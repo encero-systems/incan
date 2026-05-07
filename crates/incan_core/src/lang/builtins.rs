@@ -39,7 +39,7 @@ pub enum BuiltinFnId {
     ReadFile,
     WriteFile,
     JsonStringify,
-    Sleep,
+    IsInstance,
 }
 
 /// Metadata for a builtin function.
@@ -188,12 +188,12 @@ pub const BUILTIN_FUNCTIONS: &[BuiltinFnInfo] = &[
         Since(0, 1),
     ),
     info(
-        BuiltinFnId::Sleep,
-        "sleep",
+        BuiltinFnId::IsInstance,
+        "isinstance",
         &[],
-        "Sleep for a duration.",
-        RFC::_000,
-        Since(0, 1),
+        "Test whether a value is an instance of a type and narrow union branches.",
+        RFC::_029,
+        Since(0, 3),
     ),
 ];
 
@@ -232,15 +232,30 @@ pub fn aliases(id: BuiltinFnId) -> &'static [&'static str] {
 /// - `id`: Builtin function identifier.
 ///
 /// ## Returns
-/// - The associated [`BuiltinFnInfo`] from [`BUILTIN_FUNCTIONS`].
+/// - The associated [`BuiltinFnInfo`] copied from [`BUILTIN_FUNCTIONS`].
 ///
-/// ## Panics
-/// - If the registry is missing an entry for `id` (this indicates a programming error).
-pub fn info_for(id: BuiltinFnId) -> &'static BuiltinFnInfo {
-    BUILTIN_FUNCTIONS
-        .iter()
-        .find(|b| b.id == id)
-        .expect("INVARIANT: builtin info missing")
+/// The lookup is exhaustive over the closed enum, so adding a builtin requires updating this match at compile time.
+pub fn info_for(id: BuiltinFnId) -> BuiltinFnInfo {
+    match id {
+        BuiltinFnId::Print => BUILTIN_FUNCTIONS[0],
+        BuiltinFnId::Len => BUILTIN_FUNCTIONS[1],
+        BuiltinFnId::Sum => BUILTIN_FUNCTIONS[2],
+        BuiltinFnId::Min => BUILTIN_FUNCTIONS[3],
+        BuiltinFnId::Max => BUILTIN_FUNCTIONS[4],
+        BuiltinFnId::Str => BUILTIN_FUNCTIONS[5],
+        BuiltinFnId::Int => BUILTIN_FUNCTIONS[6],
+        BuiltinFnId::Float => BUILTIN_FUNCTIONS[7],
+        BuiltinFnId::Bool => BUILTIN_FUNCTIONS[8],
+        BuiltinFnId::Abs => BUILTIN_FUNCTIONS[9],
+        BuiltinFnId::Range => BUILTIN_FUNCTIONS[10],
+        BuiltinFnId::Enumerate => BUILTIN_FUNCTIONS[11],
+        BuiltinFnId::Zip => BUILTIN_FUNCTIONS[12],
+        BuiltinFnId::Sorted => BUILTIN_FUNCTIONS[13],
+        BuiltinFnId::ReadFile => BUILTIN_FUNCTIONS[14],
+        BuiltinFnId::WriteFile => BUILTIN_FUNCTIONS[15],
+        BuiltinFnId::JsonStringify => BUILTIN_FUNCTIONS[16],
+        BuiltinFnId::IsInstance => BUILTIN_FUNCTIONS[17],
+    }
 }
 
 /// Resolve a spelling to a builtin function identifier.

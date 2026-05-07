@@ -1,7 +1,8 @@
 """
-Arithmetic operator traits for custom types
-Python equivalents: __add__, __sub__, __mul__, __truediv__, __neg__
-Rust equivalents: std::ops::{Add, Sub, Mul, Div, Neg}
+Operator protocol traits for custom types
+
+Dunder methods are the implementation hooks. These traits are the nominal
+capability vocabulary that generic code can name in bounds and annotations.
 """
 
 
@@ -27,6 +28,17 @@ trait Add[Rhs, Output]:
     def __add__(self, other: Rhs) -> Output: ...
 
 
+trait AddAssign[Rhs, Output]:
+    """
+    AddAssign trait - Enables an explicit `a += b` hook for custom types
+    Python equivalent: __iadd__
+
+    Compound assignment first resolves this in-place hook when present, then
+    falls back to ordinary binary operator assignment (`a = a + b`).
+    """
+    def __iadd__(self, other: Rhs) -> Output: ...
+
+
 trait Sub[Rhs, Output]:
     """
     Sub trait - Enables `a - b` for custom types
@@ -50,6 +62,17 @@ trait Sub[Rhs, Output]:
     def __sub__(self, other: Rhs) -> Output: ...
 
 
+trait SubAssign[Rhs, Output]:
+    """
+    SubAssign trait - Enables an explicit `a -= b` hook for custom types
+    Python equivalent: __isub__
+
+    Compound assignment first resolves this in-place hook when present, then
+    falls back to ordinary binary operator assignment (`a = a - b`).
+    """
+    def __isub__(self, other: Rhs) -> Output: ...
+
+
 trait Mul[Rhs, Output]:
     """
     Mul trait - Enables `a * b` for custom types
@@ -70,6 +93,17 @@ trait Mul[Rhs, Output]:
     ```
     """
     def __mul__(self, other: Rhs) -> Output: ...
+
+
+trait MulAssign[Rhs, Output]:
+    """
+    MulAssign trait - Enables an explicit `a *= b` hook for custom types
+    Python equivalent: __imul__
+
+    Compound assignment first resolves this in-place hook when present, then
+    falls back to ordinary binary operator assignment (`a = a * b`).
+    """
+    def __imul__(self, other: Rhs) -> Output: ...
 
 
 trait Div[Rhs, Output]:
@@ -98,6 +132,44 @@ trait Div[Rhs, Output]:
     def __div__(self, other: Rhs) -> Output: ...
 
 
+trait DivAssign[Rhs, Output]:
+    """
+    DivAssign trait - Enables an explicit `a /= b` hook for custom types
+    Python equivalent: __idiv__
+
+    Compound assignment first resolves this in-place hook when present, then
+    falls back to ordinary binary operator assignment (`a = a / b`).
+    """
+    def __idiv__(self, other: Rhs) -> Output: ...
+
+
+trait FloorDiv[Rhs, Output]:
+    """
+    FloorDiv trait - Enables `a // b` for custom types
+    Python equivalent: __floordiv__
+    """
+    def __floordiv__(self, other: Rhs) -> Output: ...
+
+
+trait FloorDivAssign[Rhs, Output]:
+    """
+    FloorDivAssign trait - Enables an explicit `a //= b` hook for custom types
+    Python equivalent: __ifloordiv__
+
+    Compound assignment first resolves this in-place hook when present, then
+    falls back to ordinary binary operator assignment (`a = a // b`).
+    """
+    def __ifloordiv__(self, other: Rhs) -> Output: ...
+
+
+trait Pow[Rhs, Output]:
+    """
+    Pow trait - Enables `a ** b` for custom types
+    Python equivalent: __pow__
+    """
+    def __pow__(self, other: Rhs) -> Output: ...
+
+
 trait Neg[Output]:
     """
     Neg trait - Enables `-a` (unary negation) for custom types
@@ -119,6 +191,15 @@ trait Neg[Output]:
     def __neg__(self) -> Output: ...
 
 
+trait Not[Output]:
+    """
+    Not trait - Enables `~a` (bitwise inversion) for custom types
+    Python equivalent: __invert__
+    Rust equivalent: std::ops::Not
+    """
+    def __invert__(self) -> Output: ...
+
+
 trait Mod[Rhs, Output]:
     """
     Mod trait - Enables `a % b` (modulo) for custom types
@@ -138,3 +219,171 @@ trait Mod[Rhs, Output]:
     ```
     """
     def __mod__(self, other: Rhs) -> Output: ...
+
+
+trait ModAssign[Rhs, Output]:
+    """
+    ModAssign trait - Enables an explicit `a %= b` hook for custom types
+    Python equivalent: __imod__
+
+    Compound assignment first resolves this in-place hook when present, then
+    falls back to ordinary binary operator assignment (`a = a % b`).
+    """
+    def __imod__(self, other: Rhs) -> Output: ...
+
+
+trait Shr[Rhs, Output]:
+    """
+    Shr trait - Enables `a >> b` for custom types
+    Python equivalent: __rshift__
+    Rust equivalent: std::ops::Shr
+    """
+    def __rshift__(self, other: Rhs) -> Output: ...
+
+
+trait ShrAssign[Rhs, Output]:
+    """
+    ShrAssign trait - Enables an explicit `a >>= b` hook for custom types
+    Python equivalent: __irshift__
+
+    Compound assignment first resolves this in-place hook when present, then
+    falls back to ordinary binary operator assignment (`a = a >> b`).
+    """
+    def __irshift__(self, other: Rhs) -> Output: ...
+
+
+trait Shl[Rhs, Output]:
+    """
+    Shl trait - Enables `a << b` for custom types
+    Python equivalent: __lshift__
+    Rust equivalent: std::ops::Shl
+    """
+    def __lshift__(self, other: Rhs) -> Output: ...
+
+
+trait ShlAssign[Rhs, Output]:
+    """
+    ShlAssign trait - Enables an explicit `a <<= b` hook for custom types
+    Python equivalent: __ilshift__
+
+    Compound assignment first resolves this in-place hook when present, then
+    falls back to ordinary binary operator assignment (`a = a << b`).
+    """
+    def __ilshift__(self, other: Rhs) -> Output: ...
+
+
+trait PipeForward[Rhs, Output]:
+    """
+    PipeForward trait - Enables `a |> b` for custom types
+    Python-style equivalent: __pipe_forward__
+    """
+    def __pipe_forward__(self, other: Rhs) -> Output: ...
+
+
+trait PipeBackward[Rhs, Output]:
+    """
+    PipeBackward trait - Enables `a <| b` for custom types
+    Python-style equivalent: __pipe_backward__
+    """
+    def __pipe_backward__(self, other: Rhs) -> Output: ...
+
+
+trait BitAnd[Rhs, Output]:
+    """
+    BitAnd trait - Enables `a & b` for custom types
+    Python equivalent: __and__
+    Rust equivalent: std::ops::BitAnd
+    """
+    def __and__(self, other: Rhs) -> Output: ...
+
+
+trait BitAndAssign[Rhs, Output]:
+    """
+    BitAndAssign trait - Enables an explicit `a &= b` hook for custom types
+    Python equivalent: __iand__
+
+    Compound assignment first resolves this in-place hook when present, then
+    falls back to ordinary binary operator assignment (`a = a & b`).
+    """
+    def __iand__(self, other: Rhs) -> Output: ...
+
+
+trait BitOr[Rhs, Output]:
+    """
+    BitOr trait - Enables `a | b` for custom types
+    Python equivalent: __or__
+    Rust equivalent: std::ops::BitOr
+    """
+    def __or__(self, other: Rhs) -> Output: ...
+
+
+trait BitOrAssign[Rhs, Output]:
+    """
+    BitOrAssign trait - Enables an explicit `a |= b` hook for custom types
+    Python equivalent: __ior__
+
+    Compound assignment first resolves this in-place hook when present, then
+    falls back to ordinary binary operator assignment (`a = a | b`).
+    """
+    def __ior__(self, other: Rhs) -> Output: ...
+
+
+trait BitXor[Rhs, Output]:
+    """
+    BitXor trait - Enables `a ^ b` for custom types
+    Python equivalent: __xor__
+    Rust equivalent: std::ops::BitXor
+    """
+    def __xor__(self, other: Rhs) -> Output: ...
+
+
+trait BitXorAssign[Rhs, Output]:
+    """
+    BitXorAssign trait - Enables an explicit `a ^= b` hook for custom types
+    Python equivalent: __ixor__
+
+    Compound assignment first resolves this in-place hook when present, then
+    falls back to ordinary binary operator assignment (`a = a ^ b`).
+    """
+    def __ixor__(self, other: Rhs) -> Output: ...
+
+
+trait MatMul[Rhs, Output]:
+    """
+    MatMul trait - Enables `a @ b` for custom types
+    Python equivalent: __matmul__
+    """
+    def __matmul__(self, other: Rhs) -> Output: ...
+
+
+trait MatMulAssign[Rhs, Output]:
+    """
+    MatMulAssign trait - Enables an explicit `a @= b` hook for custom types
+    Python equivalent: __imatmul__
+
+    Compound assignment first resolves this in-place hook when present, then
+    falls back to ordinary binary operator assignment (`a = a @ b`).
+    """
+    def __imatmul__(self, other: Rhs) -> Output: ...
+
+
+trait GetItem[Key, Output]:
+    """
+    Compatibility/operator alias for indexed read access.
+
+    Prefer std.traits.indexing.Index[Key, Output] in new docs, bounds,
+    and explicit trait adoption. This alias remains for older operator
+    vocabulary that names the same __getitem__ hook.
+    """
+    def __getitem__(self, key: Key) -> Output: ...
+
+
+trait SetItem[Key, Value]:
+    """
+    Compatibility/operator alias for indexed write access.
+
+    Prefer std.traits.indexing.IndexMut[Key, Value] in new docs, bounds,
+    and explicit trait adoption. This alias remains for older operator
+    vocabulary that names the same __setitem__ hook.
+    """
+    def __setitem__(self, key: Key, value: Value) -> None: ...

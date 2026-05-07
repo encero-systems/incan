@@ -16,10 +16,14 @@ jobs:
     name: Format Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       # Comment wrapping (comment_width/wrap_comments/format_code_in_doc_comments) requires nightly rustfmt.
       # We intentionally use nightly for *formatting only*; all builds/tests remain on stable/MSRV jobs.
-      - uses: dtolnay/rust-toolchain@nightly
+      # Install stable first (rustup), then nightly with retries — nightly channel sync sometimes flakes on the network.
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          profile: minimal
+      - uses: ./.github/actions/install-nightly-toolchain
         with:
           components: rustfmt
       - name: Check formatting
@@ -29,55 +33,186 @@ jobs:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - uses: Swatinem/rust-cache@v2
+        with:
+          # Share registry/target across stable jobs; the Linux test shard is the cache writer.
+          shared-key: incan-stable
+          save-if: false
+      - uses: ./.github/actions/setup-rust-sccache
       - name: Run clippy
         run: cargo clippy --all-targets --all-features -- -D warnings
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
-  test:
-    name: Test Suite
-    runs-on: ${{ matrix.os }}
+  test-linux-shards:
+    name: Test Suite Shard (ubuntu-latest, stable, slice ${{ matrix.partition }}/${{ matrix.total }})
+    runs-on: ubuntu-latest
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
-        rust: [stable]
+        partition: [1, 2, 3, 4]
+        total: [4]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: incan-stable
+          # Only one matrix leg writes the shared cache; every leg can restore it.
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.partition == 1 }}
+      - uses: ./.github/actions/setup-rust-sccache
+      - uses: taiki-e/install-action@nextest
+      - name: Run test shard
+        run: cargo nextest run --all --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
+
+  test-linux:
+    name: Test Suite (ubuntu-latest, stable)
+    runs-on: ubuntu-latest
+    needs: test-linux-shards
+    if: ${{ always() }}
+    steps:
+      - name: Verify Ubuntu test shards
+        run: |
+          if [ "${{ needs.test-linux-shards.result }}" != "success" ]; then
+            echo "test-linux-shards finished with ${{ needs.test-linux-shards.result }}"
+            exit 1
+          fi
+          echo "ubuntu test shards passed"
+
+  test-macos-shards:
+    name: Test Suite Shard (macos-latest, stable, slice ${{ matrix.partition }}/${{ matrix.total }})
+    runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3, 4]
+        total: [4]
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.rust }}
+          toolchain: stable
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: incan-stable
+          # Only one matrix leg writes the shared cache; every leg can restore it.
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.partition == 1 }}
+      - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
-      - name: Run tests
-        run: cargo nextest run --all --profile ci
+      - name: Run test shard
+        run: cargo nextest run --all --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
-  msrv:
-    name: MSRV Build/Test (1.89.0)
+  test-macos:
+    name: Test Suite (macos-latest, stable)
+    runs-on: ubuntu-latest
+    needs: test-macos-shards
+    if: ${{ always() }}
+    steps:
+      - name: Verify macOS test shards
+        run: |
+          if [ "${{ needs.test-macos-shards.result }}" != "success" ]; then
+            echo "test-macos-shards finished with ${{ needs.test-macos-shards.result }}"
+            exit 1
+          fi
+          echo "macOS test shards passed"
+
+  msrv-build:
+    name: MSRV Build (1.92.0)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Rust 1.89.0
+      - uses: actions/checkout@v5
+      - name: Install Rust 1.92.0
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.89.0
+          toolchain: 1.92.0
           components: clippy
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@nextest
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/setup-rust-sccache
       - name: Cargo build (locked)
         run: cargo build --locked
-      - name: Cargo test (locked)
-        run: cargo nextest run --locked --profile ci
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
+
+  msrv-test-shards:
+    name: MSRV Test Shard (1.92.0, slice ${{ matrix.partition }}/${{ matrix.total }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        partition: [1, 2, 3, 4]
+        total: [4]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust 1.92.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.92.0
+          components: clippy
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          # Only one matrix leg writes the shared cache; every leg can restore it.
+          save-if: ${{ github.ref == 'refs/heads/main' && matrix.partition == 1 }}
+      - uses: ./.github/actions/setup-rust-sccache
+      - uses: taiki-e/install-action@nextest
+      - name: Cargo test shard (locked)
+        run: cargo nextest run --locked --profile ci --partition slice:${{ matrix.partition }}/${{ matrix.total }}
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
+
+  msrv:
+    name: MSRV Build/Test (1.92.0)
+    runs-on: ubuntu-latest
+    needs:
+      - msrv-build
+      - msrv-test-shards
+    if: ${{ always() }}
+    steps:
+      - name: Verify MSRV build and test shards
+        run: |
+          if [ "${{ needs.msrv-build.result }}" != "success" ]; then
+            echo "msrv-build finished with ${{ needs.msrv-build.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.msrv-test-shards.result }}" != "success" ]; then
+            echo "msrv-test-shards finished with ${{ needs.msrv-test-shards.result }}"
+            exit 1
+          fi
+          echo "MSRV build and test shards passed"
 
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-audit
         run: cargo install cargo-audit --locked
       - name: Run cargo audit
@@ -87,9 +222,11 @@ jobs:
     name: Cargo Deny
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
       - name: Run cargo deny
@@ -99,41 +236,191 @@ jobs:
     name: Unused Dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          profile: minimal
+      - uses: ./.github/actions/install-nightly-toolchain
+      - name: Compute udeps cache key
+        id: udeps-cache-key
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          workspace_version="$(
+            awk '
+              /^\[workspace.package\]/ { in_section=1; next }
+              /^\[/ { in_section=0 }
+              in_section && /^version = / {
+                gsub(/"/, "", $3)
+                print $3
+                exit
+              }
+            ' Cargo.toml
+          )"
+          if [ -z "$workspace_version" ]; then
+            echo "failed to read [workspace.package].version from Cargo.toml" >&2
+            exit 1
+          fi
+
+          release_line="$(
+            printf '%s\n' "$workspace_version" |
+              sed -E 's/^([0-9]+)\.([0-9]+)\..*$/v\1.\2/'
+          )"
+          if [ "$release_line" = "$workspace_version" ]; then
+            echo "failed to derive release line from workspace version: $workspace_version" >&2
+            exit 1
+          fi
+
+          key="$(
+            {
+              rustc +nightly -Vv
+              cargo +nightly -V
+              printf 'workspace-release-line=%s\n' "$release_line"
+              git ls-files 'Cargo.toml' '*/Cargo.toml' 'Cargo.lock' '*/Cargo.lock' | sort | while read -r file; do
+                printf '== %s ==\n' "$file"
+                WORKSPACE_VERSION="$workspace_version" RELEASE_LINE="$release_line" perl -pe '
+                  BEGIN {
+                    $from = quotemeta($ENV{"WORKSPACE_VERSION"});
+                    $to = $ENV{"RELEASE_LINE"};
+                  }
+                  s/$from/$to/g;
+                ' "$file"
+              done
+            } | shasum -a 256 | cut -d ' ' -f 1
+          )"
+
+          echo "release-line=$release_line" >> "$GITHUB_OUTPUT"
+          echo "key=$key" >> "$GITHUB_OUTPUT"
       - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: incan-udeps
+          key: ${{ steps.udeps-cache-key.outputs.key }}
+          add-rust-environment-hash-key: "false"
+          cache-all-crates: "true"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/setup-rust-sccache
       - name: Install cargo-udeps
         run: cargo install cargo-udeps --locked
       - name: Run cargo udeps
         run: cargo +nightly udeps --all-targets
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
-  smoke-test:
-    name: Full Smoke Test
+  smoke-release:
+    name: Smoke Release Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          components: rustfmt
       - uses: Swatinem/rust-cache@v2
-      - uses: taiki-e/install-action@nextest
-      - name: Install make
-        run: sudo apt-get update && sudo apt-get install -y make
+        with:
+          # Keep release-profile artifacts separate from the dev/test cache.
+          shared-key: incan-stable-release
+          cache-workspace-crates: "true"
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Build release compiler once
+        run: make smoke-test-release
+      - name: Upload release compiler
+        uses: actions/upload-artifact@v6
+        with:
+          name: incan-release-bin
+          path: target/release/incan
+          if-no-files-found: error
+          retention-days: 1
+
+  smoke-test-shards:
+    name: Smoke Test Shard (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    needs: smoke-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: canary
+            make-target: smoke-test-canary
+            wasi: false
+            examples-timeout: 5
+          - name: web-example
+            make-target: smoke-test-web-example
+            wasi: false
+            examples-timeout: 5
+          - name: nested-project
+            make-target: smoke-test-nested-project-example
+            wasi: false
+            examples-timeout: 5
+          - name: examples
+            make-target: smoke-test-examples
+            wasi: true
+            examples-timeout: 20
+          - name: benchmarks
+            make-target: smoke-test-benchmarks-incan
+            wasi: true
+            examples-timeout: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: incan-stable
+          cache-targets: false
+          # Smoke shards only need restore access; stable test shards own this shared cache.
+          save-if: false
+      - uses: ./.github/actions/setup-rust-sccache
       - name: Install WASI target for vocab desugarers
+        if: ${{ matrix.wasi }}
         run: rustup target add wasm32-wasip1
-      - name: Run full smoke test
-        run: make smoke-test
+      - name: Download release compiler
+        uses: actions/download-artifact@v6
+        with:
+          name: incan-release-bin
+          path: target/release
+      - name: Restore executable bit
+        run: chmod +x target/release/incan
+      - name: Run smoke shard
+        run: make ${{ matrix.make-target }}
+        env:
+          INCAN_EXAMPLES_TIMEOUT: ${{ matrix.examples-timeout }}
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
+
+  smoke-test:
+    name: Smoke Test
+    runs-on: ubuntu-latest
+    needs:
+      - smoke-release
+      - smoke-test-shards
+    if: ${{ always() }}
+    steps:
+      - name: Verify smoke jobs
+        run: |
+          if [ "${{ needs.smoke-release.result }}" != "success" ]; then
+            echo "smoke-release finished with ${{ needs.smoke-release.result }}"
+            exit 1
+          fi
+          if [ "${{ needs.smoke-test-shards.result }}" != "success" ]; then
+            echo "smoke-test-shards finished with ${{ needs.smoke-test-shards.result }}"
+            exit 1
+          fi
+          echo "smoke jobs passed"
 
   generate-rust-docs:
     name: Docs Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/setup-rust-sccache
       - name: Build docs
         run: cargo doc --no-deps
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
   docs-site:
     name: Docs Site Build (MkDocs)
@@ -142,8 +429,8 @@ jobs:
       run:
         working-directory: workspaces/docs-site
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
       - name: Install MkDocs dependencies
@@ -157,10 +444,16 @@ jobs:
     name: Generated Reference Up-to-date
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - uses: ./.github/actions/setup-rust-sccache
       - name: Regenerate language reference
         run: cargo run -p incan_core --bin generate_lang_reference
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
       - name: Verify no diff
         run: git diff --exit-code workspaces/docs-site/docs/language/reference/language.md

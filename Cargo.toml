@@ -9,15 +9,23 @@ members = [
     "crates/incan_semantics_core",
     "crates/incan_semantics_stdlib",
     "crates/incan_web_macros",
+    "crates/rust_inspect",
 ]
 exclude = ["target/incan"]
 resolver = "2"
 
+[patch.crates-io]
+# `ra_ap_proc_macro_api` enables postcard's default `heapless-cas` feature even though it only
+# needs postcard with `alloc`. That default feature pulls `heapless/cas`, which pulls the
+# unmaintained `atomic-polyfill` crate tracked by issue #260. Keep this patch narrow and remove it
+# when the upstream manifest disables postcard defaults.
+ra_ap_proc_macro_api = { path = "crates/third_party/ra_ap_proc_macro_api" }
+
 [workspace.package]
-version = "0.2.0-dev.3"
+version = "0.3.0-dev.42"
 description = "The Incan programming language compiler"
 edition = "2024"
-rust-version = "1.89"
+rust-version = "1.92"
 license = "Apache-2.0"
 authors = ["Danny Meijer <dannys.code.corner@gmail.com>"]
 repository = "https://github.com/dannys-code-corner/incan-programming-language"
@@ -42,11 +50,15 @@ readme.workspace = true
 
 [features]
 default = ["cli", "std_testing", "std_async", "std_decorators"]
-cli = ["dep:clap", "dep:tracing-subscriber"]
+cli = ["dep:clap", "dep:tracing-subscriber", "rust_inspect"]
 lsp = ["dep:tower-lsp", "dep:tokio"]
 std_testing = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_testing"]
 std_async = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_async"]
 std_decorators = ["dep:incan_semantics_stdlib", "incan_semantics_stdlib/std_decorators"]
+# Rust dependency inspection via rust-analyzer (`ra_ap_*`) in the `rust_inspect` crate.
+# Kept optional for non-CLI/library builds; the CLI enables it so ordinary `rust::` imports can preserve
+# real function/type signatures.
+rust_inspect = ["dep:rust_inspect"]
 
 [dependencies]
 # Shared language/semantic helpers (canonical vocab)
@@ -59,7 +71,7 @@ incan_semantics_core = { path = "crates/incan_semantics_core" }
 incan_semantics_stdlib = { path = "crates/incan_semantics_stdlib", optional = true }
 
 # LSP server implementation
-tower-lsp = { version = "0.17", optional = true }  # TODO: update to latest version
+tower-lsp = { version = "0.20", optional = true }
 # Async runtime (for LSP and generated async code)
 tokio = { version = "1", features = ["full"], optional = true }
 # JSON serialization (for LSP protocol)
@@ -83,17 +95,21 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = tr
 
 # TOML parsing for incan.toml manifests (RFC 013/023)
 toml = "0.9"
+# Span-preserving TOML parsing for manifest diagnostics.
+toml_edit = { version = "0.25", features = ["parse", "serde"] }
 # Serde derive for manifest deserialization
 serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.10.9"
 hex = "0.4.3"
-time = { version = "0.3.45", features = ["formatting"] }
 semver = "1.0.27"
+rust_inspect = { path = "crates/rust_inspect", optional = true }
 # WASM runtime for desugarer packaging
-wasmtime = { version = "40", default-features = false, features = ["cranelift", "runtime", "std"] }
-wasmtime-wasi = { version = "40", default-features = false, features = ["p1"] }
+wasmtime = { version = "44.0.1", default-features = false, features = ["cranelift", "runtime", "std"] }
+wasmtime-wasi = { version = "44.0.1", default-features = false, features = ["p1"] }
 
 [dev-dependencies]
+# Runtime crate used by std.io generated-project offline smoke tests.
+byteorder = "1"
 # Snapshot testing for codegen
 insta = { version = "1.45", features = ["glob"] }
 # Property-based testing

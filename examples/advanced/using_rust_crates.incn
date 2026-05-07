@@ -14,7 +14,7 @@ from rust::std::time import Instant
 from rust::std::collections import HashMap
 from rust::uuid import Uuid
 from rust::rand import Rng, thread_rng
-from serde import Deserialize
+from rust::serde @ "1.0" import Deserialize
 
 
 # =============================================================================

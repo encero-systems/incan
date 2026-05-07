@@ -1,0 +1,5 @@
+from rust::std::time import Duration
+
+def main() -> None:
+    _d = Duration.from_secs_f32(1.5)
+    println(_d.as_secs_f32())

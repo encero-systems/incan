@@ -29,9 +29,9 @@ jobs:
       - name: Minting the GitHub App's installation token
         id: app_token
         env:
-          APP_ID: ${{ secrets.INCAN_TRIAGE_APP_ID }}
-          INSTALLATION_ID: ${{ secrets.INCAN_TRIAGE_APP_INSTALLATION_ID }}
-          PRIVATE_KEY: ${{ secrets.INCAN_TRIAGE_APP_PRIVATE_KEY }}
+          APP_ID: ${{ secrets.TRIAGE_APP_ID }}
+          INSTALLATION_ID: ${{ secrets.TRIAGE_APP_INSTALLATION_ID }}
+          PRIVATE_KEY: ${{ secrets.TRIAGE_APP_PRIVATE_KEY }}
         run: |
           # enable strict error handling
           set -euo pipefail
@@ -67,7 +67,7 @@ jobs:
 
       - name: Sync PR labels (Area(s) -> labels)
         if: github.event_name == 'pull_request_target'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app_token.outputs.token }}
           script: |
@@ -130,7 +130,7 @@ jobs:
 
       - name: Sync issue labels and Issue Type (Area -> labels, title prefix -> type)
         if: github.event_name == 'issues'
-        uses: actions/github-script@v7
+        uses: actions/github-script@v8
         with:
           github-token: ${{ steps.app_token.outputs.token }}
           script: |
@@ -239,4 +239,3 @@ jobs:
             } catch (e) {
               console.log("Issue type sync failed (non-fatal):", e?.message ?? e);
             }
-

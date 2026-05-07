@@ -7,7 +7,7 @@
 //!
 //! - [`mutation_scan`] — parameter mutation analysis for `mut`/`&mut` emission
 //! - [`functions`] — function, method, trait, and `@rust.extern` delegation emission
-//! - [`impls`] — impl block emission (serde, `@derive(Validate)`, reflection)
+//! - [`impls`] — impl block emission (`@derive(Validate)`, trait impls, reflection)
 //! - [`structures`] — struct and enum emission
 //!
 //! ## See also
@@ -23,11 +23,11 @@ mod structures;
 use proc_macro2::{Literal, TokenStream};
 use quote::{format_ident, quote};
 
-use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::stdlib;
 
 use super::super::decl::{IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier};
-use super::super::expr::IrExprKind;
+use super::super::expr::{IrDictEntry, IrExprKind, IrListEntry};
+use super::super::ownership::{ValueUseSite, plan_value_use};
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
 
@@ -57,6 +57,8 @@ impl<'a> IrEmitter<'a> {
                 name,
                 type_params,
                 ty,
+                is_rusttype: _,
+                interop_edges: _,
             } => {
                 let vis = self.emit_visibility(visibility);
                 let name_ident = format_ident!("{}", name);
@@ -66,26 +68,77 @@ impl<'a> IrEmitter<'a> {
                     #vis type #name_ident #generics = #ty_tokens;
                 })
             }
+            IrDeclKind::SymbolAlias {
+                visibility,
+                name,
+                target_path,
+            } => {
+                let vis = self.emit_visibility(visibility);
+                let name_ident = format_ident!("{}", name);
+                let target_segments = target_path
+                    .iter()
+                    .map(|segment| {
+                        let ident = format_ident!("{}", segment);
+                        quote! { #ident }
+                    })
+                    .collect::<Vec<_>>();
+                let target = join_path_tokens(&target_segments);
+                Ok(quote! {
+                    #vis use #target as #name_ident;
+                })
+            }
             IrDeclKind::Const {
                 visibility,
                 name,
                 ty,
                 value,
             } => self.emit_const(visibility, name, ty, value),
+            IrDeclKind::Static {
+                visibility,
+                name,
+                ty,
+                value,
+            } => self.emit_static(visibility, name, ty, value),
             IrDeclKind::Import {
+                visibility,
                 origin,
                 qualifier,
                 path,
                 alias,
                 items,
-            } => self.emit_import(origin, qualifier, path, alias, items),
+            } => self.emit_import(visibility, origin, qualifier, path, alias, items),
             IrDeclKind::Impl(impl_block) => self.emit_impl(impl_block),
             IrDeclKind::Trait(trait_decl) => self.emit_trait(trait_decl),
         }
     }
 
+    /// Emit a module-level static binding backed by a generated `StaticCell`.
+    fn emit_static(
+        &self,
+        visibility: &super::super::decl::Visibility,
+        name: &str,
+        ty: &IrType,
+        value: &super::super::TypedExpr,
+    ) -> Result<TokenStream, EmitError> {
+        let vis = self.emit_visibility(visibility);
+        let name_ident = Self::rust_static_ident(name);
+        let ty_tokens = self.emit_type(ty);
+        let previous = self.in_static_initializer.replace(true);
+        let emitted_value = self.emit_expr(value);
+        self.in_static_initializer.replace(previous);
+        let emitted_value = emitted_value?;
+        let converted_value =
+            plan_value_use(value, ValueUseSite::Assignment { target_ty: Some(ty) }).apply(emitted_value);
+
+        Ok(quote! {
+            #vis static #name_ident: std::sync::LazyLock<incan_stdlib::storage::StaticCell<#ty_tokens>> =
+                std::sync::LazyLock::new(|| incan_stdlib::storage::StaticCell::new(#converted_value));
+        })
+    }
+
     // ---- Const emission (RFC 008) ----
 
+    /// Emit one module-level constant declaration after validating the value is const-emittable.
     fn emit_const(
         &self,
         visibility: &super::super::decl::Visibility,
@@ -98,87 +151,101 @@ impl<'a> IrEmitter<'a> {
         let vis = self.emit_visibility(visibility);
         let name_ident = format_ident!("{}", name);
         let ty_tokens = self.emit_type(ty);
-
-        // If this is a FrozenList/Set/Dict with literal initializer, emit via FrozenX::new(&[...]).
-        use super::super::types::IrType as T;
-        use incan_core::lang::types::collections::{self, CollectionTypeId};
-        let specialized_tokens: Option<TokenStream> = match (ty, &value.kind) {
-            (T::NamedGeneric(n, args), IrExprKind::List(items))
-                if n == collections::as_str(CollectionTypeId::FrozenList) && args.len() == 1 =>
-            {
-                let elems: Result<Vec<_>, EmitError> = items.iter().map(|i| self.emit_expr(i)).collect();
-                let elems = elems?;
-                Some(quote! { FrozenList::new(&[ #(#elems),* ]) })
-            }
-            (T::NamedGeneric(n, args), IrExprKind::Set(items))
-                if n == collections::as_str(CollectionTypeId::FrozenSet) && args.len() == 1 =>
-            {
-                let elems: Result<Vec<_>, EmitError> = items.iter().map(|i| self.emit_expr(i)).collect();
-                let elems = elems?;
-                Some(quote! { FrozenSet::new(&[ #(#elems),* ]) })
-            }
-            (T::NamedGeneric(n, args), IrExprKind::Dict(pairs))
-                if n == collections::as_str(CollectionTypeId::FrozenDict) && args.len() == 2 =>
-            {
-                let kvs: Result<Vec<_>, EmitError> = pairs
-                    .iter()
-                    .map(|(k, v)| {
-                        let kk = self.emit_expr(k)?;
-                        let vv = self.emit_expr(v)?;
-                        Ok(quote! { ( #kk , #vv ) })
-                    })
-                    .collect();
-                let kvs = kvs?;
-                Some(quote! { FrozenDict::new(&[ #(#kvs),* ]) })
-            }
-            _ => None,
-        };
-
-        let value_tokens = if let Some(tok) = specialized_tokens {
-            tok
-        } else {
-            match (ty, &value.kind) {
-                // RFC 008: frozen scalars.
-                (T::FrozenStr, IrExprKind::String(s)) => {
-                    quote! { FrozenStr::new(#s) }
-                }
-                (T::FrozenBytes, IrExprKind::Bytes(bytes)) => {
-                    let lit = Literal::byte_string(bytes);
-                    quote! { FrozenBytes::new(#lit) }
-                }
-                _ => self.emit_expr(value)?,
-            }
-        };
+        let value_tokens = self.emit_const_value_for_type(ty, value)?;
 
         Ok(quote! {
             #vis const #name_ident: #ty_tokens = #value_tokens;
         })
     }
 
+    /// Emit a const initializer using the declared target type to qualify frozen collection constructors.
+    fn emit_const_value_for_type(
+        &self,
+        ty: &IrType,
+        value: &super::super::TypedExpr,
+    ) -> Result<TokenStream, EmitError> {
+        use super::super::types::IrType as T;
+        use incan_core::lang::types::collections::{self, CollectionTypeId};
+
+        match (ty, &value.kind) {
+            (T::NamedGeneric(n, args), IrExprKind::List(items))
+                if n == collections::as_str(CollectionTypeId::FrozenList) && args.len() == 1 =>
+            {
+                let elems: Result<Vec<_>, EmitError> = items
+                    .iter()
+                    .map(|entry| match entry {
+                        IrListEntry::Element(value) => self.emit_const_value_for_type(&args[0], value),
+                        IrListEntry::Spread(_) => Err(EmitError::Unsupported(
+                            "FrozenList const spread emission is not supported".to_string(),
+                        )),
+                    })
+                    .collect();
+                let elems = elems?;
+                Ok(quote! { incan_stdlib::frozen::FrozenList::new(&[ #(#elems),* ]) })
+            }
+            (T::NamedGeneric(n, args), IrExprKind::Set(items))
+                if n == collections::as_str(CollectionTypeId::FrozenSet) && args.len() == 1 =>
+            {
+                let elems: Result<Vec<_>, EmitError> = items
+                    .iter()
+                    .map(|item| self.emit_const_value_for_type(&args[0], item))
+                    .collect();
+                let elems = elems?;
+                Ok(quote! { incan_stdlib::frozen::FrozenSet::new(&[ #(#elems),* ]) })
+            }
+            (T::NamedGeneric(n, args), IrExprKind::Dict(pairs))
+                if n == collections::as_str(CollectionTypeId::FrozenDict) && args.len() == 2 =>
+            {
+                let kvs: Result<Vec<_>, EmitError> = pairs
+                    .iter()
+                    .map(|entry| match entry {
+                        IrDictEntry::Pair(k, v) => {
+                            let kk = self.emit_const_value_for_type(&args[0], k)?;
+                            let vv = self.emit_const_value_for_type(&args[1], v)?;
+                            Ok(quote! { ( #kk , #vv ) })
+                        }
+                        IrDictEntry::Spread(_) => Err(EmitError::Unsupported(
+                            "FrozenDict const spread emission is not supported".to_string(),
+                        )),
+                    })
+                    .collect();
+                let kvs = kvs?;
+                Ok(quote! { incan_stdlib::frozen::FrozenDict::new(&[ #(#kvs),* ]) })
+            }
+            (T::Tuple(types), IrExprKind::Tuple(items)) if types.len() == items.len() => {
+                let elems: Result<Vec<_>, EmitError> = types
+                    .iter()
+                    .zip(items.iter())
+                    .map(|(ty, item)| self.emit_const_value_for_type(ty, item))
+                    .collect();
+                let elems = elems?;
+                Ok(quote! { (#(#elems),*) })
+            }
+            (T::FrozenStr, IrExprKind::String(s)) => Ok(quote! { incan_stdlib::frozen::FrozenStr::new(#s) }),
+            (T::FrozenBytes, IrExprKind::Bytes(bytes)) => {
+                let lit = Literal::byte_string(bytes);
+                Ok(quote! { incan_stdlib::frozen::FrozenBytes::new(#lit) })
+            }
+            _ => self.emit_expr(value),
+        }
+    }
+
     // ---- Import emission ----
 
+    /// Emit a Rust import or re-export after generated-use analysis prunes private unused bindings.
     fn emit_import(
         &self,
+        visibility: &super::super::decl::Visibility,
         origin: &IrImportOrigin,
         qualifier: &IrImportQualifier,
         path: &[String],
         alias: &Option<String>,
         items: &[super::super::decl::IrImportItem],
     ) -> Result<TokenStream, EmitError> {
-        // Skip serde imports if we're already importing them automatically.
-        // Covers both `from serde import ...` and `from std.serde.json import Serialize, Deserialize`.
-        if *self.needs_serde.borrow() {
-            let is_serde_trait = items.iter().any(|item| {
-                matches!(
-                    derives::from_str(item.name.as_str()),
-                    Some(DeriveId::Serialize | DeriveId::Deserialize)
-                )
-            });
-            let is_serde_import_path = (path.len() == 1 && path[0] == "serde")
-                || (path.len() >= 2 && path[0] == stdlib::STDLIB_ROOT && path[1] == "serde");
-            if is_serde_trait && is_serde_import_path {
-                return Ok(quote! {});
-            }
+        // Typechecker-only namespaces (e.g. `std.rust`) have no corresponding Rust module.
+        // Capability bounds are folded into generic type parameter bounds by the lowering layer.
+        if stdlib::is_typechecker_only_stdlib(path) {
+            return Ok(quote! {});
         }
 
         // RFC 023: map all Incan `std.*` imports to emitted `crate::__incan_std::*` modules.
@@ -250,18 +317,12 @@ impl<'a> IrEmitter<'a> {
         };
 
         let path_ts = join_path_tokens(&path_tokens);
-
-        // `pub use` module imports in two cases:
-        // 1. Stdlib Incan-source imports (std.web.* → crate::__incan_std::web::*)
-        // 2. Rust crate imports inside a `rust.module(...)` file — these are re-exported so users can do `from
-        //    std.web.response import Json` and get axum::Json.
-        //
-        // Item imports (`from ... import X`) are always emitted as re-exports. The frontend already treats both
-        // `from module import X` and `from rust::crate import X` as module exports, so the backend must preserve that
-        // contract in generated Rust as well.
+        // Public source imports, stdlib facades, and rust.module imports are re-exported. Private `pub::` library
+        // imports behave like ordinary private imports: emit them only when generated Rust references the binding.
         let is_rust_crate_reexport =
             matches!(qualifier, IrImportQualifier::None) && self.rust_module_path.is_some() && !is_pub_library_import;
-        let export_module_import = is_incan_source_stdlib || is_rust_crate_reexport;
+        let is_public_reexport = !matches!(visibility, super::super::decl::Visibility::Private);
+        let export_module_import = is_public_reexport || is_incan_source_stdlib || is_rust_crate_reexport;
 
         if let Some(alias_name) = alias {
             let alias_ident = Self::rust_ident(alias_name);
@@ -269,10 +330,12 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! {
                     pub use #path_ts as #alias_ident;
                 })
-            } else {
+            } else if self.should_emit_import_binding(alias_name) {
                 Ok(quote! {
                     use #path_ts as #alias_ident;
                 })
+            } else {
+                Ok(quote! {})
             }
         } else if !items.is_empty() {
             // ---- Track Rust import paths for alias resolution ----
@@ -288,17 +351,53 @@ impl<'a> IrEmitter<'a> {
                 }
             }
 
+            let preserves_stdlib_rust_facade = matches!(qualifier, IrImportQualifier::None)
+                && path.first().is_some_and(|segment| segment == "incan_stdlib");
+            let export_item_import = export_module_import || preserves_stdlib_rust_facade;
+            // If rust-inspect metadata is unavailable for an extension trait, codegen cannot map the later method call
+            // back to its trait import. Preserve only the common Rust pattern `from crate import Trait, function` when
+            // reachable code uses a lowercase function from the same import group. This keeps `rand::Rng` for
+            // `thread_rng().gen_range(...)` without retaining unrelated dead type imports such as `Path` in pruned
+            // helper-only code.
+            let preserve_metadata_missing_trait_candidate =
+                if matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import {
+                    let analysis = self.generated_use_analysis.borrow();
+                    items.iter().any(|item| {
+                        let binding = item.alias.as_ref().unwrap_or(&item.name);
+                        item.name.chars().next().is_some_and(|ch| ch.is_ascii_lowercase())
+                            && analysis.used_imports.contains(binding)
+                    })
+                } else {
+                    false
+                };
             let item_stmts: Vec<TokenStream> = items
                 .iter()
+                .filter(|item| {
+                    let binding = item.alias.as_ref().unwrap_or(&item.name);
+                    export_item_import
+                        || self.should_emit_import_binding(binding)
+                        || self.should_emit_extension_trait_import(binding)
+                        || (preserve_metadata_missing_trait_candidate
+                            && item.rust_trait_methods.is_empty()
+                            && item.name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
+                })
                 .map(|item| {
                     let name_ident = Self::rust_ident(&item.name);
                     let path_tokens_clone = path_tokens.clone();
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     if let Some(alias) = &item.alias {
                         let alias_ident = Self::rust_ident(alias);
-                        quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
+                        if export_item_import {
+                            quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
+                        } else {
+                            quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
+                        }
                     } else {
-                        quote! { pub use #path_ts_clone :: #name_ident; }
+                        if export_item_import {
+                            quote! { pub use #path_ts_clone :: #name_ident; }
+                        } else {
+                            quote! { use #path_ts_clone :: #name_ident; }
+                        }
                     }
                 })
                 .collect();
@@ -309,10 +408,14 @@ impl<'a> IrEmitter<'a> {
             Ok(quote! {
                 pub use #path_ts;
             })
-        } else {
+        } else if let Some(binding) = path.last()
+            && self.should_emit_import_binding(binding)
+        {
             Ok(quote! {
                 use #path_ts;
             })
+        } else {
+            Ok(quote! {})
         }
     }
 }

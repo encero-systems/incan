@@ -5,6 +5,10 @@
 use std::fmt;
 
 use super::decl::IrTraitBound;
+use incan_core::lang::types::numerics::{self, NumericTypeId};
+
+/// Canonical IR generic name used for anonymous union types.
+pub const IR_UNION_TYPE_NAME: &str = "Union";
 
 /// Ownership semantics for a value
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -36,7 +40,16 @@ pub enum IrType {
     Bool,
     Int,
     Float,
+    /// Exact-width numeric type introduced by RFC 009.
+    Numeric(NumericTypeId),
+    /// Fixed-precision decimal value. Precision/scale are checked by the frontend; Rust emission uses the
+    /// toolchain-owned Decimal128 runtime representation.
+    Decimal {
+        precision: u8,
+        scale: u8,
+    },
     String,
+    Bytes,
     /// &'static str (for compile-time string constants)
     StaticStr,
     /// &'static [u8] (for compile-time byte string constants)
@@ -95,30 +108,70 @@ pub enum IrType {
 }
 
 impl IrType {
+    /// Return whether this type mentions an unbound generic type parameter.
+    pub fn contains_generic_parameter(&self) -> bool {
+        match self {
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner) => inner.contains_generic_parameter(),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                key.contains_generic_parameter() || value.contains_generic_parameter()
+            }
+            IrType::Tuple(items) | IrType::NamedGeneric(_, items) => {
+                items.iter().any(IrType::contains_generic_parameter)
+            }
+            IrType::Function { params, ret } => {
+                params.iter().any(IrType::contains_generic_parameter) || ret.contains_generic_parameter()
+            }
+            IrType::Generic(_) => true,
+            _ => false,
+        }
+    }
+
     /// Check if this type is Copy in Rust
     ///
     /// Returns true for primitive types (unit, bool, int, float) and string references
     /// (`&str`, `&'static str`) since references are Copy.
     pub fn is_copy(&self) -> bool {
-        matches!(
-            self,
+        match self {
             IrType::Unit
-                | IrType::Bool
-                | IrType::Int
-                | IrType::Float
-                | IrType::StaticStr
-                | IrType::StaticBytes
-                | IrType::FrozenStr
-                | IrType::FrozenBytes
-                | IrType::StrRef
-                | IrType::Ref(_)
-                | IrType::RefMut(_)
-        )
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::Numeric(_)
+            | IrType::Decimal { .. }
+            | IrType::StaticStr
+            | IrType::StaticBytes
+            | IrType::FrozenStr
+            | IrType::FrozenBytes
+            | IrType::StrRef
+            | IrType::Ref(_)
+            | IrType::RefMut(_) => true,
+            IrType::Tuple(items) => items.iter().all(IrType::is_copy),
+            IrType::Option(inner) => inner.is_copy(),
+            IrType::Result(ok, err) => ok.is_copy() && err.is_copy(),
+            _ => false,
+        }
     }
 
     /// Check if this type is a reference
     pub fn is_ref(&self) -> bool {
         matches!(self, IrType::Ref(_) | IrType::RefMut(_))
+    }
+
+    /// Return the nominal type constructor name for user-defined or imported nominal types.
+    ///
+    /// This treats `Foo` and `Foo[T]` as the same nominal family while preserving generic
+    /// arguments elsewhere in the IR.
+    pub fn nominal_type_name(&self) -> Option<&str> {
+        match self {
+            IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) | IrType::NamedGeneric(name, _) => {
+                Some(name.as_str())
+            }
+            _ => None,
+        }
     }
 
     /// Get the Incan-style type name (for reflection/display to users).
@@ -133,7 +186,10 @@ impl IrType {
             IrType::Bool => "bool".to_string(),
             IrType::Int => "int".to_string(),
             IrType::Float => "float".to_string(),
+            IrType::Numeric(id) => numerics::as_str(*id).to_string(),
+            IrType::Decimal { precision, scale } => format!("decimal[{precision}, {scale}]"),
             IrType::String => "str".to_string(),
+            IrType::Bytes => "bytes".to_string(),
             IrType::StaticStr | IrType::StrRef | IrType::FrozenStr => "str".to_string(),
             IrType::StaticBytes | IrType::FrozenBytes => "bytes".to_string(),
             IrType::List(elem) => format!("list[{}]", elem.incan_name()),
@@ -178,7 +234,10 @@ impl IrType {
             IrType::Bool => "bool".to_string(),
             IrType::Int => "i64".to_string(),
             IrType::Float => "f64".to_string(),
+            IrType::Numeric(id) => numerics::rust_name(*id).to_string(),
+            IrType::Decimal { .. } => "incan_stdlib::num::Decimal128".to_string(),
             IrType::String => "String".to_string(),
+            IrType::Bytes => "Vec<u8>".to_string(),
             IrType::StaticStr => "&'static str".to_string(),
             IrType::StaticBytes => "&'static [u8]".to_string(),
             IrType::FrozenStr => "FrozenStr".to_string(),
@@ -195,6 +254,9 @@ impl IrType {
             IrType::Result(ok, err) => format!("Result<{}, {}>", ok.rust_name(), err.rust_name()),
             IrType::Struct(name) | IrType::Enum(name) => name.clone(),
             IrType::Trait(name) => format!("dyn {}", name),
+            IrType::NamedGeneric(name, _) if name == IR_UNION_TYPE_NAME => {
+                self.union_type_name().unwrap_or_else(|| IR_UNION_TYPE_NAME.to_string())
+            }
             IrType::NamedGeneric(name, args) => {
                 let inner: Vec<_> = args.iter().map(|a| a.rust_name()).collect();
                 format!("{}<{}>", name, inner.join(", "))
@@ -219,6 +281,60 @@ impl IrType {
             IrType::Unknown => "_".to_string(),
         }
     }
+}
+
+impl IrType {
+    /// Return the normalized members of an anonymous union type.
+    pub fn union_members(&self) -> Option<&[IrType]> {
+        match self {
+            IrType::NamedGeneric(name, members) if name == IR_UNION_TYPE_NAME => Some(members.as_slice()),
+            _ => None,
+        }
+    }
+
+    /// Return whether this type is an anonymous union type.
+    pub fn is_union(&self) -> bool {
+        self.union_members().is_some()
+    }
+
+    /// Return the deterministic generated Rust type name for an anonymous union shape.
+    pub fn union_type_name(&self) -> Option<String> {
+        let members = self.union_members()?;
+        let key = members.iter().map(IrType::rust_name).collect::<Vec<_>>().join("|");
+        Some(format!("__IncanUnion{:016x}", stable_union_hash(key.as_bytes())))
+    }
+
+    /// Return the variant name for a normalized union member index.
+    pub fn union_variant_name(index: usize) -> String {
+        format!("V{index}")
+    }
+
+    /// Find the union variant index that can hold `member_ty`.
+    pub fn union_variant_index_for_member(&self, member_ty: &IrType) -> Option<usize> {
+        let members = self.union_members()?;
+        members
+            .iter()
+            .position(|member| union_member_type_matches(member, member_ty))
+    }
+}
+
+/// Return whether a concrete value type can inhabit a normalized union member type.
+fn union_member_type_matches(member: &IrType, value_ty: &IrType) -> bool {
+    member == value_ty
+        || matches!(
+            (member, value_ty),
+            (IrType::String, IrType::StaticStr | IrType::StrRef | IrType::FrozenStr)
+        )
+}
+
+/// Hash a union member-key into a deterministic generated Rust type suffix.
+fn stable_union_hash(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 impl fmt::Display for IrType {
@@ -253,6 +369,17 @@ mod tests {
     #[test]
     fn test_simple_bool_rust_name() {
         assert_eq!(IrType::Bool.rust_name(), "bool");
+    }
+
+    #[test]
+    fn test_exact_width_numeric_names() {
+        let i32_type = IrType::Numeric(NumericTypeId::I32);
+        assert_eq!(i32_type.incan_name(), "i32");
+        assert_eq!(i32_type.rust_name(), "i32");
+
+        let byte_type = IrType::Numeric(NumericTypeId::U8);
+        assert_eq!(byte_type.incan_name(), "u8");
+        assert_eq!(byte_type.rust_name(), "u8");
     }
 
     #[test]
@@ -410,8 +537,21 @@ mod tests {
     }
 
     #[test]
-    fn test_is_copy_option_false() {
-        assert!(!IrType::Option(Box::new(IrType::Int)).is_copy());
+    fn test_is_copy_option_tracks_inner_type() {
+        assert!(IrType::Option(Box::new(IrType::Int)).is_copy());
+        assert!(!IrType::Option(Box::new(IrType::String)).is_copy());
+    }
+
+    #[test]
+    fn test_is_copy_result_tracks_inner_types() {
+        assert!(IrType::Result(Box::new(IrType::Int), Box::new(IrType::Bool)).is_copy());
+        assert!(!IrType::Result(Box::new(IrType::Int), Box::new(IrType::String)).is_copy());
+    }
+
+    #[test]
+    fn test_is_copy_tuple_tracks_inner_types() {
+        assert!(IrType::Tuple(vec![IrType::Int, IrType::Bool]).is_copy());
+        assert!(!IrType::Tuple(vec![IrType::Int, IrType::String]).is_copy());
     }
 
     #[test]

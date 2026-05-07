@@ -21,12 +21,14 @@
 - [Builtin types](#builtin-types)
 - [Surface constructors](#surface-constructors)
 - [Surface functions](#surface-functions)
-- [Surface math](#surface-math)
+- [Built-in collection helpers](#built-in-collection-helpers)
 - [Surface string methods](#surface-string-methods)
 - [Surface types](#surface-types)
 - [Surface methods](#surface-methods)
 
 ## Keywords
+
+Reservation describes how a spelling is reserved: `Hard` keywords are always reserved by the lexer, `Contextual` keywords are recognized only in parser-owned syntactic positions, and `Soft` keywords are reserved after importing their activating `std.*` namespace.
 
 | Id | Canonical | Aliases | Reservation | Activation | Category | Usage | RFC | Since | Stability |
 |----|---|---|---|---|---|---|---|---|---|
@@ -35,6 +37,7 @@
 | Elif | `elif` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
 | Match | `match` |  | Hard | - | ControlFlow | Statement, Expression | RFC 000 | 0.1 | Stable |
 | Case | `case` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
+| Loop | `loop` |  | Hard | - | ControlFlow | Statement, Expression | RFC 016 | 0.3 | Stable |
 | While | `while` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
 | For | `for` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
 | Break | `break` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
@@ -42,7 +45,7 @@
 | Return | `return` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
 | Yield | `yield` |  | Hard | - | ControlFlow | Statement, Expression | RFC 001 | 0.1 | Stable |
 | Pass | `pass` |  | Hard | - | ControlFlow | Statement | RFC 000 | 0.1 | Stable |
-| Assert | `assert` |  | Soft | `std.testing` | ControlFlow | Statement | RFC 018 | 0.2 | Draft |
+| Assert | `assert` |  | Contextual | - | ControlFlow | Statement | RFC 018 | 0.3 | Draft |
 | Def | `def` | `fn` | Hard | - | Definition | Statement | RFC 000 | 0.1 | Stable |
 | Async | `async` |  | Soft | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
 | Await | `await` |  | Soft | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
@@ -55,6 +58,7 @@
 | With | `with` |  | Hard | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
 | Extends | `extends` |  | Hard | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
 | Pub | `pub` |  | Hard | - | Definition | Modifier | RFC 000 | 0.1 | Stable |
+| Alias | `alias` |  | Contextual | - | Definition | Modifier | RFC 083 | 0.3 | Stable |
 | Import | `import` |  | Hard | - | Import | Statement | RFC 000 | 0.1 | Stable |
 | From | `from` |  | Hard | - | Import | Statement | RFC 000 | 0.1 | Stable |
 | As | `as` |  | Hard | - | Import | Modifier | RFC 000 | 0.1 | Stable |
@@ -63,9 +67,11 @@
 | Super | `super` |  | Hard | - | Import | Expression | RFC 000 | 0.1 | Stable |
 | Crate | `crate` |  | Hard | - | Import | Expression | RFC 005 | 0.1 | Stable |
 | Const | `const` |  | Hard | - | Binding | Statement | RFC 008 | 0.1 | Stable |
+| Static | `static` |  | Hard | - | Binding | Statement | RFC 052 | 0.2 | Stable |
 | Let | `let` |  | Hard | - | Binding | Statement | RFC 000 | 0.1 | Stable |
 | Mut | `mut` |  | Hard | - | Binding | Modifier | RFC 000 | 0.1 | Stable |
 | SelfKw | `self` |  | Hard | - | Binding | ReceiverOnly | RFC 000 | 0.1 | Stable |
+| Cls | `cls` |  | Contextual | - | Binding | ReceiverOnly | RFC 000 | 0.2 | Stable |
 | True | `true` | `True` | Hard | - | Literal | Expression | RFC 000 | 0.1 | Stable |
 | False | `false` | `False` | Hard | - | Literal | Expression | RFC 000 | 0.1 | Stable |
 | None | `None` |  | Hard | - | Literal | Expression | RFC 000 | 0.1 | Stable |
@@ -85,7 +91,6 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 
 | Id | Canonical | Activated by | Category | Usage | RFC | Since | Stability |
 |---|---|---|---|---|---|---|---|
-| Assert | `assert` | `std.testing` | ControlFlow | Statement | RFC 018 | 0.2 | Draft |
 | Async | `async` | `std.async` | Definition | Modifier | RFC 000 | 0.1 | Stable |
 | Await | `await` | `std.async` | Definition | Expression | RFC 000 | 0.1 | Stable |
 
@@ -94,28 +99,47 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | Namespace | Feature gate | Submodules | Activates soft keywords |
 |---|---|---|---|
 | `std.web` | `web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.macros`, `std.web.prelude` | - |
-| `std.testing` | - | - | `assert` |
+| `std.testing` | - | - | - |
 | `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.select`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.serde` | `json` | `std.serde.json` | - |
 | `std.reflection` | - | - | - |
+| `std.result` | - | - | - |
 | `std.derives` | - | `std.derives.string`, `std.derives.comparison`, `std.derives.copying`, `std.derives.collection` | - |
 | `std.traits` | - | `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing`, `std.traits.callable`, `std.traits.prelude` | - |
 | `std.math` | - | - | - |
+| `std.fs` | - | `std.fs.path`, `std.fs.file`, `std.fs.metadata`, `std.fs.glob`, `std.fs.prelude` | - |
+| `std.graph` | - | - | - |
+| `std.collections` | - | - | - |
+| `std.io` | - | - | - |
+| `std.tempfile` | - | - | - |
+| `std.rust` | - | - | - |
+| `std.builtins` | - | - | - |
 
 ## Builtin exceptions
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
+| AssertionError | `AssertionError` |  | Raised when a language assertion or std.testing assertion helper fails. | RFC 018 | 0.3 | Stable |
 | ValueError | `ValueError` |  | Raised when an operation receives a value of the right type but an invalid value. | RFC 000 | 0.1 | Stable |
 | TypeError | `TypeError` |  | Raised when an operation receives a value of an inappropriate type. | RFC 000 | 0.1 | Stable |
 | ZeroDivisionError | `ZeroDivisionError` |  | Raised when dividing or taking modulo by zero (Python-like numeric semantics). | RFC 000 | 0.1 | Stable |
-| IndexError | `IndexError` |  | Raised when an index is out of bounds (e.g. string/list indexing). | RFC 000 | 0.1 | Stable |
+| IndexError | `IndexError` |  | Raised when an index is out of bounds (e.g. string/list indexing) or when calling `list.pop()` on an empty list. | RFC 000 | 0.1 | Stable |
 | KeyError | `KeyError` |  | Raised when a dict key is missing. | RFC 000 | 0.1 | Stable |
 | JsonDecodeError | `JSONDecodeError` |  | Raised when parsing JSON fails (Python-like). | RFC 000 | 0.1 | Stable |
 
 ### Examples
 
 Only exceptions with examples are listed here.
+
+#### `AssertionError`
+
+```incan
+def main() -> None:
+    assert 1 == 2, "math broke"
+
+```
+
+Panics at runtime with `AssertionError: math broke`.
 
 #### `ValueError`
 
@@ -193,6 +217,15 @@ def main() -> None:
 
 Panics at runtime with `IndexError: index 99 out of range for list of length 3`.
 
+```incan
+def main() -> None:
+    xs: list[int] = []
+    _ = xs.pop()
+
+```
+
+Panics at runtime with `IndexError: pop from empty list`.
+
 #### `KeyError`
 
 ```incan
@@ -207,6 +240,8 @@ Panics at runtime with `KeyError: 'b' not found in dict`.
 #### `JsonDecodeError`
 
 ```incan
+from std.serde.json import Deserialize
+
 @derive(Deserialize)
 model User:
     name: str
@@ -242,15 +277,52 @@ def main() -> None:
 | ReadFile | `read_file` |  | Read a file from disk into a string/bytes. | RFC 000 | 0.1 | Stable |
 | WriteFile | `write_file` |  | Write a string/bytes to a file on disk. | RFC 000 | 0.1 | Stable |
 | JsonStringify | `json_stringify` |  | Serialize a value to JSON. | RFC 000 | 0.1 | Stable |
-| Sleep | `sleep` |  | Sleep for a duration. | RFC 000 | 0.1 | Stable |
+| IsInstance | `isinstance` |  | Test whether a value is an instance of a type and narrow union branches. | RFC 029 | 0.3 | Stable |
 
 ## Decorators
+
+User-defined decorators are valid on top-level `def` / `async def` declarations and instance methods. A
+decorator is an ordinary callable value that receives the decorated function value and returns the binding that should
+replace it:
+
+```incan
+def parse(value: int) -> int:
+    return value
+
+def as_int(func: (int) -> str) -> (int) -> int:
+    return parse
+
+@as_int
+def label(value: int) -> str:
+    return "value"
+
+def main() -> None:
+    result = label(1)  # int
+```
+
+Stacked decorators apply bottom-up, matching Python's declaration model: the decorator closest to `def` receives the
+original function value first, and the outer decorators receive each previous result. Decorator factories such as
+`@logged("name")` are checked by first evaluating the factory expression as a callable-producing expression and then
+applying the produced decorator to the function value.
+
+Method decorators receive an unbound callable shape with the receiver first. A decorator on
+`def label(self, value: int) -> str` sees `(&Box, int) -> str`; a decorator on
+`def bump(mut self, value: int) -> int` sees `(&mut Box, int) -> int`. The wrapper passes the actual receiver borrow
+through to the decorated callable, so method decorators do not require cloning the receiver.
+
+Class, model, trait, enum, newtype, field, alias, and module decorators remain limited to compiler-owned decorators.
+Compiler-owned decorators such as `@derive`, `@route`, `@rust.extern`, `@rust.allow`, `@staticmethod`, `@classmethod`,
+and `@requires` keep their existing special behavior.
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
 | Derive | `@derive` |  | Derive common trait implementations. | RFC 000 | 0.1 | Stable |
+| RustDerive | `@rust.derive` |  | Declare a Rust derive path required by a derivable Incan trait. | RFC 024 | 0.3 | Stable |
 | RustExtern | `@rust.extern` |  | Mark functions whose body is provided by a Rust module. | RFC 022 | 0.2 | Stable |
+| RustAllow | `@rust.allow` |  | Emit targeted Rust #[allow(...)] lint suppressions on a generated item. | RFC 057 | 0.3 | Stable |
+| NoImplicitCoercion | `@no_implicit_coercion` |  | Disable RFC 017 implicit newtype coercion for this type. | RFC 017 | 0.3 | Stable |
 | StaticMethod | `@staticmethod` |  | Mark a method as static (no self receiver). | RFC 000 | 0.1 | Stable |
+| ClassMethod | `@classmethod` |  | Mark a method as a class method (no implicit self receiver). | RFC 000 | 0.2 | Stable |
 | Requires | `@requires` |  | Declare required fields for trait default methods. | RFC 000 | 0.1 | Stable |
 
 ## Derives
@@ -267,8 +339,6 @@ def main() -> None:
 | Clone | `Clone` |  | Derive deep cloning. | RFC 000 | 0.1 | Stable |
 | Copy | `Copy` |  | Derive copy semantics for simple value types. | RFC 000 | 0.1 | Stable |
 | Default | `Default` |  | Derive a default value constructor. | RFC 000 | 0.1 | Stable |
-| Serialize | `Serialize` |  | Derive serialization support (e.g. JSON). | RFC 000 | 0.1 | Stable |
-| Deserialize | `Deserialize` |  | Derive deserialization support (e.g. JSON). | RFC 000 | 0.1 | Stable |
 | Validate | `Validate` |  | Enable validated construction via `TypeName.new(...)` and require a `validate(self) -> Result[Self, E]` method. | RFC 000 | 0.1 | Stable |
 
 ## Builtin traits
@@ -291,6 +361,8 @@ def main() -> None:
 | Iterator | `Iterator` |  | Trait for iterator behavior. | RFC 000 | 0.1 | Stable |
 | IntoIterator | `IntoIterator` |  | Trait for conversion into iterators. | RFC 000 | 0.1 | Stable |
 | Error | `Error` |  | Trait for error-like values. | RFC 000 | 0.1 | Stable |
+| Iterable | `Iterable` |  | Trait for values that produce iterators. | RFC 006 | 0.3 | Stable |
+| Sum | `Sum` |  | Trait for values that can be produced by summing iterator items. | RFC 088 | 0.3 | Stable |
 
 ## Operators
 
@@ -310,6 +382,15 @@ def main() -> None:
 | Slash | `/` | 60 | Left | Infix | false | RFC 000 | 0.1 | Stable |
 | SlashSlash | `//` | 60 | Left | Infix | false | RFC 000 | 0.1 | Stable |
 | Percent | `%` | 60 | Left | Infix | false | RFC 000 | 0.1 | Stable |
+| MatMul | `@` | 60 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| PipeForward | `|>` | 40 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| PipeBackward | `<|` | 40 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| Amp | `&` | 45 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| Pipe | `|` | 43 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| Caret | `^` | 44 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| Shl | `<<` | 48 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| Shr | `>>` | 48 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| Tilde | `~` | 65 | Right | Prefix | false | RFC 028 | 0.3 | Stable |
 | EqEq | `==` | 40 | Left | Infix | false | RFC 000 | 0.1 | Stable |
 | NotEq | `!=` | 40 | Left | Infix | false | RFC 000 | 0.1 | Stable |
 | Lt | `<` | 40 | Left | Infix | false | RFC 000 | 0.1 | Stable |
@@ -323,6 +404,12 @@ def main() -> None:
 | SlashEq | `/=` | 10 | Left | Infix | false | RFC 000 | 0.1 | Stable |
 | SlashSlashEq | `//=` | 10 | Left | Infix | false | RFC 000 | 0.1 | Stable |
 | PercentEq | `%=` | 10 | Left | Infix | false | RFC 000 | 0.1 | Stable |
+| MatMulEq | `@=` | 10 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| AmpEq | `&=` | 10 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| PipeEq | `|=` | 10 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| CaretEq | `^=` | 10 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| ShlEq | `<<=` | 10 | Left | Infix | false | RFC 028 | 0.3 | Stable |
+| ShrEq | `>>=` | 10 | Left | Infix | false | RFC 028 | 0.3 | Stable |
 | DotDot | `..` | 30 | Left | Infix | false | RFC 000 | 0.1 | Stable |
 | DotDotEq | `..=` | 30 | Left | Infix | false | RFC 000 | 0.1 | Stable |
 | And | `and` | 35 | Left | Infix | true | RFC 000 | 0.1 | Stable |
@@ -339,6 +426,7 @@ def main() -> None:
 | Colon | `:` |  | Separator | RFC 000 | 0.1 | Stable |
 | Question | `?` |  | Marker | RFC 000 | 0.1 | Stable |
 | At | `@` |  | Marker | RFC 000 | 0.1 | Stable |
+| Pipe | `|` |  | Marker | RFC 040 | 0.3 | Stable |
 | Dot | `.` |  | Access | RFC 000 | 0.1 | Stable |
 | ColonColon | `::` |  | Access | RFC 000 | 0.1 | Stable |
 | Arrow | `->` |  | Arrow | RFC 000 | 0.1 | Stable |
@@ -368,8 +456,20 @@ def main() -> None:
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
-| Int | `int` | `i64`, `i32` | Builtin signed integer type. | RFC 000 | 0.1 | Stable |
-| Float | `float` | `f64`, `f32` | Builtin floating-point type. | RFC 000 | 0.1 | Stable |
+| I8 | `i8` |  | Signed 8-bit integer type. | RFC 009 | 0.3 | Stable |
+| I16 | `i16` | `short`, `smallint` | Signed 16-bit integer type. | RFC 009 | 0.3 | Stable |
+| I32 | `i32` | `integer` | Signed 32-bit integer type. | RFC 009 | 0.3 | Stable |
+| I64 | `i64` | `int`, `bigint`, `long` | Signed 64-bit integer type. | RFC 009 | 0.3 | Stable |
+| I128 | `i128` | `hugeint` | Signed 128-bit integer type. | RFC 009 | 0.3 | Stable |
+| U8 | `u8` | `byte` | Unsigned 8-bit integer type. | RFC 009 | 0.3 | Stable |
+| U16 | `u16` |  | Unsigned 16-bit integer type. | RFC 009 | 0.3 | Stable |
+| U32 | `u32` |  | Unsigned 32-bit integer type. | RFC 009 | 0.3 | Stable |
+| U64 | `u64` |  | Unsigned 64-bit integer type. | RFC 009 | 0.3 | Stable |
+| U128 | `u128` |  | Unsigned 128-bit integer type. | RFC 009 | 0.3 | Stable |
+| F32 | `f32` | `real`, `fp32` | 32-bit binary floating-point type. | RFC 009 | 0.3 | Stable |
+| F64 | `f64` | `float`, `double`, `fp64` | 64-bit binary floating-point type. | RFC 009 | 0.3 | Stable |
+| ISize | `isize` |  | Pointer-sized signed integer type. | RFC 009 | 0.3 | Stable |
+| USize | `usize` |  | Pointer-sized unsigned integer type. | RFC 009 | 0.3 | Stable |
 | Bool | `bool` |  | Builtin boolean type. | RFC 000 | 0.1 | Stable |
 
 
@@ -386,6 +486,7 @@ def main() -> None:
 | FrozenList | `FrozenList` | `frozenlist` | Immutable/const-friendly list type. | RFC 009 | 0.1 | Stable |
 | FrozenDict | `FrozenDict` | `frozendict` | Immutable/const-friendly dict type. | RFC 009 | 0.1 | Stable |
 | FrozenSet | `FrozenSet` | `frozenset` | Immutable/const-friendly set type. | RFC 009 | 0.1 | Stable |
+| Generator | `Generator` | `generator` | Lazy resumable producer type. | RFC 006 | 0.3 | Stable |
 
 ## Surface constructors
 
@@ -411,42 +512,11 @@ def main() -> None:
 | UnboundedChannel | `unbounded_channel` |  | Create an unbounded channel (sender, receiver). | RFC 000 | 0.1 | Stable |
 | Oneshot | `oneshot` |  | Create a oneshot channel (sender, receiver). | RFC 000 | 0.1 | Stable |
 
-## Surface math
+## Built-in collection helpers
 
-### Functions
-
-| Id | Canonical | Aliases | Description | RFC | Since | Stability |
-|---|---|---|---|---|---|---|
-| Sqrt | `sqrt` |  | Square root. | RFC 000 | 0.1 | Stable |
-| Abs | `abs` |  | Absolute value. | RFC 000 | 0.1 | Stable |
-| Floor | `floor` |  | Floor (round down). | RFC 000 | 0.1 | Stable |
-| Ceil | `ceil` |  | Ceil (round up). | RFC 000 | 0.1 | Stable |
-| Pow | `pow` |  | Power function. | RFC 000 | 0.1 | Stable |
-| Exp | `exp` |  | Exponentiation (e^x). | RFC 000 | 0.1 | Stable |
-| Log | `log` |  | Natural logarithm. | RFC 000 | 0.1 | Stable |
-| Log10 | `log10` |  | Base-10 logarithm. | RFC 000 | 0.1 | Stable |
-| Log2 | `log2` |  | Base-2 logarithm. | RFC 000 | 0.1 | Stable |
-| Sin | `sin` |  | Sine. | RFC 000 | 0.1 | Stable |
-| Cos | `cos` |  | Cosine. | RFC 000 | 0.1 | Stable |
-| Tan | `tan` |  | Tangent. | RFC 000 | 0.1 | Stable |
-| Asin | `asin` |  | Arcsine. | RFC 000 | 0.1 | Stable |
-| Acos | `acos` |  | Arccosine. | RFC 000 | 0.1 | Stable |
-| Atan | `atan` |  | Arctangent. | RFC 000 | 0.1 | Stable |
-| Sinh | `sinh` |  | Hyperbolic sine. | RFC 000 | 0.1 | Stable |
-| Cosh | `cosh` |  | Hyperbolic cosine. | RFC 000 | 0.1 | Stable |
-| Tanh | `tanh` |  | Hyperbolic tangent. | RFC 000 | 0.1 | Stable |
-| Atan2 | `atan2` |  | Two-argument arctangent. | RFC 000 | 0.1 | Stable |
-
-
-### Constants
-
-| Id | Canonical | Aliases | Description | RFC | Since | Stability |
-|---|---|---|---|---|---|---|
-| Pi | `pi` |  | The constant π. | RFC 000 | 0.1 | Stable |
-| E | `e` |  | The constant e. | RFC 000 | 0.1 | Stable |
-| Tau | `tau` |  | The constant τ (2π). | RFC 000 | 0.1 | Stable |
-| Inf | `inf` |  | Positive infinity. | RFC 000 | 0.1 | Stable |
-| Nan | `nan` |  | Not a number (NaN). | RFC 000 | 0.1 | Stable |
+| Id | Receiver | Member | Signature | Aliases | Description | RFC | Since | Stability |
+|---|---|---|---|---|---|---|---|---|
+| ListRepeat | `list` | `repeat` | `list.repeat[T](value: T, count: int) -> list[T]` |  | Create a list containing `count` clone-derived copies of `value`; negative counts raise `ValueError`. | RFC 069 | 0.3 | Stable |
 
 ## Surface string methods
 
@@ -475,6 +545,7 @@ def main() -> None:
 | Semaphore | `Semaphore` |  | Named | Async/runtime semaphore. | RFC 000 | 0.1 | Stable |
 | Barrier | `Barrier` |  | Named | Async/runtime barrier. | RFC 000 | 0.1 | Stable |
 | JoinHandle | `JoinHandle` |  | Generic | Handle to a spawned task. | RFC 000 | 0.1 | Stable |
+| TaskJoinError | `TaskJoinError` |  | Named | Error returned when a spawned task fails to join. | RFC 000 | 0.1 | Stable |
 | Sender | `Sender` |  | Generic | Bounded channel sender. | RFC 000 | 0.1 | Stable |
 | Receiver | `Receiver` |  | Generic | Bounded channel receiver. | RFC 000 | 0.1 | Stable |
 | OneshotSender | `OneshotSender` |  | Generic | Oneshot channel sender. | RFC 000 | 0.1 | Stable |
@@ -490,6 +561,7 @@ def main() -> None:
 | Body | `Body` |  | Generic | Request body extractor wrapper for web handlers. | RFC 000 | 0.1 | Stable |
 | Request | `Request` |  | Named | Full HTTP request access for web handlers. | RFC 000 | 0.1 | Stable |
 | FieldInfo | `FieldInfo` |  | Named | Field metadata record returned by __fields__(). | RFC 021 | 0.1 | Stable |
+| ValidationError | `ValidationError` |  | Named | Structured validation error used by validated newtypes. | RFC 017 | 0.3 | Stable |
 
 ## Surface methods
 
@@ -521,7 +593,9 @@ def main() -> None:
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
 |---|---|---|---|---|---|---|
 | Append | `append` |  | Append an element to the end of the list. | RFC 009 | 0.1 | Stable |
-| Pop | `pop` |  | Remove and return the last element. | RFC 009 | 0.1 | Stable |
+| Extend | `extend` |  | Append all elements from another list. | RFC 009 | 0.2 | Stable |
+| Clone | `clone` |  | Clone the list container and each element. | RFC 009 | 0.3 | Stable |
+| Pop | `pop` |  | Remove and return the last element. On an empty list, panics with `IndexError: pop from empty list` (Python-compatible). | RFC 009 | 0.1 | Stable |
 | Contains | `contains` |  | Return true if the list contains a value. | RFC 009 | 0.1 | Stable |
 | Swap | `swap` |  | Swap two elements by index. | RFC 009 | 0.1 | Stable |
 | Reserve | `reserve` |  | Reserve capacity for at least N more elements. | RFC 009 | 0.1 | Stable |
@@ -557,6 +631,18 @@ def main() -> None:
 | Unwrap | `unwrap` |  | Return the contained value or panic. | RFC 000 | 0.1 | Stable |
 
 
+### Result methods
+
+| Id | Canonical | Aliases | Description | RFC | Since | Stability |
+|---|---|---|---|---|---|---|
+| Map | `map` |  | Transform an Ok payload while preserving Err. | RFC 070 | 0.3 | Stable |
+| MapErr | `map_err` |  | Transform an Err payload while preserving Ok. | RFC 070 | 0.3 | Stable |
+| AndThen | `and_then` |  | Chain a Result-returning operation from an Ok payload. | RFC 070 | 0.3 | Stable |
+| OrElse | `or_else` |  | Recover or remap through a Result-returning operation from an Err payload. | RFC 070 | 0.3 | Stable |
+| Inspect | `inspect` |  | Observe an Ok payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
+| InspectErr | `inspect_err` |  | Observe an Err payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
+
+
 ### FrozenList methods
 
 | Id | Canonical | Aliases | Description | RFC | Since | Stability |
@@ -589,5 +675,3 @@ def main() -> None:
 |---|---|---|---|---|---|---|
 | Len | `len` |  | Return the number of bytes. | RFC 009 | 0.1 | Stable |
 | IsEmpty | `is_empty` |  | Return true if the byte string is empty. | RFC 009 | 0.1 | Stable |
-
-

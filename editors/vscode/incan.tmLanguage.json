@@ -616,11 +616,11 @@
     "keywords": {
       "patterns": [
         {
-          "match": "\\b(assert|break|case|continue|elif|else|for|if|match|pass|return|while|yield)\\b",
+          "match": "\\b(assert|break|case|continue|elif|else|for|if|loop|match|pass|return|while|yield)\\b",
           "name": "keyword.control.flow.incan"
         },
         {
-          "match": "\\b(const)\\b",
+          "match": "\\b(const|static)\\b",
           "name": "keyword.control.const.incan"
         },
         {
@@ -628,7 +628,7 @@
           "name": "keyword.control.async.incan"
         },
         {
-          "match": "\\b(class|def|enum|fn|model|newtype|trait|type)\\b",
+          "match": "\\b(alias|class|def|enum|fn|model|newtype|trait|type)\\b",
           "name": "keyword.declaration.incan"
         },
         {
@@ -974,7 +974,7 @@
     "variables": {
       "patterns": [
         {
-          "match": "\\b(self)\\b",
+          "match": "\\b(cls|self)\\b",
           "name": "variable.language.self.incan"
         },
         {

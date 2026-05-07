@@ -1,10 +1,10 @@
-//! Declaration AST types: models, classes, traits, newtypes, enums, functions, methods, decorators, type parameters,
-//! and trait bounds.
+//! Declaration AST types: models, classes, traits, newtypes, enums, functions, methods, properties, decorators, type
+//! parameters, and trait bounds.
 
 use incan_core::lang::keywords::KeywordId;
 use incan_semantics_core::SurfaceFeatureKey;
 
-use super::{Expr, Ident, ImportPath, Spanned, Statement, Type, Visibility};
+use super::{Expr, Ident, ImportPath, IntLiteral, PartialArg, Spanned, Statement, Type, Visibility};
 
 // ============================================================================
 // Models (data containers with validation)
@@ -17,9 +17,14 @@ pub struct ModelDecl {
     pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
-    // Traits adopted by this model via `with TraitA, TraitB`.
-    pub traits: Vec<Spanned<Ident>>,
+    // Traits adopted by this model via `with TraitA, TraitB[T]`.
+    pub traits: Vec<Spanned<TraitBound>>,
+    /// Docstring at the start of the model body (surface `"""..."""`), when present.
+    pub docstring: Option<String>,
     pub fields: Vec<Spanned<FieldDecl>>,
+    pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
+    pub method_partials: Vec<Spanned<MethodPartialDecl>>,
+    pub properties: Vec<Spanned<PropertyDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
 
@@ -52,8 +57,13 @@ pub struct ClassDecl {
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
     pub extends: Option<Ident>,
-    pub traits: Vec<Spanned<Ident>>,
+    pub traits: Vec<Spanned<TraitBound>>,
+    /// Docstring at the start of the class body (surface `"""..."""`), when present.
+    pub docstring: Option<String>,
     pub fields: Vec<Spanned<FieldDecl>>,
+    pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
+    pub method_partials: Vec<Spanned<MethodPartialDecl>>,
+    pub properties: Vec<Spanned<PropertyDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
 }
 
@@ -70,7 +80,50 @@ pub struct TraitDecl {
     pub type_params: Vec<TypeParam>,
     /// Supertraits adopted via `with TraitA, TraitB[T]` (RFC 042).
     pub traits: Vec<Spanned<TraitBound>>,
+    /// Docstring at the start of the trait body (surface `"""..."""`), when present.
+    pub docstring: Option<String>,
+    pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
+    pub method_partials: Vec<Spanned<MethodPartialDecl>>,
+    pub properties: Vec<Spanned<PropertyDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
+}
+
+// ============================================================================
+// Symbol aliases (declaration-level aliases for existing module symbols)
+// ============================================================================
+
+/// A module-level symbol alias declaration: `mean = avg` or `pub average = alias avg`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AliasDecl {
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub target: ImportPath,
+    pub explicit_marker: bool,
+}
+
+/// A module-level partial callable preset declaration: `pub BronzeReader = partial TableReader(layer="bronze")`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartialDecl {
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub target: ImportPath,
+    pub args: Vec<PartialArg>,
+}
+
+/// A same-type method alias declaration inside a method-bearing type body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodAliasDecl {
+    pub name: Ident,
+    pub target: Ident,
+    pub explicit_marker: bool,
+}
+
+/// A same-type method partial declaration inside a method-bearing type body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MethodPartialDecl {
+    pub name: Ident,
+    pub target: Ident,
+    pub args: Vec<PartialArg>,
 }
 
 // ============================================================================
@@ -90,6 +143,19 @@ pub struct TypeAliasDecl {
 }
 
 // ============================================================================
+// Inline Test Modules (RFC 018)
+// ============================================================================
+
+/// Reserved inline test-only scope introduced by `module tests:`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TestModuleDecl {
+    /// The reserved module name. RFC 018 only permits `tests`.
+    pub name: Ident,
+    /// Top-level declarations scoped inside the inline test module.
+    pub body: Vec<Spanned<super::Declaration>>,
+}
+
+// ============================================================================
 // Newtypes (zero-cost wrappers with invariants)
 // ============================================================================
 
@@ -100,23 +166,84 @@ pub struct NewtypeDecl {
     pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
+    /// `true` when declared as `type X = rusttype Y`, RFC 041.
+    pub is_rusttype: bool,
     pub underlying: Spanned<Type>,
     pub docstring: Option<String>,
+    /// Alias-style member rebinding entries inside a newtype/rusttype body.
+    pub rebindings: Vec<Spanned<RebindingDecl>>,
+    pub method_aliases: Vec<Spanned<MethodAliasDecl>>,
+    pub method_partials: Vec<Spanned<MethodPartialDecl>>,
+    /// Optional `interop:` conversion edges (RFC 041).
+    pub interop_edges: Vec<Spanned<InteropEdgeDecl>>,
     pub methods: Vec<Spanned<MethodDecl>>,
+}
+
+/// A short or qualified member rebinding declaration in a newtype/rusttype body.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RebindingDecl {
+    pub name: Ident,
+    pub target: Spanned<Expr>,
+}
+
+/// Direction of a `interop:` edge declaration (RFC 041).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InteropDirection {
+    From,
+    Into,
+}
+
+/// Adapter mode for an interop edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InteropAdapterKind {
+    Via,
+    Try,
+}
+
+/// A single line in a `interop:` block.
+#[derive(Debug, Clone, PartialEq)]
+pub struct InteropEdgeDecl {
+    pub direction: InteropDirection,
+    pub ty: Spanned<Type>,
+    pub adapter_kind: InteropAdapterKind,
+    pub adapter: Spanned<Expr>,
 }
 
 // ============================================================================
 // Enums (algebraic data types)
 // ============================================================================
 
-/// An enum declaration: an algebraic data type with variants.
+/// An enum declaration: an algebraic data type with variants, optional methods, and trait adoption.
 #[derive(Debug, Clone, PartialEq)]
 pub struct EnumDecl {
     pub visibility: Visibility,
     pub decorators: Vec<Spanned<Decorator>>,
     pub name: Ident,
     pub type_params: Vec<TypeParam>,
+    /// Backing value type for RFC 032 value enums (`enum Name(str):` / `enum Name(int):`).
+    pub value_type: Option<Spanned<ValueEnumType>>,
+    /// Traits adopted by this enum via `with TraitA, TraitB[T]`.
+    pub traits: Vec<Spanned<TraitBound>>,
+    /// Docstring at the start of the enum body (surface `"""..."""`), when present.
+    pub docstring: Option<String>,
+    /// Variants declared before any enum methods.
     pub variants: Vec<Spanned<VariantDecl>>,
+    /// Methods and associated functions declared after the variant list.
+    pub methods: Vec<Spanned<MethodDecl>>,
+}
+
+/// The allowed backing literal types for a value enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueEnumType {
+    Str,
+    Int,
+}
+
+/// A literal assigned to a value enum variant.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValueEnumLiteral {
+    Str(String),
+    Int(IntLiteral),
 }
 
 /// A single variant of an enum declaration, with optional tuple fields.
@@ -124,6 +251,7 @@ pub struct EnumDecl {
 pub struct VariantDecl {
     pub name: Ident,
     pub fields: Vec<Spanned<Type>>,
+    pub value: Option<Spanned<ValueEnumLiteral>>,
 }
 
 // ============================================================================
@@ -161,6 +289,8 @@ pub struct MethodDecl {
     pub decorators: Vec<Spanned<Decorator>>,
     pub surface_modifiers: Vec<SurfaceModifier>,
     pub name: Ident,
+    /// Method-scoped generic parameters declared after the method name.
+    pub type_params: Vec<TypeParam>,
     pub receiver: Option<Receiver>,
     pub params: Vec<Spanned<Param>>,
     pub return_type: Spanned<Type>,
@@ -177,6 +307,18 @@ impl MethodDecl {
     pub fn is_async(&self) -> bool {
         self.has_surface_modifier(&SurfaceFeatureKey::SoftKeyword(KeywordId::Async))
     }
+}
+
+/// A computed property declaration within a model, class, or trait.
+///
+/// Properties expose field-like member access while carrying a typed body-bearing declaration for later semantic
+/// stages. `body: None` is reserved for abstract trait property requirements, mirroring abstract methods.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PropertyDecl {
+    pub visibility: Visibility,
+    pub name: Ident,
+    pub return_type: Spanned<Type>,
+    pub body: Option<Vec<Spanned<Statement>>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -197,9 +339,24 @@ pub struct SurfaceModifier {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Param {
     pub is_mut: bool,
+    pub kind: ParamKind,
     pub name: Ident,
     pub ty: Spanned<Type>,
     pub default: Option<Spanned<Expr>>,
+}
+
+/// Surface parameter kind.
+///
+/// Rest parameters use the annotated element/value type at the source level, but downstream semantic layers bind the
+/// local variable as the explicit container type described by RFC 038.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParamKind {
+    /// Ordinary fixed-arity parameter: `name: T`.
+    Normal,
+    /// Positional rest capture: `*name: T`, bound inside the function as `List[T]`.
+    RestPositional,
+    /// Keyword rest capture: `**name: T`, bound inside the function as `Dict[str, T]`.
+    RestKeyword,
 }
 
 // ============================================================================
@@ -211,6 +368,8 @@ pub struct Param {
 pub struct Decorator {
     pub path: ImportPath,
     pub name: Ident,
+    /// Whether the decorator was written with a call suffix, including zero-argument factory calls like `@factory()`.
+    pub is_call: bool,
     pub args: Vec<DecoratorArg>,
 }
 

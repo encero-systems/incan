@@ -1,0 +1,33 @@
+[package]
+name = "rust_inspect"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Rust inspect metadata extraction substrate for Incan"
+
+[lib]
+name = "rust_inspect"
+path = "src/lib.rs"
+
+[dependencies]
+incan_core = { path = "../incan_core" }
+thiserror = "2.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sha2 = "0.10.9"
+hex = "0.4.3"
+toml = "0.9"
+tracing = "0.1"
+ra_ap_hir = "0.0.325"
+ra_ap_ide_db = "0.0.325"
+ra_ap_load-cargo = "0.0.325"
+ra_ap_project_model = "0.0.325"
+ra_ap_syntax = "0.0.325"
+ra_ap_vfs = "0.0.325"
+
+[dev-dependencies]
+tempfile = "3"

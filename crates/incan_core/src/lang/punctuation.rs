@@ -40,6 +40,7 @@ pub enum PunctuationId {
     Colon,
     Question,
     At,
+    Pipe,
 
     // Access / path
     Dot,
@@ -108,6 +109,14 @@ pub const PUNCTUATION: &[PunctuationInfo] = &[
         PunctuationCategory::Marker,
         RFC::_000,
         Since(0, 1),
+    ),
+    info(
+        PunctuationId::Pipe,
+        "|",
+        &[],
+        PunctuationCategory::Marker,
+        RFC::_040,
+        Since(0, 3),
     ),
     // Access / path
     info(
@@ -220,13 +229,26 @@ pub fn category(id: PunctuationId) -> PunctuationCategory {
 
 /// Return the full metadata entry for a punctuation token.
 ///
-/// ## Panics
-/// - If the registry is missing an entry for `id` (this indicates a programming error).
-pub fn info_for(id: PunctuationId) -> &'static PunctuationInfo {
-    PUNCTUATION
-        .iter()
-        .find(|p| p.id == id)
-        .expect("INVARIANT: punctuation info missing")
+/// The lookup is exhaustive over the closed enum, so adding punctuation requires updating this match at compile time.
+pub fn info_for(id: PunctuationId) -> PunctuationInfo {
+    match id {
+        PunctuationId::Comma => PUNCTUATION[0],
+        PunctuationId::Colon => PUNCTUATION[1],
+        PunctuationId::Question => PUNCTUATION[2],
+        PunctuationId::At => PUNCTUATION[3],
+        PunctuationId::Pipe => PUNCTUATION[4],
+        PunctuationId::Dot => PUNCTUATION[5],
+        PunctuationId::ColonColon => PUNCTUATION[6],
+        PunctuationId::Arrow => PUNCTUATION[7],
+        PunctuationId::FatArrow => PUNCTUATION[8],
+        PunctuationId::Ellipsis => PUNCTUATION[9],
+        PunctuationId::LParen => PUNCTUATION[10],
+        PunctuationId::RParen => PUNCTUATION[11],
+        PunctuationId::LBracket => PUNCTUATION[12],
+        PunctuationId::RBracket => PUNCTUATION[13],
+        PunctuationId::LBrace => PUNCTUATION[14],
+        PunctuationId::RBrace => PUNCTUATION[15],
+    }
 }
 
 /// Resolve a punctuation spelling to its identifier.

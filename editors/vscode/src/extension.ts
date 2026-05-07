@@ -8,7 +8,6 @@
  */
 
 import * as path from 'path';
-import * as fs from 'fs';
 import * as vscode from 'vscode';
 import {
     LanguageClient,
@@ -16,37 +15,73 @@ import {
     ServerOptions,
     TransportKind,
 } from 'vscode-languageclient/node';
+import {
+    BinaryResolution,
+    formatDoctorReport,
+    formatResolution,
+    resolveBinary,
+} from './binaryResolution';
 
 let client: LanguageClient | undefined;
 let outputChannel: vscode.OutputChannel;
 
-function findWorkspaceBinary(binaryName: string): string | undefined {
+function workspaceFolders(): string[] {
     const folders = vscode.workspace.workspaceFolders;
     if (!folders || folders.length === 0) {
-        return undefined;
+        return [];
     }
-
-    // Prefer debug while developing; fall back to release.
-    const candidates = [
-        path.join('target', 'debug', binaryName),
-        path.join('target', 'release', binaryName),
-    ];
-
-    for (const folder of folders) {
-        for (const rel of candidates) {
-            const abs = path.join(folder.uri.fsPath, rel);
-            if (fs.existsSync(abs)) {
-                return abs;
-            }
-        }
-    }
-    return undefined;
+    return folders.map(folder => folder.uri.fsPath);
 }
 
-function getCompilerPath(): string {
+function resolveConfiguredBinary(binaryName: string, settingName: 'compiler.path' | 'lsp.path'): BinaryResolution {
     const config = vscode.workspace.getConfiguration('incan');
-    const compilerPath = config.get<string>('compiler.path', '');
-    return compilerPath || 'incan';
+    const configuredPath = config.get<string>(settingName, '').trim();
+    const settingKey = `incan.${settingName}`;
+    return resolveBinary({
+        binaryName,
+        settingKey,
+        configuredPath,
+        workspaceFolders: workspaceFolders(),
+    });
+}
+
+function getCompilerResolution(): BinaryResolution {
+    return resolveConfiguredBinary('incan', 'compiler.path');
+}
+
+function getLspResolution(): BinaryResolution {
+    return resolveConfiguredBinary('incan-lsp', 'lsp.path');
+}
+
+function shellQuote(value: string): string {
+    return `"${value.replace(/(["\\$`])/g, '\\$1')}"`;
+}
+
+function logResolution(resolution: BinaryResolution) {
+    for (const line of formatResolution(resolution)) {
+        outputChannel.appendLine(line);
+    }
+}
+
+function warnForResolution(resolution: BinaryResolution) {
+    if (resolution.warnings.length === 0) {
+        return;
+    }
+    vscode.window.showWarningMessage(`Incan ${resolution.name} setup issue: ${resolution.warnings[0]}`);
+}
+
+function writeDoctorReport() {
+    const compiler = getCompilerResolution();
+    const lsp = getLspResolution();
+    for (const line of formatDoctorReport(compiler, lsp)) {
+        outputChannel.appendLine(line);
+    }
+}
+
+async function showDoctor() {
+    outputChannel.clear();
+    writeDoctorReport();
+    outputChannel.show(true);
 }
 
 function getFileToRun(uri?: vscode.Uri): string | undefined {
@@ -77,14 +112,15 @@ async function runIncanFile(uri?: vscode.Uri) {
         await doc.save();
     }
 
-    const compiler = getCompilerPath();
+    const compiler = getCompilerResolution();
+    warnForResolution(compiler);
     const terminal = vscode.window.createTerminal({
         name: `Incan: ${path.basename(filePath)}`,
         cwd: path.dirname(filePath),
     });
     
     terminal.show();
-    terminal.sendText(`${compiler} run "${filePath}"`);
+    terminal.sendText(`${shellQuote(compiler.command)} run ${shellQuote(filePath)}`);
 }
 
 async function checkIncanFile(uri?: vscode.Uri) {
@@ -100,14 +136,15 @@ async function checkIncanFile(uri?: vscode.Uri) {
         await doc.save();
     }
 
-    const compiler = getCompilerPath();
+    const compiler = getCompilerResolution();
+    warnForResolution(compiler);
     const terminal = vscode.window.createTerminal({
         name: `Incan Check: ${path.basename(filePath)}`,
         cwd: path.dirname(filePath),
     });
     
     terminal.show();
-    terminal.sendText(`${compiler} "${filePath}"`);
+    terminal.sendText(`${shellQuote(compiler.command)} ${shellQuote(filePath)}`);
 }
 
 export function activate(context: vscode.ExtensionContext) {
@@ -116,33 +153,34 @@ export function activate(context: vscode.ExtensionContext) {
     // Register run/check commands
     context.subscriptions.push(
         vscode.commands.registerCommand('incan.runFile', runIncanFile),
-        vscode.commands.registerCommand('incan.checkFile', checkIncanFile)
+        vscode.commands.registerCommand('incan.checkFile', checkIncanFile),
+        vscode.commands.registerCommand('incan.doctor', showDoctor)
     );
 
     const config = vscode.workspace.getConfiguration('incan');
     const lspEnabled = config.get<boolean>('lsp.enabled', true);
 
     if (!lspEnabled) {
-        console.log('Incan LSP is disabled');
+        outputChannel.appendLine('Incan LSP is disabled');
         return;
     }
 
-    // Get the path to incan-lsp
-    let serverPath = config.get<string>('lsp.path', '');
-    if (!serverPath) {
-        // When working inside the compiler repo, prefer the workspace-built binary so
-        // diagnostics match the checked-out language features (e.g. newly added syntax).
-        serverPath = findWorkspaceBinary('incan-lsp') ?? 'incan-lsp';
-    }
+    const server = getLspResolution();
+    const compiler = getCompilerResolution();
+    outputChannel.appendLine('Incan extension binary resolution');
+    outputChannel.appendLine('================================');
+    logResolution(server);
+    logResolution(compiler);
+    warnForResolution(server);
 
     // Server options - run the LSP binary
     const serverOptions: ServerOptions = {
         run: {
-            command: serverPath,
+            command: server.command,
             transport: TransportKind.stdio,
         },
         debug: {
-            command: serverPath,
+            command: server.command,
             transport: TransportKind.stdio,
         },
     };
@@ -195,15 +233,3 @@ export function deactivate(): Thenable<void> | undefined {
     }
     return client.stop();
 }
-
-
-
-
-
-
-
-
-
-
-
-

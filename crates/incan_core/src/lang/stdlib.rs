@@ -1,5 +1,9 @@
 //! Canonical stdlib module names.
-use super::keywords;
+use super::{
+    derives::{self, DeriveId},
+    keywords,
+    traits::{self, TraitId},
+};
 
 /// Root stdlib namespace (e.g. `import std::...`).
 pub const STDLIB_ROOT: &str = "std";
@@ -21,6 +25,14 @@ pub const STDLIB_THIS: &str = "this";
 
 /// `std.async` module name.
 pub const STDLIB_ASYNC: &str = "async";
+/// `std.graph` module name.
+pub const STDLIB_GRAPH: &str = "graph";
+/// `std.rust` module name for capability bounds (RFC 041).
+pub const STDLIB_RUST: &str = "rust";
+/// `std.builtins` module name for explicit builtin-function escape calls (RFC 045).
+pub const STDLIB_BUILTINS: &str = "builtins";
+
+const STDLIB_GRAPH_CONSTRUCTOR_TYPES: &[&str] = &["DiGraph", "Dag", "MultiDiGraph"];
 
 /// Check if a module path starts with `std.<module>`.
 pub fn is_stdlib_module(path: &[String], module: &str) -> bool {
@@ -34,6 +46,12 @@ pub fn is_stdlib_module(path: &[String], module: &str) -> bool {
 /// `IrImportQualifier::None` — bypassing this check entirely.
 pub fn is_any_stdlib_path(path: &[String]) -> bool {
     path.len() >= 2 && path[0] == STDLIB_ROOT
+}
+
+/// Return whether `name` is an RFC 047 graph type with direct constructor syntax.
+#[must_use]
+pub fn is_graph_constructor_type(name: &str) -> bool {
+    STDLIB_GRAPH_CONSTRUCTOR_TYPES.contains(&name)
 }
 
 /// A top-level stdlib namespace with optional metadata.
@@ -51,6 +69,12 @@ pub struct StdlibNamespace {
     pub extra_crate_deps: &'static [StdlibExtraCrateDep],
     /// Known submodules for validation and LSP completion. Empty for leaf modules.
     pub submodules: &'static [&'static str],
+    /// When `true`, this namespace is handled entirely by the typechecker with no corresponding `.incn` stub file or
+    /// emitted Rust module. Items are resolved symbolically at import time.
+    ///
+    /// `std.rust` is the canonical example: `Send`, `Sync`, etc. map to native Rust traits that are already in scope
+    /// and must not be re-declared or imported in generated code.
+    pub typechecker_only: bool,
 }
 
 /// Additional crate dependency needed by a stdlib namespace.
@@ -70,6 +94,90 @@ pub enum StdlibExtraCrateSource {
     /// Registry version dependency.
     Version(&'static str),
 }
+
+/// Builtin trait identity for stdlib method-stub lookup.
+///
+/// Most source-defined trait contracts are canonical builtin traits. `Copy` is represented as a derive vocabulary item
+/// today because it has no separate [`TraitId`] entry, but still needs the same empty-stub fallback as trait contracts
+/// such as `Clone` and `Default`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StdlibTraitMethodOwner {
+    /// Builtin trait vocabulary item.
+    Trait(TraitId),
+    /// Builtin derive vocabulary item that also names a source-defined stdlib trait.
+    Derive(DeriveId),
+}
+
+impl StdlibTraitMethodOwner {
+    /// Return the canonical source spelling used to match this owner against a typechecker trait name.
+    fn canonical_name(self) -> &'static str {
+        match self {
+            Self::Trait(id) => traits::as_str(id),
+            Self::Derive(id) => derives::as_str(id),
+        }
+    }
+}
+
+/// Registry entry for stdlib modules whose trait stubs provide fallback method signatures.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct StdlibTraitMethodModule {
+    /// Builtin trait or derive vocabulary item resolved by canonical spelling.
+    pub owner: StdlibTraitMethodOwner,
+    /// Canonical segmented stdlib module path, e.g. `["std", "derives", "copying"]`.
+    pub module_segments: &'static [&'static str],
+}
+
+const STDLIB_DERIVES_COPYING_SEGMENTS: &[&str] = &[STDLIB_ROOT, "derives", "copying"];
+const STDLIB_DERIVES_STRING_SEGMENTS: &[&str] = &[STDLIB_ROOT, "derives", "string"];
+const STDLIB_DERIVES_COMPARISON_SEGMENTS: &[&str] = &[STDLIB_ROOT, "derives", "comparison"];
+
+/// Builtin stdlib trait-method fallback registry.
+///
+/// This intentionally covers only the derive-tree source-defined traits that previously needed fallback from empty
+/// symbol-table stubs. Other stdlib trait families, such as `std.traits.convert`, do not get implicit fallback unless
+/// they are added here deliberately.
+pub const STDLIB_TRAIT_METHOD_MODULES: &[StdlibTraitMethodModule] = &[
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Clone),
+        module_segments: STDLIB_DERIVES_COPYING_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Derive(DeriveId::Copy),
+        module_segments: STDLIB_DERIVES_COPYING_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Default),
+        module_segments: STDLIB_DERIVES_COPYING_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Debug),
+        module_segments: STDLIB_DERIVES_STRING_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Display),
+        module_segments: STDLIB_DERIVES_STRING_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Eq),
+        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::PartialEq),
+        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Ord),
+        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::PartialOrd),
+        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
+    },
+    StdlibTraitMethodModule {
+        owner: StdlibTraitMethodOwner::Trait(TraitId::Hash),
+        module_segments: STDLIB_DERIVES_COMPARISON_SEGMENTS,
+    },
+];
 
 /// Registry of top-level stdlib namespaces.
 ///
@@ -95,42 +203,56 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
             },
         ],
         submodules: &["app", "routing", "request", "response", "macros", "prelude"],
+        typechecker_only: false,
     },
     StdlibNamespace {
         name: "testing",
         feature: None,
         extra_crate_deps: &[],
         submodules: &[],
+        typechecker_only: false,
     },
     StdlibNamespace {
         name: "async",
         feature: Some("async"),
         extra_crate_deps: &[],
         submodules: &["time", "task", "channel", "select", "sync", "prelude"],
+        typechecker_only: false,
     },
     StdlibNamespace {
         name: "serde",
         feature: Some("json"),
         extra_crate_deps: &[],
         submodules: &["json"],
+        typechecker_only: false,
     },
     StdlibNamespace {
         name: "reflection",
         feature: None,
         extra_crate_deps: &[],
         submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "result",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
     },
     StdlibNamespace {
         name: "derives",
         feature: None,
         extra_crate_deps: &[],
         submodules: &["string", "comparison", "copying", "collection"],
+        typechecker_only: false,
     },
     StdlibNamespace {
         name: "traits",
         feature: None,
         extra_crate_deps: &[],
         submodules: &["convert", "ops", "error", "indexing", "callable", "prelude"],
+        typechecker_only: false,
     },
     StdlibNamespace {
         name: "math",
@@ -140,12 +262,88 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
             source: StdlibExtraCrateSource::Version("0.2"),
         }],
         submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "fs",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &["path", "file", "metadata", "glob", "prelude"],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "graph",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "collections",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "io",
+        feature: None,
+        extra_crate_deps: &[StdlibExtraCrateDep {
+            crate_name: "byteorder",
+            source: StdlibExtraCrateSource::Version("1"),
+        }],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "tempfile",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "rust",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        // Capability bounds (Send, Sync, Static, Fn, FnMut, FnOnce) are native Rust traits already in scope in all
+        // generated code. They have no .incn stub and no emitted Rust module.
+        typechecker_only: true,
+    },
+    StdlibNamespace {
+        name: STDLIB_BUILTINS,
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        // `std.builtins.<name>(...)` is an explicit call escape to the compiler's builtin-function registry. Builtin
+        // types deliberately stay at the root surface and there is no source stub or emitted Rust module.
+        typechecker_only: true,
     },
 ];
 
 /// Look up a top-level stdlib namespace by name.
 pub fn find_namespace(name: &str) -> Option<&'static StdlibNamespace> {
     STDLIB_NAMESPACES.iter().find(|ns| ns.name == name)
+}
+
+/// Return the stdlib module path that owns fallback method signatures for a builtin trait name.
+///
+/// The returned segments can be passed to the typechecker's stdlib cache to load the full `.incn` trait declaration
+/// when an imported symbol-table stub has no methods. Unknown traits and builtin traits outside the registered
+/// fallback surface return `None`.
+#[must_use]
+pub fn trait_method_module_segments(trait_name: &str) -> Option<Vec<String>> {
+    STDLIB_TRAIT_METHOD_MODULES
+        .iter()
+        .find(|entry| entry.owner.canonical_name() == trait_name)
+        .map(|entry| {
+            entry
+                .module_segments
+                .iter()
+                .map(|segment| (*segment).to_string())
+                .collect()
+        })
 }
 
 /// Resolve soft keywords activated by a stdlib import path.
@@ -172,8 +370,10 @@ pub fn is_known_stdlib_module(path: &[String]) -> bool {
     let Some(ns) = find_namespace(&path[1]) else {
         return false;
     };
-    if path.len() == 2 {
-        return true;
+    match path.len() {
+        2 => return true,
+        3 => {}
+        _ => return false,
     }
     // Leaf modules (no submodules) don't have children.
     if ns.submodules.is_empty() {
@@ -206,17 +406,35 @@ pub fn stdlib_feature_for(path: &[String]) -> Option<&'static str> {
     find_namespace(&path[1]).and_then(|ns| ns.feature)
 }
 
+/// Returns `true` when a stdlib module path refers to a typechecker-only namespace.
+///
+/// Typechecker-only namespaces (`std.rust`) are handled entirely by the frontend: their items are resolved
+/// symbolically at import time and have no corresponding `.incn` stub file or emitted Rust module. The dependency
+/// resolver and emission layer must skip them.
+#[must_use]
+pub fn is_typechecker_only_stdlib(path: &[String]) -> bool {
+    if path.len() < 2 || path[0] != STDLIB_ROOT {
+        return false;
+    }
+    find_namespace(&path[1]).is_some_and(|ns| ns.typechecker_only)
+}
+
 /// Resolve the relative stub `.incn` file path for a stdlib module path.
 ///
 /// Uses convention-based resolution:
 /// - `std.X` (leaf, no submodules) → `stdlib/X.incn`
 /// - `std.X` (namespace with submodules) → `stdlib/X/prelude.incn`
 /// - `std.X.Y` (and deeper) → `stdlib/X/Y.incn`
+///
+/// Returns `None` for typechecker-only namespaces (e.g. `std.rust`) which have no stub file.
 pub fn stdlib_stub_path(path: &[String]) -> Option<String> {
     if path.len() < 2 || path[0] != STDLIB_ROOT {
         return None;
     }
     let ns = find_namespace(&path[1])?;
+    if ns.typechecker_only {
+        return None;
+    }
     if path.len() == 2 {
         if ns.submodules.is_empty() {
             Some(format!("stdlib/{}.incn", ns.name))
@@ -249,6 +467,23 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "async", "time"])));
         assert!(is_known_stdlib_module(&segs(&["std", "serde", "json"])));
         assert!(is_known_stdlib_module(&segs(&["std", "reflection"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "result"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "fs"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "graph"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "io"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "tempfile"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "collections"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "builtins"])));
+    }
+
+    #[test]
+    fn graph_constructor_types_are_registry_owned() {
+        assert!(is_graph_constructor_type("DiGraph"));
+        assert!(is_graph_constructor_type("Dag"));
+        assert!(is_graph_constructor_type("MultiDiGraph"));
+        assert!(!is_graph_constructor_type("NodeId"));
+        assert!(!is_graph_constructor_type("EdgeId"));
     }
 
     #[test]
@@ -256,6 +491,7 @@ mod tests {
         assert!(!is_known_stdlib_module(&segs(&["std", "f64", "consts"])));
         assert!(!is_known_stdlib_module(&segs(&["std", "web", "missing"])));
         assert!(!is_known_stdlib_module(&segs(&["std", "math", "extra"])));
+        assert!(!is_known_stdlib_module(&segs(&["std", "collections", "deque"])));
     }
 
     #[test]
@@ -276,6 +512,41 @@ mod tests {
             stdlib_stub_path(&segs(&["std", "async", "prelude"])),
             Some("stdlib/async/prelude.incn".to_string())
         );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "fs"])),
+            Some("stdlib/fs/prelude.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "fs", "path"])),
+            Some("stdlib/fs/path.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "graph"])),
+            Some("stdlib/graph.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "io"])),
+            Some("stdlib/io.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "tempfile"])),
+            Some("stdlib/tempfile.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "collections"])),
+            Some("stdlib/collections.incn".to_string())
+        );
+    }
+
+    #[test]
+    fn typechecker_only_namespace_std_rust_has_no_stub_path() {
+        assert_eq!(stdlib_stub_path(&segs(&["std", "rust"])), None);
+        assert_eq!(stdlib_stub_path(&segs(&["std", "builtins"])), None);
+        assert!(is_typechecker_only_stdlib(&segs(&["std", "rust"])));
+        assert!(is_typechecker_only_stdlib(&segs(&["std", "builtins"])));
+        assert!(!is_typechecker_only_stdlib(&segs(&["std", "testing"])));
+        assert!(!is_typechecker_only_stdlib(&segs(&["std", "async"])));
+        assert!(!is_typechecker_only_stdlib(&segs(&["not", "stdlib"]))); // non-stdlib path
     }
 
     #[test]
@@ -283,25 +554,103 @@ mod tests {
         let hint = known_stdlib_modules_for_hint();
         assert!(hint.windows(2).all(|w| w[0] <= w[1]));
         assert!(hint.contains(&"std.derives".to_string()));
+        assert!(hint.contains(&"std.fs".to_string()));
+        assert!(hint.contains(&"std.graph".to_string()));
+        assert!(hint.contains(&"std.io".to_string()));
+        assert!(hint.contains(&"std.tempfile".to_string()));
+        assert!(hint.contains(&"std.rust".to_string()));
         assert!(hint.contains(&"std.web.app".to_string()));
         assert!(hint.contains(&"std.async.prelude".to_string()));
+        assert!(hint.contains(&"std.builtins".to_string()));
+        assert!(hint.contains(&"std.collections".to_string()));
+    }
+
+    #[test]
+    fn trait_method_module_lookup_preserves_derive_fallback_surface() {
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Clone)),
+            Some(segs(&["std", "derives", "copying"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(derives::as_str(DeriveId::Copy)),
+            Some(segs(&["std", "derives", "copying"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Default)),
+            Some(segs(&["std", "derives", "copying"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Debug)),
+            Some(segs(&["std", "derives", "string"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Display)),
+            Some(segs(&["std", "derives", "string"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Eq)),
+            Some(segs(&["std", "derives", "comparison"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::PartialEq)),
+            Some(segs(&["std", "derives", "comparison"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Ord)),
+            Some(segs(&["std", "derives", "comparison"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::PartialOrd)),
+            Some(segs(&["std", "derives", "comparison"]))
+        );
+        assert_eq!(
+            trait_method_module_segments(traits::as_str(TraitId::Hash)),
+            Some(segs(&["std", "derives", "comparison"]))
+        );
+    }
+
+    #[test]
+    fn trait_method_module_lookup_leaves_other_builtin_traits_unmapped() {
+        assert_eq!(trait_method_module_segments(traits::as_str(TraitId::From)), None);
+        assert_eq!(trait_method_module_segments(traits::as_str(TraitId::Into)), None);
+        assert_eq!(trait_method_module_segments("Serialize"), None);
     }
 
     #[test]
     fn stdlib_registry_keeps_phase_023_metadata() {
         let async_ns = find_namespace("async");
         let reflection_ns = find_namespace("reflection");
+        let fs_ns = find_namespace("fs");
+        let tempfile_ns = find_namespace("tempfile");
         let traits_ns = find_namespace("traits");
         let math_ns = find_namespace("math");
+        let graph_ns = find_namespace("graph");
+        let collections_ns = find_namespace("collections");
 
         assert_eq!(async_ns.and_then(|ns| ns.feature), Some("async"));
         assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(fs_ns.map(|ns| ns.submodules.contains(&"path")), Some(true));
+        assert_eq!(fs_ns.and_then(|ns| ns.feature), None);
+        assert_eq!(tempfile_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(tempfile_ns.and_then(|ns| ns.feature), None);
         assert_eq!(traits_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
         assert_eq!(
             math_ns
                 .and_then(|ns| ns.extra_crate_deps.first())
                 .map(|dep| dep.crate_name),
             Some("libm")
+        );
+        assert_eq!(graph_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(graph_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(collections_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(collections_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
+        assert_eq!(collections_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(collections_ns.map(|ns| ns.typechecker_only), Some(false));
+        assert_eq!(
+            find_namespace("io")
+                .and_then(|ns| ns.extra_crate_deps.first())
+                .map(|dep| dep.crate_name),
+            Some("byteorder")
         );
     }
 }

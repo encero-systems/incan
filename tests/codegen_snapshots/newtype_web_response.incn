@@ -1,8 +1,9 @@
 """Test web response newtypes compile without E0761 module ambiguity"""
 
 from std.web import Json, Html, Response
+from std.serde import json
 
-@derive(Serialize)
+@derive(json)
 model User:
     id: int
     name: str

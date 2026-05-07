@@ -1,0 +1,41 @@
+def is_even(n: int) -> bool:
+    return n % 2 == 0
+
+def double(n: int) -> int:
+    return n * 2
+
+def add(acc: int, n: int) -> int:
+    return acc + n
+
+type Money = newtype int
+
+type PositiveInt = newtype int:
+    def from_underlying(n: int) -> Result[PositiveInt, ValidationError]:
+        if n <= 0:
+            return Err(ValidationError("positive int must be greater than zero"))
+        return Ok(PositiveInt(n))
+
+def sum_money(items: list[Money]) -> Money:
+    return items.iter().sum()
+
+def sum_positive(items: list[PositiveInt]) -> PositiveInt:
+    return items.iter().sum()
+
+def main() -> None:
+    xs = [1, 2, 3, 4, 5]
+    moneys = [Money(1), Money(2)]
+    positives = [PositiveInt(1), PositiveInt(2)]
+    ys = xs.iter().filter(is_even).map(double).take(2).collect()
+    batches = xs.iter().batch(2).collect()
+    reduced = xs.iter().reduce(0, add)
+    folded = xs.iter().fold(0, add)
+    total = xs.iter().sum()
+    total_money = sum_money(moneys)
+    total_positive = sum_positive(positives)
+    println(len(ys))
+    println(len(batches))
+    println(reduced)
+    println(folded)
+    println(total)
+    println(total_money.0)
+    println(total_positive.0)

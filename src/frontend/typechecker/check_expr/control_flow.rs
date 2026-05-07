@@ -8,20 +8,30 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::{ResolvedType, ScopeKind};
 
 use super::TypeChecker;
-use crate::frontend::typechecker::helpers::ensure_bool_condition;
+use crate::frontend::typechecker::LoopContextKind;
+use crate::frontend::typechecker::helpers::result_ty;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
 
 impl TypeChecker {
     /// Type-check an `await` expression.
     ///
     /// By the time we reach this method the registry has already confirmed that the `await` feature is active (via
-    /// `typecheck_surface_expr_action`), so no additional feature-gate check is needed here.
+    /// `typecheck_surface_expr_action`), so no additional feature-gate check is needed here. The enclosing callable
+    /// must be `async` (`in_async_body`). Closure bodies are not async contexts: `check_closure` clears
+    /// `in_async_body` while typechecking the body.
     pub(in crate::frontend::typechecker::check_expr) fn check_await(
         &mut self,
         inner: &Spanned<Expr>,
-        _span: Span,
+        span: Span,
     ) -> ResolvedType {
+        if !self.in_async_body {
+            self.errors.push(errors::await_outside_async(span));
+            return ResolvedType::Unknown;
+        }
+
+        let prev_await_operand_span = self.await_operand_span.replace((inner.span.start, inner.span.end));
         let inner_ty = self.check_expr(inner);
+        self.await_operand_span = prev_await_operand_span;
 
         if let ResolvedType::Generic(name, args) = &inner_ty
             && surface_types::from_str(name.as_str()) == Some(SurfaceTypeId::JoinHandle)
@@ -52,7 +62,18 @@ impl TypeChecker {
         inner: &Spanned<Expr>,
         span: Span,
     ) -> ResolvedType {
-        let inner_ty = self.check_expr(inner);
+        self.check_try_with_expected(inner, span, None)
+    }
+
+    /// Validate the `?` operator while preserving contextual `Ok` type information.
+    pub(in crate::frontend::typechecker::check_expr) fn check_try_with_expected(
+        &mut self,
+        inner: &Spanned<Expr>,
+        span: Span,
+        expected_ok_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let expected_result_ty = expected_ok_ty.map(|ok_ty| result_ty(ok_ty.clone(), ResolvedType::Unknown));
+        let inner_ty = self.check_expr_with_expected(inner, expected_result_ty.as_ref());
 
         if !inner_ty.is_result() {
             self.errors.push(errors::try_on_non_result(&inner_ty.to_string(), span));
@@ -72,14 +93,14 @@ impl TypeChecker {
         inner_ty.result_ok_type().cloned().unwrap_or(ResolvedType::Unknown)
     }
 
+    /// Type-check an expression-form `if`, including RFC 068 truthiness validation for its condition.
     pub(in crate::frontend::typechecker::check_expr) fn check_if_expr(
         &mut self,
         if_expr: &IfExpr,
         _span: Span,
     ) -> ResolvedType {
         let cond_ty = self.check_expr(&if_expr.condition);
-        let is_compatible = self.types_compatible(&cond_ty, &ResolvedType::Bool);
-        ensure_bool_condition(&cond_ty, if_expr.condition.span, is_compatible, &mut self.errors);
+        self.validate_truthiness_condition(&cond_ty, if_expr.condition.span);
 
         self.symbols.enter_scope(ScopeKind::Block);
         for stmt in &if_expr.then_body {
@@ -96,6 +117,31 @@ impl TypeChecker {
         }
 
         ResolvedType::Unit
+    }
+
+    /// Type-check a value-producing `loop:` expression.
+    ///
+    /// The loop body runs in its own block scope so bindings introduced inside the loop do not leak outward.
+    /// `break <value>` statements feed their inferred types into the active loop context, which is resolved after
+    /// the body finishes checking.
+    pub(in crate::frontend::typechecker::check_expr) fn check_loop_expr(
+        &mut self,
+        loop_expr: &LoopExpr,
+        expected: Option<&ResolvedType>,
+        span: Span,
+    ) -> ResolvedType {
+        self.symbols.enter_scope(ScopeKind::Block);
+        self.push_loop_context(LoopContextKind::Expression, expected.cloned());
+        for stmt in &loop_expr.body {
+            self.check_statement(stmt);
+        }
+        let loop_ctx = self.pop_loop_context();
+        self.symbols.exit_scope();
+        let Some(loop_ctx) = loop_ctx else {
+            return ResolvedType::Unknown;
+        };
+
+        self.resolve_loop_break_result_type(span, expected, &loop_ctx.break_types)
     }
 
     /// Type-check a range expression (`start..end`) and return `Range[int]`.

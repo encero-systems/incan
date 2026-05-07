@@ -6,16 +6,17 @@ use incan_core::lang::types::numerics::{self, NumericTypeId};
 use incan_core::lang::types::stringlike::{self, StringLikeId};
 
 use super::TypeRef;
-use crate::frontend::symbols::ResolvedType;
+use crate::frontend::symbols::{CallableParam, ResolvedType};
 
 /// Convert a frontend semantic [`ResolvedType`] into the stable manifest-level [`TypeRef`] surface.
 ///
 /// This keeps manifest type encoding in one place so producers write a deterministic type spelling regardless of where
 /// the export originated.
-pub(super) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
+pub(crate) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
     match ty {
-        ResolvedType::Int => named_type_ref(numerics::as_str(NumericTypeId::Int)),
-        ResolvedType::Float => named_type_ref(numerics::as_str(NumericTypeId::Float)),
+        ResolvedType::Int => named_type_ref("int"),
+        ResolvedType::Float => named_type_ref("float"),
+        ResolvedType::Numeric(id) => named_type_ref(numerics::as_str(*id)),
         ResolvedType::Bool => named_type_ref(numerics::as_str(NumericTypeId::Bool)),
         ResolvedType::Str => named_type_ref(stringlike::as_str(StringLikeId::Str)),
         ResolvedType::Bytes => named_type_ref(stringlike::as_str(StringLikeId::Bytes)),
@@ -41,7 +42,7 @@ pub(super) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
             args: args.iter().map(type_ref_from_resolved).collect(),
         },
         ResolvedType::Function(params, return_type) => TypeRef::Function {
-            params: params.iter().map(type_ref_from_resolved).collect(),
+            params: params.iter().map(|param| type_ref_from_resolved(&param.ty)).collect(),
             return_type: Box::new(type_ref_from_resolved(return_type)),
         },
         ResolvedType::Tuple(elements) => TypeRef::Tuple {
@@ -52,6 +53,12 @@ pub(super) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
         ResolvedType::Ref(inner) => TypeRef::Ref {
             inner: Box::new(type_ref_from_resolved(inner)),
         },
+        // Mutable refs are compiler-internal today; manifests only preserve the borrowed inner type.
+        ResolvedType::RefMut(inner) => TypeRef::Ref {
+            inner: Box::new(type_ref_from_resolved(inner)),
+        },
+        ResolvedType::RustPath(path) => TypeRef::RustPath { path: path.clone() },
+        ResolvedType::CallSiteInfer => TypeRef::Unknown,
         ResolvedType::Unknown => TypeRef::Unknown,
     }
 }
@@ -83,7 +90,10 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
             }
         }
         TypeRef::Function { params, return_type } => ResolvedType::Function(
-            params.iter().map(resolved_type_from_manifest_type_ref).collect(),
+            params
+                .iter()
+                .map(|param| CallableParam::positional(resolved_type_from_manifest_type_ref(param)))
+                .collect(),
             Box::new(resolved_type_from_manifest_type_ref(return_type)),
         ),
         TypeRef::Tuple { elements } => {
@@ -92,16 +102,22 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
         TypeRef::TypeParam { name } => ResolvedType::TypeVar(name.clone()),
         TypeRef::SelfType => ResolvedType::SelfType,
         TypeRef::Ref { inner } => ResolvedType::Ref(Box::new(resolved_type_from_manifest_type_ref(inner))),
+        TypeRef::RustPath { path } => ResolvedType::RustPath(path.clone()),
         TypeRef::Unknown => ResolvedType::Unknown,
     }
 }
 
+/// Resolve a manifest simple type name, preserving ordinary int/float/bool spellings.
 fn resolved_named_type_from_manifest(name: &str) -> ResolvedType {
     if let Some(id) = numerics::from_str(name) {
-        return match id {
-            NumericTypeId::Int => ResolvedType::Int,
-            NumericTypeId::Float => ResolvedType::Float,
-            NumericTypeId::Bool => ResolvedType::Bool,
+        return match name {
+            "int" => ResolvedType::Int,
+            "float" => ResolvedType::Float,
+            "bool" => ResolvedType::Bool,
+            _ => match id {
+                NumericTypeId::Bool => ResolvedType::Bool,
+                _ => ResolvedType::Numeric(id),
+            },
         };
     }
     if let Some(id) = stringlike::from_str(name) {

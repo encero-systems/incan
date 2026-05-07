@@ -9,7 +9,7 @@
 //! - ID-bearing tokens avoid stringly-typed checks in the parser and compiler.
 //! - Use `crate::token_helpers` for ergonomic token matching at call sites.
 
-use crate::ast::Span;
+use crate::ast::{DecimalLiteral, FloatLiteral, IntLiteral, Span};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::operators::OperatorId;
 use incan_core::lang::punctuation::PunctuationId;
@@ -31,8 +31,9 @@ pub enum TokenKind {
 
     // ========== Identifiers and Literals ==========
     Ident(String),
-    Int(i64),
-    Float(f64),
+    Int(IntLiteral),
+    Float(FloatLiteral),
+    Decimal(DecimalLiteral),
     String(String),
     Bytes(Vec<u8>),
     FString(Vec<FStringPart>),

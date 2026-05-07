@@ -1,0 +1,11 @@
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+    def parse(raw: str) -> Result[Email, str]:
+        ...
+
+    interop:
+        from str try Email.parse
+
+def main() -> None:
+    pass

@@ -1,0 +1,565 @@
+"""
+Temporary files and directories.
+
+`std.tempfile` owns temporary-resource lifecycle: creation, automatic cleanup, and explicit persistence. Use
+`NamedTemporaryFile.try_new()` or `TemporaryDirectory.try_new()` when a program needs a real filesystem path that should
+be removed when the wrapper is dropped. Use `try_new_with(...)` when the caller needs a naming prefix, suffix, or parent
+directory.
+
+The returned paths are ordinary `std.fs.Path` values. Read, write, open, copy, move, and metadata operations stay on
+`std.fs`; tempfile handles only decide when the backing filesystem entry should stop being temporary.
+
+Example:
+
+```incan
+temp = NamedTemporaryFile.try_new()?
+temp.path().write_text("payload", encoding="utf-8", errors="strict", newline=None)?
+publish(temp.path())
+```
+
+Direct class construction remains ordinary infallible value construction and is not the resource-acquisition API.
+"""
+
+from rust::std::cell import RefCell
+from rust::std::io import Error as RustIoError
+from rust::std::rc import Rc
+from rust::std::string import String as RustString
+from rust::tempfile @ "3" import Builder, NamedTempFile as RustNamedTemporaryFile, TempDir as RustTemporaryDirectory
+from std.io import BytesIO, _BytesIO
+from std.fs import File, Path
+from std.fs.path import IoError, _io_error as _fs_io_error
+
+
+pub class NamedTemporaryFile:
+    """
+    Owning handle for a named temporary file.
+
+    The file exists at a visible filesystem path while this wrapper is live. Dropping a non-persisted wrapper removes
+    the file. Call `path()` to hand the location to `std.fs` APIs, and call `persist()` when the caller intentionally
+    wants the file to survive the wrapper.
+
+    Use `NamedTemporaryFile.try_new()` or `NamedTemporaryFile.try_new_with(...)` to create live values. Direct
+    construction is reserved for the generated stdlib implementation.
+
+    Example:
+
+    ```incan
+    temp = NamedTemporaryFile.try_new()?
+    temp.path().write_text("draft", encoding="utf-8", errors="strict", newline=None)?
+    upload(temp.path())
+    ```
+    """
+
+    handle: Rc[RefCell[Option[RustNamedTemporaryFile]]]
+    persisted_path: Rc[RefCell[Option[Path]]]
+
+    @staticmethod
+    def try_new() -> Result[NamedTemporaryFile, IoError]:
+        """
+        Create a named temporary file with host defaults.
+
+        Returns:
+            `Ok(NamedTemporaryFile)` for a live temporary file in the host default temporary directory, or
+            `Err(IoError)` when the host cannot create it.
+
+        Example:
+            `NamedTemporaryFile.try_new()?` creates a file under the host default temporary directory.
+        """
+        return NamedTemporaryFile.try_new_with("", "", None)
+
+    @staticmethod
+    def try_new_with(prefix: str, suffix: str, dir: Option[Path]) -> Result[NamedTemporaryFile, IoError]:
+        """
+        Create a named temporary file with configured naming.
+
+        Args:
+            prefix: Filename prefix requested from the host temporary-file builder.
+            suffix: Filename suffix requested from the host temporary-file builder.
+            dir: Parent directory for the temporary file, or `None` for the host default temporary directory.
+
+        Returns:
+            `Ok(NamedTemporaryFile)` for a live temporary file, or `Err(IoError)` with `dir` as the error path when
+            creation fails before a concrete file path exists.
+
+        Example:
+
+        ```incan
+        temp = NamedTemporaryFile.try_new_with("report-", ".txt", Some(Path("build/tmp")))?
+        ```
+        """
+        error_path = _parent_path(dir)
+        mut builder = Builder.new()
+        rust_prefix = RustString.from(prefix)
+        rust_suffix = RustString.from(suffix)
+        rust_prefix_ref = rust_prefix.as_str()
+        rust_suffix_ref = rust_suffix.as_str()
+        builder.prefix(rust_prefix_ref)
+        builder.suffix(rust_suffix_ref)
+        match _dir_to_string(dir):
+            Some(parent) => return _named_temporary_file_from_result(error_path, builder.tempfile_in(parent))
+            None => return _named_temporary_file_from_result(error_path, builder.tempfile())
+
+    def path(self) -> Path:
+        """
+        Return the current filesystem path.
+
+        Returns:
+            A `Path` that can be used with `std.fs` APIs. After `persist()`, this returns the persisted path. For a
+            wrapper that has lost its live handle without a persisted path, this returns `Path("")`.
+
+        Example:
+            `temp.path().write_bytes(data)?` writes through the ordinary `std.fs.Path` API.
+        """
+        match self.handle.borrow().as_ref():
+            Some(file) => return Path(file.path().to_string_lossy().into_owned())
+            None =>
+                match self.persisted_path.borrow().as_ref():
+                    Some(path) => return path.clone()
+                    None => return Path("")
+
+    def persist(self) -> Result[Path, IoError]:
+        """
+        Keep the file at its current path and disable automatic deletion.
+
+        Returns:
+            `Ok(Path)` for the now-ordinary filesystem path. Repeated calls return the same persisted path. If the host
+            reports an error while keeping the file, this returns `Err(IoError)` for the last known temporary path.
+
+        Example:
+
+        ```incan
+        saved = temp.persist()?
+        println(f"kept {saved}")
+        ```
+        """
+        path = self.path()
+        mut handle = self.handle.borrow_mut()
+        match handle.take():
+            Some(file) =>
+                match file.keep():
+                    Ok(kept) =>
+                        persisted = Path(kept.1.to_string_lossy().into_owned())
+                        self.persisted_path.replace(Some(persisted.clone()))
+                        return Ok(persisted)
+                    Err(err) =>
+                        return Err(_io_error(path, err.error.to_string()))
+            None =>
+                match self.persisted_path.borrow().as_ref():
+                    Some(path) => return Ok(path.clone())
+                    None => return Err(_io_error(Path("."), "temporary file is no longer live"))
+
+
+pub class TemporaryDirectory:
+    """
+    Owning handle for a temporary directory tree.
+
+    The directory exists at a visible filesystem path while this wrapper is live. Dropping a non-persisted wrapper
+    removes the directory tree recursively. Call `path()` to create files under it with `std.fs.Path`, and call
+    `persist()` when the caller intentionally wants the whole tree to survive the wrapper.
+
+    Use `TemporaryDirectory.try_new()` or `TemporaryDirectory.try_new_with(...)` to create live values. Direct
+    construction is reserved for the generated stdlib implementation.
+
+    Example:
+
+    ```incan
+    workspace = TemporaryDirectory.try_new()?
+    (workspace.path() / "artifact.txt").write_text("ready", encoding="utf-8", errors="strict", newline=None)?
+    ```
+    """
+
+    handle: Rc[RefCell[Option[RustTemporaryDirectory]]]
+    persisted_path: Rc[RefCell[Option[Path]]]
+
+    @staticmethod
+    def try_new() -> Result[TemporaryDirectory, IoError]:
+        """
+        Create a temporary directory with host defaults.
+
+        Returns:
+            `Ok(TemporaryDirectory)` for a live temporary directory in the host default temporary location, or
+            `Err(IoError)` when the host cannot create it.
+
+        Example:
+            `TemporaryDirectory.try_new()?` creates an empty scratch directory in the host default temporary location.
+        """
+        return TemporaryDirectory.try_new_with("", "", None)
+
+    @staticmethod
+    def try_new_with(prefix: str, suffix: str, dir: Option[Path]) -> Result[TemporaryDirectory, IoError]:
+        """
+        Create a temporary directory with configured naming.
+
+        Args:
+            prefix: Directory-name prefix requested from the host temporary-directory builder.
+            suffix: Directory-name suffix requested from the host temporary-directory builder.
+            dir: Parent directory for the temporary directory, or `None` for the host default temporary location.
+
+        Returns:
+            `Ok(TemporaryDirectory)` for a live temporary directory, or `Err(IoError)` with `dir` as the error path when
+            creation fails before a concrete directory path exists.
+
+        Example:
+
+        ```incan
+        workspace = TemporaryDirectory.try_new_with("stage-", "", Some(Path("build/tmp")))?
+        ```
+        """
+        error_path = _parent_path(dir)
+        mut builder = Builder.new()
+        rust_prefix = RustString.from(prefix)
+        rust_suffix = RustString.from(suffix)
+        rust_prefix_ref = rust_prefix.as_str()
+        rust_suffix_ref = rust_suffix.as_str()
+        builder.prefix(rust_prefix_ref)
+        builder.suffix(rust_suffix_ref)
+        match _dir_to_string(dir):
+            Some(parent) => return _temporary_directory_from_result(error_path, builder.tempdir_in(parent))
+            None => return _temporary_directory_from_result(error_path, builder.tempdir())
+
+    def path(self) -> Path:
+        """
+        Return the current filesystem path.
+
+        Returns:
+            A `Path` for the live temporary directory. After `persist()`, this returns the persisted path. For a wrapper
+            that has lost its live handle without a persisted path, this returns `Path("")`.
+
+        Example:
+            `directory.path() / "output.json"` builds a child path with the ordinary `Path` slash operator.
+        """
+        match self.handle.borrow().as_ref():
+            Some(directory) => return Path(directory.path().to_string_lossy().into_owned())
+            None =>
+                match self.persisted_path.borrow().as_ref():
+                    Some(path) => return path.clone()
+                    None => return Path("")
+
+    def persist(self) -> Result[Path, IoError]:
+        """
+        Keep the directory tree at its current path and disable automatic deletion.
+
+        Returns:
+            `Ok(Path)` for the now-ordinary directory path. Repeated calls return the same persisted path.
+
+        Example:
+
+        ```incan
+        output_dir = directory.persist()?
+        println(f"kept {output_dir}")
+        ```
+        """
+        mut handle = self.handle.borrow_mut()
+        match handle.take():
+            Some(directory) =>
+                persisted = Path(directory.keep().to_string_lossy().into_owned())
+                self.persisted_path.replace(Some(persisted.clone()))
+                return Ok(persisted)
+            None =>
+                match self.persisted_path.borrow().as_ref():
+                    Some(path) => return Ok(path.clone())
+                    None => return Err(_io_error(Path("."), "temporary directory is no longer live"))
+
+
+pub class _SpooledTemporaryFile:
+    """
+    Temporary binary stream that starts in memory and rolls over to a named temporary file.
+
+    Construct values with `SpooledTemporaryFile(max_size=...)`. Data stays in a `std.io.BytesIO` buffer until the
+    buffered size is greater than `max_size`, or until `rollover()`/`persist()` needs a filesystem path. After rollover,
+    reads, writes, seeking, and flushing use a `std.fs.File` handle while cleanup and persistence remain owned by
+    `std.tempfile`.
+
+    Example:
+
+    ```incan
+    buf = SpooledTemporaryFile(max_size=1024)
+    buf.write(b"payload")?
+    if buf.rolled_to_disk():
+        println(buf.path()?)
+    ```
+    """
+
+    max_size: int
+    memory: _BytesIO
+    temp_file: Option[NamedTemporaryFile]
+    disk_file: Option[File]
+
+    def rolled_to_disk(self) -> bool:
+        """
+        Return whether the stream has rolled over to a real temporary file.
+
+        Returns:
+            `true` after automatic or explicit rollover; `false` while bytes are still memory-backed.
+
+        Example:
+            `SpooledTemporaryFile(max_size=8).rolled_to_disk()` returns `false`.
+        """
+        match self.disk_file:
+            Some(_) => return true
+            None => return false
+
+    def path(self) -> Result[Path, IoError]:
+        """
+        Return the rolled temporary file path.
+
+        Returns:
+            `Ok(Path)` after rollover, or `Err(IoError)` while the stream is still memory-backed.
+
+        Example:
+            `path = spool.rollover()?` returns the same path as `spool.path()?`.
+        """
+        match self.temp_file:
+            Some(temp) => return Ok(temp.path())
+            None => return Err(_io_error(Path("."), "spooled temporary file has not rolled to disk"))
+
+    def rollover(mut self) -> Result[Path, IoError]:
+        """
+        Force rollover to a named temporary file.
+
+        Existing bytes and the current cursor position are copied into the disk-backed file. Calling `rollover()` again
+        is a no-op that returns the current path.
+
+        Returns:
+            The temporary file path, or `Err(IoError)` if creating or opening the file fails.
+
+        Example:
+
+        ```incan
+        spool = SpooledTemporaryFile(max_size=1048576)
+        spool.write(b"header")?
+        path = spool.rollover()?
+        ```
+        """
+        if self.rolled_to_disk():
+            return self.path()
+
+        position = self.memory.tell()
+        data = self.memory.getvalue()
+        temp = NamedTemporaryFile.try_new()?
+        file = temp.path().open("w+b", -1, None, None, None)?
+        file.write_bytes(data)?
+        file.seek(position, 0)?
+        self.temp_file = Some(temp)
+        self.disk_file = Some(file)
+        return self.path()
+
+    def read(self, size: int = -1) -> Result[bytes, IoError]:
+        """
+        Read bytes from the current cursor.
+
+        Args:
+            size: Maximum bytes to read. Use a negative value to read through EOF.
+
+        Returns:
+            Bytes read from the memory buffer or rolled file.
+
+        Example:
+            `SpooledTemporaryFile(max_size=4).read()?` reads from the current cursor.
+        """
+        match self.disk_file:
+            Some(file) => return file.read_bytes(size)
+            None =>
+                match self.memory.read(size):
+                    Ok(data) => return Ok(data)
+                    Err(err) => return Err(_io_error(Path("."), err.detail))
+
+    def read_bytes(self, size: int = -1) -> Result[bytes, IoError]:
+        """
+        Read bytes from the current cursor.
+
+        Args:
+            size: Maximum bytes to read. Use a negative value to read through EOF.
+
+        Returns:
+            Bytes read from the active backing store.
+
+        Example:
+            `data = spool.read_bytes(-1)?`
+        """
+        return self.read(size)
+
+    def write(mut self, data: bytes) -> Result[int, IoError]:
+        """
+        Write bytes at the current cursor and roll over when the buffer exceeds `max_size`.
+
+        Args:
+            data: Bytes to write.
+
+        Returns:
+            Number of bytes accepted for writing.
+
+        Example:
+            `SpooledTemporaryFile(max_size=2).write(b"abc")?` rolls the stream to disk.
+        """
+        return self.write_bytes(data)
+
+    def write_bytes(mut self, data: bytes) -> Result[int, IoError]:
+        """
+        Write bytes at the current cursor and roll over when the buffer exceeds `max_size`.
+
+        Args:
+            data: Bytes to write.
+
+        Returns:
+            Number of bytes accepted for writing.
+
+        Example:
+            `written = spool.write_bytes(chunk)?`
+        """
+        match self.disk_file:
+            Some(file) => return file.write_bytes(data)
+            None =>
+                match self.memory.write_bytes(data):
+                    Ok(written) =>
+                        if len(self.memory.getvalue()) > self.max_size:
+                            self.rollover()?
+                        return Ok(written)
+                    Err(err) => return Err(_io_error(Path("."), err.detail))
+
+    def seek(self, offset: int, whence: int = 0) -> Result[int, IoError]:
+        """
+        Move the stream cursor.
+
+        Args:
+            offset: Byte offset interpreted relative to `whence`.
+            whence: `0` for start, `1` for current position, and `2` for end.
+
+        Returns:
+            New cursor position.
+
+        Example:
+            `spool.seek(0, 0)?` rewinds the stream.
+        """
+        match self.disk_file:
+            Some(file) => return file.seek(offset, whence)
+            None =>
+                match self.memory.seek(offset, whence):
+                    Ok(position) => return Ok(position)
+                    Err(err) => return Err(_io_error(Path("."), err.detail))
+
+    def tell(self) -> Result[int, IoError]:
+        """
+        Return the current byte cursor position.
+
+        Returns:
+            Current offset from the start of the active backing store.
+
+        Example:
+            `offset = spool.tell()?`
+        """
+        match self.disk_file:
+            Some(file) => return file.tell()
+            None => return Ok(self.memory.tell())
+
+    def flush(self) -> Result[None, IoError]:
+        """
+        Flush the disk-backed file if rollover has happened.
+
+        Returns:
+            `Ok(None)` for memory-backed streams or after the host file flushes successfully.
+
+        Example:
+            `spool.flush()?`
+        """
+        match self.disk_file:
+            Some(file) => return file.flush()
+            None => return Ok(None)
+
+    def getvalue(self) -> Result[bytes, IoError]:
+        """
+        Return all stream bytes without changing the current cursor.
+
+        Returns:
+            A snapshot of the memory buffer or rolled file contents.
+
+        Example:
+            `data = spool.getvalue()?`
+        """
+        match self.disk_file:
+            Some(file) =>
+                position = file.tell()?
+                file.seek(0, 0)?
+                data = file.read_bytes(-1)?
+                file.seek(position, 0)?
+                return Ok(data)
+            None => return Ok(self.memory.getvalue())
+
+    def persist(mut self) -> Result[Path, IoError]:
+        """
+        Keep the rolled file on disk and disable automatic deletion.
+
+        Memory-backed streams roll over first, so `persist()` always returns a filesystem path when it succeeds.
+
+        Returns:
+            `Ok(Path)` for the now-ordinary filesystem path, or `Err(IoError)` if rollover or persistence fails.
+
+        Example:
+
+        ```incan
+        spool = SpooledTemporaryFile(max_size=4096)
+        spool.write(b"artifact")?
+        saved = spool.persist()?
+        ```
+        """
+        self.rollover()?
+        self.flush()?
+        match self.temp_file:
+            Some(temp) => return temp.persist()
+            None => return Err(_io_error(Path("."), "spooled temporary file is no longer live"))
+
+
+@rust.allow("non_snake_case")
+pub def SpooledTemporaryFile(max_size: int = 0) -> _SpooledTemporaryFile:
+    """
+    Construct an infallible spooled temporary binary stream.
+
+    Args:
+        max_size: Maximum in-memory byte size before automatic rollover. A value of `0` rolls over after the first
+            write that leaves bytes in the buffer.
+
+    Returns:
+        A memory-backed stream that rolls over to `NamedTemporaryFile` storage when needed.
+
+    Example:
+        `spool = SpooledTemporaryFile(max_size=1024 * 1024)`
+    """
+    return _SpooledTemporaryFile(max_size=max_size, memory=BytesIO(b""), temp_file=None, disk_file=None)
+
+
+def _named_temporary_file_from_result(path: Path, result: Result[RustNamedTemporaryFile, RustIoError]) -> Result[NamedTemporaryFile, IoError]:
+    match result:
+        Ok(file) => return Ok(
+            NamedTemporaryFile(
+                handle=Rc.new(RefCell.new(Some(file))),
+                persisted_path=Rc.new(RefCell.new(None)),
+            ),
+        )
+        Err(detail) => return Err(_io_error(path, detail.to_string()))
+
+
+def _temporary_directory_from_result(path: Path, result: Result[RustTemporaryDirectory, RustIoError]) -> Result[TemporaryDirectory, IoError]:
+    match result:
+        Ok(directory) => return Ok(
+            TemporaryDirectory(
+                handle=Rc.new(RefCell.new(Some(directory))),
+                persisted_path=Rc.new(RefCell.new(None)),
+            ),
+        )
+        Err(detail) => return Err(_io_error(path, detail.to_string()))
+
+
+def _dir_to_string(dir: Option[Path]) -> Option[str]:
+    match dir:
+        Some(path) => return Some(path.0)
+        None => return None
+
+
+def _parent_path(dir: Option[Path]) -> Path:
+    match _dir_to_string(dir):
+        Some(value) => return Path(value)
+        None => return Path(".")
+
+
+def _io_error(path: Path, detail: str) -> IoError:
+    return _fs_io_error(path, detail)

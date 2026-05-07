@@ -3,27 +3,36 @@
 //! This module handles the full compilation flow: module collection, type checking, codegen configuration, dependency
 //! resolution, project generation, and Cargo build/run.
 
+use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::backend::{IrCodegen, ProjectGenerator};
+use crate::backend::{IrCodegen, ProjectGenerator, RunProfile};
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::resolve_dependencies;
-use crate::frontend::ast::Program;
+use crate::frontend::api_metadata::{
+    CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
+    collect_checked_api_metadata, validate_checked_api_docstrings,
+};
 use crate::frontend::ast::{Declaration, Decorator, ImportKind, Span, Spanned};
+use crate::frontend::contract_metadata::{ContractMetadataPackage, read_project_model_bundles};
 use crate::frontend::library_exports::{CheckedExportKind, CheckedNamedExport, collect_checked_public_exports};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::{diagnostics, typechecker};
 use crate::library_manifest::LibraryManifest;
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
-use std::collections::{HashMap, HashSet};
 
 use super::common::{
-    build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules, collect_project_requirements,
-    format_dependency_error, merge_project_requirement_dependencies, resolve_project_root, validate_output_dir,
+    CargoPolicy, build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules,
+    collect_project_requirements, format_dependency_error, imported_module_deps_for_with_index,
+    merge_project_requirement_dependencies, module_key_index, resolve_project_root,
+    typecheck_modules_with_import_graph, validate_output_dir,
 };
+#[cfg(feature = "rust_inspect")]
+use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
 use super::lock::{LockResolutionRequest, resolve_lock_payload};
 use super::vocab_extraction::{PendingDesugarerArtifact, collect_library_vocab_metadata};
 use crate::cli::prelude::ParsedModule;
@@ -39,6 +48,8 @@ use crate::cli::prelude::ParsedModule;
 struct PreparedProject {
     /// The configured project generator
     generator: ProjectGenerator,
+    /// Whether generating the Rust project changed any on-disk project inputs.
+    project_changed: bool,
     /// Output directory path
     out_dir: String,
     /// Project root directory (used as working dir when running)
@@ -219,7 +230,14 @@ fn format_rust_extern_wrapped_diagnostics(stderr: &str, contexts: &[RustExternDe
 
 fn resolve_library_project_root(file_path: Option<&str>) -> CliResult<PathBuf> {
     if let Some(file_path) = file_path {
-        return Ok(resolve_project_root(Path::new(file_path)));
+        let normalized = if Path::new(file_path).is_absolute() {
+            PathBuf::from(file_path)
+        } else {
+            env::current_dir()
+                .map_err(|e| CliError::failure(format!("failed to determine current directory: {e}")))?
+                .join(file_path)
+        };
+        return Ok(resolve_project_root(&normalized));
     }
 
     env::current_dir().map_err(|e| CliError::failure(format!("failed to determine current directory: {e}")))
@@ -237,15 +255,18 @@ fn validate_library_entrypoint(manifest: &ProjectManifest) -> CliResult<PathBuf>
 }
 
 fn module_key(path_segments: &[String]) -> String {
-    path_segments.join("_")
+    canonicalize_source_module_segments(path_segments).join("_")
 }
 
+/// Rename one checked export while preserving its semantic export kind.
 fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> CheckedNamedExport {
     let mut renamed = export.clone();
     renamed.name = exported_name.to_string();
 
     match &mut renamed.kind {
         CheckedExportKind::Function(function_export) => function_export.name = exported_name.to_string(),
+        CheckedExportKind::Partial(partial_export) => partial_export.name = exported_name.to_string(),
+        CheckedExportKind::Alias(alias_export) => alias_export.name = exported_name.to_string(),
         CheckedExportKind::TypeAlias(type_alias_export) => type_alias_export.name = exported_name.to_string(),
         CheckedExportKind::Model(model_export) => model_export.name = exported_name.to_string(),
         CheckedExportKind::Class(class_export) => class_export.name = exported_name.to_string(),
@@ -253,6 +274,7 @@ fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> Ch
         CheckedExportKind::Enum(enum_export) => enum_export.name = exported_name.to_string(),
         CheckedExportKind::Newtype(newtype_export) => newtype_export.name = exported_name.to_string(),
         CheckedExportKind::Const(const_export) => const_export.name = exported_name.to_string(),
+        CheckedExportKind::Static(static_export) => static_export.name = exported_name.to_string(),
     }
 
     renamed
@@ -336,13 +358,20 @@ impl<'a> LibraryReexportResolver<'a> {
 fn prepare_project(
     file_path: &str,
     output_dir: Option<&str>,
-    locked: bool,
-    frozen: bool,
+    cargo_policy: &CargoPolicy,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
 ) -> CliResult<PreparedProject> {
-    let modules = collect_modules(file_path)?;
+    let normalized_file_path = if Path::new(file_path).is_absolute() {
+        PathBuf::from(file_path)
+    } else {
+        env::current_dir()
+            .map_err(|e| CliError::failure(format!("failed to determine current directory: {e}")))?
+            .join(file_path)
+    };
+    let normalized_file_path_str = normalized_file_path.to_string_lossy().to_string();
+    let modules = collect_modules(&normalized_file_path_str)?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
 
     let Some(main_module) = modules.last() else {
@@ -350,10 +379,13 @@ fn prepare_project(
     };
 
     let dep_modules = &modules[..modules.len() - 1];
-    let path = Path::new(file_path);
-    let project_root = resolve_project_root(path);
-
-    let manifest = ProjectManifest::discover(&project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    let path = normalized_file_path.as_path();
+    let inferred_project_root = resolve_project_root(path);
+    let manifest = ProjectManifest::discover(&inferred_project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    let project_root = manifest
+        .as_ref()
+        .map(|manifest| manifest.project_root().to_path_buf())
+        .unwrap_or(inferred_project_root);
     let library_manifest_index = manifest
         .as_ref()
         .map(LibraryManifestIndex::from_project_manifest)
@@ -361,40 +393,13 @@ fn prepare_project(
     let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
 
     // Type check all modules (dependencies + stdlib first), so diagnostics are associated with the correct file.
-    let declared = manifest.as_ref().map(|m| m.declared_rust_crate_names());
-    let mut all_errors: String = String::new();
-    for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module: Vec<(&str, &Program)> = modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
-
-        let mut checker = typechecker::TypeChecker::new();
-        if let Some(names) = declared.clone() {
-            checker.set_declared_crate_names(names);
-        }
-        checker.set_library_manifest_index(library_manifest_index.clone());
-
-        match checker.check_with_imports(&module.ast, &deps_for_module) {
-            Ok(()) => {
-                for warn in checker.warnings() {
-                    eprint!(
-                        "{}",
-                        diagnostics::format_error(module.file_path.to_string_lossy().as_ref(), &module.source, warn)
-                    );
-                }
-            }
-            Err(errs) => {
-                for err in &errs {
-                    all_errors.push_str(&diagnostics::format_error(
-                        module.file_path.to_string_lossy().as_ref(),
-                        &module.source,
-                        err,
-                    ));
-                }
-            }
-        }
-    }
-    if !all_errors.is_empty() {
-        return Err(CliError::failure(all_errors.trim_end()));
-    }
+    typecheck_modules_with_import_graph(
+        &modules,
+        manifest.as_ref(),
+        &library_manifest_index,
+        #[cfg(feature = "rust_inspect")]
+        None,
+    )?;
 
     // Derive project name (manifest overrides filename)
     let project_name = manifest
@@ -416,6 +421,7 @@ fn prepare_project(
 
     // ---- Setup codegen ----
     let mut codegen = IrCodegen::new();
+    codegen.set_preserve_dependency_public_items(false);
     if let Some(m) = manifest.as_ref() {
         codegen.set_declared_crate_names(m.declared_rust_crate_names());
     }
@@ -460,6 +466,8 @@ fn prepare_project(
         }
     };
     merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
+    #[cfg(feature = "rust_inspect")]
+    let metadata_query_paths = collect_rust_inspect_query_paths(&modules);
 
     // Resolve lock payload before moving deps into generator (borrows resolved)
     let lock_payload = resolve_lock_payload(LockResolutionRequest {
@@ -469,12 +477,28 @@ fn prepare_project(
         resolved: &resolved,
         project_requirements: &project_requirements,
         cargo_features: &cargo_features,
-        locked,
-        frozen,
+        cargo_policy,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths: &metadata_query_paths,
     })?;
+    #[cfg(feature = "rust_inspect")]
+    {
+        let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
+            &project_root,
+            project_name.as_str(),
+            manifest
+                .as_ref()
+                .and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone())),
+            &resolved,
+            &project_requirements,
+            lock_payload.clone(),
+        )?;
+        prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths)?;
+        codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir);
+    }
     generator.set_cargo_lock_payload(lock_payload);
 
-    let cargo_flags = cargo_command_flags(locked, frozen, &cargo_features);
+    let cargo_flags = cargo_command_flags(cargo_policy, &cargo_features);
     generator.set_cargo_policy_flags(cargo_flags);
 
     generator.set_dependencies(resolved.dependencies);
@@ -482,7 +506,7 @@ fn prepare_project(
 
     // ---- Generate Rust project files ----
     let has_deps = !dep_modules.is_empty();
-    if has_deps {
+    let project_changed = if has_deps {
         let module_paths: Vec<Vec<String>> = dep_modules.iter().map(|m| m.path_segments.clone()).collect();
         let (main_code, rust_modules) = codegen
             .try_generate_multi_file_nested(&main_module.ast, &module_paths)
@@ -490,18 +514,19 @@ fn prepare_project(
 
         generator
             .generate_nested(&main_code, &rust_modules)
-            .map_err(|e| CliError::failure(format!("Error generating project: {}", e)))?;
+            .map_err(|e| CliError::failure(format!("Error generating project: {}", e)))?
     } else {
         let rust_code = codegen
             .try_generate(&main_module.ast)
             .map_err(|e| CliError::failure(format!("Code generation error: {}", e)))?;
         generator
             .generate(&rust_code)
-            .map_err(|e| CliError::failure(format!("Error generating project: {}", e)))?;
-    }
+            .map_err(|e| CliError::failure(format!("Error generating project: {}", e)))?
+    };
 
     Ok(PreparedProject {
         generator,
+        project_changed,
         out_dir,
         project_root,
         rust_extern_contexts,
@@ -512,8 +537,7 @@ fn prepare_project(
 pub fn build_file(
     file_path: &str,
     output_dir: Option<&String>,
-    locked: bool,
-    frozen: bool,
+    cargo_policy: CargoPolicy,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -521,8 +545,7 @@ pub fn build_file(
     let prepared = prepare_project(
         file_path,
         output_dir.map(|s| s.as_str()),
-        locked,
-        frozen,
+        &cargo_policy,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
@@ -557,8 +580,7 @@ pub fn build_file(
 pub fn build_library(
     file_path: Option<&str>,
     _output_dir: Option<&String>,
-    locked: bool,
-    frozen: bool,
+    cargo_policy: CargoPolicy,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
@@ -587,15 +609,89 @@ pub fn build_library(
 
     let declared = manifest.declared_rust_crate_names();
     let library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
+    let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
+    let contract_model_bundles = read_project_model_bundles(&project_root, &manifest.contract_model_bundle_paths())
+        .map_err(|error| CliError::failure(error.to_string()))?;
+    let rust_extern_contexts = collect_rust_extern_contexts(&modules);
+    let dep_modules = &modules[..modules.len() - 1];
+
+    let mut inline_imports = collect_inline_rust_imports(lib_module, false);
+    for module in dep_modules {
+        inline_imports.extend(collect_inline_rust_imports(module, false));
+    }
+    let project_name = manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.name.clone())
+        .or_else(|| {
+            manifest
+                .project_root()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "incan_library".to_string());
+
+    let cargo_features = CargoFeatureSelection {
+        cargo_features: cargo_features.clone(),
+        cargo_no_default_features,
+        cargo_all_features,
+    }
+    .normalized();
+
+    let mut resolved = match resolve_dependencies(Some(&manifest), &inline_imports, true, &cargo_features) {
+        Ok(resolved) => resolved,
+        Err(errors) => {
+            let mut msg = String::new();
+            let sources = build_source_map(&modules);
+            for err in errors {
+                msg.push_str(&format_dependency_error(&err, &sources));
+            }
+            return Err(CliError::failure(msg.trim_end()));
+        }
+    };
+    merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
+    #[cfg(feature = "rust_inspect")]
+    let metadata_query_paths = collect_rust_inspect_query_paths(&modules);
+
+    let lock_payload_for_typecheck = resolve_lock_payload(LockResolutionRequest {
+        project_root: &project_root,
+        project_name: project_name.as_str(),
+        manifest: Some(&manifest),
+        resolved: &resolved,
+        project_requirements: &project_requirements,
+        cargo_features: &cargo_features,
+        cargo_policy: &cargo_policy,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths: &metadata_query_paths,
+    })?;
+    #[cfg(feature = "rust_inspect")]
+    let rust_inspect_manifest_dir = project_root.join("target").join("incan_lock");
+    #[cfg(feature = "rust_inspect")]
+    {
+        ensure_rust_inspect_workspace(
+            &project_root,
+            project_name.as_str(),
+            manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
+            &resolved,
+            &project_requirements,
+            lock_payload_for_typecheck.clone(),
+        )?;
+        prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths)?;
+    }
+
     let mut all_errors = String::new();
     let mut checked_exports_by_module: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+    let mut api_metadata_modules = Vec::new();
+    let module_idx_by_key = module_key_index(&modules);
 
     for (idx, module) in modules.iter().enumerate() {
-        let deps_for_module: Vec<(&str, &Program)> = modules[..idx].iter().map(|m| (m.name.as_str(), &m.ast)).collect();
-
+        let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
         let mut checker = typechecker::TypeChecker::new();
         checker.set_declared_crate_names(declared.clone());
         checker.set_library_manifest_index(library_manifest_index.clone());
+        #[cfg(feature = "rust_inspect")]
+        checker.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.clone());
 
         match checker.check_with_imports(&module.ast, &deps_for_module) {
             Ok(()) => {
@@ -606,6 +702,11 @@ pub fn build_library(
                     );
                 }
                 let module_exports = collect_checked_public_exports(&module.ast, &checker);
+                api_metadata_modules.push(collect_checked_api_metadata(
+                    &module.ast,
+                    &checker,
+                    module.path_segments.clone(),
+                ));
                 checked_exports_by_module.insert(
                     module_key(&module.path_segments),
                     module_exports
@@ -630,6 +731,26 @@ pub fn build_library(
         return Err(CliError::failure(all_errors.trim_end()));
     }
 
+    for diagnostic in validate_checked_api_docstrings(&api_metadata_modules) {
+        if let Some(module) = modules
+            .iter()
+            .find(|module| module.path_segments == diagnostic.module_path)
+        {
+            all_errors.push_str(&diagnostics::format_error(
+                module.file_path.to_string_lossy().as_ref(),
+                &module.source,
+                &diagnostic.error,
+            ));
+        } else {
+            all_errors.push_str(&diagnostic.error.message);
+            all_errors.push('\n');
+        }
+    }
+
+    if !all_errors.is_empty() {
+        return Err(CliError::failure(all_errors.trim_end()));
+    }
+
     let selected_exports = LibraryReexportResolver::new(&checked_exports_by_module)
         .resolve(lib_module)
         .map_err(|errs| {
@@ -644,18 +765,6 @@ pub fn build_library(
             CliError::failure(msg.trim_end())
         })?;
 
-    let project_name = manifest
-        .project
-        .as_ref()
-        .and_then(|project| project.name.clone())
-        .or_else(|| {
-            manifest
-                .project_root()
-                .file_name()
-                .and_then(|name| name.to_str())
-                .map(str::to_owned)
-        })
-        .unwrap_or_else(|| "incan_library".to_string());
     let project_version = manifest
         .project
         .as_ref()
@@ -663,7 +772,21 @@ pub fn build_library(
         .unwrap_or_else(|| "0.1.0".to_string());
 
     let mut library_manifest =
-        LibraryManifest::from_checked_exports(project_name.clone(), project_version, &selected_exports);
+        LibraryManifest::from_checked_exports(project_name.clone(), project_version.clone(), &selected_exports);
+    library_manifest.contract_metadata.models = ContractMetadataPackage::new(
+        contract_model_bundles
+            .into_iter()
+            .filter(|bundle| bundle.publishable)
+            .collect(),
+    );
+    library_manifest.contract_metadata.api = Some(CheckedApiMetadataPackage {
+        schema_version: CHECKED_API_METADATA_SCHEMA_VERSION,
+        package: Some(CheckedApiPackageIdentity {
+            name: project_name.clone(),
+            version: Some(project_version.clone()),
+        }),
+        modules: api_metadata_modules,
+    });
     let mut pending_desugarer_artifact: Option<PendingDesugarerArtifact> = None;
 
     if let Some(vocab_extraction) = collect_library_vocab_metadata(&manifest, &project_root)? {
@@ -678,11 +801,8 @@ pub fn build_library(
     package_desugarer_artifact(&out_dir, pending_desugarer_artifact.as_ref())?;
     let manifest_path = out_dir.join(format!("{project_name}.incnlib"));
 
-    let dep_modules = &modules[..modules.len() - 1];
-    let project_requirements = collect_project_requirements(&modules, &library_manifest_index)?;
-    let rust_extern_contexts = collect_rust_extern_contexts(&modules);
-
     let mut codegen = IrCodegen::new();
+    codegen.set_preserve_dependency_public_items(true);
     codegen.set_declared_crate_names(declared);
     codegen.set_library_manifest_index(library_manifest_index.clone());
     for module in dep_modules {
@@ -692,31 +812,8 @@ pub fn build_library(
     generator.set_stdlib_features(project_requirements.stdlib_features.clone());
     generator.set_include_dev_dependencies(false);
     generator.set_rust_edition(manifest.build.as_ref().and_then(|build| build.rust_edition.clone()));
-
-    let mut inline_imports = collect_inline_rust_imports(lib_module, false);
-    for module in dep_modules {
-        inline_imports.extend(collect_inline_rust_imports(module, false));
-    }
-
-    let cargo_features = CargoFeatureSelection {
-        cargo_features,
-        cargo_no_default_features,
-        cargo_all_features,
-    }
-    .normalized();
-
-    let mut resolved = match resolve_dependencies(Some(&manifest), &inline_imports, true, &cargo_features) {
-        Ok(resolved) => resolved,
-        Err(errors) => {
-            let mut msg = String::new();
-            let sources = build_source_map(&modules);
-            for err in errors {
-                msg.push_str(&format_dependency_error(&err, &sources));
-            }
-            return Err(CliError::failure(msg.trim_end()));
-        }
-    };
-    merge_project_requirement_dependencies(&mut resolved, &project_requirements)?;
+    #[cfg(feature = "rust_inspect")]
+    let metadata_query_paths = collect_rust_inspect_query_paths(&modules);
 
     let lock_payload = resolve_lock_payload(LockResolutionRequest {
         project_root: &project_root,
@@ -725,11 +822,25 @@ pub fn build_library(
         resolved: &resolved,
         project_requirements: &project_requirements,
         cargo_features: &cargo_features,
-        locked,
-        frozen,
+        cargo_policy: &cargo_policy,
+        #[cfg(feature = "rust_inspect")]
+        rust_inspect_query_paths: &metadata_query_paths,
     })?;
+    #[cfg(feature = "rust_inspect")]
+    {
+        let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
+            &project_root,
+            project_name.as_str(),
+            manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
+            &resolved,
+            &project_requirements,
+            lock_payload.clone(),
+        )?;
+        prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths)?;
+        codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir);
+    }
     generator.set_cargo_lock_payload(lock_payload);
-    generator.set_cargo_policy_flags(cargo_command_flags(locked, frozen, &cargo_features));
+    generator.set_cargo_policy_flags(cargo_command_flags(&cargo_policy, &cargo_features));
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);
 
@@ -812,23 +923,30 @@ fn package_desugarer_artifact(out_dir: &Path, artifact: Option<&PendingDesugarer
 /// Build and run an Incan file.
 pub fn run_file(
     file_path: &str,
-    locked: bool,
-    frozen: bool,
+    cargo_policy: CargoPolicy,
     cargo_features: Vec<String>,
     cargo_no_default_features: bool,
     cargo_all_features: bool,
+    release: bool,
 ) -> CliResult<ExitCode> {
-    let prepared = prepare_project(
+    let mut prepared = prepare_project(
         file_path,
         None,
-        locked,
-        frozen,
+        &cargo_policy,
         cargo_features,
         cargo_no_default_features,
         cargo_all_features,
     )?;
+    prepared.generator.set_run_profile(if release {
+        RunProfile::Release
+    } else {
+        RunProfile::Debug
+    });
 
-    match prepared.generator.run_with_cwd(&prepared.project_root) {
+    match prepared
+        .generator
+        .run_with_cwd(&prepared.project_root, prepared.project_changed)
+    {
         Ok(result) => {
             if !result.stdout.is_empty() {
                 print!("{}", result.stdout);
@@ -849,6 +967,7 @@ mod tests {
     use crate::frontend::lexer;
     use crate::frontend::parser;
     use crate::frontend::symbols::ResolvedType;
+    use crate::lockfile::{IncanLock, compute_deps_fingerprint};
     use crate::manifest::ProjectManifest;
     use std::fs;
 
@@ -1004,6 +1123,247 @@ mod tests {
 
         let result = LibraryReexportResolver::new(&module_exports).resolve(&lib_module);
         assert!(result.is_err(), "expected duplicate export to fail");
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_library_reexports_accepts_directory_entrypoint_spelling() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "pub from dataset.mod import DataSet\npub from dataset.ops import filter_ds\n";
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+        let ast = parser::parse_with_module_path(&tokens, Some("project/src/lib.incn"))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let lib_module = ParsedModule {
+            name: "main".to_string(),
+            path_segments: vec!["main".to_string()],
+            file_path: PathBuf::from("project/src/lib.incn"),
+            source: source.to_string(),
+            ast,
+        };
+
+        let dataset_export = CheckedNamedExport {
+            name: "DataSet".to_string(),
+            kind: CheckedExportKind::TypeAlias(crate::frontend::library_exports::CheckedTypeAliasExport {
+                name: "DataSet".to_string(),
+                type_params: Vec::new(),
+                target: ResolvedType::Named("DataSet".to_string()),
+            }),
+        };
+        let filter_export = CheckedNamedExport {
+            name: "filter_ds".to_string(),
+            kind: CheckedExportKind::Function(crate::frontend::library_exports::CheckedFunctionExport {
+                name: "filter_ds".to_string(),
+                type_params: Vec::new(),
+                params: Vec::new(),
+                return_type: ResolvedType::Named("DataSet".to_string()),
+                is_async: false,
+            }),
+        };
+        let mut module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+        module_exports.insert(
+            "dataset".to_string(),
+            HashMap::from([(dataset_export.name.clone(), dataset_export)]),
+        );
+        module_exports.insert(
+            "dataset_ops".to_string(),
+            HashMap::from([(filter_export.name.clone(), filter_export)]),
+        );
+
+        let resolved = LibraryReexportResolver::new(&module_exports)
+            .resolve(&lib_module)
+            .map_err(|errs| format!("{errs:?}"))?;
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved.iter().any(|export| export.name == "DataSet"));
+        assert!(resolved.iter().any(|export| export.name == "filter_ds"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn resolve_library_reexports_accepts_canonical_nested_module_spelling() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "pub from dataset import DataSet\npub from dataset.ops import filter_ds\n";
+        let tokens = lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+        let ast = parser::parse_with_module_path(&tokens, Some("project/src/lib.incn"))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let lib_module = ParsedModule {
+            name: "main".to_string(),
+            path_segments: vec!["main".to_string()],
+            file_path: PathBuf::from("project/src/lib.incn"),
+            source: source.to_string(),
+            ast,
+        };
+
+        let dataset_export = CheckedNamedExport {
+            name: "DataSet".to_string(),
+            kind: CheckedExportKind::TypeAlias(crate::frontend::library_exports::CheckedTypeAliasExport {
+                name: "DataSet".to_string(),
+                type_params: Vec::new(),
+                target: ResolvedType::Named("DataSet".to_string()),
+            }),
+        };
+        let filter_export = CheckedNamedExport {
+            name: "filter_ds".to_string(),
+            kind: CheckedExportKind::Function(crate::frontend::library_exports::CheckedFunctionExport {
+                name: "filter_ds".to_string(),
+                type_params: Vec::new(),
+                params: Vec::new(),
+                return_type: ResolvedType::Named("DataSet".to_string()),
+                is_async: false,
+            }),
+        };
+        let mut module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+        module_exports.insert(
+            "dataset".to_string(),
+            HashMap::from([(dataset_export.name.clone(), dataset_export)]),
+        );
+        module_exports.insert(
+            "dataset_ops".to_string(),
+            HashMap::from([(filter_export.name.clone(), filter_export)]),
+        );
+
+        let resolved = LibraryReexportResolver::new(&module_exports)
+            .resolve(&lib_module)
+            .map_err(|errs| format!("{errs:?}"))?;
+        assert_eq!(resolved.len(), 2);
+        assert!(resolved.iter().any(|export| export.name == "DataSet"));
+        assert!(resolved.iter().any(|export| export.name == "filter_ds"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_library_accepts_nested_directory_modules() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(src_dir.join("dataset"))?;
+
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"nestedlib\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            src_dir.join("lib.incn"),
+            "pub from dataset.mod import DataSet\npub from dataset.ops import filter_ds\n",
+        )?;
+        std::fs::write(
+            src_dir.join("dataset").join("mod.incn"),
+            "pub trait DataSet[T]:\n    pass\n",
+        )?;
+        std::fs::write(
+            src_dir.join("dataset").join("ops.incn"),
+            "from dataset.mod import DataSet\npub def filter_ds[T](ds: DataSet[T]) -> DataSet[T]:\n    return ds\n",
+        )?;
+
+        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
+        let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
+        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        incan_lock.write(&project_root.join("incan.lock"))?;
+
+        let lib_path = src_dir.join("lib.incn");
+        let lib_path_str = lib_path
+            .to_str()
+            .ok_or("lib path should be valid utf-8 for build_library test")?;
+        let exit = build_library(
+            Some(lib_path_str),
+            None,
+            CargoPolicy::default(),
+            Vec::new(),
+            false,
+            false,
+        )?;
+        assert_eq!(exit, ExitCode::SUCCESS);
+
+        let generated_lib = project_root.join("target").join("lib").join("src").join("lib.rs");
+        let generated_dataset = project_root
+            .join("target")
+            .join("lib")
+            .join("src")
+            .join("dataset")
+            .join("mod.rs");
+        let generated_flat_dataset = project_root.join("target").join("lib").join("src").join("dataset.rs");
+
+        let generated_lib_source = std::fs::read_to_string(&generated_lib)?;
+        let generated_dataset_source = std::fs::read_to_string(&generated_dataset)?;
+
+        assert!(
+            !generated_lib_source.contains("crate::dataset::r#mod"),
+            "generated lib.rs should not reference crate::dataset::r#mod"
+        );
+        assert!(
+            !generated_dataset_source.contains("crate::dataset::r#mod"),
+            "generated dataset/mod.rs should not reference crate::dataset::r#mod"
+        );
+        assert!(
+            !generated_flat_dataset.exists(),
+            "stale flat dataset.rs should not exist after nested library build"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn build_library_accepts_canonical_nested_module_imports() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let src_dir = project_root.join("src");
+        std::fs::create_dir_all(src_dir.join("dataset"))?;
+
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"nestedlib\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            src_dir.join("lib.incn"),
+            "pub from dataset import DataSet\npub from dataset.ops import filter_ds\n",
+        )?;
+        std::fs::write(
+            src_dir.join("dataset").join("mod.incn"),
+            "pub trait DataSet[T]:\n    pass\n",
+        )?;
+        std::fs::write(
+            src_dir.join("dataset").join("ops.incn"),
+            "from dataset import DataSet\npub def filter_ds[T](ds: DataSet[T]) -> DataSet[T]:\n    return ds\n",
+        )?;
+
+        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
+        let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
+        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        incan_lock.write(&project_root.join("incan.lock"))?;
+
+        let lib_path = src_dir.join("lib.incn");
+        let lib_path_str = lib_path
+            .to_str()
+            .ok_or("lib path should be valid utf-8 for build_library test")?;
+        let exit = build_library(
+            Some(lib_path_str),
+            None,
+            CargoPolicy::default(),
+            Vec::new(),
+            false,
+            false,
+        )?;
+        assert_eq!(exit, ExitCode::SUCCESS);
+
+        let generated_lib = project_root.join("target").join("lib").join("src").join("lib.rs");
+        let generated_dataset = project_root
+            .join("target")
+            .join("lib")
+            .join("src")
+            .join("dataset")
+            .join("mod.rs");
+
+        let generated_lib_source = std::fs::read_to_string(&generated_lib)?;
+        let generated_dataset_source = std::fs::read_to_string(&generated_dataset)?;
+
+        assert!(
+            !generated_lib_source.contains("crate::dataset::r#mod"),
+            "generated lib.rs should not reference crate::dataset::r#mod"
+        );
+        assert!(
+            !generated_dataset_source.contains("crate::dataset::r#mod"),
+            "generated dataset/mod.rs should not reference crate::dataset::r#mod"
+        );
+
         Ok(())
     }
 }

@@ -8,36 +8,21 @@ docs_dir: docs
 site_dir: site
 use_directory_urls: true
 
-# Keep `mkdocs build --strict` useful, but don't spam logs for intentional
-# site-root absolute links like `/RFCs/013_.../` (these are safe with
-# `use_directory_urls: true` and are often used inside snippets).
+# Keep `mkdocs build --strict` useful, but don't spam logs for intentional site-root absolute links like
+# `/RFCs/013_.../` (these are safe with `use_directory_urls: true` and are often used inside snippets).
 validation:
   absolute_links: ignore
 
 theme:
   name: material
+  logo: /shared/incapunk/wordmark_small_001.png
   highlightjs: false
   pygments_style: default
   pygments_style_dark: native
   palette:
-    - media: "(prefers-color-scheme)"
-      toggle:
-        icon: material/link
-        name: Switch to light mode
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
-      primary: purple
-      accent: indigo
-      toggle:
-        icon: material/toggle-switch
-        name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
+    - scheme: slate
       primary: black
-      accent: indigo
-      toggle:
-        icon: material/toggle-switch-off
-        name: Switch to system preference
+      accent: amber
   features:
     - navigation.instant
     - navigation.sections
@@ -60,6 +45,7 @@ markdown_extensions:
   - admonition
   - attr_list
   - footnotes
+  - def_list
   - pymdownx.arithmatex:
       generic: true
   - md_in_html
@@ -71,6 +57,8 @@ markdown_extensions:
         - name: incan
           lang: incan
   - pymdownx.inlinehilite
+  - pymdownx.tasklist:
+      custom_checkbox: true
   - pymdownx.snippets:
       check_paths: true
       base_path:
@@ -90,6 +78,7 @@ extra:
 
 extra_css:
   - stylesheets/pygments.css
+  - /shared/incapunk/incapunk.css
 
 extra_javascript:
   - _snippets/javascripts/mathjax.js
@@ -124,6 +113,7 @@ nav:
               - 12. Newtypes (stronger types): language/tutorials/book/12_newtypes.md
               - 13. Unit tests: language/tutorials/book/13_unit_tests.md
           - Build your first API: language/tutorials/build_your_first_api.md
+          - Fallible and infallible paths: language/tutorials/fallible_and_infallible_paths.md
           - Web framework: language/tutorials/web_framework.md
       - How-to:
           - Async programming: language/how-to/async_programming.md
@@ -131,24 +121,48 @@ nav:
           - Error handling recipes: language/how-to/error_handling_recipes.md
           - Error messages: language/how-to/error_messages.md
           - File I/O: language/how-to/file_io.md
+          - Generators: language/how-to/generators.md
           - Imports and modules: language/how-to/imports_and_modules.md
+          - Module state: language/how-to/module_state.md
+          - Choosing collection types: language/how-to/choosing_collections.md
+          - Choosing numeric types: language/how-to/choosing_numeric_types.md
           - Modeling with enums: language/how-to/modeling_with_enums.md
-          - std.testing guide: language/how-to/testing_stdlib.md
+          - Project lifecycle: language/how-to/project_lifecycle.md
+          - Testing: language/how-to/testing_stdlib.md
           - String processing: language/how-to/string_processing.md
           - Performance: language/how-to/performance.md
           - Rust interop: language/how-to/rust_interop.md
           - Rust types (coming from Python): language/how-to/rust_types_for_python_devs.md
       - Reference:
-          - About the language reference: language/reference/index.md
           - Language reference (generated): language/reference/language.md
+          - Code style guide: language/reference/code_style.md
+          - Functions and calls: language/reference/functions.md
+          - Generators: language/reference/generators.md
+          - Symbol aliases: language/reference/symbol_aliases.md
+          - Callable presets: language/reference/callable_presets.md
           - Glossary: language/reference/glossary.md
           - File I/O reference (Path/File APIs): language/reference/file_io.md
           - Imports and modules: language/reference/imports_and_modules.md
+          - Static storage: language/reference/static_storage.md
           - Numeric semantics: language/reference/numeric_semantics.md
+          - Project lifecycle: language/reference/project_lifecycle.md
           - Strings and Bytes: language/reference/strings.md
-          - Testing: language/reference/testing.md
           - Reflection: language/reference/reflection.md
           - Derives & traits (reference): language/reference/derives_and_traits.md
+          - Standard library:
+              - Overview: language/reference/stdlib/index.md
+              - std.async: language/reference/stdlib/async.md
+              - std.collections: language/reference/stdlib/collections.md
+              - std.derives.*: language/reference/stdlib/derives.md
+              - std.fs: language/reference/stdlib/fs.md
+              - std.graph: language/reference/stdlib/graph.md
+              - std.io: language/reference/stdlib/io.md
+              - std.tempfile: language/reference/stdlib/tempfile.md
+              - std.reflection: language/reference/stdlib/reflection.md
+              - std.result: language/reference/stdlib/result.md
+              - std.traits.*: language/reference/stdlib/traits.md
+              - std.testing: language/reference/stdlib/testing.md
+              - std.math: language/reference/stdlib/math.md
           - Stdlib traits:
               - Overview: language/reference/stdlib_traits/index.md
               - Collection protocols: language/reference/stdlib_traits/collection_protocols.md
@@ -168,10 +182,17 @@ nav:
           - Why Incan?: language/explanation/why_incan.md
           - Why not just Rust?: language/explanation/why_not_just_rust.md
           - How Incan works: language/explanation/how_incan_works.md
+          - Compile time and runtime: language/explanation/compile_time_and_runtime.md
+          - Rust-shaped confidence: language/explanation/rust_shaped_confidence.md
           - Control flow: language/explanation/control_flow.md
+          - Callable presets: language/explanation/callable_presets.md
           - Closures: language/explanation/closures.md
           - Consts: language/explanation/consts.md
+          - Generators: language/explanation/generators.md
+          - Module static storage: language/explanation/static_storage.md
+          - Numeric types: language/explanation/numeric_types.md
           - Derives & traits (explained): language/explanation/derives_and_traits.md
+          - Why call-site type args exist: language/explanation/call_site_type_arguments.md
           - How derives work: language/explanation/how_derives_work.md
           - Enums: language/explanation/enums.md
           - Error handling: language/explanation/error_handling.md
@@ -195,15 +216,20 @@ nav:
           - Troubleshooting: tooling/how-to/troubleshooting.md
           - Editor setup: tooling/how-to/editor_setup.md
           - LSP: tooling/how-to/lsp.md
-          - Formatting: tooling/how-to/formatting.md
+          - Formatting with incan fmt: tooling/how-to/formatting.md
           - Testing: tooling/how-to/testing.md
       - Explanation:
           - Projects today: tooling/explanation/projects_today.md
           - LSP architecture: tooling/explanation/lsp_architecture.md
       - Reference:
           - CLI reference: tooling/reference/cli_reference.md
+          - Checked contract metadata: tooling/reference/contract_metadata.md
+          - Checked API metadata: tooling/reference/checked_api_metadata.md
           - Project configuration: tooling/reference/project_configuration.md
           - LSP protocol support: tooling/reference/lsp_protocol_support.md
+  - Whitepapers:
+      - Overview: whitepapers/index.md
+      - Incan ecosystem north star: whitepapers/incan_ecosystem_north_star.md
   - Contributing:
       - Start here: contributing/index.md
       - Tutorials:
@@ -225,12 +251,15 @@ nav:
           - Writing RFCs: contributing/how-to/writing_rfcs.md
       - Explanation:
           - Architecture: contributing/explanation/architecture.md
+          - Duckborrowing: contributing/explanation/duckborrowing.md
           - Layering rules: contributing/explanation/layering.md
+          - Incapunk docs theme: contributing/explanation/incapunk_docs_theme.md
           - Readable, maintainable Rust: contributing/explanation/readable-maintainable-rust.md
           - "std.testing internals": contributing/explanation/stdlib_testing_internals.md
       - RFCs: RFCs/index.md
   - Release notes:
       - Overview: release_notes/index.md
+      - Release 0.3: release_notes/0_3.md
       - Release 0.2: release_notes/0_2.md
       - Release 0.1: release_notes/0_1.md
   - Roadmap: roadmap.md

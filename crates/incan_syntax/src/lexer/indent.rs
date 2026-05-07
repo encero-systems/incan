@@ -38,8 +38,11 @@ impl<'a> Lexer<'a> {
                     return; // Stay at line start
                 }
                 '\n' => {
-                    // Blank line - skip
+                    // Blank line: emit `Newline` so the parser/formatter can preserve vertical gaps
+                    // (otherwise only the newline after the previous statement appears in the stream).
                     self.advance();
+                    self.tokens
+                        .push(Token::new(TokenKind::Newline, Span::new(start, self.current_pos)));
                     return; // Stay at line start
                 }
                 '\r' => {

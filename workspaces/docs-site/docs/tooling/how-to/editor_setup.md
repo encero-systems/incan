@@ -88,7 +88,8 @@ The Incan Language Server provides IDE integration:
 - **Go-to-definition** - Jump to symbol definitions
 - **Completions** - Keywords and symbols
 
-See [Language Server](lsp.md) for setup instructions.
+See [Language Server](lsp.md) for setup instructions. If you develop the compiler from a clone, prefer `make build` so
+`incan` and `incan-lsp` on your `PATH` both point at `target/debug` (see the LSP guide).
 
 ## Format on Save
 
@@ -123,6 +124,7 @@ For now, you can set up a task or use a file watcher:
 
 ## Next Steps
 
-- [Formatting Guide](formatting.md) - Code style and `incan fmt`
+- [Incan Code Style Guide](../../language/reference/code_style.md) - Canonical source layout rules
+- [Formatting with `incan fmt`](formatting.md) - Formatter command usage
 - [Language Guide](../../language/index.md) - Learn Incan syntax and features
 - [Examples](https://github.com/dannys-code-corner/incan/tree/main/examples) - Sample programs

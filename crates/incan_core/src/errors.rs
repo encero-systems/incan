@@ -23,6 +23,7 @@ use crate::strings::StringAccessError;
 /// - Keep this enum focused on identity; avoid duplicating docs/meaning here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ErrorKind {
+    AssertionError,
     ValueError,
     TypeError,
     ZeroDivisionError,
@@ -82,6 +83,14 @@ impl<'a> IncanError<'a> {
         Self::new(ErrorKind::IndexError, ErrorArgs::Static("string index out of range"))
     }
 
+    /// `IndexError: pop from empty list`
+    ///
+    /// Mirrors Python's `list.pop()` on an empty list.
+    #[inline]
+    pub const fn list_pop_empty() -> Self {
+        Self::new(ErrorKind::IndexError, ErrorArgs::Static("pop from empty list"))
+    }
+
     /// `ValueError: slice step cannot be zero`
     #[inline]
     pub const fn slice_step_zero() -> Self {
@@ -106,6 +115,12 @@ impl<'a> IncanError<'a> {
             ErrorKind::ValueError,
             ErrorArgs::Static("range() arg 3 must not be zero"),
         )
+    }
+
+    /// `ValueError: value not found in list`
+    #[inline]
+    pub const fn list_value_not_found() -> Self {
+        Self::new(ErrorKind::ValueError, ErrorArgs::Static("value not found in list"))
     }
 
     /// `IndexError: index {index} out of range for {container} of length {len}`
@@ -225,12 +240,20 @@ mod tests {
             "IndexError: string index out of range"
         );
         assert_eq!(
+            IncanError::list_pop_empty().to_string(),
+            "IndexError: pop from empty list"
+        );
+        assert_eq!(
             IncanError::slice_step_zero().to_string(),
             "ValueError: slice step cannot be zero"
         );
         assert_eq!(
             IncanError::zero_division().to_string(),
             "ZeroDivisionError: float division by zero"
+        );
+        assert_eq!(
+            IncanError::list_value_not_found().to_string(),
+            "ValueError: value not found in list"
         );
     }
 

@@ -40,7 +40,7 @@ pub trait FromJson: for<'de> Deserialize<'de> {
 }
 ```
 
-**Used by**: Models with `@derive(Serialize, Deserialize)` decorators
+**Used by**: Models that derive `std.serde.json`
 
 ### The Prelude
 
@@ -62,7 +62,7 @@ This brings in:
 
 Enables JSON serialization support. Adds dependencies on `serde` and `serde_json`.
 
-**Enabled when**: Your Incan code uses `@derive(Serialize, Deserialize)`
+**Enabled when**: Your Incan code imports and derives `std.serde.json`
 
 ## Architecture Notes
 
@@ -75,6 +75,7 @@ These files define the user-facing `std.*` API surface and are parsed by the com
 
 For `std.testing`, this also includes marker semantics metadata consumed by `incan test` discovery/execution.
 The Rust runtime in `src/testing.rs` only provides irreducible host boundaries declared via `@rust.extern`.
+The language `assert` statement is always available without importing `std.testing`; the stdlib assertion helpers mirror that behavior for call-style assertions and unwrap-style helpers.
 
 ### Why a Separate Crate?
 

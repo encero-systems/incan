@@ -7,6 +7,7 @@
 //! - Completions (future)
 
 pub mod backend;
+mod call_site_type_args;
 pub mod diagnostics;
 
 pub use backend::IncanLanguageServer;

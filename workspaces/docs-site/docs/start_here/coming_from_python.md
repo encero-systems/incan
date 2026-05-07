@@ -9,9 +9,10 @@ This page is a routing guide for Python developers building apps/services.
 - Learn the basics: [The Incan Book (Basics)](../language/tutorials/book/index.md)
 - Build your first API: [Build your first API](../language/tutorials/build_your_first_api.md)
 - Multi-file apps: [Imports and modules (how-to)](../language/how-to/imports_and_modules.md)
+- Write tests: [Testing in Incan](../language/how-to/testing_stdlib.md)
 - Set up your workflow:
     - [Formatting](../tooling/how-to/formatting.md)
-    - [Testing](../tooling/how-to/testing.md)
+    - [Testing CLI](../tooling/how-to/testing.md)
     - [Editor setup](../tooling/how-to/editor_setup.md) (LSP, syntax highlighting)
 
 ## Explanation

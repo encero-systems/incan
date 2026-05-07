@@ -1,22 +1,89 @@
-//! Declaration formatting: imports, models, classes, traits, enums, newtypes, functions, methods, decorators, fields,
-//! params, and type params.
+//! Declaration formatting: imports, models, classes, traits, enums, newtypes, functions, methods, properties,
+//! decorators, fields, params, and type params.
 
 use crate::frontend::ast::*;
 
-use super::Formatter;
+use super::{Formatter, RFC053_METHOD_BLANK_LINES};
 
 impl Formatter {
+    fn method_is_body_bearing(method: &MethodDecl) -> bool {
+        method.body.is_some()
+    }
+
+    /// Return whether a property body should participate in body-bearing member spacing.
+    fn property_is_body_bearing(property: &PropertyDecl) -> bool {
+        property.body.is_some()
+    }
+
+    fn format_methods_with_spacing(&mut self, methods: &[Spanned<MethodDecl>], seen_member_before_methods: bool) {
+        let mut seen_member = seen_member_before_methods;
+        for method in methods {
+            if Self::method_is_body_bearing(&method.node) && seen_member {
+                self.writer.blank_lines(RFC053_METHOD_BLANK_LINES);
+            }
+            self.format_method(&method.node);
+            seen_member = true;
+        }
+    }
+
+    /// Format computed properties with the same body-bearing spacing contract used for methods.
+    fn format_properties_with_spacing(
+        &mut self,
+        properties: &[Spanned<PropertyDecl>],
+        seen_member_before_properties: bool,
+    ) {
+        let mut seen_member = seen_member_before_properties;
+        for property in properties {
+            if Self::property_is_body_bearing(&property.node) && seen_member {
+                self.writer.blank_lines(RFC053_METHOD_BLANK_LINES);
+            }
+            self.format_property(&property.node);
+            seen_member = true;
+        }
+    }
+
+    /// Format same-type method aliases in their declaration form.
+    fn format_method_aliases(&mut self, aliases: &[Spanned<MethodAliasDecl>]) {
+        for alias in aliases {
+            self.writer.write(&alias.node.name);
+            self.writer.write(" = ");
+            if alias.node.explicit_marker {
+                self.writer.write("alias ");
+            }
+            self.writer.write(&alias.node.target);
+            self.writer.newline();
+        }
+    }
+
+    /// Format same-type method partials in their declaration form.
+    fn format_method_partials(&mut self, partials: &[Spanned<MethodPartialDecl>]) {
+        for partial in partials {
+            self.writer.write(&partial.node.name);
+            self.writer.write(" = partial ");
+            self.writer.write(&partial.node.target);
+            self.writer.write("(");
+            self.format_partial_args(&partial.node.args);
+            self.writer.write(")");
+            self.writer.newline();
+        }
+    }
+
+    /// Format one top-level or inline-test declaration.
     pub(super) fn format_declaration(&mut self, decl: &Declaration) {
         match decl {
             Declaration::Import(import) => self.format_import(import),
             Declaration::Const(konst) => self.format_const(konst),
+            Declaration::Static(static_decl) => self.format_static(static_decl),
             Declaration::Model(model) => self.format_model(model),
             Declaration::Class(class) => self.format_class(class),
             Declaration::Trait(tr) => self.format_trait(tr),
+            Declaration::Alias(alias) => self.format_alias(alias),
+            Declaration::Partial(partial) => self.format_partial(partial),
             Declaration::TypeAlias(alias) => self.format_type_alias(alias),
             Declaration::Newtype(nt) => self.format_newtype(nt),
             Declaration::Enum(en) => self.format_enum(en),
             Declaration::Function(func) => self.format_function(func),
+            Declaration::TestModule(test_module) => self.format_test_module(test_module),
             Declaration::Docstring(doc) => self.format_docstring(doc),
         }
     }
@@ -34,30 +101,46 @@ impl Formatter {
         self.writer.newline();
     }
 
+    fn format_static(&mut self, static_decl: &StaticDecl) {
+        self.write_visibility(static_decl.visibility);
+        self.writer.write("static ");
+        self.writer.write(&static_decl.name);
+        self.writer.write(": ");
+        self.format_type(&static_decl.ty.node);
+        self.writer.write(" = ");
+        self.format_expr(&static_decl.value.node);
+        self.writer.newline();
+    }
+
+    fn format_test_module(&mut self, test_module: &TestModuleDecl) {
+        self.writer.write("module ");
+        self.writer.write(&test_module.name);
+        self.writer.writeln(":");
+        self.writer.indent();
+        for decl in &test_module.body {
+            self.format_declaration(&decl.node);
+        }
+        if test_module.body.is_empty() {
+            self.writer.writeln("pass");
+        }
+        self.writer.dedent();
+    }
+
     pub(super) fn format_docstring(&mut self, doc: &str) {
         // Trim leading and trailing whitespace from the docstring content to ensure idempotent formatting
         let trimmed = doc.trim();
         if trimmed.is_empty() {
             self.writer.writeln("\"\"\"\"\"\"");
         } else if trimmed.contains('\n') {
-            let lines: Vec<&str> = trimmed.lines().collect();
-            let first = lines[0].trim();
-            let rest = &lines[1..];
-            let common_indent = rest
-                .iter()
-                .filter(|line| !line.trim().is_empty())
-                .map(|line| line.chars().take_while(|ch| ch.is_whitespace()).count())
-                .min()
-                .unwrap_or(0);
+            let lines = normalized_docstring_lines(trimmed);
 
             // Multi-line docstring
             self.writer.writeln("\"\"\"");
-            self.writer.writeln(first);
-            for line in rest {
-                if line.trim().is_empty() {
+            for line in lines {
+                if line.is_empty() {
                     self.writer.newline();
                 } else {
-                    self.writer.writeln(strip_common_indent(line, common_indent).trim_end());
+                    self.writer.writeln(&line);
                 }
             }
             self.writer.writeln("\"\"\"");
@@ -252,6 +335,7 @@ impl Formatter {
 
     // ---- Models, classes, traits ----
 
+    /// Format a model declaration, including field and method alias members.
     fn format_model(&mut self, model: &ModelDecl) {
         for dec in &model.decorators {
             self.format_decorator(&dec.node);
@@ -267,33 +351,67 @@ impl Formatter {
                 if i > 0 {
                     self.writer.write(", ");
                 }
-                self.writer.write(&trait_name.node);
+                self.writer.write(&trait_name.node.name);
+                if !trait_name.node.type_args.is_empty() {
+                    self.writer.write("[");
+                    for (j, arg) in trait_name.node.type_args.iter().enumerate() {
+                        if j > 0 {
+                            self.writer.write(", ");
+                        }
+                        self.format_type(&arg.node);
+                    }
+                    self.writer.write("]");
+                }
             }
         }
         self.writer.writeln(":");
         self.writer.indent();
 
+        if let Some(docstring) = &model.docstring {
+            self.format_docstring(docstring);
+            if !model.fields.is_empty()
+                || !model.method_aliases.is_empty()
+                || !model.method_partials.is_empty()
+                || !model.properties.is_empty()
+                || !model.methods.is_empty()
+            {
+                self.writer.newline();
+            }
+        }
+
         let has_fields = !model.fields.is_empty();
         for field in &model.fields {
             self.format_field(&field.node);
         }
-
-        let mut first_method = true;
-        for method in &model.methods {
-            if has_fields || !first_method {
-                self.writer.newline();
-            }
-            self.format_method(&method.node);
-            first_method = false;
+        self.format_method_aliases(&model.method_aliases);
+        self.format_method_partials(&model.method_partials);
+        if (!model.method_aliases.is_empty() || !model.method_partials.is_empty())
+            && (!model.properties.is_empty() || !model.methods.is_empty())
+        {
+            self.writer.newline();
         }
 
-        if model.fields.is_empty() && model.methods.is_empty() {
+        let seen_before_properties =
+            has_fields || !model.method_aliases.is_empty() || !model.method_partials.is_empty();
+        self.format_properties_with_spacing(&model.properties, seen_before_properties);
+        self.format_methods_with_spacing(&model.methods, seen_before_properties || !model.properties.is_empty());
+
+        if model.fields.is_empty()
+            && model.method_aliases.is_empty()
+            && model.method_partials.is_empty()
+            && model.properties.is_empty()
+            && model.methods.is_empty()
+        {
+            if model.docstring.is_some() {
+                self.writer.newline();
+            }
             self.writer.writeln("pass");
         }
 
         self.writer.dedent();
     }
 
+    /// Format a class declaration, including field and method alias members.
     fn format_class(&mut self, class: &ClassDecl) {
         for dec in &class.decorators {
             self.format_decorator(&dec.node);
@@ -315,34 +433,68 @@ impl Formatter {
                 if i > 0 {
                     self.writer.write(", ");
                 }
-                self.writer.write(&trait_name.node);
+                self.writer.write(&trait_name.node.name);
+                if !trait_name.node.type_args.is_empty() {
+                    self.writer.write("[");
+                    for (j, arg) in trait_name.node.type_args.iter().enumerate() {
+                        if j > 0 {
+                            self.writer.write(", ");
+                        }
+                        self.format_type(&arg.node);
+                    }
+                    self.writer.write("]");
+                }
             }
         }
 
         self.writer.writeln(":");
         self.writer.indent();
 
+        if let Some(docstring) = &class.docstring {
+            self.format_docstring(docstring);
+            if !class.fields.is_empty()
+                || !class.method_aliases.is_empty()
+                || !class.method_partials.is_empty()
+                || !class.properties.is_empty()
+                || !class.methods.is_empty()
+            {
+                self.writer.newline();
+            }
+        }
+
         let has_fields = !class.fields.is_empty();
         for field in &class.fields {
             self.format_field(&field.node);
         }
-
-        let mut first_method = true;
-        for method in &class.methods {
-            if has_fields || !first_method {
-                self.writer.newline();
-            }
-            self.format_method(&method.node);
-            first_method = false;
+        self.format_method_aliases(&class.method_aliases);
+        self.format_method_partials(&class.method_partials);
+        if (!class.method_aliases.is_empty() || !class.method_partials.is_empty())
+            && (!class.properties.is_empty() || !class.methods.is_empty())
+        {
+            self.writer.newline();
         }
 
-        if class.fields.is_empty() && class.methods.is_empty() {
+        let seen_before_properties =
+            has_fields || !class.method_aliases.is_empty() || !class.method_partials.is_empty();
+        self.format_properties_with_spacing(&class.properties, seen_before_properties);
+        self.format_methods_with_spacing(&class.methods, seen_before_properties || !class.properties.is_empty());
+
+        if class.fields.is_empty()
+            && class.method_aliases.is_empty()
+            && class.method_partials.is_empty()
+            && class.properties.is_empty()
+            && class.methods.is_empty()
+        {
+            if class.docstring.is_some() {
+                self.writer.newline();
+            }
             self.writer.writeln("pass");
         }
 
         self.writer.dedent();
     }
 
+    /// Format a trait declaration, including same-trait method aliases.
     fn format_trait(&mut self, tr: &TraitDecl) {
         for dec in &tr.decorators {
             self.format_decorator(&dec.node);
@@ -364,16 +516,37 @@ impl Formatter {
         self.writer.writeln(":");
         self.writer.indent();
 
-        let mut first = true;
-        for method in &tr.methods {
-            if !first {
+        if let Some(docstring) = &tr.docstring {
+            self.format_docstring(docstring);
+            if !tr.method_aliases.is_empty()
+                || !tr.method_partials.is_empty()
+                || !tr.properties.is_empty()
+                || !tr.methods.is_empty()
+            {
                 self.writer.newline();
             }
-            self.format_method(&method.node);
-            first = false;
         }
 
-        if tr.methods.is_empty() {
+        self.format_method_aliases(&tr.method_aliases);
+        self.format_method_partials(&tr.method_partials);
+        if (!tr.method_aliases.is_empty() || !tr.method_partials.is_empty())
+            && (!tr.properties.is_empty() || !tr.methods.is_empty())
+        {
+            self.writer.newline();
+        }
+
+        let seen_before_properties = !tr.method_aliases.is_empty() || !tr.method_partials.is_empty();
+        self.format_properties_with_spacing(&tr.properties, seen_before_properties);
+        self.format_methods_with_spacing(&tr.methods, seen_before_properties || !tr.properties.is_empty());
+
+        if tr.method_aliases.is_empty()
+            && tr.method_partials.is_empty()
+            && tr.properties.is_empty()
+            && tr.methods.is_empty()
+        {
+            if tr.docstring.is_some() {
+                self.writer.newline();
+            }
             self.writer.writeln("pass");
         }
 
@@ -382,6 +555,7 @@ impl Formatter {
 
     // ---- Enums and newtypes ----
 
+    /// Format an enum declaration, including optional value-enum backing metadata.
     fn format_enum(&mut self, en: &EnumDecl) {
         for dec in &en.decorators {
             self.format_decorator(&dec.node);
@@ -391,20 +565,36 @@ impl Formatter {
         self.writer.write("enum ");
         self.writer.write(&en.name);
         self.format_type_params(&en.type_params);
+        if let Some(value_type) = &en.value_type {
+            self.writer.write("(");
+            self.format_value_enum_type(value_type.node);
+            self.writer.write(")");
+        }
         self.writer.writeln(":");
         self.writer.indent();
+
+        if let Some(docstring) = &en.docstring {
+            self.format_docstring(docstring);
+            if !en.variants.is_empty() {
+                self.writer.newline();
+            }
+        }
 
         for variant in &en.variants {
             self.format_enum_variant(&variant.node);
         }
 
         if en.variants.is_empty() {
+            if en.docstring.is_some() {
+                self.writer.newline();
+            }
             self.writer.writeln("pass");
         }
 
         self.writer.dedent();
     }
 
+    /// Format one enum variant with optional payload fields and raw value assignment.
     fn format_enum_variant(&mut self, variant: &VariantDecl) {
         self.writer.write(&variant.name);
         if !variant.fields.is_empty() {
@@ -417,6 +607,54 @@ impl Formatter {
             }
             self.writer.write(")");
         }
+        if let Some(value) = &variant.value {
+            self.writer.write(" = ");
+            self.format_value_enum_literal(&value.node);
+        }
+        self.writer.newline();
+    }
+
+    /// Format the backing type specifier used by a value enum.
+    fn format_value_enum_type(&mut self, value_type: ValueEnumType) {
+        match value_type {
+            ValueEnumType::Str => self.writer.write("str"),
+            ValueEnumType::Int => self.writer.write("int"),
+        }
+    }
+
+    /// Format the raw literal assigned to a value enum variant.
+    fn format_value_enum_literal(&mut self, value: &ValueEnumLiteral) {
+        match value {
+            ValueEnumLiteral::Str(value) => {
+                self.writer.write("\"");
+                self.writer.write(&escape_value_enum_string(value));
+                self.writer.write("\"");
+            }
+            ValueEnumLiteral::Int(value) => self.writer.write(&value.repr),
+        }
+    }
+
+    /// Format a module-level symbol alias declaration.
+    fn format_alias(&mut self, alias: &AliasDecl) {
+        self.write_visibility(alias.visibility);
+        self.writer.write(&alias.name);
+        self.writer.write(" = ");
+        if alias.explicit_marker {
+            self.writer.write("alias ");
+        }
+        self.writer.write(&alias.target.segments.join("."));
+        self.writer.newline();
+    }
+
+    /// Format a module-level partial callable preset declaration.
+    fn format_partial(&mut self, partial: &PartialDecl) {
+        self.write_visibility(partial.visibility);
+        self.writer.write(&partial.name);
+        self.writer.write(" = partial ");
+        self.writer.write(&partial.target.segments.join("."));
+        self.writer.write("(");
+        self.format_partial_args(&partial.args);
+        self.writer.write(")");
         self.writer.newline();
     }
 
@@ -432,6 +670,7 @@ impl Formatter {
         self.writer.newline();
     }
 
+    /// Format a newtype or rusttype declaration, including method aliases.
     fn format_newtype(&mut self, nt: &NewtypeDecl) {
         for dec in &nt.decorators {
             self.format_decorator(&dec.node);
@@ -441,10 +680,19 @@ impl Formatter {
         self.writer.write("type ");
         self.writer.write(&nt.name);
         self.format_type_params(&nt.type_params);
-        self.writer.write(" = newtype ");
+        if nt.is_rusttype {
+            self.writer.write(" = rusttype ");
+        } else {
+            self.writer.write(" = newtype ");
+        }
         self.format_type(&nt.underlying.node);
 
-        let has_body = nt.docstring.is_some() || !nt.methods.is_empty();
+        let has_body = nt.docstring.is_some()
+            || !nt.rebindings.is_empty()
+            || !nt.method_aliases.is_empty()
+            || !nt.method_partials.is_empty()
+            || !nt.interop_edges.is_empty()
+            || !nt.methods.is_empty();
         if !has_body {
             self.writer.newline();
             return;
@@ -455,17 +703,60 @@ impl Formatter {
 
         if let Some(docstring) = &nt.docstring {
             self.format_docstring(docstring);
+            if !nt.rebindings.is_empty()
+                || !nt.method_aliases.is_empty()
+                || !nt.method_partials.is_empty()
+                || !nt.interop_edges.is_empty()
+                || !nt.methods.is_empty()
+            {
+                self.writer.newline();
+            }
+        }
+
+        for rebinding in &nt.rebindings {
+            self.writer.write(&rebinding.node.name);
+            self.writer.write(" = ");
+            self.format_expr(&rebinding.node.target.node);
+            self.writer.newline();
+        }
+        self.format_method_aliases(&nt.method_aliases);
+        self.format_method_partials(&nt.method_partials);
+        if (!nt.rebindings.is_empty() || !nt.method_aliases.is_empty() || !nt.method_partials.is_empty())
+            && (!nt.interop_edges.is_empty() || !nt.methods.is_empty())
+        {
+            self.writer.newline();
+        }
+
+        if !nt.interop_edges.is_empty() {
+            self.writer.writeln("interop:");
+            self.writer.indent();
+            for edge in &nt.interop_edges {
+                match edge.node.direction {
+                    InteropDirection::From => self.writer.write("from "),
+                    InteropDirection::Into => self.writer.write("into "),
+                }
+                self.format_type(&edge.node.ty.node);
+                self.writer.write(" ");
+                match edge.node.adapter_kind {
+                    InteropAdapterKind::Via => self.writer.write("via "),
+                    InteropAdapterKind::Try => self.writer.write("try "),
+                }
+                self.format_expr(&edge.node.adapter.node);
+                self.writer.newline();
+            }
+            self.writer.dedent();
             if !nt.methods.is_empty() {
                 self.writer.newline();
             }
         }
 
-        for (idx, method) in nt.methods.iter().enumerate() {
-            if idx > 0 {
-                self.writer.newline();
-            }
-            self.format_method(&method.node);
-        }
+        self.format_methods_with_spacing(
+            &nt.methods,
+            !nt.rebindings.is_empty()
+                || !nt.method_aliases.is_empty()
+                || !nt.method_partials.is_empty()
+                || !nt.interop_edges.is_empty(),
+        );
 
         self.writer.dedent();
     }
@@ -489,23 +780,29 @@ impl Formatter {
         }
     }
 
+    /// Format a function declaration, wrapping its parameter list when the header exceeds the line-length target.
     fn format_function(&mut self, func: &FunctionDecl) {
         for dec in &func.decorators {
             self.format_decorator(&dec.node);
         }
 
-        self.write_visibility(func.visibility);
-        if func.is_async() {
-            self.writer.write("async ");
-        }
-        self.writer.write("def ");
-        self.writer.write(&func.name);
-        self.format_type_params(&func.type_params);
+        let checkpoint = self.writer.checkpoint();
+        self.write_function_prefix(func.visibility, func.is_async(), &func.name, &func.type_params);
         self.writer.write("(");
         self.format_params(&func.params);
         self.writer.write(") -> ");
         self.format_type(&func.return_type.node);
-        self.writer.writeln(":");
+        self.writer.write(":");
+        if self.writer.line_length_exceeded() {
+            self.writer.restore(checkpoint);
+            self.write_function_prefix(func.visibility, func.is_async(), &func.name, &func.type_params);
+            self.writer.write("(");
+            self.format_params_multiline(None, &func.params);
+            self.writer.write(") -> ");
+            self.format_type(&func.return_type.node);
+            self.writer.write(":");
+        }
+        self.writer.newline();
 
         self.writer.indent();
 
@@ -521,7 +818,7 @@ impl Formatter {
                 self.writer.writeln("pass");
             } else {
                 for stmt in body {
-                    self.format_statement(&stmt.node);
+                    self.format_statement(stmt);
                 }
             }
         }
@@ -529,40 +826,43 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Format a method declaration, wrapping receiver and parameter lines when the header exceeds the target length.
     fn format_method(&mut self, method: &MethodDecl) {
         for dec in &method.decorators {
             self.format_decorator(&dec.node);
         }
 
-        if method.is_async() {
-            self.writer.write("async ");
-        }
-        self.writer.write("def ");
-        self.writer.write(&method.name);
+        let checkpoint = self.writer.checkpoint();
+        self.write_method_prefix(method);
         self.writer.write("(");
-
-        let has_receiver = method.receiver.is_some();
-        if let Some(receiver) = &method.receiver {
-            match receiver {
-                Receiver::Immutable => self.writer.write("self"),
-                Receiver::Mutable => self.writer.write("mut self"),
-            }
-        }
-
-        if has_receiver && !method.params.is_empty() {
-            self.writer.write(", ");
-        }
-        self.format_params(&method.params);
-
+        self.format_receiver_and_params(method.receiver.as_ref(), &method.params);
         self.writer.write(") -> ");
         self.format_type(&method.return_type.node);
 
         if method.body.is_none() {
-            self.writer.writeln(": ...");
+            if self.writer.line_length_exceeded() {
+                self.writer.restore(checkpoint);
+                self.write_method_prefix(method);
+                self.writer.write("(");
+                self.format_params_multiline(method.receiver.as_ref(), &method.params);
+                self.writer.write(") -> ");
+                self.format_type(&method.return_type.node);
+            }
+            self.writer.newline();
             return;
         }
 
-        self.writer.writeln(":");
+        self.writer.write(":");
+        if self.writer.line_length_exceeded() {
+            self.writer.restore(checkpoint);
+            self.write_method_prefix(method);
+            self.writer.write("(");
+            self.format_params_multiline(method.receiver.as_ref(), &method.params);
+            self.writer.write(") -> ");
+            self.format_type(&method.return_type.node);
+            self.writer.write(":");
+        }
+        self.writer.newline();
         self.writer.indent();
 
         if let Some(body) = &method.body {
@@ -575,7 +875,7 @@ impl Formatter {
                 self.writer.writeln("pass");
             } else {
                 for stmt in body {
-                    self.format_statement(&stmt.node);
+                    self.format_statement(stmt);
                 }
             }
         }
@@ -583,12 +883,111 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Format a computed property declaration.
+    fn format_property(&mut self, property: &PropertyDecl) {
+        self.write_visibility(property.visibility);
+        self.writer.write("property ");
+        self.writer.write(&property.name);
+        self.writer.write(" -> ");
+        self.format_type(&property.return_type.node);
+
+        if property.body.is_none() {
+            self.writer.newline();
+            return;
+        }
+
+        self.writer.writeln(":");
+        self.writer.indent();
+
+        if let Some(body) = &property.body {
+            let (docstring, body) = self.split_leading_docstring(body);
+            if let Some(docstring) = docstring {
+                self.format_docstring(docstring);
+            }
+
+            if body.is_empty() && docstring.is_none() {
+                self.writer.writeln("pass");
+            } else {
+                for stmt in body {
+                    self.format_statement(stmt);
+                }
+            }
+        }
+
+        self.writer.dedent();
+    }
+
+    /// Write the reusable prefix before a function's opening parameter parenthesis.
+    fn write_function_prefix(&mut self, visibility: Visibility, is_async: bool, name: &str, type_params: &[TypeParam]) {
+        self.write_visibility(visibility);
+        if is_async {
+            self.writer.write("async ");
+        }
+        self.writer.write("def ");
+        self.writer.write(name);
+        self.format_type_params(type_params);
+    }
+
+    /// Write the reusable prefix before a method's opening parameter parenthesis.
+    fn write_method_prefix(&mut self, method: &MethodDecl) {
+        if method.is_async() {
+            self.writer.write("async ");
+        }
+        self.writer.write("def ");
+        self.writer.write(&method.name);
+        if !method.type_params.is_empty() {
+            self.format_type_params(&method.type_params);
+        }
+    }
+
+    /// Format an explicit method receiver.
+    fn format_receiver(&mut self, receiver: &Receiver) {
+        match receiver {
+            Receiver::Immutable => self.writer.write("self"),
+            Receiver::Mutable => self.writer.write("mut self"),
+        }
+    }
+
+    /// Format an inline method receiver followed by ordinary parameters.
+    fn format_receiver_and_params(&mut self, receiver: Option<&Receiver>, params: &[Spanned<Param>]) {
+        if let Some(receiver) = receiver {
+            self.format_receiver(receiver);
+            if !params.is_empty() {
+                self.writer.write(", ");
+            }
+        }
+        self.format_params(params);
+    }
+
+    /// Format a multiline receiver/parameter list inside an already-opened signature.
+    fn format_params_multiline(&mut self, receiver: Option<&Receiver>, params: &[Spanned<Param>]) {
+        let trailing_commas = self.writer.config().trailing_commas;
+        self.writer.newline();
+        self.writer.indent();
+        if let Some(receiver) = receiver {
+            self.format_receiver(receiver);
+            if trailing_commas || !params.is_empty() {
+                self.writer.write(",");
+            }
+            self.writer.newline();
+        }
+        for (i, param) in params.iter().enumerate() {
+            self.format_param(&param.node);
+            if trailing_commas || i + 1 < params.len() {
+                self.writer.write(",");
+            }
+            self.writer.newline();
+        }
+        self.writer.dedent();
+    }
+
     // ---- Decorators ----
 
+    /// Format one declaration decorator, preserving `@name` versus `@name()`.
     fn format_decorator(&mut self, dec: &Decorator) {
         self.writer.write("@");
         self.format_decorator_path(&dec.path);
-        if !dec.args.is_empty() {
+        if dec.is_call {
             self.writer.write("(");
             for (i, arg) in dec.args.iter().enumerate() {
                 if i > 0 {
@@ -681,6 +1080,14 @@ impl Formatter {
     }
 
     fn format_param(&mut self, param: &Param) {
+        if param.is_mut {
+            self.writer.write("mut ");
+        }
+        match param.kind {
+            ParamKind::Normal => {}
+            ParamKind::RestPositional => self.writer.write("*"),
+            ParamKind::RestKeyword => self.writer.write("**"),
+        }
         self.writer.write(&param.name);
         self.writer.write(": ");
         self.format_type(&param.ty.node);
@@ -735,6 +1142,22 @@ impl Formatter {
     }
 }
 
+/// Escape a value enum string literal for formatter round-tripping.
+fn escape_value_enum_string(s: &str) -> String {
+    let mut result = String::new();
+    for c in s.chars() {
+        match c {
+            '\n' => result.push_str("\\n"),
+            '\r' => result.push_str("\\r"),
+            '\t' => result.push_str("\\t"),
+            '\\' => result.push_str("\\\\"),
+            '"' => result.push_str("\\\""),
+            c => result.push(c),
+        }
+    }
+    result
+}
+
 fn strip_common_indent(line: &str, indent: usize) -> &str {
     let mut chars_to_strip = indent;
     let mut start = 0usize;
@@ -756,4 +1179,32 @@ fn strip_common_indent(line: &str, indent: usize) -> &str {
     }
 
     &line[start..]
+}
+
+fn normalized_docstring_lines(doc: &str) -> Vec<String> {
+    let lines: Vec<&str> = doc.lines().collect();
+    let first = lines.first().map(|line| line.trim()).unwrap_or_default();
+    let rest = lines.get(1..).unwrap_or_default();
+    let common_indent = rest
+        .iter()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.chars().take_while(|ch| ch.is_whitespace()).count())
+        .min()
+        .unwrap_or(0);
+
+    let mut normalized = Vec::new();
+    normalized.push(first.to_string());
+    let mut previous_blank = false;
+    for line in rest {
+        if line.trim().is_empty() {
+            if !previous_blank {
+                normalized.push(String::new());
+                previous_blank = true;
+            }
+        } else {
+            normalized.push(strip_common_indent(line, common_indent).trim_end().to_string());
+            previous_blank = false;
+        }
+    }
+    normalized
 }

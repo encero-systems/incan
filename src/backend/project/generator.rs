@@ -15,6 +15,8 @@ use std::path::{Path, PathBuf};
 use crate::manifest::DependencySpec;
 use incan_core::lang::rust_keywords;
 
+const MOD_INSERT_MARKER: &str = "// __INCAN_INSERT_MODS__";
+
 // ============================================================================
 // RFC 023: Stdlib module naming
 // ============================================================================
@@ -48,6 +50,8 @@ pub struct ProjectGenerator {
     pub(super) output_dir: PathBuf,
     /// Project name
     pub(super) name: String,
+    /// Optional Cargo package name when it should differ from the generated target name.
+    pub(super) package_name: Option<String>,
     /// Whether this is a binary (true) or library (false)
     pub(super) is_binary: bool,
     /// Enabled stdlib feature flags for the generated project (for example `json`, `async`, `web`).
@@ -64,6 +68,17 @@ pub struct ProjectGenerator {
     pub(super) cargo_policy_flags: Vec<String>,
     /// Optional Rust edition override.
     pub(super) rust_edition: Option<String>,
+    /// Profile used when building the generated crate for `incan run`.
+    pub(super) run_profile: RunProfile,
+}
+
+/// Cargo profile used for `incan run`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunProfile {
+    /// `cargo build` (debug profile).
+    Debug,
+    /// `cargo build --release` (optimized profile).
+    Release,
 }
 
 impl ProjectGenerator {
@@ -71,6 +86,7 @@ impl ProjectGenerator {
         Self {
             output_dir: output_dir.as_ref().to_path_buf(),
             name: name.to_string(),
+            package_name: None,
             is_binary,
             stdlib_features: Vec::new(),
             dependencies: Vec::new(),
@@ -79,6 +95,7 @@ impl ProjectGenerator {
             cargo_lock_payload: None,
             cargo_policy_flags: Vec::new(),
             rust_edition: None,
+            run_profile: RunProfile::Debug,
         }
     }
 
@@ -92,6 +109,11 @@ impl ProjectGenerator {
         normalized.sort();
         normalized.dedup();
         self.stdlib_features = normalized;
+    }
+
+    /// Override the Cargo package name while preserving the generated Rust target name.
+    pub fn set_package_name(&mut self, package_name: Option<String>) {
+        self.package_name = package_name;
     }
 
     /// Set resolved Rust dependencies.
@@ -124,15 +146,66 @@ impl ProjectGenerator {
         self.rust_edition = edition;
     }
 
-    /// Generate the project structure (single-file mode).
-    pub fn generate(&self, rust_code: &str) -> io::Result<()> {
+    /// Set the cargo profile used for `incan run`.
+    pub fn set_run_profile(&mut self, profile: RunProfile) {
+        self.run_profile = profile;
+    }
+
+    /// Ensure the generated `src/` directory exists.
+    fn ensure_generated_src_dir(&self) -> io::Result<PathBuf> {
         let src_dir = self.output_dir.join("src");
         fs::create_dir_all(&src_dir)?;
+        Ok(src_dir)
+    }
+
+    /// Remove a conflicting module artifact if it exists.
+    ///
+    /// This deliberately removes only the generated Rust file-or-directory path that conflicts with the layout we are
+    /// about to emit, rather than deleting the entire `src/` tree.
+    fn remove_conflicting_module_artifact(path: &Path) -> io::Result<bool> {
+        if path.is_dir() {
+            fs::remove_dir_all(path)?;
+            return Ok(true);
+        } else if path.exists() {
+            fs::remove_file(path)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    /// Write `content` to `path` only when the file contents actually changed.
+    fn write_file_if_changed(path: &Path, content: &str) -> io::Result<bool> {
+        match fs::read_to_string(path) {
+            Ok(existing) if existing == content => Ok(false),
+            Ok(_) | Err(_) => {
+                fs::write(path, content)?;
+                Ok(true)
+            }
+        }
+    }
+
+    /// Render a Rust module declaration for a generated module file or directory.
+    ///
+    /// Keyword-named modules use raw identifiers in Rust (`r#type`) while keeping the on-disk layout clean
+    /// (`type.rs`, `type/mod.rs`). The explicit `#[path = "..."]` keeps that mapping obvious in emitted code and
+    /// matches the RFC 023 closeout contract for keyword-named module paths.
+    fn render_module_decl(name: &str, relative_path: &str, visibility: &str) -> String {
+        let escaped_name = rust_keywords::escape_keyword(name);
+        if rust_keywords::is_keyword(name) {
+            return format!("#[path = \"{relative_path}\"]\n{visibility}mod {escaped_name};");
+        }
+        format!("{visibility}mod {escaped_name};")
+    }
+
+    /// Generate the project structure (single-file mode).
+    pub fn generate(&self, rust_code: &str) -> io::Result<bool> {
+        let src_dir = self.ensure_generated_src_dir()?;
+        let mut changed = false;
 
         // Write Cargo.toml
         let cargo_toml = self.generate_cargo_toml()?;
-        fs::write(self.output_dir.join("Cargo.toml"), cargo_toml)?;
-        self.write_cargo_lock_if_needed()?;
+        changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
+        changed |= self.write_cargo_lock_if_needed()?;
 
         // Write main source file
         let main_file = if self.is_binary {
@@ -140,9 +213,9 @@ impl ProjectGenerator {
         } else {
             src_dir.join("lib.rs")
         };
-        fs::write(main_file, rust_code)?;
+        changed |= Self::write_file_if_changed(&main_file, rust_code)?;
 
-        Ok(())
+        Ok(changed)
     }
 
     /// Generate the project structure with multiple module files (flat).
@@ -150,24 +223,28 @@ impl ProjectGenerator {
     /// # Arguments
     /// * `main_code` - The main.rs code (without mod declarations, they will be prepended)
     /// * `modules` - HashMap of module name to module code (e.g., "models" -> "pub struct User { ... }")
-    pub fn generate_multi(&self, main_code: &str, modules: &HashMap<String, String>) -> io::Result<()> {
-        let src_dir = self.output_dir.join("src");
-        fs::create_dir_all(&src_dir)?;
+    pub fn generate_multi(&self, main_code: &str, modules: &HashMap<String, String>) -> io::Result<bool> {
+        let src_dir = self.ensure_generated_src_dir()?;
+        let mut changed = false;
+
+        for module_name in modules.keys() {
+            changed |= Self::remove_conflicting_module_artifact(&src_dir.join(module_name))?;
+        }
 
         // Write Cargo.toml
         let cargo_toml = self.generate_cargo_toml()?;
-        fs::write(self.output_dir.join("Cargo.toml"), cargo_toml)?;
-        self.write_cargo_lock_if_needed()?;
+        changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
+        changed |= self.write_cargo_lock_if_needed()?;
 
         // Write each module file
         for (module_name, module_code) in modules {
             let module_file = src_dir.join(format!("{}.rs", module_name));
-            fs::write(module_file, module_code)?;
+            changed |= Self::write_file_if_changed(&module_file, module_code)?;
         }
 
-        // Build main.rs with the crate-level prelude first, then mod declarations.
+        // Build main.rs with the generated header first, then mod declarations.
         // Crate attributes (`#![...]`) must appear before any Rust items (including `mod ...;`),
-        // so we insert module declarations immediately after the crate-level allow attribute.
+        // so we insert module declarations at the backend marker after any crate attributes.
         let mut full_main = String::new();
         full_main.push_str(main_code);
 
@@ -177,12 +254,21 @@ impl ProjectGenerator {
             module_names.sort();
             let mods: String = module_names
                 .iter()
-                .map(|m| format!("mod {};\n", rust_keywords::escape_keyword(m)))
-                .collect();
+                .map(|m| Self::render_module_decl(m, &format!("{m}.rs"), ""))
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
 
-            // Insert right after the crate-level allow attribute line (if present),
-            // otherwise prepend (best-effort).
-            if let Some(attr_pos) = full_main.find("#![allow(") {
+            // Insert at the backend marker when present. Older generated code may not have the marker, so fall back to
+            // the crate-attribute position before prepending.
+            if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
+                let line_end = full_main[marker_pos..]
+                    .find('\n')
+                    .map(|o| marker_pos + o + 1)
+                    .unwrap_or(full_main.len());
+                full_main.replace_range(marker_pos..line_end, &mods);
+                full_main.insert(marker_pos + mods.len(), '\n');
+            } else if let Some(attr_pos) = full_main.find("#![") {
                 let line_end = full_main[attr_pos..]
                     .find('\n')
                     .map(|o| attr_pos + o + 1)
@@ -200,9 +286,9 @@ impl ProjectGenerator {
         } else {
             src_dir.join("lib.rs")
         };
-        fs::write(main_file, full_main)?;
+        changed |= Self::write_file_if_changed(&main_file, &full_main)?;
 
-        Ok(())
+        Ok(changed)
     }
 
     /// Generate the project structure with nested module directories.
@@ -216,14 +302,14 @@ impl ProjectGenerator {
     /// # Arguments
     /// * `main_code` - The main.rs code (without mod declarations, they will be prepended)
     /// * `modules` - HashMap of path segments to module code (e.g., ["db", "models"] -> "pub struct User { ... }")
-    pub fn generate_nested(&self, main_code: &str, modules: &HashMap<Vec<String>, String>) -> io::Result<()> {
-        let src_dir = self.output_dir.join("src");
-        fs::create_dir_all(&src_dir)?;
+    pub fn generate_nested(&self, main_code: &str, modules: &HashMap<Vec<String>, String>) -> io::Result<bool> {
+        let src_dir = self.ensure_generated_src_dir()?;
+        let mut changed = false;
 
         // Write Cargo.toml
         let cargo_toml = self.generate_cargo_toml()?;
-        fs::write(self.output_dir.join("Cargo.toml"), cargo_toml)?;
-        self.write_cargo_lock_if_needed()?;
+        changed |= Self::write_file_if_changed(&self.output_dir.join("Cargo.toml"), &cargo_toml)?;
+        changed |= self.write_cargo_lock_if_needed()?;
 
         // ---- RFC 023: Transform stdlib paths to __incan_std ----
         let mut transformed_modules: HashMap<Vec<String>, String> = HashMap::new();
@@ -264,6 +350,20 @@ impl ProjectGenerator {
         let modules_with_submodules: std::collections::HashSet<Vec<String>> =
             dir_submodules.keys().filter(|path| !path.is_empty()).cloned().collect();
 
+        // Remove only the stale Rust paths that conflict with the layout we are about to generate.
+        for path_segments in transformed_modules.keys() {
+            let mut module_path = src_dir.clone();
+            for segment in path_segments {
+                module_path = module_path.join(segment);
+            }
+
+            if modules_with_submodules.contains(path_segments) {
+                changed |= Self::remove_conflicting_module_artifact(&module_path.with_extension("rs"))?;
+            } else {
+                changed |= Self::remove_conflicting_module_artifact(&module_path)?;
+            }
+        }
+
         // ---- Create directories and mod.rs files for modules with submodules ----
         for (dir_path, submodules) in &dir_submodules {
             if dir_path.is_empty() {
@@ -283,7 +383,16 @@ impl ProjectGenerator {
             // Add submodule declarations
             let submod_declarations: String = submodules
                 .iter()
-                .map(|s| format!("pub mod {};", rust_keywords::escape_keyword(s)))
+                .map(|s| {
+                    let mut child_path = dir_path.clone();
+                    child_path.push(s.clone());
+                    let relative_path = if modules_with_submodules.contains(&child_path) {
+                        format!("{s}/mod.rs")
+                    } else {
+                        format!("{s}.rs")
+                    };
+                    Self::render_module_decl(s, &relative_path, "pub ")
+                })
                 .collect::<Vec<_>>()
                 .join("\n");
 
@@ -301,7 +410,7 @@ impl ProjectGenerator {
             }
 
             let mod_rs_path = dir.join("mod.rs");
-            fs::write(mod_rs_path, mod_rs_content)?;
+            changed |= Self::write_file_if_changed(&mod_rs_path, &mod_rs_content)?;
         }
 
         // ---- Write leaf module code files (modules without submodules) ----
@@ -324,12 +433,12 @@ impl ProjectGenerator {
             let file_name = format!("{file_stem}.rs");
             file_path = file_path.join(file_name);
 
-            fs::write(file_path, module_code)?;
+            changed |= Self::write_file_if_changed(&file_path, module_code)?;
         }
 
-        // ---- Build main.rs with crate-level prelude + top-level mod declarations ----
+        // ---- Build main.rs with generated header + top-level mod declarations ----
         // Crate attributes (`#![...]`) must appear before any Rust items (including `mod ...;`), so we insert module
-        // declarations immediately after the crate-level allow attribute.
+        // declarations at the backend marker after any crate attributes.
         let mut full_main = String::new();
         full_main.push_str(main_code);
 
@@ -338,10 +447,27 @@ impl ProjectGenerator {
         if !sorted_top.is_empty() {
             let mods: String = sorted_top
                 .iter()
-                .map(|m| format!("mod {};\n", rust_keywords::escape_keyword(m)))
-                .collect();
+                .map(|m| {
+                    let top_level_path = vec![(*m).clone()];
+                    let relative_path = if modules_with_submodules.contains(&top_level_path) {
+                        format!("{m}/mod.rs")
+                    } else {
+                        format!("{m}.rs")
+                    };
+                    Self::render_module_decl(m, &relative_path, "")
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+                + "\n";
 
-            if let Some(attr_pos) = full_main.find("#![allow(") {
+            if let Some(marker_pos) = full_main.find(MOD_INSERT_MARKER) {
+                let line_end = full_main[marker_pos..]
+                    .find('\n')
+                    .map(|o| marker_pos + o + 1)
+                    .unwrap_or(full_main.len());
+                full_main.replace_range(marker_pos..line_end, &mods);
+                full_main.insert(marker_pos + mods.len(), '\n');
+            } else if let Some(attr_pos) = full_main.find("#![") {
                 let line_end = full_main[attr_pos..]
                     .find('\n')
                     .map(|o| attr_pos + o + 1)
@@ -359,18 +485,17 @@ impl ProjectGenerator {
         } else {
             src_dir.join("lib.rs")
         };
-        fs::write(main_file, full_main)?;
+        changed |= Self::write_file_if_changed(&main_file, &full_main)?;
 
-        Ok(())
+        Ok(changed)
     }
 
     /// Write a Cargo.lock file if a lock payload was provided.
-    fn write_cargo_lock_if_needed(&self) -> io::Result<()> {
+    fn write_cargo_lock_if_needed(&self) -> io::Result<bool> {
         let Some(payload) = &self.cargo_lock_payload else {
-            return Ok(());
+            return Ok(false);
         };
-        fs::write(self.output_dir.join("Cargo.lock"), payload)?;
-        Ok(())
+        Self::write_file_if_changed(&self.output_dir.join("Cargo.lock"), payload)
     }
 }
 
@@ -452,6 +577,35 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_multi_escapes_keyword_module_names() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("incan_test_keyword_modules");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let generator = ProjectGenerator::new(&temp_dir, "test_keyword_modules", true);
+
+        let mut modules = HashMap::new();
+        modules.insert("async".to_string(), "pub fn launch() {}".to_string());
+        modules.insert("type".to_string(), "pub fn marker() {}".to_string());
+
+        generator.generate_multi("fn main() {}", &modules)?;
+
+        let main_content = fs::read_to_string(temp_dir.join("src/main.rs"))?;
+        assert!(main_content.contains("#[path = \"async.rs\"]\nmod r#async;"));
+        assert!(main_content.contains("#[path = \"type.rs\"]\nmod r#type;"));
+        assert!(temp_dir.join("src/async.rs").exists());
+        assert!(temp_dir.join("src/type.rs").exists());
+
+        let async_content = fs::read_to_string(temp_dir.join("src/async.rs"))?;
+        assert!(async_content.contains("pub fn launch"));
+
+        let type_content = fs::read_to_string(temp_dir.join("src/type.rs"))?;
+        assert!(type_content.contains("pub fn marker"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
     fn test_generate_nested_transforms_stdlib_to_incan_std() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join("incan_test_stdlib_transform");
         let _ = fs::remove_dir_all(&temp_dir);
@@ -517,6 +671,48 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_nested_escapes_keyword_submodule_names() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("incan_test_nested_keyword_modules");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let generator = ProjectGenerator::new(&temp_dir, "test_nested_keyword_modules", false);
+
+        let mut modules = HashMap::new();
+        modules.insert(
+            vec!["api".to_string(), "async".to_string()],
+            "pub fn launch() {}".to_string(),
+        );
+        modules.insert(
+            vec!["type".to_string(), "helpers".to_string()],
+            "pub fn marker() {}".to_string(),
+        );
+
+        generator.generate_nested("pub fn root() {}", &modules)?;
+
+        assert!(temp_dir.join("src/api").exists());
+        assert!(temp_dir.join("src/api/mod.rs").exists());
+        assert!(temp_dir.join("src/api/async.rs").exists());
+        assert!(temp_dir.join("src/type").exists());
+        assert!(temp_dir.join("src/type/mod.rs").exists());
+        assert!(temp_dir.join("src/type/helpers.rs").exists());
+
+        let main_content = fs::read_to_string(temp_dir.join("src/lib.rs"))?;
+        assert!(main_content.contains("#[path = \"type/mod.rs\"]\nmod r#type;"));
+
+        let mod_rs_content = fs::read_to_string(temp_dir.join("src/api/mod.rs"))?;
+        assert!(mod_rs_content.contains("#[path = \"async.rs\"]\npub mod r#async;"));
+
+        let async_content = fs::read_to_string(temp_dir.join("src/api/async.rs"))?;
+        assert!(async_content.contains("pub fn launch"));
+
+        let type_mod_rs_content = fs::read_to_string(temp_dir.join("src/type/mod.rs"))?;
+        assert!(type_mod_rs_content.contains("pub mod helpers;"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
     fn test_generate_multi_empty_modules() -> Result<(), Box<dyn std::error::Error>> {
         let temp_dir = std::env::temp_dir().join("incan_test_multi_empty");
         let _ = fs::remove_dir_all(&temp_dir);
@@ -530,6 +726,110 @@ mod tests {
         let main_content = fs::read_to_string(temp_dir.join("src/main.rs"))?;
         // Should just be the main code, no mod declarations
         assert_eq!(main_content, "fn main() {}");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_is_unchanged_when_contents_match() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("incan_test_generate_unchanged");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let generator = ProjectGenerator::new(&temp_dir, "test_unchanged", true);
+        let first = generator.generate("fn main() {}\n")?;
+        let second = generator.generate("fn main() {}\n")?;
+
+        assert!(first, "initial generation should report changes");
+        assert!(!second, "identical regeneration should not rewrite files");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_nested_is_unchanged_when_contents_match() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("incan_test_generate_nested_unchanged");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let generator = ProjectGenerator::new(&temp_dir, "test_nested_unchanged", true);
+        let mut modules = HashMap::new();
+        modules.insert(
+            vec!["dataset".to_string(), "ops".to_string()],
+            "pub fn filter_ds<T>(ds: T) -> T { ds }".to_string(),
+        );
+
+        let first = generator.generate_nested("fn main() {}\n", &modules)?;
+        let second = generator.generate_nested("fn main() {}\n", &modules)?;
+
+        assert!(first, "initial nested generation should report changes");
+        assert!(!second, "identical nested regeneration should not rewrite files");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_nested_removes_stale_flat_module_file() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("incan_test_nested_cleanup");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let generator = ProjectGenerator::new(&temp_dir, "test_cleanup", false);
+
+        let mut flat_modules = HashMap::new();
+        flat_modules.insert("dataset".to_string(), "pub trait DataSet<T> {}".to_string());
+        generator.generate_multi("pub fn root() {}", &flat_modules)?;
+        assert!(
+            temp_dir.join("src/dataset.rs").exists(),
+            "flat module should exist after flat generation"
+        );
+
+        let mut nested_modules = HashMap::new();
+        nested_modules.insert(vec!["dataset".to_string()], "pub trait DataSet<T> {}".to_string());
+        nested_modules.insert(
+            vec!["dataset".to_string(), "ops".to_string()],
+            "pub fn filter_ds<T>(ds: T) -> T { ds }".to_string(),
+        );
+        generator.generate_nested("pub fn root() {}", &nested_modules)?;
+
+        assert!(
+            !temp_dir.join("src/dataset.rs").exists(),
+            "stale flat module file should be removed before nested generation"
+        );
+        assert!(
+            temp_dir.join("src/dataset/mod.rs").exists(),
+            "nested module entrypoint should exist"
+        );
+        assert!(
+            temp_dir.join("src/dataset/ops.rs").exists(),
+            "nested leaf module should exist"
+        );
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_nested_preserves_unrelated_src_files() -> Result<(), Box<dyn std::error::Error>> {
+        let temp_dir = std::env::temp_dir().join("incan_test_nested_preserve_unrelated");
+        let _ = fs::remove_dir_all(&temp_dir);
+        fs::create_dir_all(temp_dir.join("src"))?;
+        fs::write(temp_dir.join("src").join("manual.rs"), "pub fn keep_me() {}\n")?;
+
+        let generator = ProjectGenerator::new(&temp_dir, "test_cleanup", false);
+        let mut nested_modules = HashMap::new();
+        nested_modules.insert(vec!["dataset".to_string()], "pub trait DataSet<T> {}".to_string());
+        nested_modules.insert(
+            vec!["dataset".to_string(), "ops".to_string()],
+            "pub fn filter_ds<T>(ds: T) -> T { ds }".to_string(),
+        );
+
+        generator.generate_nested("pub fn root() {}", &nested_modules)?;
+
+        assert!(
+            temp_dir.join("src/manual.rs").exists(),
+            "unrelated source files should not be removed by nested generation"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

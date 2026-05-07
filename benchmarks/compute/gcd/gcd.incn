@@ -1,14 +1,7 @@
 # GCD Benchmark
-# Compute GCD for many number pairs using Euclidean algorithm
+# Compute GCD for many number pairs using std.math.gcd
 
-def gcd(a: int, b: int) -> int:
-    mut x = a
-    mut y = b
-    while y != 0:
-        temp = y
-        y = x % y
-        x = temp
-    return x
+import std.math
 
 def main() -> None:
     iterations = 10_000_000
@@ -18,6 +11,6 @@ def main() -> None:
     for i in range(1, iterations + 1):
         a = (i * 17) % 10000 + 1
         b = (i * 31) % 10000 + 1
-        total += gcd(a, b)
+        total += math.gcd(a, b)
     
     println(f"Sum of {iterations} GCDs: {total}")

@@ -39,11 +39,11 @@ If you used the no-install fallback:
 
 ## Project Structure
 
-To scaffold a full project with an entry point, test file, and manifest:
+To scaffold a full project with an entry point, test file, and manifest, use the standard project lifecycle path. It is the simplest path for most first projects.
 
 ```bash
-mkdir my_project && cd my_project
-incan init
+incan new my_project --yes
+cd my_project
 ```
 
 This creates a ready-to-run layout:
@@ -54,24 +54,28 @@ my_project/
 │   └── main.incn          # Entry point ("Hello from my_project!")
 ├── tests/
 │   └── test_main.incn     # Starter test
+├── README.md
+├── .gitignore
 └── incan.toml             # Project manifest
 ```
 
 You can run it immediately:
 
 ```bash
-incan run src/main.incn
-incan test tests/
+incan run
+incan test
 ```
 
-For the full walkthrough — adding modules, Rust crate dependencies, and lock files — see:
+When you run `incan new` in an interactive terminal without `--yes`, it prompts for the project name, version, description, author, and license. Use `incan init` instead when you are already inside an existing directory and want to add Incan project files there.
+
+For the full walkthrough — adding modules and tests — see:
 [Your first project](your_first_project.md).
 
 ## Next Steps
 
-- [Your first project](your_first_project.md) - Set up a real project with modules, dependencies, tests, and
-  lock files
-- [Formatting Guide](../how-to/formatting.md) - Code style and `incan fmt`
+- [Your first project](your_first_project.md) - Set up a real project with modules and tests
+- [Incan Code Style Guide](../../language/reference/code_style.md) - Canonical source layout rules
+- [Formatting with `incan fmt`](../how-to/formatting.md) - Formatter command usage
 - [CLI Reference](../reference/cli_reference.md) - Commands, flags, and environment variables
 - [Projects today](../explanation/projects_today.md) - Where builds go, what is regenerated, and what’s planned
 - [Troubleshooting](../how-to/troubleshooting.md) - Common setup and “it didn’t work” fixes

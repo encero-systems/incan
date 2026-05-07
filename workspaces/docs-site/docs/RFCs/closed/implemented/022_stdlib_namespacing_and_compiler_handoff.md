@@ -3,9 +3,9 @@
 **Status:** Implemented  
 **Created:** 2026-02-06  
 **Author(s):** Danny Meijer (@dannymeijer)  
-**Related:** RFC 000 (core imports/modules), RFC 005 (Rust interop), RFC 012 (JsonValue),  
+**Related:** RFC 000 (core imports/modules), RFC 005 (Rust interop), RFC 051 (`JsonValue`),  
 RFC 013 (Rust crate dependencies), RFC 020 (offline/locked policy)
-**Issues:** [#120](https://github.com/incan-lang/incan/issues/120)
+**Issue:** [#120](https://github.com/dannys-code-corner/incan/issues/120)
 
 ## Summary
 
@@ -61,7 +61,7 @@ from rust::std::time import Instant
 from std.datetime import DateTime
 ```
 
-Note: JSON is intentionally treated as a cross-cutting stdlib concern via `std.json` (see RFC 012).
+Note: JSON is intentionally treated as a cross-cutting stdlib concern via `std.json`.
 
 ### Namespaced decorators
 
@@ -212,9 +212,8 @@ framework glue belongs in `incan_stdlib`.
 - **RFC 013 / RFC 020 (dependency policy)**: stdlib handoff should reduce generated-project dependency sprawl by making
   the generated project depend primarily on `incan_stdlib` (with features), while user `rust::...` imports continue to
   be governed by `incan.toml` and lock policy.
-- **RFC 012 (JsonValue)**: a dedicated `std.json` module provides a natural home for the dynamic SON value type and JSON
-  parsing/serialization APIs, while keeping web wrappers (`std.web.Json[T]`) separate (specifics to be determined in
-  RFC 012).
+- **RFC 051 (`JsonValue`)**: a dedicated `std.json` module provides a natural home for a future dynamic JSON value
+  type and JSON parsing/serialization APIs, while keeping web wrappers (`std.web.Json[T]`) separate.
 - **Testing RFCs (018/019)**: namespaced `@std.testing.fixture` etc can follow the same pattern as web routing.
 
 ## Design details

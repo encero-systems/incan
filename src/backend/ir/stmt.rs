@@ -26,6 +26,7 @@ impl IrStmt {
 
 /// Statement kinds
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum IrStmtKind {
     /// Expression statement (expr;)
     Expr(IrExpr),
@@ -34,6 +35,7 @@ pub enum IrStmtKind {
     Let {
         name: String,
         ty: IrType,
+        type_annotation: Option<IrType>,
         mutability: Mutability,
         value: IrExpr,
     },
@@ -52,8 +54,14 @@ pub enum IrStmtKind {
     /// Return statement
     Return(Option<IrExpr>),
 
-    /// Break statement (with optional label)
-    Break(Option<String>),
+    /// Yield a generator item from a compiler-emitted generator body.
+    Yield(IrExpr),
+
+    /// Break statement (with optional label and value)
+    Break {
+        label: Option<String>,
+        value: Option<IrExpr>,
+    },
 
     /// Continue statement (with optional label)
     Continue(Option<String>),
@@ -98,8 +106,12 @@ pub enum IrStmtKind {
 pub enum AssignTarget {
     /// Simple variable
     Var(String),
+    /// Local binding wrapper created from a module static.
+    StaticBinding(String),
+    /// Direct assignment into a compiler-managed module static storage cell.
+    Static(String),
     /// Field access (obj.field)
     Field { object: Box<IrExpr>, field: String },
-    /// Index access (list[i])
+    /// Index access (`list[i]`)
     Index { object: Box<IrExpr>, index: Box<IrExpr> },
 }

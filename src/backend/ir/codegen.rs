@@ -29,19 +29,28 @@
 
 use std::collections::{HashMap, HashSet};
 use std::env;
+#[cfg(feature = "rust_inspect")]
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::frontend::ast::{Declaration, Program};
+use crate::frontend::ast::{self, Declaration, Expr, ImportKind, ImportPath, Program};
+use crate::frontend::decorator_resolution;
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::module::canonicalize_source_module_segments;
+use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::decorators::{self, DecoratorId};
-use incan_core::lang::derives::{self, DeriveId};
+use incan_core::lang::stdlib;
+use incan_core::lang::traits::{self as core_traits, TraitId};
 
 use super::scanners::{
     check_for_this_import as scan_check_for_this_import, collect_rust_crates as scan_collect_rust_crates,
     detect_serde_usage,
 };
 use super::{AstLowering, EmitError, EmitService, IrEmitter, LoweringErrors};
+
+const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
+const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
 
 fn collect_model_field_aliases(main: &Program, deps: &[(&str, &Program)]) -> HashMap<String, HashMap<String, String>> {
     use crate::frontend::ast::Declaration;
@@ -75,33 +84,253 @@ fn collect_model_field_aliases(main: &Program, deps: &[(&str, &Program)]) -> Has
     out
 }
 
-fn collect_type_module_paths(
-    deps: &[(&str, &Program, Option<Vec<String>>)],
-) -> (HashMap<String, Vec<String>>, HashSet<String>) {
+/// Resolve a source import path to the generated Rust module path used for dependency emission.
+fn generated_module_path_for_source_import(path: &ImportPath, current_module_path: &[String]) -> Option<Vec<String>> {
+    let resolved_segments = if path.parent_levels > 0 {
+        let keep = current_module_path.len().checked_sub(path.parent_levels)?;
+        let mut resolved = current_module_path[..keep].to_vec();
+        resolved.extend(path.segments.clone());
+        resolved
+    } else {
+        path.segments.clone()
+    };
+    let mut segments = canonicalize_source_module_segments(&resolved_segments);
+
+    if segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
+        segments[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
+    }
+
+    Some(segments)
+}
+
+/// True when a dependency module should keep its public API even if the main module does not import every item.
+fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_stdlib_public_items: bool) -> bool {
+    if module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "derives", "collection"])
+        || module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "result"])
+        || module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "serde", "json"])
+    {
+        return true;
+    }
+    if !preserve_non_stdlib_public_items {
+        return false;
+    }
+    !matches!(
+        module_path.first().map(String::as_str),
+        Some(stdlib::INCAN_STD_NAMESPACE)
+    )
+}
+
+/// Return whether a generated module path exactly matches a static path literal.
+fn module_path_matches(module_path: &[String], expected: &[&str]) -> bool {
+    module_path.len() == expected.len()
+        && module_path
+            .iter()
+            .zip(expected.iter())
+            .all(|(actual, expected)| actual == expected)
+}
+
+/// Return whether a function carries the stdlib-backed web route decorator that lowers to a Rust proc-macro attribute.
+///
+/// Binary-style dependency emission prunes otherwise-unreferenced private items. Route handlers are different because
+/// their Rust attribute expands into inventory registration after IR emission, so the function itself is a generated
+/// entrypoint even when no Incan expression calls it directly.
+fn has_web_route_passthrough_decorator(
+    func: &ast::FunctionDecl,
+    aliases: &HashMap<String, Vec<String>>,
+    stdlib_cache: &mut StdlibAstCache,
+) -> bool {
+    func.decorators.iter().any(|decorator| {
+        let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, aliases);
+        if resolved.len() < 2 {
+            return false;
+        }
+        let module_segments = &resolved[..resolved.len() - 1];
+        let name = &resolved[resolved.len() - 1];
+        if name != "route" {
+            return false;
+        }
+        let Some(meta) = stdlib_cache.lookup_function_meta(module_segments, name) else {
+            return false;
+        };
+        meta.is_rust_extern && meta.rust_module_path.as_deref() == Some("incan_web_macros")
+    })
+}
+
+/// Collect dependency-module declarations that are referenced through imports.
+fn collect_externally_reachable_items_by_module(
+    main: &Program,
+    dependency_modules: &[(&str, &Program, Option<Vec<String>>)],
+) -> HashMap<Vec<String>, HashSet<String>> {
+    let module_paths: HashSet<Vec<String>> = dependency_modules
+        .iter()
+        .map(|(name, _, path_segments)| path_segments.clone().unwrap_or_else(|| vec![(*name).to_string()]))
+        .collect();
+
+    /// Record imported item names against the generated dependency module that owns them.
+    fn record_imports(
+        reachable: &mut HashMap<Vec<String>, HashSet<String>>,
+        program: &Program,
+        current_module_path: &[String],
+        module_paths: &HashSet<Vec<String>>,
+    ) {
+        let mut module_import_bindings: HashMap<String, Vec<String>> = HashMap::new();
+        for decl in &program.declarations {
+            let Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            match &import.kind {
+                ImportKind::From { module, items } => {
+                    let Some(module_path) = generated_module_path_for_source_import(module, current_module_path) else {
+                        continue;
+                    };
+                    let reachable_items = reachable.entry(module_path).or_default();
+                    for item in items {
+                        reachable_items.insert(item.name.clone());
+                    }
+                }
+                ImportKind::Module(path) => {
+                    let Some(segments) = generated_module_path_for_source_import(path, current_module_path) else {
+                        continue;
+                    };
+                    if module_paths.contains(&segments) {
+                        if let Some(binding) = import.alias.clone().or_else(|| path.segments.last().cloned()) {
+                            module_import_bindings.insert(binding, segments);
+                        }
+                        continue;
+                    }
+                    let Some(item_name) = segments.last() else {
+                        continue;
+                    };
+                    for module_path in module_paths {
+                        if segments.len() == module_path.len() + 1 && segments.starts_with(module_path) {
+                            reachable
+                                .entry(module_path.clone())
+                                .or_default()
+                                .insert(item_name.clone());
+                            break;
+                        }
+                    }
+                }
+                ImportKind::PubLibrary { .. }
+                | ImportKind::PubFrom { .. }
+                | ImportKind::RustCrate { .. }
+                | ImportKind::RustFrom { .. }
+                | ImportKind::Python(_) => {}
+            }
+        }
+        if !module_import_bindings.is_empty() {
+            let _ = crate::frontend::ast_walk::any_expr_in_program(program, |expr| {
+                if let Expr::Field(object, field) = expr
+                    && let Expr::Ident(binding) = &object.node
+                    && let Some(module_path) = module_import_bindings.get(binding)
+                {
+                    reachable.entry(module_path.clone()).or_default().insert(field.clone());
+                }
+                if let Expr::MethodCall(object, method, _, _) = expr
+                    && let Expr::Ident(binding) = &object.node
+                    && let Some(module_path) = module_import_bindings.get(binding)
+                {
+                    reachable.entry(module_path.clone()).or_default().insert(method.clone());
+                }
+                false
+            });
+        }
+        if module_paths.contains(current_module_path) {
+            let aliases = decorator_resolution::collect_import_aliases(program);
+            let mut stdlib_cache = StdlibAstCache::new();
+            for decl in &program.declarations {
+                let Declaration::Function(func) = &decl.node else {
+                    continue;
+                };
+                if has_web_route_passthrough_decorator(func, &aliases, &mut stdlib_cache) {
+                    reachable
+                        .entry(current_module_path.to_vec())
+                        .or_default()
+                        .insert(func.name.clone());
+                }
+            }
+        }
+    }
+
+    let mut reachable = HashMap::new();
+    record_imports(&mut reachable, main, &[String::from("main")], &module_paths);
+    for (name, program, path_segments) in dependency_modules {
+        let module_path = path_segments.clone().unwrap_or_else(|| vec![(*name).to_string()]);
+        record_imports(&mut reachable, program, &module_path, &module_paths);
+    }
+    reachable
+}
+
+/// Dependency type facts gathered during codegen setup and reused by module emission.
+///
+/// Multi-file consumers only carry short nominal type names after typechecking/lowering, so emission cannot infer
+/// imported-enum ownership rules from local IR alone. This metadata keeps a single codegen-owned source of truth for:
+/// - dependency module qualification (`module_paths`)
+/// - short-name collisions that must not be auto-qualified (`ambiguous_type_names`)
+/// - imported enum names that are safe to treat as enum loop elements (`enum_type_names`)
+/// - imported stdlib error types whose trait methods require Rust trait imports (`error_trait_type_names`)
+#[derive(Debug, Clone, Default)]
+struct DependencyTypeMetadata {
+    module_paths: HashMap<String, Vec<String>>,
+    ambiguous_type_names: HashSet<String>,
+    enum_type_names: HashSet<String>,
+    error_trait_type_names: HashSet<String>,
+}
+
+/// Collect dependency type metadata needed by IR emission for cross-module nominal types.
+///
+/// Enum loop ownership is the subtle case: imported enums lower to nominal `Struct(name)` references in consumer
+/// modules, so the emitter cannot rely on local enum declarations when deciding whether `list[T]` loops should emit
+/// `.iter().cloned()`. This helper records enum names from dependency modules while excluding ambiguous short names and
+/// short names that are also used by non-enum dependency types.
+fn collect_dependency_type_metadata(deps: &[(&str, &Program, Option<Vec<String>>)]) -> DependencyTypeMetadata {
     let mut paths: HashMap<String, Vec<String>> = HashMap::new();
     let mut ambiguous: HashSet<String> = HashSet::new();
+    let mut enum_type_names: HashSet<String> = HashSet::new();
+    let mut non_enum_type_names: HashSet<String> = HashSet::new();
+    let mut error_trait_type_names: HashSet<String> = HashSet::new();
+    let error_trait_name = core_traits::as_str(TraitId::Error);
 
     for (_name, program, path_segments) in deps {
-        let Some(segs) = path_segments.as_ref() else {
-            continue;
-        };
         for decl in &program.declarations {
             let type_name = match &decl.node {
-                Declaration::Model(m) => Some(&m.name),
-                Declaration::Class(c) => Some(&c.name),
-                Declaration::Enum(e) => Some(&e.name),
-                Declaration::TypeAlias(a) => Some(&a.name),
-                Declaration::Newtype(n) => Some(&n.name),
+                Declaration::Model(m) => {
+                    if m.traits.iter().any(|bound| bound.node.name == error_trait_name) {
+                        error_trait_type_names.insert(m.name.clone());
+                    }
+                    Some((&m.name, false))
+                }
+                Declaration::Class(c) => {
+                    if c.traits.iter().any(|bound| bound.node.name == error_trait_name) {
+                        error_trait_type_names.insert(c.name.clone());
+                    }
+                    Some((&c.name, false))
+                }
+                Declaration::Enum(e) => Some((&e.name, true)),
+                Declaration::TypeAlias(a) => Some((&a.name, false)),
+                Declaration::Newtype(n) => Some((&n.name, false)),
                 _ => None,
             };
-            if let Some(name) = type_name {
-                if let Some(existing) = paths.get(name) {
-                    if existing != segs {
-                        ambiguous.insert(name.clone());
-                    }
-                } else {
-                    paths.insert(name.clone(), segs.clone());
+            let Some((name, is_enum)) = type_name else {
+                continue;
+            };
+
+            if is_enum {
+                enum_type_names.insert(name.clone());
+            } else {
+                non_enum_type_names.insert(name.clone());
+            }
+
+            let Some(segs) = path_segments.as_ref() else {
+                continue;
+            };
+
+            if let Some(existing) = paths.get(name) {
+                if existing != segs {
+                    ambiguous.insert(name.clone());
                 }
+            } else {
+                paths.insert(name.clone(), segs.clone());
             }
         }
     }
@@ -109,15 +338,23 @@ fn collect_type_module_paths(
     for name in &ambiguous {
         paths.remove(name);
     }
+    enum_type_names.retain(|name| !ambiguous.contains(name) && !non_enum_type_names.contains(name));
 
-    (paths, ambiguous)
+    DependencyTypeMetadata {
+        module_paths: paths,
+        ambiguous_type_names: ambiguous,
+        enum_type_names,
+        error_trait_type_names,
+    }
 }
 
+/// Return whether any loaded module derives serde serialize or deserialize through resolved JSON derive imports.
 fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bool) {
     let mut has_serialize = false;
     let mut has_deserialize = false;
 
     let mut visit = |program: &Program| {
+        let import_aliases = decorator_resolution::collect_import_aliases(program);
         for decl in &program.declarations {
             let decorators = match &decl.node {
                 Declaration::Model(m) => Some(&m.decorators),
@@ -139,9 +376,31 @@ fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bo
                     let crate::frontend::ast::Expr::Ident(name) = &expr.node else {
                         continue;
                     };
-                    match derives::from_str(name.as_str()) {
-                        Some(DeriveId::Serialize) => has_serialize = true,
-                        Some(DeriveId::Deserialize) => has_deserialize = true,
+                    let resolved = import_aliases
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| vec![name.to_string()]);
+                    match resolved.as_slice() {
+                        [std, serde, json] if std == "std" && serde == "serde" && json == "json" => {
+                            has_serialize = true;
+                            has_deserialize = true;
+                        }
+                        [std, serde, json, trait_name]
+                            if std == "std" && serde == "serde" && json == "json" && trait_name == "Serialize" =>
+                        {
+                            has_serialize = true;
+                        }
+                        [std, serde, json, trait_name]
+                            if std == "std" && serde == "serde" && json == "json" && trait_name == "Deserialize" =>
+                        {
+                            has_deserialize = true;
+                        }
+                        [serde, trait_name] if serde == "serde" && trait_name == "Serialize" => {
+                            has_serialize = true;
+                        }
+                        [serde, trait_name] if serde == "serde" && trait_name == "Deserialize" => {
+                            has_deserialize = true;
+                        }
                         _ => {}
                     }
                 }
@@ -154,8 +413,8 @@ fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bo
         visit(dep);
     }
 
-    // Fallback: if no explicit @derive(Serialize/Deserialize) was found but serde usage is
-    // detected (e.g. `json_stringify()` builtin), we conservatively enable Serialize only.
+    // Fallback: if no explicit serde derive was found but serde usage is detected (e.g. `json_stringify()` builtin), we
+    // conservatively enable Serialize only.
     // Deserialize is NOT enabled here because implicit serde usage (like `json_stringify`)
     // only needs serialization, not deserialization.
     if !has_serialize && !has_deserialize {
@@ -171,10 +430,12 @@ fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bo
     (has_serialize, has_deserialize)
 }
 
+/// Add serde derives to generated newtypes when the current program needs serde support.
 fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool, add_deserialize: bool) {
     use super::decl::IrDeclKind;
     use super::types::IrType;
 
+    /// Return whether a newtype inner type can safely receive derived serde support.
     fn is_conservative_serde_safe_newtype_inner(ty: &IrType) -> bool {
         match ty {
             IrType::Unit
@@ -182,6 +443,7 @@ fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool,
             | IrType::Int
             | IrType::Float
             | IrType::String
+            | IrType::Bytes
             | IrType::StaticStr
             | IrType::StaticBytes
             | IrType::FrozenStr
@@ -198,9 +460,6 @@ fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool,
         }
     }
 
-    let serialize = derives::as_str(DeriveId::Serialize);
-    let deserialize = derives::as_str(DeriveId::Deserialize);
-
     for decl in &mut ir_program.declarations {
         if let IrDeclKind::Struct(s) = &mut decl.kind
             && s.fields.len() == 1
@@ -212,11 +471,11 @@ fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool,
             if !is_conservative_serde_safe_newtype_inner(&s.fields[0].ty) {
                 continue;
             }
-            if add_serialize && !s.derives.iter().any(|d| d == serialize) {
-                s.derives.push(serialize.to_string());
+            if add_serialize && !s.derives.iter().any(|d| d == SERDE_SERIALIZE_DERIVE) {
+                s.derives.push(SERDE_SERIALIZE_DERIVE.to_string());
             }
-            if add_deserialize && !s.derives.iter().any(|d| d == deserialize) {
-                s.derives.push(deserialize.to_string());
+            if add_deserialize && !s.derives.iter().any(|d| d == SERDE_DESERIALIZE_DERIVE) {
+                s.derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
             }
         }
     }
@@ -303,7 +562,7 @@ pub struct IrCodegen<'a> {
     /// Stores both the flat module name (used for build graph identity) and the nested module path
     /// segments (used for correct Rust qualification in codegen).
     dependency_modules: Vec<(&'a str, &'a Program, Option<Vec<String>>)>,
-    /// Whether serde is needed (for Serialize/Deserialize derives)
+    /// Whether serde is needed for emitted Rust derives or helpers.
     // Serde still affects emitted Rust imports and derive augmentation in IR emission, so this remains an
     // emission-internal signal even after project-level requirement collection moved to provider manifests.
     needs_serde: bool,
@@ -322,6 +581,15 @@ pub struct IrCodegen<'a> {
     declared_crate_names: Option<HashSet<String>>,
     /// Consumer-side `pub::` dependency metadata used by internal typechecking.
     library_manifest_index: Option<Arc<LibraryManifestIndex>>,
+    /// Whether generated Rust should deny warning classes that normal emission suppresses at narrow scopes.
+    strict_generated_lints: bool,
+    /// Private IR items called by generated code that is appended outside normal IR emission.
+    externally_reachable_items: HashSet<String>,
+    /// Whether non-stdlib dependency modules keep public items that are not otherwise reachable.
+    preserve_dependency_public_items: bool,
+    /// Manifest/workspace root for rust-inspect-backed typechecking during IR generation.
+    #[cfg(feature = "rust_inspect")]
+    rust_inspect_manifest_dir: Option<PathBuf>,
 }
 
 impl<'a> IrCodegen<'a> {
@@ -337,7 +605,30 @@ impl<'a> IrCodegen<'a> {
             emit_zen_in_main: false,
             declared_crate_names: None,
             library_manifest_index: None,
+            strict_generated_lints: false,
+            externally_reachable_items: HashSet::new(),
+            preserve_dependency_public_items: true,
+            #[cfg(feature = "rust_inspect")]
+            rust_inspect_manifest_dir: None,
         }
+    }
+
+    /// Enable strict generated Rust lint validation for `--emit-rust --strict`.
+    pub fn set_strict_generated_lints(&mut self, enabled: bool) {
+        self.strict_generated_lints = enabled;
+    }
+
+    /// Set private generated Rust entrypoints called by code injected after IR emission.
+    pub fn set_externally_reachable_items(&mut self, names: HashSet<String>) {
+        self.externally_reachable_items = names;
+    }
+
+    /// Set whether non-stdlib dependency modules preserve their public API surface during emission.
+    ///
+    /// Library builds keep this enabled so public dependency declarations remain available at the Rust crate boundary.
+    /// Binary and test harness builds can disable it so unused dependency declarations are pruned instead of warning.
+    pub fn set_preserve_dependency_public_items(&mut self, enabled: bool) {
+        self.preserve_dependency_public_items = enabled;
     }
 
     /// Set declared Rust crate names from `incan.toml [rust-dependencies]`. (RFC 031)
@@ -350,6 +641,12 @@ impl<'a> IrCodegen<'a> {
     /// Set the consumer-side library manifest index for `pub::` import validation.
     pub fn set_library_manifest_index(&mut self, index: LibraryManifestIndex) {
         self.library_manifest_index = Some(Arc::new(index));
+    }
+
+    /// Set the manifest/workspace root used for rust-inspect-backed typechecking during IR generation.
+    #[cfg(feature = "rust_inspect")]
+    pub fn set_rust_inspect_manifest_dir(&mut self, dir: PathBuf) {
+        self.rust_inspect_manifest_dir = Some(dir);
     }
 
     /// Get the Rust crates imported via `import rust::` or `from rust::`
@@ -366,6 +663,19 @@ impl<'a> IrCodegen<'a> {
     #[cfg(test)]
     fn needs_serde(&self) -> bool {
         self.needs_serde
+    }
+
+    fn configure_typechecker(&self, tc: &mut crate::frontend::typechecker::TypeChecker) {
+        if let Some(names) = self.declared_crate_names.clone() {
+            tc.set_declared_crate_names(names);
+        }
+        if let Some(index) = self.library_manifest_index.clone() {
+            tc.set_library_manifest_index_shared(index);
+        }
+        #[cfg(feature = "rust_inspect")]
+        if let Some(dir) = self.rust_inspect_manifest_dir.clone() {
+            tc.set_rust_inspect_manifest_dir(dir);
+        }
     }
 
     /// Add a dependency module (for multi-file compilation)
@@ -436,7 +746,7 @@ impl<'a> IrCodegen<'a> {
         }
     }
 
-    /// Scan a program for Serialize/Deserialize derives.
+    /// Scan a program for serde-backed derives.
     ///
     /// This remains an internal compatibility hook because serde-backed derives and legacy
     /// `json_stringify` usage can still require serde emission without import-activated provider
@@ -540,6 +850,17 @@ impl<'a> IrCodegen<'a> {
         program: &Program,
         internal_module_roots: &HashSet<String>,
     ) -> Result<String, GenerationError> {
+        self.try_generate_via_ir_with_union_config(program, internal_module_roots, HashMap::new(), false)
+    }
+
+    /// Generate code via the IR pipeline with optional crate-root union sharing for multi-file source modules.
+    fn try_generate_via_ir_with_union_config(
+        &self,
+        program: &Program,
+        internal_module_roots: &HashSet<String>,
+        generated_union_types: HashMap<String, super::types::IrType>,
+        qualify_union_types_from_crate: bool,
+    ) -> Result<String, GenerationError> {
         let deps: Vec<(&str, &Program)> = self
             .dependency_modules
             .iter()
@@ -549,7 +870,7 @@ impl<'a> IrCodegen<'a> {
         // RFC 021: Make alias-aware lowering work across module boundaries by seeding alias maps
         // for models declared in dependency modules as well.
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let (type_module_paths, ambiguous_type_names) = collect_type_module_paths(&self.dependency_modules);
+        let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
         let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
 
         // Typecheck to obtain reusable type information for lowering.
@@ -558,12 +879,7 @@ impl<'a> IrCodegen<'a> {
         let type_info_opt = {
             use crate::frontend::typechecker::TypeChecker;
             let mut tc = TypeChecker::new();
-            if let Some(names) = self.declared_crate_names.clone() {
-                tc.set_declared_crate_names(names);
-            }
-            if let Some(index) = self.library_manifest_index.clone() {
-                tc.set_library_manifest_index_shared(index);
-            }
+            self.configure_typechecker(&mut tc);
             match tc.check_with_imports(program, &deps) {
                 Ok(()) => tc.type_info().clone(),
                 Err(errs) => return Err(GenerationError::TypeCheck(errs)),
@@ -572,6 +888,7 @@ impl<'a> IrCodegen<'a> {
 
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
+        lowering.seed_dependency_trait_decls(&self.dependency_modules);
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
         if self.needs_serde {
@@ -583,6 +900,7 @@ impl<'a> IrCodegen<'a> {
 
         // Build unified function registry including imported module functions
         let mut unified_registry = ir_program.function_registry.clone();
+        let mut dependency_ir_programs = Vec::new();
         for (_, dep_ast, _) in &self.dependency_modules {
             // For dependencies, use best-effort lowering without type info to
             // preserve prior behavior and avoid redundant typechecking.
@@ -590,6 +908,7 @@ impl<'a> IrCodegen<'a> {
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let dep_ir = dep_lowering.lower_program(dep_ast)?;
             unified_registry.merge(&dep_ir.function_registry);
+            dependency_ir_programs.push(dep_ir);
         }
 
         // Emit IR to Rust code
@@ -602,9 +921,21 @@ impl<'a> IrCodegen<'a> {
             if self.emit_zen_in_main {
                 inner.set_emit_zen(true);
             }
-            inner.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
+            inner.set_type_module_paths(
+                dependency_type_metadata.module_paths.clone(),
+                dependency_type_metadata.ambiguous_type_names.clone(),
+            );
+            inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
+            inner.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
             inner.set_needs_serde(self.needs_serde);
             inner.set_external_rust_functions(self.external_rust_functions.clone());
+            inner.set_strict_generated_lints(self.strict_generated_lints);
+            inner.set_externally_reachable_items(self.externally_reachable_items.clone());
+            inner.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
+            inner.set_generated_union_types(generated_union_types);
+            for dep_ir in &dependency_ir_programs {
+                inner.seed_nominal_metadata_from_program(dep_ir);
+            }
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&unified_registry);
@@ -612,9 +943,21 @@ impl<'a> IrCodegen<'a> {
             if self.emit_zen_in_main {
                 emitter.set_emit_zen(true);
             }
-            emitter.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
+            emitter.set_type_module_paths(
+                dependency_type_metadata.module_paths.clone(),
+                dependency_type_metadata.ambiguous_type_names.clone(),
+            );
+            emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
+            emitter.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
+            emitter.set_strict_generated_lints(self.strict_generated_lints);
+            emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
+            emitter.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
+            emitter.set_generated_union_types(generated_union_types);
+            for dep_ir in &dependency_ir_programs {
+                emitter.seed_nominal_metadata_from_program(dep_ir);
+            }
             Ok(emitter.emit_program(&ir_program)?)
         }
     }
@@ -657,16 +1000,16 @@ impl<'a> IrCodegen<'a> {
             let mut svc = EmitService::new_from_program(&ir_program);
             let inner = svc.inner_mut();
             inner.set_internal_module_roots(internal_roots);
-            inner.set_add_clippy_allows(false);
+            inner.set_externally_reachable_items(self.externally_reachable_items.clone());
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
             emitter.set_internal_module_roots(internal_roots);
-            emitter.set_add_clippy_allows(false);
             if self.emit_zen_in_main {
                 emitter.set_emit_zen(true);
             }
             emitter.set_needs_serde(self.needs_serde);
+            emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
             Ok(emitter.emit_program(&ir_program)?)
         }
     }
@@ -700,6 +1043,10 @@ impl<'a> IrCodegen<'a> {
         self.try_generate_multi_file_internal(program, module_names)
     }
 
+    /// Generate flat dependency modules with generated-use pruning.
+    ///
+    /// Dependency modules keep imported/reachable declarations for binary-style emission and can preserve non-stdlib
+    /// public items when library surfaces are being generated.
     fn try_generate_multi_file_internal(
         &mut self,
         program: &'a Program,
@@ -718,60 +1065,111 @@ impl<'a> IrCodegen<'a> {
 
         let internal_roots: HashSet<String> = module_names.iter().map(|s| (*s).to_string()).collect();
 
-        // Generate main file
-        let main_code = self.try_generate_via_ir(program, &internal_roots)?;
-
         let deps: Vec<(&str, &Program)> = self
             .dependency_modules
             .iter()
             .map(|(name, ast, _)| (*name, *ast))
             .collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let (type_module_paths, ambiguous_type_names) = collect_type_module_paths(&self.dependency_modules);
+        let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
+        let dependency_reachable_items =
+            collect_externally_reachable_items_by_module(program, &self.dependency_modules);
 
         // Generate module files
-        let mut modules = HashMap::new();
-        for (name, ast, _) in &self.dependency_modules {
-            if module_names.contains(name) {
-                let module_type_info = {
-                    use crate::frontend::typechecker::TypeChecker;
-                    let mut tc = TypeChecker::new();
-                    if let Some(names) = self.declared_crate_names.clone() {
-                        tc.set_declared_crate_names(names);
-                    }
-                    if let Some(index) = self.library_manifest_index.clone() {
-                        tc.set_library_manifest_index_shared(index);
-                    }
-                    match tc.check_with_imports_allow_private(ast, &deps) {
-                        Ok(()) => tc.type_info().clone(),
-                        Err(errs) => return Err(GenerationError::TypeCheck(errs)),
-                    }
-                };
-                let mut lowering = AstLowering::new_with_type_info(module_type_info);
-                lowering.seed_struct_field_aliases(global_aliases.clone());
-                let mut ir = lowering.lower_program(ast)?;
-                // Do not auto-add serde derives to dependency modules.
-                // Global serde usage in the main module must not mutate unrelated dependency
-                // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
-                // RFC 023: Infer trait bounds for generic functions.
-                super::trait_bound_inference::infer_trait_bounds(&mut ir);
-                let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
-                let module_code = if use_emit_service {
-                    let mut svc = EmitService::new_from_program(&ir);
-                    let inner = svc.inner_mut();
-                    inner.set_internal_module_roots(internal_roots.clone());
-                    inner.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
-                    inner.set_add_clippy_allows(false);
-                    svc.emit_program(&ir)?
-                } else {
-                    let mut emitter = IrEmitter::new(&ir.function_registry);
-                    emitter.set_internal_module_roots(internal_roots.clone());
-                    emitter.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
-                    emitter.set_add_clippy_allows(false);
-                    emitter.emit_program(&ir)?
-                };
-                modules.insert(name.to_string(), module_code);
+        let mut lowered_modules = Vec::new();
+        for (name, ast, path_segments) in &self.dependency_modules {
+            if !module_names.contains(name) {
+                continue;
             }
+            let module_type_info = {
+                use crate::frontend::typechecker::TypeChecker;
+                let mut tc = TypeChecker::new();
+                self.configure_typechecker(&mut tc);
+                match tc.check_with_imports_allow_private(ast, &deps) {
+                    Ok(()) => tc.type_info().clone(),
+                    Err(errs) => return Err(GenerationError::TypeCheck(errs)),
+                }
+            };
+            let mut lowering = AstLowering::new_with_type_info(module_type_info);
+            lowering.seed_dependency_trait_decls(&self.dependency_modules);
+            lowering.seed_struct_field_aliases(global_aliases.clone());
+            let mut ir = lowering.lower_program(ast)?;
+            // Do not auto-add serde derives to dependency modules.
+            // Global serde usage in the main module must not mutate unrelated dependency
+            // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
+            super::trait_bound_inference::infer_trait_bounds(&mut ir);
+            let module_path = path_segments.clone().unwrap_or_else(|| vec![name.to_string()]);
+            lowered_modules.push((name.to_string(), module_path, ir));
+        }
+        for idx in 0..lowered_modules.len() {
+            let (left, rest) = lowered_modules.split_at_mut(idx);
+            let Some((_, current_ir, tail)) = rest
+                .split_first_mut()
+                .map(|((name, _path, ir), tail)| (name.clone(), ir, tail))
+            else {
+                continue;
+            };
+            let external_programs: Vec<&super::IrProgram> = left
+                .iter()
+                .map(|(_, _, ir)| ir)
+                .chain(tail.iter().map(|(_, _, ir)| ir))
+                .collect();
+            super::trait_bound_inference::propagate_trait_bounds_from_programs(current_ir, &external_programs);
+        }
+        let mut shared_union_types = HashMap::new();
+        for (_, _, ir) in &lowered_modules {
+            shared_union_types.extend(IrEmitter::collect_union_types_from_program(ir));
+        }
+
+        // Generate main file after dependency lowering so it can own shared crate-root union wrappers.
+        let main_code =
+            self.try_generate_via_ir_with_union_config(program, &internal_roots, shared_union_types, true)?;
+
+        let mut modules = HashMap::new();
+        for (name, module_path, ir) in &lowered_modules {
+            let reachable_items = dependency_reachable_items.get(module_path).cloned().unwrap_or_default();
+            let preserve_public_items =
+                should_preserve_dependency_public_items(module_path, self.preserve_dependency_public_items);
+            let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
+            let module_code = if use_emit_service {
+                let mut svc = EmitService::new_from_program(ir);
+                let inner = svc.inner_mut();
+                inner.set_internal_module_roots(internal_roots.clone());
+                inner.set_preserve_public_items(preserve_public_items);
+                inner.set_externally_reachable_items(reachable_items.clone());
+                inner.set_type_module_paths(
+                    dependency_type_metadata.module_paths.clone(),
+                    dependency_type_metadata.ambiguous_type_names.clone(),
+                );
+                inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
+                inner.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
+                inner.set_external_rust_functions(self.external_rust_functions.clone());
+                inner.set_qualify_union_types_from_crate(true);
+                inner.set_emit_generated_union_definitions(false);
+                for (_, _, dep_ir) in &lowered_modules {
+                    inner.seed_nominal_metadata_from_program(dep_ir);
+                }
+                svc.emit_program(ir)?
+            } else {
+                let mut emitter = IrEmitter::new(&ir.function_registry);
+                emitter.set_internal_module_roots(internal_roots.clone());
+                emitter.set_preserve_public_items(preserve_public_items);
+                emitter.set_externally_reachable_items(reachable_items);
+                emitter.set_type_module_paths(
+                    dependency_type_metadata.module_paths.clone(),
+                    dependency_type_metadata.ambiguous_type_names.clone(),
+                );
+                emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
+                emitter.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
+                emitter.set_external_rust_functions(self.external_rust_functions.clone());
+                emitter.set_qualify_union_types_from_crate(true);
+                emitter.set_emit_generated_union_definitions(false);
+                for (_, _, dep_ir) in &lowered_modules {
+                    emitter.seed_nominal_metadata_from_program(dep_ir);
+                }
+                emitter.emit_program(ir)?
+            };
+            modules.insert(name.clone(), module_code);
         }
 
         Ok((main_code, modules))
@@ -806,6 +1204,10 @@ impl<'a> IrCodegen<'a> {
         self.try_generate_multi_file_nested_internal(program, module_paths)
     }
 
+    /// Generate nested dependency modules with generated-use pruning.
+    ///
+    /// Dependency modules keep imported/reachable declarations for binary-style emission and can preserve non-stdlib
+    /// public items when library surfaces are being generated.
     fn try_generate_multi_file_nested_internal(
         &mut self,
         program: &'a Program,
@@ -841,66 +1243,116 @@ impl<'a> IrCodegen<'a> {
 
         let internal_roots: HashSet<String> = module_paths.iter().filter_map(|p| p.first().cloned()).collect();
 
-        // Generate main file
-        let main_code = self.try_generate_via_ir(program, &internal_roots)?;
-
         let deps: Vec<(&str, &Program)> = self
             .dependency_modules
             .iter()
             .map(|(name, ast, _)| (*name, *ast))
             .collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let (type_module_paths, ambiguous_type_names) = collect_type_module_paths(&self.dependency_modules);
+        let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
+        let dependency_reachable_items =
+            collect_externally_reachable_items_by_module(program, &self.dependency_modules);
 
         // Generate module files by path
-        let mut modules = HashMap::new();
+        let mut lowered_modules = Vec::new();
         for (name, ast, _) in &self.dependency_modules {
             // Find matching path by comparing joined segments with module name
             // Module name is path segments joined with "_" (e.g., "db_models")
             for path in module_paths {
                 let path_name = path.join("_");
-                if path_name == *name {
-                    let module_type_info = {
-                        use crate::frontend::typechecker::TypeChecker;
-                        let mut tc = TypeChecker::new();
-                        if let Some(names) = self.declared_crate_names.clone() {
-                            tc.set_declared_crate_names(names);
-                        }
-                        if let Some(index) = self.library_manifest_index.clone() {
-                            tc.set_library_manifest_index_shared(index);
-                        }
-                        match tc.check_with_imports_allow_private(ast, &deps) {
-                            Ok(()) => tc.type_info().clone(),
-                            Err(errs) => return Err(GenerationError::TypeCheck(errs)),
-                        }
-                    };
-                    let mut lowering = AstLowering::new_with_type_info(module_type_info);
-                    lowering.seed_struct_field_aliases(global_aliases.clone());
-                    let mut ir = lowering.lower_program(ast)?;
-                    // Do not auto-add serde derives to dependency modules.
-                    // Global serde usage in the main module must not mutate unrelated dependency
-                    // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
-                    // RFC 023: Infer trait bounds for generic functions.
-                    super::trait_bound_inference::infer_trait_bounds(&mut ir);
-                    let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
-                    let module_code = if use_emit_service {
-                        let mut svc = EmitService::new_from_program(&ir);
-                        let inner = svc.inner_mut();
-                        inner.set_internal_module_roots(internal_roots.clone());
-                        inner.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
-                        inner.set_add_clippy_allows(false);
-                        svc.emit_program(&ir)?
-                    } else {
-                        let mut emitter = IrEmitter::new(&ir.function_registry);
-                        emitter.set_internal_module_roots(internal_roots.clone());
-                        emitter.set_type_module_paths(type_module_paths.clone(), ambiguous_type_names.clone());
-                        emitter.set_add_clippy_allows(false);
-                        emitter.emit_program(&ir)?
-                    };
-                    modules.insert(path.clone(), module_code);
-                    break;
+                if path_name != *name {
+                    continue;
                 }
+                let module_type_info = {
+                    use crate::frontend::typechecker::TypeChecker;
+                    let mut tc = TypeChecker::new();
+                    self.configure_typechecker(&mut tc);
+                    match tc.check_with_imports_allow_private(ast, &deps) {
+                        Ok(()) => tc.type_info().clone(),
+                        Err(errs) => return Err(GenerationError::TypeCheck(errs)),
+                    }
+                };
+                let mut lowering = AstLowering::new_with_type_info(module_type_info);
+                lowering.seed_dependency_trait_decls(&self.dependency_modules);
+                lowering.seed_struct_field_aliases(global_aliases.clone());
+                let mut ir = lowering.lower_program(ast)?;
+                // Do not auto-add serde derives to dependency modules.
+                // Global serde usage in the main module must not mutate unrelated dependency
+                // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
+                super::trait_bound_inference::infer_trait_bounds(&mut ir);
+                lowered_modules.push((path.clone(), ir));
+                break;
             }
+        }
+        for idx in 0..lowered_modules.len() {
+            let (left, rest) = lowered_modules.split_at_mut(idx);
+            let Some((_, current_ir, tail)) = rest
+                .split_first_mut()
+                .map(|((path, ir), tail)| (path.clone(), ir, tail))
+            else {
+                continue;
+            };
+            let external_programs: Vec<&super::IrProgram> = left
+                .iter()
+                .map(|(_, ir)| ir)
+                .chain(tail.iter().map(|(_, ir)| ir))
+                .collect();
+            super::trait_bound_inference::propagate_trait_bounds_from_programs(current_ir, &external_programs);
+        }
+        let mut shared_union_types = HashMap::new();
+        for (_, ir) in &lowered_modules {
+            shared_union_types.extend(IrEmitter::collect_union_types_from_program(ir));
+        }
+
+        // Generate main file after dependency lowering so it can own shared crate-root union wrappers.
+        let main_code =
+            self.try_generate_via_ir_with_union_config(program, &internal_roots, shared_union_types, true)?;
+
+        let mut modules = HashMap::new();
+        for (path, ir) in &lowered_modules {
+            let reachable_items = dependency_reachable_items.get(path).cloned().unwrap_or_default();
+            let preserve_public_items =
+                should_preserve_dependency_public_items(path, self.preserve_dependency_public_items);
+            let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
+            let module_code = if use_emit_service {
+                let mut svc = EmitService::new_from_program(ir);
+                let inner = svc.inner_mut();
+                inner.set_internal_module_roots(internal_roots.clone());
+                inner.set_preserve_public_items(preserve_public_items);
+                inner.set_externally_reachable_items(reachable_items.clone());
+                inner.set_type_module_paths(
+                    dependency_type_metadata.module_paths.clone(),
+                    dependency_type_metadata.ambiguous_type_names.clone(),
+                );
+                inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
+                inner.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
+                inner.set_external_rust_functions(self.external_rust_functions.clone());
+                inner.set_qualify_union_types_from_crate(true);
+                inner.set_emit_generated_union_definitions(false);
+                for (_, dep_ir) in &lowered_modules {
+                    inner.seed_nominal_metadata_from_program(dep_ir);
+                }
+                svc.emit_program(ir)?
+            } else {
+                let mut emitter = IrEmitter::new(&ir.function_registry);
+                emitter.set_internal_module_roots(internal_roots.clone());
+                emitter.set_preserve_public_items(preserve_public_items);
+                emitter.set_externally_reachable_items(reachable_items);
+                emitter.set_type_module_paths(
+                    dependency_type_metadata.module_paths.clone(),
+                    dependency_type_metadata.ambiguous_type_names.clone(),
+                );
+                emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
+                emitter.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
+                emitter.set_external_rust_functions(self.external_rust_functions.clone());
+                emitter.set_qualify_union_types_from_crate(true);
+                emitter.set_emit_generated_union_definitions(false);
+                for (_, dep_ir) in &lowered_modules {
+                    emitter.seed_nominal_metadata_from_program(dep_ir);
+                }
+                emitter.emit_program(ir)?
+            };
+            modules.insert(path.clone(), module_code);
         }
 
         Ok((main_code, modules))
@@ -920,8 +1372,12 @@ mod tests {
         LibraryArtifactMetadata, LibraryManifestIndex, LibraryManifestIndexEntry,
     };
     use crate::frontend::{lexer, parser};
-    use crate::library_manifest::{ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
+    use crate::library_manifest::{
+        ConstExport, FunctionExport, LibraryManifest, ModelExport, ParamExport, ParamKindExport, TypeRef,
+    };
     use std::collections::HashMap;
+    #[cfg(feature = "rust_inspect")]
+    use std::fs;
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
         match result {
@@ -943,10 +1399,798 @@ mod tests {
         must_ok(IrCodegen::new().try_generate(&ast))
     }
 
+    fn assert_no_generated_unused_lint_allows(code: &str) {
+        assert!(!code.contains("#[allow(dead_code)]"), "{code}");
+        assert!(!code.contains("#[allow(unused_imports)]"), "{code}");
+        assert!(!code.contains("#[allow(dead_code, unused_variables)]"), "{code}");
+    }
+
+    #[test]
+    fn partial_function_codegen_emits_wrapper_with_defaulted_preset() {
+        let code = generate(
+            r#"
+pub def route(method: str, path: str) -> str:
+  return method
+
+pub get = partial route(method="GET")
+
+pub def use() -> str:
+  return get(path="/health")
+"#,
+        );
+        assert!(code.contains("pub fn get("), "{code}");
+        assert!(code.contains("\"GET\""), "{code}");
+        assert!(code.contains("route("), "{code}");
+        assert!(
+            code.contains("get(\"GET\".to_string(), \"/health\".to_string())"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn local_partial_codegen_fills_omitted_preset_argument() {
+        let code = generate(
+            r#"
+def route(method: str, path: str) -> str:
+  return method + path
+
+pub def use() -> str:
+  get = partial route(method="GET")
+  return get(path="/health")
+"#,
+        );
+        assert!(code.contains("|method, path|"), "{code}");
+        assert!(
+            code.contains("get(\"GET\".to_string(), \"/health\".to_string())"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn partial_model_constructor_codegen_emits_wrapper_with_defaulted_preset() {
+        let code = generate(
+            r#"
+pub model Reader:
+  layer: str
+  format: str
+
+pub BronzeReader = partial Reader(layer="bronze", format="delta")
+
+pub def use() -> Reader:
+  return BronzeReader()
+"#,
+        );
+        assert!(code.contains("pub fn BronzeReader("), "{code}");
+        assert!(code.contains("\"bronze\""), "{code}");
+        assert!(code.contains("\"delta\""), "{code}");
+        assert!(code.contains("Reader {"), "{code}");
+    }
+
+    #[test]
+    fn trait_method_partial_codegen_emits_default_method_wrapper() {
+        let code = generate(
+            r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="name")
+
+model User with Named:
+  name: str
+
+pub def use(user: User) -> str:
+  return user.short()
+"#,
+        );
+        assert!(code.contains("fn short"), "{code}");
+        assert!(code.contains("return self.label(prefix);"), "{code}");
+        assert!(code.contains("user.short(\"name\".to_string())"), "{code}");
+    }
+
+    #[test]
+    fn method_partial_codegen_resolves_alias_target() {
+        let code = generate(
+            r#"
+model User:
+  name: str
+  def label(self, prefix: str) -> str:
+    return prefix
+  display = label
+  short = partial display(prefix="name")
+
+pub def use(user: User) -> str:
+  return user.short()
+"#,
+        );
+        assert!(code.contains("fn short"), "{code}");
+        assert!(code.contains("return self.label(&prefix);"), "{code}");
+        assert!(code.contains("user.short(\"name\".to_string())"), "{code}");
+    }
+
+    #[test]
+    fn normal_codegen_does_not_emit_blanket_generated_lint_allows() {
+        let code = generate(
+            r#"
+def helper(value: int) -> int:
+  return value
+
+def main() -> None:
+  return
+"#,
+        );
+
+        assert!(!code.contains("#![allow(unused_imports, dead_code, unused_variables)]"));
+        assert!(!code.contains("use incan_stdlib::prelude::*;"));
+        assert!(!code.contains("use incan_derive::{FieldInfo, IncanClass};"));
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn top_level_callable_alias_lowers_calls_to_target_and_public_reexport() {
+        let code = generate(
+            r#"
+pub def avg(x: int) -> int:
+  return x
+
+mean = avg
+pub average = alias avg
+
+def main() -> int:
+  return mean(10)
+"#,
+        );
+        assert!(code.contains("pub fn avg(x: i64) -> i64"), "{code}");
+        assert!(code.contains("pub use avg as average;"), "{code}");
+        assert!(code.contains("return avg(10);"), "{code}");
+        assert!(!code.contains("fn mean"), "{code}");
+    }
+
+    #[test]
+    fn top_level_qualified_alias_preserves_target_path() {
+        let code = generate(
+            r#"
+import std.math as math
+
+pub root = math.sqrt
+"#,
+        );
+        assert!(code.contains("pub use crate::__incan_std::math as math;"), "{code}");
+        assert!(code.contains("pub use math::sqrt as root;"), "{code}");
+    }
+
+    #[test]
+    fn normal_codegen_keeps_used_private_helpers_without_dead_code_allows() {
+        let code = generate(
+            r#"
+def helper(value: int) -> int:
+  return value
+
+def main() -> None:
+  print(helper(1))
+"#,
+        );
+
+        assert!(code.contains("fn helper(value: i64) -> i64"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_prunes_unused_private_helpers() {
+        let code = generate(
+            r#"
+def helper(value: int) -> int:
+  return value
+
+def main() -> None:
+  print("done")
+"#,
+        );
+
+        assert!(!code.contains("fn helper"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_prunes_unused_dependency_public_items_for_binary_mode() {
+        let constants_module = parse_program(
+            r#"
+pub def api_version() -> str:
+  return "v1"
+
+pub def max_page_size() -> int:
+  return 100
+
+pub def default_timeout() -> int:
+  return 30
+"#,
+        );
+        let main_module = parse_program(
+            r#"
+from shared.constants import api_version, max_page_size
+
+def main() -> None:
+  print(api_version())
+  print(max_page_size())
+"#,
+        );
+        let constants_path = vec!["shared".to_string(), "constants".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.set_preserve_dependency_public_items(false);
+        codegen.add_module_with_path_segments("shared_constants", &constants_module, constants_path.clone());
+
+        let (_main_code, rust_modules) =
+            must_ok(codegen.try_generate_multi_file_nested(&main_module, std::slice::from_ref(&constants_path)));
+        let constants_code = must_some(
+            rust_modules.get(&constants_path),
+            "missing generated shared.constants module",
+        );
+
+        assert!(
+            constants_code.contains("pub fn api_version() -> String"),
+            "{constants_code}"
+        );
+        assert!(
+            constants_code.contains("pub fn max_page_size() -> i64"),
+            "{constants_code}"
+        );
+        assert!(!constants_code.contains("default_timeout"), "{constants_code}");
+        assert_no_generated_unused_lint_allows(constants_code);
+    }
+
+    #[test]
+    fn normal_codegen_can_preserve_dependency_public_items_for_library_mode() {
+        let constants_module = parse_program(
+            r#"
+pub def api_version() -> str:
+  return "v1"
+
+pub def default_timeout() -> int:
+  return 30
+"#,
+        );
+        let main_module = parse_program(
+            r#"
+from shared.constants import api_version
+
+def main() -> None:
+  print(api_version())
+"#,
+        );
+        let constants_path = vec!["shared".to_string(), "constants".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.set_preserve_dependency_public_items(true);
+        codegen.add_module_with_path_segments("shared_constants", &constants_module, constants_path.clone());
+
+        let (_main_code, rust_modules) =
+            must_ok(codegen.try_generate_multi_file_nested(&main_module, std::slice::from_ref(&constants_path)));
+        let constants_code = must_some(
+            rust_modules.get(&constants_path),
+            "missing generated shared.constants module",
+        );
+
+        assert!(
+            constants_code.contains("pub fn api_version() -> String"),
+            "{constants_code}"
+        );
+        assert!(
+            constants_code.contains("pub fn default_timeout() -> i64"),
+            "{constants_code}"
+        );
+        assert_no_generated_unused_lint_allows(constants_code);
+    }
+
+    #[test]
+    fn normal_codegen_keeps_external_generated_entrypoints() {
+        let tokens = must_ok(lexer::lex(
+            r#"
+def test_generated_entrypoint() -> None:
+  return
+"#,
+        ));
+        let ast = must_ok(parser::parse(&tokens));
+        let mut codegen = IrCodegen::new();
+        codegen.set_externally_reachable_items(std::collections::HashSet::from([String::from(
+            "test_generated_entrypoint",
+        )]));
+        let code = must_ok(codegen.try_generate(&ast));
+
+        assert!(code.contains("fn test_generated_entrypoint"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_prunes_unused_rust_imports() {
+        let code = generate(
+            r#"
+import rust::std::collections::HashMap
+
+def main() -> None:
+  print("done")
+"#,
+        );
+
+        assert!(!code.contains("use std::collections::HashMap;"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_keeps_used_rust_import_aliases() {
+        let code = generate(
+            r#"
+import rust::std::f64::consts as consts
+
+def main() -> None:
+  _ = consts.PI
+"#,
+        );
+
+        assert!(code.contains("use std::f64::consts as consts;"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn generated_use_analysis_keeps_rust_extension_trait_imports() {
+        use crate::backend::ir::decl::{
+            FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, Visibility,
+        };
+        use crate::backend::ir::expr::{
+            IrCallArg, IrCallArgKind, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind,
+        };
+        use crate::backend::ir::{IrDecl, IrDeclKind, IrProgram, IrStmt, IrStmtKind, IrType, Mutability, TypedExpr};
+
+        let mut program = IrProgram::new();
+        program.declarations.push(IrDecl::new(IrDeclKind::Import {
+            visibility: Visibility::Private,
+            origin: IrImportOrigin::Standard,
+            qualifier: IrImportQualifier::None,
+            path: vec![String::from("rand")],
+            alias: None,
+            items: vec![
+                IrImportItem {
+                    name: String::from("Rng"),
+                    alias: None,
+                    rust_trait_methods: vec![String::from("gen_range")],
+                },
+                IrImportItem {
+                    name: String::from("thread_rng"),
+                    alias: None,
+                    rust_trait_methods: Vec::new(),
+                },
+            ],
+        }));
+        let rng_ty = IrType::Struct(String::from("rand::rngs::ThreadRng"));
+        program.declarations.push(IrDecl::new(IrDeclKind::Function(IrFunction {
+            name: String::from("main"),
+            params: Vec::<FunctionParam>::new(),
+            return_type: IrType::Unit,
+            body: vec![
+                IrStmt::new(IrStmtKind::Let {
+                    name: String::from("rng"),
+                    ty: rng_ty.clone(),
+                    type_annotation: None,
+                    mutability: Mutability::Mutable,
+                    value: TypedExpr::new(
+                        IrExprKind::Call {
+                            func: Box::new(TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: String::from("thread_rng"),
+                                    access: VarAccess::Move,
+                                    ref_kind: VarRefKind::ExternalRustName,
+                                },
+                                IrType::Function {
+                                    params: Vec::new(),
+                                    ret: Box::new(rng_ty.clone()),
+                                },
+                            )),
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: None,
+                            canonical_path: None,
+                        },
+                        rng_ty.clone(),
+                    ),
+                }),
+                IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+                    IrExprKind::MethodCall {
+                        receiver: Box::new(TypedExpr::new(
+                            IrExprKind::Var {
+                                name: String::from("rng"),
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::Value,
+                            },
+                            rng_ty,
+                        )),
+                        method: String::from("gen_range"),
+                        dispatch: None,
+                        type_args: Vec::new(),
+                        args: vec![IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: TypedExpr::new(
+                                IrExprKind::Range {
+                                    start: Some(Box::new(TypedExpr::new(IrExprKind::Int(1), IrType::Int))),
+                                    end: Some(Box::new(TypedExpr::new(IrExprKind::Int(7), IrType::Int))),
+                                    inclusive: false,
+                                },
+                                IrType::Unknown,
+                            ),
+                        }],
+                        callable_signature: None,
+                        arg_policy: MethodCallArgPolicy::Default,
+                    },
+                    IrType::Int,
+                ))),
+            ],
+            is_async: false,
+            is_generator: false,
+            visibility: Visibility::Private,
+            type_params: Vec::new(),
+            is_extern: false,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        })));
+
+        let mut emitter = IrEmitter::new(&program.function_registry);
+        let code = must_ok(emitter.emit_program(&program));
+
+        assert!(code.contains("use rand::Rng;"), "{code}");
+        assert!(code.contains("use rand::thread_rng;"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn generated_use_analysis_keeps_rust_trait_candidates_without_metadata() {
+        use crate::backend::ir::decl::{
+            FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, Visibility,
+        };
+        use crate::backend::ir::expr::{
+            IrCallArg, IrCallArgKind, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind,
+        };
+        use crate::backend::ir::{IrDecl, IrDeclKind, IrProgram, IrStmt, IrStmtKind, IrType, Mutability, TypedExpr};
+
+        let mut program = IrProgram::new();
+        program.declarations.push(IrDecl::new(IrDeclKind::Import {
+            visibility: Visibility::Private,
+            origin: IrImportOrigin::Standard,
+            qualifier: IrImportQualifier::None,
+            path: vec![String::from("rand")],
+            alias: None,
+            items: vec![
+                IrImportItem {
+                    name: String::from("Rng"),
+                    alias: None,
+                    rust_trait_methods: Vec::new(),
+                },
+                IrImportItem {
+                    name: String::from("thread_rng"),
+                    alias: None,
+                    rust_trait_methods: Vec::new(),
+                },
+            ],
+        }));
+        let rng_ty = IrType::Struct(String::from("rand::rngs::ThreadRng"));
+        program.declarations.push(IrDecl::new(IrDeclKind::Function(IrFunction {
+            name: String::from("main"),
+            params: Vec::<FunctionParam>::new(),
+            return_type: IrType::Unit,
+            body: vec![
+                IrStmt::new(IrStmtKind::Let {
+                    name: String::from("rng"),
+                    ty: rng_ty.clone(),
+                    type_annotation: None,
+                    mutability: Mutability::Mutable,
+                    value: TypedExpr::new(
+                        IrExprKind::Call {
+                            func: Box::new(TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: String::from("thread_rng"),
+                                    access: VarAccess::Move,
+                                    ref_kind: VarRefKind::ExternalRustName,
+                                },
+                                IrType::Function {
+                                    params: Vec::new(),
+                                    ret: Box::new(rng_ty.clone()),
+                                },
+                            )),
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: None,
+                            canonical_path: None,
+                        },
+                        rng_ty.clone(),
+                    ),
+                }),
+                IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+                    IrExprKind::MethodCall {
+                        receiver: Box::new(TypedExpr::new(
+                            IrExprKind::Var {
+                                name: String::from("rng"),
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::Value,
+                            },
+                            rng_ty,
+                        )),
+                        method: String::from("gen_range"),
+                        dispatch: None,
+                        type_args: Vec::new(),
+                        args: vec![IrCallArg {
+                            name: None,
+                            kind: IrCallArgKind::Positional,
+                            expr: TypedExpr::new(
+                                IrExprKind::Range {
+                                    start: Some(Box::new(TypedExpr::new(IrExprKind::Int(1), IrType::Int))),
+                                    end: Some(Box::new(TypedExpr::new(IrExprKind::Int(7), IrType::Int))),
+                                    inclusive: false,
+                                },
+                                IrType::Unknown,
+                            ),
+                        }],
+                        callable_signature: None,
+                        arg_policy: MethodCallArgPolicy::Default,
+                    },
+                    IrType::Int,
+                ))),
+            ],
+            is_async: false,
+            is_generator: false,
+            visibility: Visibility::Private,
+            type_params: Vec::new(),
+            is_extern: false,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        })));
+
+        let mut emitter = IrEmitter::new(&program.function_registry);
+        let code = must_ok(emitter.emit_program(&program));
+
+        assert!(code.contains("use rand::Rng;"), "{code}");
+        assert!(code.contains("use rand::thread_rng;"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn normal_codegen_expects_only_unread_private_model_fields() {
+        let code = generate(
+            r#"
+model User:
+  name: str
+  age: int
+
+def main() -> None:
+  let user = User(name="Ada", age=42)
+  print(user.name)
+"#,
+        );
+
+        assert!(code.contains("name: String"), "{code}");
+        assert!(
+            code.contains(
+                "#[expect(dead_code, reason = \"retained for Incan private field semantics\")]\n    age: i64"
+            ),
+            "{code}"
+        );
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn generated_rust_warning_clean() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::backend::project::ProjectGenerator;
+        use std::process::Command;
+
+        let code = generate(
+            r#"
+import rust::std::f64::consts as consts
+
+model User:
+  name: str
+  age: int
+
+def helper(value: int) -> int:
+  return value
+
+def main() -> None:
+  let user = User(name="Ada", age=42)
+  print(user.name)
+  print(helper(1))
+  _ = consts.PI
+"#,
+        );
+        assert_no_generated_unused_lint_allows(&code);
+
+        let tmp = tempfile::tempdir()?;
+        let generator = ProjectGenerator::new(tmp.path(), "warning_clean_codegen", true);
+        generator.generate(&code)?;
+
+        let output = Command::new("cargo")
+            .arg("check")
+            .current_dir(tmp.path())
+            .env("CARGO_NET_OFFLINE", "true")
+            .env("RUSTFLAGS", "-Dwarnings")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "generated Rust should pass cargo check with -Dwarnings\nstderr:\n{}\nstdout:\n{}",
+            String::from_utf8_lossy(&output.stderr),
+            String::from_utf8_lossy(&output.stdout)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn normal_codegen_uses_underscore_for_unused_parameters() {
+        let code = generate(
+            r#"
+def helper(value: int, unused: int) -> int:
+  return value
+
+def main() -> None:
+  print(helper(1, 2))
+"#,
+        );
+
+        assert!(code.contains("fn helper(value: i64, _: i64) -> i64"), "{code}");
+        assert!(!code.contains("#[allow(unused_variables)]"), "{code}");
+    }
+
+    #[test]
+    fn normal_codegen_uses_underscore_for_unused_locals() {
+        let code = generate(
+            r#"
+def main() -> None:
+  let unused = "value"
+  print("done")
+"#,
+        );
+
+        assert!(code.contains("let _unused = \"value\".to_string();"), "{code}");
+        assert!(!code.contains("let unused = \"value\".to_string();"), "{code}");
+        assert!(!code.contains("#[allow(unused_variables)]"), "{code}");
+    }
+
+    #[test]
+    fn normal_codegen_unused_local_scan_respects_shadowing() {
+        let code = generate(
+            r#"
+def main() -> None:
+  let unused = "outer"
+  if true:
+    let unused = "inner"
+    print(unused)
+"#,
+        );
+
+        assert!(code.contains("let _unused = \"outer\".to_string();"), "{code}");
+        assert!(code.contains("let unused = \"inner\".to_string();"), "{code}");
+        assert!(!code.contains("#[allow(unused_variables)]"), "{code}");
+    }
+
+    #[test]
+    fn strict_codegen_emits_denies_without_generated_scoped_allows() {
+        let ast = parse_program(
+            r#"
+def helper(value: int) -> int:
+  return value
+
+def main() -> None:
+  return
+"#,
+        );
+        let mut codegen = IrCodegen::new();
+        codegen.set_strict_generated_lints(true);
+        let code = must_ok(codegen.try_generate(&ast));
+
+        assert!(code.contains("#![deny(unused_imports, dead_code, unused_variables)]"));
+        assert!(!code.contains("#![allow("));
+        assert!(!code.contains("#[allow(dead_code"));
+        assert!(!code.contains("#[allow(unused_variables"));
+    }
+
+    #[test]
+    fn built_in_derive_macros_are_path_qualified() {
+        let code = generate(
+            r#"
+model User:
+  name: str
+
+def main() -> None:
+  let user = User(name="Ada")
+  print(user.name)
+"#,
+        );
+
+        assert!(code.contains("#[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]"));
+        assert!(!code.contains("use incan_derive::{FieldInfo, IncanClass};"));
+    }
+
     /// Parse an Incan program into an AST
     fn parse_program(source: &str) -> Program {
         let tokens = must_ok(lexer::lex(source));
         must_ok(parser::parse(&tokens))
+    }
+
+    fn parse_program_result(source: &str) -> Result<Program, Box<dyn std::error::Error>> {
+        let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+        let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+        Ok(ast)
+    }
+
+    fn read_stdlib_program(path: &str) -> Result<Program, Box<dyn std::error::Error>> {
+        let source = std::fs::read_to_string(path)?;
+        parse_program_result(&source)
+    }
+
+    /// Parse and scan a source snippet to determine whether serde runtime support is required.
+    fn detects_serde(source: &str) -> bool {
+        let ast = parse_program(source);
+        let mut codegen = IrCodegen::new();
+        codegen.update_serde_requirement(&ast);
+        codegen.needs_serde()
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    fn seeded_rust_inspect_workspace() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "ra_seeded_codegen_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )?;
+        Ok(tmp)
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    fn reqwest_shaped_rust_inspect_workspace() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "reqwest"
+version = "0.0.0"
+edition = "2021"
+"#,
+        )?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("src").join("lib.rs"),
+            r#"
+pub struct Client;
+
+pub struct RequestBuilder;
+
+pub trait IntoUrl {}
+
+impl IntoUrl for &str {}
+
+impl Client {
+    pub fn new() -> Client {
+        Client
+    }
+
+    pub fn post<U: IntoUrl>(&self, _url: U) -> RequestBuilder {
+        RequestBuilder
+    }
+}
+
+impl RequestBuilder {
+    pub fn json<T: ?Sized>(self, _json: &T) -> RequestBuilder {
+        self
+    }
+}
+"#,
+        )?;
+        Ok(tmp)
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    fn prewarm_metadata(manifest_dir: &std::path::Path, paths: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+        let inspector =
+            crate::rust_inspect::Inspector::new(crate::rust_inspect::InspectorConfig::new(manifest_dir.to_path_buf()));
+        inspector.prewarm(paths.iter().map(|p| (*p).to_string()).collect::<Vec<_>>(), &|_| ())?;
+        Ok(())
     }
 
     fn db_module_program() -> Program {
@@ -978,6 +2222,8 @@ def main() -> None:
             name: "Widget".to_string(),
             type_params: Vec::new(),
             traits: Vec::new(),
+            trait_adoptions: Vec::new(),
+            derives: Vec::new(),
             fields: Vec::new(),
             methods: Vec::new(),
         });
@@ -989,6 +2235,8 @@ def main() -> None:
                 ty: TypeRef::Named {
                     name: "str".to_string(),
                 },
+                kind: ParamKindExport::Normal,
+                has_default: false,
             }],
             return_type: TypeRef::Named {
                 name: "Widget".to_string(),
@@ -1045,7 +2293,7 @@ def main() -> None:
     fn test_simple_function() {
         let code = generate(
             r#"
-def add(a: int, b: int) -> int:
+pub def add(a: int, b: int) -> int:
   return a + b
 "#,
         );
@@ -1057,9 +2305,9 @@ def add(a: int, b: int) -> int:
     fn test_model_generation() {
         let code = generate(
             r#"
-model User:
-  name: str
-  age: int
+pub model User:
+  pub name: str
+  pub age: int
 "#,
         );
         assert!(code.contains("struct User"));
@@ -1070,29 +2318,25 @@ model User:
     #[test]
     fn test_serde_detection() {
         let source = r#"
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 model Config:
   name: str
 "#;
-        let tokens = must_ok(lexer::lex(source));
-        let ast = must_ok(parser::parse(&tokens));
-        let mut codegen = IrCodegen::new();
-        codegen.update_serde_requirement(&ast);
-        assert!(codegen.needs_serde());
+        assert!(detects_serde(source));
     }
 
     #[test]
     fn test_serde_detection_single_derive() {
         let source = r#"
+from std.serde.json import Serialize
+
 @derive(Serialize)
 model User:
   id: int
 "#;
-        let tokens = must_ok(lexer::lex(source));
-        let ast = must_ok(parser::parse(&tokens));
-        let mut codegen = IrCodegen::new();
-        codegen.update_serde_requirement(&ast);
-        assert!(codegen.needs_serde());
+        assert!(detects_serde(source));
     }
 
     #[test]
@@ -1102,11 +2346,7 @@ model User:
 model User:
   id: int
 "#;
-        let tokens = must_ok(lexer::lex(source));
-        let ast = must_ok(parser::parse(&tokens));
-        let mut codegen = IrCodegen::new();
-        codegen.update_serde_requirement(&ast);
-        assert!(!codegen.needs_serde());
+        assert!(!detects_serde(source));
     }
 
     #[test]
@@ -1115,18 +2355,56 @@ model User:
 def main() -> None:
   _ = json_stringify(123)
 "#;
-        let tokens = must_ok(lexer::lex(source));
-        let ast = must_ok(parser::parse(&tokens));
-        let mut codegen = IrCodegen::new();
-        codegen.update_serde_requirement(&ast);
-        assert!(codegen.needs_serde());
+        assert!(detects_serde(source));
+    }
+
+    #[test]
+    fn test_serde_detection_json_stringify_in_if_condition() {
+        let source = r#"
+def main() -> None:
+  if json_stringify(1) == "1":
+    pass
+"#;
+        assert!(detects_serde(source));
+    }
+
+    #[test]
+    fn test_serde_detection_json_stringify_in_elif_body() {
+        let source = r#"
+def main() -> None:
+  if true:
+    pass
+  elif false:
+    _ = json_stringify(1)
+"#;
+        assert!(detects_serde(source));
+    }
+
+    #[test]
+    fn test_serde_detection_json_stringify_in_while_condition() {
+        let source = r#"
+def main() -> None:
+  while json_stringify(1) == "1":
+    break
+"#;
+        assert!(detects_serde(source));
+    }
+
+    #[test]
+    fn test_serde_detection_json_stringify_in_for_iterator() {
+        let source = r#"
+def main() -> None:
+  for item in [json_stringify(1)]:
+    _ = item
+"#;
+        assert!(detects_serde(source));
     }
 
     #[test]
     fn test_fstring_generation() {
         let code = generate(
             r#"
-def greet(name: str) -> str:
+pub def greet(name: str) -> str:
   return f"Hello, {name}!"
 "#,
         );
@@ -1155,7 +2433,7 @@ def main() -> None:
     fn test_enum_generation() {
         let code = generate(
             r#"
-enum Status:
+pub enum Status:
   Active
   Inactive
 "#,
@@ -1170,6 +2448,9 @@ enum Status:
         let store_code = generate_nested_store_code(
             r#"
 from db.schema import Database
+
+pub def touch(db: Database) -> None:
+  return
 "#,
         );
         assert!(store_code.contains("use crate::db::schema::Database;"));
@@ -1190,10 +2471,10 @@ model Account:
             r#"
 from db.schema import Account
 
-def get_type(a: Account) -> str:
+pub def get_type(a: Account) -> str:
   return a.type
 
-def make() -> Account:
+pub def make() -> Account:
   return Account(type="x")
 "#,
         );
@@ -1239,10 +2520,10 @@ model Account:
             r#"
 from db.schema import Account as A
 
-def get_type(a: A) -> str:
+pub def get_type(a: A) -> str:
   return a.type
 
-def make() -> A:
+pub def make() -> A:
   return A(type="x")
 "#,
         );
@@ -1272,7 +2553,7 @@ def make() -> A:
     fn test_multi_file_self_alias_resolution_in_dependency_module() {
         let db_module = parse_program(
             r#"
-model Account:
+pub model Account:
   type_ [alias="type"]: str
 
   def get_type(self) -> str:
@@ -1300,10 +2581,69 @@ model Account:
     }
 
     #[test]
+    fn test_same_named_stdlib_helpers_do_not_contaminate_nested_module_signatures()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let main_module = parse_program_result(
+            r#"
+from std.testing import timeout
+from std.async.time import timeout as async_timeout
+
+def main() -> None:
+  return
+"#,
+        )?;
+        let testing_module = read_stdlib_program("crates/incan_stdlib/stdlib/testing.incn")?;
+        let async_task_module = read_stdlib_program("crates/incan_stdlib/stdlib/async/task.incn")?;
+        let async_time_module = read_stdlib_program("crates/incan_stdlib/stdlib/async/time.incn")?;
+        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn")?;
+
+        let testing_path = vec!["__incan_std".to_string(), "testing".to_string()];
+        let async_task_path = vec!["__incan_std".to_string(), "async".to_string(), "task".to_string()];
+        let async_time_path = vec!["__incan_std".to_string(), "async".to_string(), "time".to_string()];
+        let traits_error_path = vec!["__incan_std".to_string(), "traits".to_string(), "error".to_string()];
+
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("__incan_std_testing", &testing_module, testing_path.clone());
+        codegen.add_module_with_path_segments("__incan_std_async_task", &async_task_module, async_task_path.clone());
+        codegen.add_module_with_path_segments("__incan_std_async_time", &async_time_module, async_time_path.clone());
+        codegen.add_module_with_path_segments(
+            "__incan_std_traits_error",
+            &traits_error_module,
+            traits_error_path.clone(),
+        );
+
+        let (_main_code, rust_modules) = codegen.try_generate_multi_file_nested(
+            &main_module,
+            &[
+                testing_path.clone(),
+                async_task_path,
+                async_time_path,
+                traits_error_path,
+            ],
+        )?;
+        let testing_code = rust_modules
+            .get(&testing_path)
+            .ok_or_else(|| std::io::Error::other("missing generated std.testing module"))?;
+
+        assert!(
+            testing_code.contains("pub fn timeout(duration: String)"),
+            "std.testing.timeout should remain a non-generic marker wrapper; got:\n{testing_code}"
+        );
+        assert!(
+            !testing_code.contains("RuntimeFuture"),
+            "std.testing wrapper should not inherit std.async.time.timeout bounds; got:\n{testing_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_rust_imports_do_not_use_crate_prefix() {
         let code = generate(
             r#"
 from rust::time import Duration
+
+pub def touch(duration: Duration) -> None:
+  return
 "#,
         );
         assert!(code.contains("use time::Duration;"));
@@ -1315,6 +2655,9 @@ from rust::time import Duration
         let code = generate(
             r#"
 import serde::Serialize
+
+pub def touch(value: Serialize) -> None:
+  return
 "#,
         );
         assert!(code.contains("use serde::Serialize;"));
@@ -1326,6 +2669,9 @@ import serde::Serialize
         let store_code = generate_nested_store_code(
             r#"
 from ..db.schema import Database
+
+pub def touch(db: Database) -> None:
+  return
 "#,
         );
         assert!(store_code.contains("use super::db::schema::Database;"));
@@ -1337,6 +2683,9 @@ from ..db.schema import Database
         let store_code = generate_nested_store_code(
             r#"
 import db::schema::Database
+
+pub def touch(db: Database) -> None:
+  return
 "#,
         );
         assert!(store_code.contains("use crate::db::schema::Database;"));
@@ -1348,6 +2697,9 @@ import db::schema::Database
         let store_code = generate_non_nested_store_code(
             r#"
 from db import Database
+
+pub def touch(db: Database) -> None:
+  return
 "#,
             "db",
         );
@@ -1360,6 +2712,9 @@ from db import Database
         let store_code = generate_non_nested_store_code(
             r#"
 from db.schema import Database
+
+pub def touch(db: Database) -> None:
+  return
 "#,
             "db_schema",
         );
@@ -1374,14 +2729,16 @@ from db.schema import Database
 from pub::widgets import Widget as PublicWidget, make_widget
 
 def main() -> None:
-  return
+  w: PublicWidget = make_widget("ok")
 "#,
         );
         let mut codegen = IrCodegen::new();
         codegen.set_library_manifest_index(library_index_with_widgets_exports());
         let code = must_ok(codegen.try_generate(&ast));
-        assert!(code.contains("pub use widgets::Widget as PublicWidget;"));
-        assert!(code.contains("pub use widgets::make_widget;"));
+        assert!(code.contains("use widgets::Widget as PublicWidget;"));
+        assert!(code.contains("use widgets::make_widget;"));
+        assert!(!code.contains("pub use widgets::Widget as PublicWidget;"));
+        assert!(!code.contains("pub use widgets::make_widget;"));
         assert!(!code.contains("pub::widgets"));
     }
 
@@ -1398,7 +2755,7 @@ def main() -> None:
         codegen.set_library_manifest_index(library_index_with_widgets_exports());
         let code = must_ok(codegen.try_generate(&ast));
         assert!(
-            code.contains("let mut w = make_widget(DEFAULT_NAME);"),
+            code.contains("let _w: Widget = make_widget(DEFAULT_NAME);"),
             "Generated code did not match expected. Code was:\n{code}"
         );
     }
@@ -1410,13 +2767,674 @@ def main() -> None:
 import pub::widgets as widgets_alias
 
 def main() -> None:
-  return
+  widgets_alias.make_widget("ok")
 "#,
         );
         let mut codegen = IrCodegen::new();
         codegen.set_library_manifest_index(library_index_with_widgets_exports());
         let code = must_ok(codegen.try_generate(&ast));
         assert!(code.contains("use widgets as widgets_alias;"));
+        assert!(!code.contains("pub use widgets as widgets_alias;"));
         assert!(!code.contains("use pub::widgets"));
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_borrows_rust_backed_free_function_args_from_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
+
+        let source = r#"
+from rust::demo import Thing
+from rust::demo import takes_ref
+
+pub def forward(value: Thing) -> None:
+  takes_ref(value)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = seeded_rust_inspect_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(manifest_dir.clone());
+        tc.rust_inspect_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: "demo::takes_ref".to_string(),
+                    definition_path: Some("demo::takes_ref".to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Function(RustFunctionSig {
+                        params: vec![RustParam {
+                            name: Some("value".to_string()),
+                            type_display: "&demo::Thing".to_string(),
+                        }],
+                        return_type: "()".to_string(),
+                        is_async: false,
+                        is_unsafe: false,
+                    }),
+                },
+            )
+            .map_err(|e| std::io::Error::other(format!("seed rust-inspect function: {e}")))?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("takes_ref(&value);"),
+            "expected borrowed rust free-function arg in generated code; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_borrows_rust_backed_method_args_from_metadata() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use incan_core::interop::{
+            RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo, RustVisibility,
+        };
+
+        let source = r#"
+from rust::demo import Builder
+
+model Payload:
+  name: str
+
+pub def forward(payload: Payload) -> int:
+  builder = Builder.new()
+  return builder.json(payload)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = seeded_rust_inspect_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(manifest_dir.clone());
+        tc.rust_inspect_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: "demo::Builder".to_string(),
+                    definition_path: Some("demo::Builder".to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Type(RustTypeInfo {
+                        methods: vec![
+                            RustMethodSig {
+                                name: "new".to_string(),
+                                signature: RustFunctionSig {
+                                    params: Vec::new(),
+                                    return_type: "demo::Builder".to_string(),
+                                    is_async: false,
+                                    is_unsafe: false,
+                                },
+                            },
+                            RustMethodSig {
+                                name: "json".to_string(),
+                                signature: RustFunctionSig {
+                                    params: vec![RustParam {
+                                        name: Some("value".to_string()),
+                                        type_display: "&T".to_string(),
+                                    }],
+                                    return_type: "i64".to_string(),
+                                    is_async: false,
+                                    is_unsafe: false,
+                                },
+                            },
+                        ],
+                        fields: Vec::new(),
+                        variants: Vec::new(),
+                    }),
+                },
+            )
+            .map_err(|e| std::io::Error::other(format!("seed rust-inspect type: {e}")))?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("builder.json(&payload);"),
+            "expected borrowed rust method arg in generated code; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_borrows_reqwest_json_payload_returned_from_registry_client()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+
+        let source = r#"
+from rust::reqwest import Client
+
+model Payload:
+  name: str
+
+pub def forward(payload: Payload) -> None:
+  builder = Client.new().post("https://example.invalid")
+  _ = builder.json(payload)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = reqwest_shaped_rust_inspect_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        prewarm_metadata(&manifest_dir, &["reqwest::Client"])?;
+
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(manifest_dir);
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("builder.json(&payload);"),
+            "expected registry-returned reqwest RequestBuilder::json payload to be borrowed; got:\n{code}"
+        );
+        assert!(
+            code.contains(r#"Client::new().post("https://example.invalid")"#),
+            "expected generic reqwest Client::post string literal to keep inferable &str shape; got:\n{code}"
+        );
+        assert!(
+            !code.contains(r#".post("https://example.invalid".into())"#),
+            "generic reqwest Client::post must not force ambiguous `.into()` on string literals; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_codegen_keeps_nested_rust_associated_calls_type_like_when_outer_receiver_is_unknown()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+
+        let source = r#"
+from rust::datafusion::execution::context import SessionContext
+from rust::datafusion::dataframe import DataFrameWriteOptions
+
+pub def f(uri: str) -> None:
+  ctx = SessionContext.new()
+  _ = ctx.write_csv(uri, DataFrameWriteOptions.new(), None)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let mut tc = TypeChecker::new();
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("ctx.write_csv(&uri, DataFrameWriteOptions::new(), None::<_>);"),
+            "expected nested rust associated call to keep :: syntax; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_borrows_async_rust_backed_free_function_args_from_metadata()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustVisibility};
+
+        let source = r#"
+from std.async import sleep
+from rust::demo import State
+from rust::demo import Plan
+from rust::demo import consume
+
+pub async def run(state: State, plan: Plan) -> None:
+  await sleep(0.01)
+  await consume(state, plan)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = seeded_rust_inspect_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(manifest_dir.clone());
+        tc.rust_inspect_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: "demo::consume".to_string(),
+                    definition_path: Some("demo::consume".to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Function(RustFunctionSig {
+                        params: vec![
+                            RustParam {
+                                name: Some("state".to_string()),
+                                type_display: "&demo::State".to_string(),
+                            },
+                            RustParam {
+                                name: Some("plan".to_string()),
+                                type_display: "&demo::Plan".to_string(),
+                            },
+                        ],
+                        return_type: "()".to_string(),
+                        is_async: true,
+                        is_unsafe: false,
+                    }),
+                },
+            )
+            .map_err(|e| std::io::Error::other(format!("seed rust-inspect function: {e}")))?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("consume(&state, &plan).await"),
+            "expected borrowed async rust free-function args in generated code; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_borrows_async_rust_backed_free_function_args_from_real_rust_inspect()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use crate::rust_inspect::write_async_result_probe_crate;
+
+        let source = r#"
+from std.async import sleep
+from rust::ra_async_result_probe import State
+from rust::ra_async_result_probe import Plan
+from rust::ra_async_result_probe import consume
+
+pub async def run(state: State, plan: Plan) -> None:
+  await sleep(0.01)
+  await consume(state, plan)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = tempfile::tempdir()?;
+        write_async_result_probe_crate(tmp.path())?;
+
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
+        prewarm_metadata(
+            tmp.path(),
+            &[
+                "ra_async_result_probe::State",
+                "ra_async_result_probe::Plan",
+                "ra_async_result_probe::consume",
+            ],
+        )?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("consume(&state, &plan).await"),
+            "expected borrowed async rust free-function args from real metadata; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_borrows_async_rust_backed_free_function_args_from_generated_lock_workspace()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::backend::project::ProjectGenerator;
+        use crate::frontend::typechecker::TypeChecker;
+        use crate::manifest::{DependencySource, DependencySpec};
+        use crate::rust_inspect::write_hyphenated_function_probe_crate;
+
+        let source = r#"
+from std.async import sleep
+from rust::foo_bar import State
+from rust::foo_bar import Plan
+from rust::foo_bar::consumer import consume
+
+pub async def run(state: State, plan: Plan) -> None:
+  await sleep(0.01)
+  await consume(state, plan)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = tempfile::tempdir()?;
+        let dep_root = tmp.path().join("foo-bar-dep");
+        write_hyphenated_function_probe_crate(&dep_root)?;
+
+        let lock_root = tmp.path().join("generated_lock");
+        let mut generator = ProjectGenerator::new(&lock_root, "lock_probe", true);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "foo-bar".to_string(),
+            version: None,
+            features: vec![],
+            default_features: true,
+            source: DependencySource::Path { path: dep_root.clone() },
+            optional: false,
+            package: None,
+        }]);
+        generator.generate("fn main() {}\n")?;
+
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(lock_root.clone());
+        prewarm_metadata(
+            &lock_root,
+            &["foo_bar::State", "foo_bar::Plan", "foo_bar::consumer::consume"],
+        )?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("consume(&state, &plan).await"),
+            "expected borrowed async rust free-function args from generated lock workspace; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_nested_module_codegen_borrows_async_rust_args_from_generated_lock_workspace()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::backend::project::ProjectGenerator;
+        use crate::manifest::{DependencySource, DependencySpec};
+        use crate::rust_inspect::write_hyphenated_function_probe_crate;
+
+        let main_module = parse_program(
+            r#"
+def main() -> None:
+  return
+"#,
+        );
+        let dep_module = parse_program(
+            r#"
+from std.async import sleep
+from rust::foo_bar import State
+from rust::foo_bar import Plan
+from rust::foo_bar::consumer import consume
+
+pub async def run(state: State, plan: Plan) -> None:
+  await sleep(0.01)
+  await consume(state, plan)
+"#,
+        );
+
+        let tmp = tempfile::tempdir()?;
+        let dep_root = tmp.path().join("foo-bar-dep");
+        write_hyphenated_function_probe_crate(&dep_root)?;
+
+        let lock_root = tmp.path().join("generated_lock");
+        let mut generator = ProjectGenerator::new(&lock_root, "lock_probe", true);
+        generator.set_dependencies(vec![DependencySpec {
+            crate_name: "foo-bar".to_string(),
+            version: None,
+            features: vec![],
+            default_features: true,
+            source: DependencySource::Path { path: dep_root.clone() },
+            optional: false,
+            package: None,
+        }]);
+        generator.generate("fn main() {}\n")?;
+
+        let worker_path = vec!["worker".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.set_rust_inspect_manifest_dir(lock_root);
+        codegen.add_module_with_path_segments("worker", &dep_module, worker_path.clone());
+
+        let (_main_code, rust_modules) =
+            must_ok(codegen.try_generate_multi_file_nested(&main_module, std::slice::from_ref(&worker_path)));
+        let worker_code = must_some(rust_modules.get(&worker_path), "missing generated worker module");
+
+        assert!(
+            worker_code.contains("consume(&state, &plan).await"),
+            "expected borrowed async rust free-function args in generated nested module; got:\n{worker_code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_borrows_async_rust_args_after_rust_method_return() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use crate::rust_inspect::write_async_result_probe_crate;
+
+        let source = r#"
+from std.async import sleep
+from rust::ra_async_result_probe import SessionContext
+from rust::ra_async_result_probe import Plan
+from rust::ra_async_result_probe import consume
+
+pub async def run(plan: Plan) -> None:
+  ctx = SessionContext.new()
+  state = ctx.state()
+  await sleep(0.01)
+  await consume(state, plan)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = tempfile::tempdir()?;
+        write_async_result_probe_crate(tmp.path())?;
+
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
+        prewarm_metadata(
+            tmp.path(),
+            &[
+                "ra_async_result_probe::SessionContext",
+                "ra_async_result_probe::Plan",
+                "ra_async_result_probe::consume",
+            ],
+        )?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+
+        let mut codegen = IrCodegen::new();
+        codegen.collect_external_rust_functions(&ast);
+
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        emitter.set_external_rust_functions(codegen.external_rust_functions.clone());
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("consume(&state, &plan).await"),
+            "expected borrowed async rust free-function args after rust method return; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_ir_codegen_uses_configured_rust_inspect_workspace_for_async_borrows()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::rust_inspect::write_hyphenated_function_probe_crate;
+
+        let tmp = tempfile::tempdir()?;
+        let dep_root = tmp.path().join("foo-bar-dep");
+        write_hyphenated_function_probe_crate(&dep_root)?;
+
+        let host_root = tmp.path().join("host");
+        std::fs::create_dir_all(host_root.join("src"))?;
+        std::fs::write(
+            host_root.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"host\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies.foo_bar]\npackage = \"foo-bar\"\npath = \"{}\"\n",
+                dep_root.display()
+            ),
+        )?;
+        std::fs::write(host_root.join("src/lib.rs"), "pub fn touch() {}\n")?;
+
+        let source = r#"
+from std.async import sleep
+from rust::foo_bar import State
+from rust::foo_bar import Plan
+from rust::foo_bar::consumer import consume
+
+pub async def run(state: State, plan: Plan) -> None:
+  await sleep(0.01)
+  await consume(state, plan)
+"#;
+        let ast = parse_program(source);
+        let mut codegen = IrCodegen::new();
+        codegen.set_rust_inspect_manifest_dir(host_root);
+        let code = must_ok(codegen.try_generate(&ast));
+
+        assert!(
+            code.contains("consume(&state, &plan).await"),
+            "expected IrCodegen to preserve borrowed async args via the configured metadata workspace; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_codegen_emits_explicit_function_call_type_args() {
+        let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+pub def run() -> int:
+  return id[int](1)
+"#;
+        let ast = parse_program(source);
+        let code = must_ok(IrCodegen::new().try_generate(&ast));
+        assert!(
+            code.contains("id::<i64>(1)") || code.contains("id :: < i64 > (1)"),
+            "expected explicit function type args to emit Rust turbofish, got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn test_codegen_emits_explicit_method_call_type_args() {
+        let source = r#"
+class Box:
+  def pick[T](self, value: T) -> T:
+    return value
+
+pub def run() -> int:
+  let b = Box()
+  return b.pick[int](1)
+"#;
+        let ast = parse_program(source);
+        let code = must_ok(IrCodegen::new().try_generate(&ast));
+        assert!(
+            code.contains("pick::<i64>") || code.contains("pick :: < i64 >"),
+            "expected explicit method type args to emit Rust turbofish, got:\n{code}"
+        );
+    }
+
+    #[test]
+    fn test_codegen_emits_full_turbofish_for_mixed_explicit_and_inferred_type_args() {
+        let source = r#"
+def pair_map[T, U](x: T, y: U) -> int:
+  return 0
+
+pub def run() -> int:
+  return pair_map[int, _](1, 2)
+"#;
+        let ast = parse_program(source);
+        let code = must_ok(IrCodegen::new().try_generate(&ast));
+        assert!(
+            code.contains("pair_map::<i64, i64>") || code.contains("pair_map :: < i64 , i64 >"),
+            "expected full turbofish for mixed explicit/`_` call-site generics, got:\n{code}"
+        );
     }
 }

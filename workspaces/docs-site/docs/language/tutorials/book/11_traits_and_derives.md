@@ -32,7 +32,7 @@ The `:?` inside an f-string means “debug formatting”.
 
 Traits let you define a shared contract. In a trait, a method can either:
 
-- Use `...` to mean “implementers must provide this” (required methds)
+- Use `...` to mean “implementers must provide this” (required methods)
 - Provide a default implementation (Rust-like default methods)
 
 Traits are always abstract in Incan. That means two things:
@@ -44,16 +44,36 @@ Traits are always abstract in Incan. That means two things:
     **Traits** are like a typed interface (represented in Python by a `Protocol` or `abc.ABC`): “anything that implements
     these methods can be treated as this capability”.
 
+### Protocol traits and hooks
+
+Some traits are tied to ordinary syntax. The trait is the named capability, and the dunder method is the implementation hook:
+
+```incan
+from std.derives.collection import Bool, Len
+from std.traits.indexing import Index
+
+model Bucket with Len, Index[int, str]:
+    items: list[str]
+
+    def __len__(self) -> int:
+        return len(self.items)
+
+    def __getitem__(self, index: int) -> str:
+        return self.items[index]
+```
+
+`len(bucket)` uses `__len__`, and `bucket[0]` uses `__getitem__`. Use these hooks when syntax is the clearest expression of the type's behavior. Prefer explicit checks for optionality, fallibility, emptiness, and named state: `value is Some(x)`, `result is Ok(x)`, `len(items) > 0`, or `connection.is_open`.
+
 ### Trait hierarchies with `with`
 
 Traits can also refine other traits:
 
 ```incan
 trait Collection[T]:
-    def first(self) -> T: ...
+    def first(self) -> T
 
 trait OrderedCollection[T] with Collection[T]:
-    def sorted(self) -> Self: ...
+    def sorted(self) -> Self
 
 def first_item(values: Collection[int]) -> int:
     return values.first()
@@ -88,6 +108,28 @@ def main() -> None:
     println(u.greet())  # outputs: Hello, alice!
 ```
 
+Enums can adopt traits too. Put the required method in the enum body:
+
+```incan
+trait Describable:
+    def describe(self) -> str: ...
+
+enum Outcome with Describable:
+    Success
+    Failure(str)
+
+    def describe(self) -> str:
+        match self:
+            Outcome.Success => return "success"
+            Outcome.Failure(message) => return message
+
+def print_description[T with Describable](value: T) -> None:
+    println(value.describe())
+
+def main() -> None:
+    print_description(Outcome.Failure("not found"))
+```
+
 Mutation uses `mut self` (and the field must be declared via `@requires(...)`):
 
 ```incan
@@ -108,7 +150,7 @@ def main() -> None:
 
 1. Add a second derived type and print it with `:?`.
 2. Create a small trait (for example `Describable`) and implement it for a model.
-3. Call the trait method.
+3. Implement the same trait for an enum and call the trait method.
 
 ??? example "One possible solution"
 
@@ -127,9 +169,19 @@ def main() -> None:
         def describe(self) -> str:
             return f"user={self.username}"
 
+    enum JobState with Describable:
+        Queued
+        Failed(str)
+
+        def describe(self) -> str:
+            match self:
+                JobState.Queued => return "queued"
+                JobState.Failed(message) => return message
+
     def main() -> None:
         println(f"{Point(x=1, y=2):?}")
         println(User(username="alice").describe())
+        println(JobState.Failed("timeout").describe())
     ```
 
 ## Where to learn more

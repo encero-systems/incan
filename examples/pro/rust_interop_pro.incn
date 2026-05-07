@@ -1,0 +1,133 @@
+"""
+Pro-level Rust interop authoring pattern (RFC 041).
+
+Using this pattern, you can author Rust-backed types with Incan-visible method surfaces, and declare interop edges.
+This is especially useful when interoperating with external libraries that do not have a corresponding Incan type.
+
+This feature is best used at library boundaries where you need clean interop with existing Rust APIs.
+
+If you are new to Rust, use this mental model:
+
+- `rusttype` wraps an existing Rust type as an opaque Incan type.
+- methods with `...` declare the callable contract; Rust provides the implementation.
+- `interop:` defines automatic boundary conversions the compiler inserts for you.
+- you usually only need the Rust path, method names, and desired conversion edges.
+
+In this file we demonstrate the full rust interop surface (as introduced by RFC 041) in one file:
+
+1. rusttype declaration
+    Type aliases over opaque Rust types with Incan-visible method surfaces.
+    Methods are declared with abstract bodies (...); the compiler relies on the underlying Rust type to provide the
+    implementation.
+
+2. interop: edges
+    `from str try <adapter>` — fallible construction from a Rust boundary type.
+    `into str via <adapter>` — lossless projection to a Rust boundary type.
+    The compiler inserts the adapter call automatically at coercion sites.
+
+3. std.rust capability bounds
+    `T with Send, Sync, Static` — Rust marker traits used as generic bounds.
+    These are compile-time constraints only; no runtime cost, nor glue code.
+
+4. async runtime wrappers
+    `spawn_blocking` runs sync work on the thread-pool without blocking the async executor.
+    `timeout` wraps any async call with a wall-clock deadline.
+
+**Design note** — str vs &str at rusttype method boundaries:  
+Incan's `str` maps to Rust `String`. A method declared `def label(self) -> str` will emit `widget.label()` in Rust,
+which must return `String` (not `&str`). When built with the `rust_inspect` feature, the compiler detects the mismatch
+and automatically inserts `.to_string()` at the call site. Without that feature, choose methods whose Rust signatures
+already return `String` (e.g. `to_string()`). This example uses Uuid which has `to_string() -> String` (always safe).
+"""
+
+from rust::std::time import Instant
+from rust::uuid import Uuid
+from std.async.task import spawn_blocking
+from std.async.time import sleep, timeout
+from std.rust import Send, Sync, Static
+
+
+# ---- RequestId rusttype ----
+
+
+type RequestId = rusttype Uuid:
+    """
+    Wraps `uuid::Uuid` as an opaque, RFC 4122-compliant request identifier.
+    
+    The interop: block provides safe boundary conversions without glue code:
+
+    - from str: parse a hyphenated UUID string (fallible, via try adapter)
+    - into str: format back to canonical hyphenated form (infallible, via adapter)
+    
+    `to_string` is used over `as_str` because Uuid::to_string returns String directly, matching Incan's str = String
+    contract without needing the `rust_inspect` feature.
+    """
+    # Abstract rusttype method declarations: bodies are `...` on purpose.
+    # Implementations are provided by the underlying Rust type (`uuid::Uuid`).
+    def parse_str(raw: str) -> Result[RequestId, str]:
+        ...
+
+    def to_string(self) -> str:
+        ...
+
+    # Here we declare the interop edges for the RequestId rusttype.
+    interop:
+        # We route the incoming str values through our `parse_str` method,
+        # and outgoing str values through our `to_string` method.
+        from str try RequestId.parse_str
+        into str via RequestId.to_string
+
+
+# ---- Generic utilities bounded by std.rust capability traits ----
+
+# T must be Send + Sync + 'static so it can cross async/thread boundaries.
+def make_tag[T with Send, Sync, Static](label: str, _value: T) -> str:
+    return f"{label}/{Uuid.new_v4().to_string()}"
+
+
+# ---- Functions that use RequestId ----
+
+def describe(req_id: RequestId) -> str:
+    return req_id.to_string()
+
+
+def format_ids(ids: List[RequestId]) -> str:
+    mut parts = []
+    for id in ids:
+        parts.append(id.to_string())
+    return ", ".join(parts)
+
+
+# ---- Blocking and async work ----
+
+def blocking_work() -> str:
+    rid = Uuid.new_v4()
+    return make_tag("sync", rid)
+
+
+async def async_work() -> str:
+    await sleep(0.01)
+    rid = Uuid.new_v4()
+    return make_tag("async", rid)
+
+
+# ---- Entry point ----
+
+async def main() -> None:
+    started = Instant.now()
+
+    # Demonstrate list of rusttypes + interop-aware formatting
+    ids = [Uuid.new_v4(), Uuid.new_v4(), Uuid.new_v4()]
+    println(f"generated ids: {format_ids(ids)}")
+
+    # spawn_blocking: run sync work on the blocking thread-pool
+    match await spawn_blocking(blocking_work):
+        Ok(tag) => println(f"spawn_blocking: {tag}")
+        Err(err) => println(f"spawn_blocking error: {err.message()}")
+
+    # timeout: enforce a wall-clock deadline on async work
+    match await timeout(0.25, async_work()):
+        Ok(tag) => println(f"timeout ok: {tag}")
+        Err(err) => println(f"timeout error: {err.message()}")
+
+    println(f"elapsed: {started.elapsed().as_secs_f64()}s")

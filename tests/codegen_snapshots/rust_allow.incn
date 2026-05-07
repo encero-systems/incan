@@ -1,0 +1,33 @@
+"""RFC 057: targeted Rust lint suppressions"""
+
+@rust.allow("dead_code")
+model AllowModel:
+    value: int
+
+    @rust.allow("unused_variables")
+    def model_method(self, unused_value: int) -> int:
+        return self.value
+
+@rust.allow("non_camel_case_types")
+class allow_class:
+    value: int
+
+    @rust.allow("non_snake_case")
+    def MixedMethod(self) -> int:
+        return self.value
+
+@rust.allow("clippy::large_enum_variant")
+enum AllowEnum:
+    Small
+    Large(str)
+
+@rust.allow("non_camel_case_types")
+type allow_newtype = newtype int:
+    @rust.allow("dead_code")
+    def inner(self) -> int:
+        return self.0
+
+@rust.allow("non_snake_case", "clippy::too_many_arguments")
+def MixedName(a: int, b: int, c: int) -> int:
+    return a + b + c
+

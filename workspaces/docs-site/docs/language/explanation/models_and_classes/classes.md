@@ -2,8 +2,7 @@
 
 A `class` is Incan’s **behavior-first** type: it models an object with methods, mutable state, and inheritance.
 
-If you’re deciding between `model` and `class`, start with the [Models & classes overview](index.md). This page focuses
-on how classes behave once you’ve chosen them.
+If you’re deciding between `model` and `class`, start with the [Models & classes overview](index.md). This page focuses on how classes behave once you’ve chosen them.
 
 ## Quick start
 
@@ -60,22 +59,27 @@ The key ideas:
 ??? info "Coming from TypeScript / JavaScript?"
     - `self` is the object (roughly like JS/TS `this`).
     - Construction is keyword-only (`Point(x=..., y=...)`); there is no `constructor(...)` method.
-    - `extends` does **not** introduce subtyping (a child value can’t be used where the parent type is required);
-      use traits/enums for polymorphism.
+    - `extends` does **not** introduce subtyping (a child value can’t be used where the parent type is required); use traits/enums for polymorphism.
 
 ## Defining fields
 
 A `class` declares object state as typed fields.
 
 - Syntax: `name: Type`
+- Public field syntax: `pub name: Type`
 - Optional defaults: `name: Type = expr`
+
+Fields are private by default, even when the class itself is `pub`. A private field may be accessed from methods on the declaring class, but external code and child classes must use `pub` fields or methods.
 
 Field metadata and aliases (`[alias="..."]`, `[description="..."]`, or `as "..."`) are **not supported** on classes.
 
 ```incan
-class UserService:
+pub class UserService:
     repo: UserRepository
-    logger_name: str
+    pub logger_name: str
+
+    def repository(self) -> UserRepository:
+        return self.repo
 ```
 
 ## Constructing a class
@@ -96,8 +100,7 @@ This keeps call sites explicit and stable as you add/reorder fields.
 Constructor keys are the declared field names (including inherited fields).
 
 ??? tip "Coming from Python?"
-    In Incan you don’t write an `__init__`/init method for classes; the declared fields (including inherited fields)
-    define the constructor keys.
+    In Incan you don’t write an `__init__`/init method for classes; the declared fields (including inherited fields) define the constructor keys.
 
 Rules:
 
@@ -116,8 +119,22 @@ def main() -> None:
     println(c.value)
 ```
 
-Because classes don’t support field aliases/metadata (the way a `model` would), member access always uses the canonical
-field name.
+Because classes don’t support field aliases/metadata (the way a `model` would), member access always uses the canonical field name. Private fields can only be read or written from methods on the declaring class; use `pub` for fields that are part of the public object surface.
+
+For derived field-like values, use a computed property:
+
+```incan
+class Counter:
+    value: int
+
+    property doubled -> int:
+        return self.value * 2
+
+def demo(c: Counter) -> int:
+    return c.doubled
+```
+
+Computed properties read like fields but execute a body on each read. See: [Computed properties](../../reference/computed_properties.md).
 
 ## Methods and receivers (`self` vs `mut self`)
 
@@ -207,8 +224,7 @@ class Service with Loggable:
         println(f"[{self.name}] {msg}")
 ```
 
-Traits are behavior-only (no storage). A trait default method may assume certain fields exist on the adopter; use
-`@requires(...)` to declare that contract in a trait.
+Traits are behavior-only (no storage). A trait default method may assume certain fields exist on the adopter; use `@requires(...)` to declare that contract in a trait.
 
 See:
 
@@ -236,7 +252,9 @@ class AnimalService:
 A more complex example:
 
 ```incan
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 model User:
     id: int
     email: str
@@ -266,8 +284,7 @@ Classes provide:
 - `__class_name__() -> str`
 - `__fields__() -> FrozenList[FieldInfo]`
 
-Unlike models, classes do not support per-field aliases/metadata, so `FieldInfo.alias` and `FieldInfo.description` are
-always `None` and `FieldInfo.wire_name == FieldInfo.name`.
+Unlike models, classes do not support per-field aliases/metadata, so `FieldInfo.alias` and `FieldInfo.description` are always `None` and `FieldInfo.wire_name == FieldInfo.name`.
 
 See: [Reflection (Reference)](../../reference/reflection.md)
 

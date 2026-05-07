@@ -10,15 +10,17 @@ impl<'a> Parser<'a> {
         let name = self.identifier()?;
         let type_params = self.type_params()?;
         let traits = if self.match_keyword(KeywordId::With) {
-            self.identifier_list_spanned()?
+            self.trait_supertrait_list_spanned()?
         } else {
             Vec::new()
         };
         self.expect_punct(PunctuationId::Colon, "Expected ':' after model name")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
 
-        let (mut fields, methods) = self.fields_and_methods()?;
+        let docstring = self.optional_leading_block_docstring();
+
+        let (mut fields, method_aliases, method_partials, properties, methods) = self.fields_and_methods()?;
 
         self.expect(&TokenKind::Dedent, "Expected dedent after model body")?;
 
@@ -35,7 +37,11 @@ impl<'a> Parser<'a> {
             name,
             type_params,
             traits,
+            docstring,
             fields,
+            method_aliases,
+            method_partials,
+            properties,
             methods,
         })
     }
@@ -57,25 +63,20 @@ impl<'a> Parser<'a> {
         };
 
         let traits = if self.match_keyword(KeywordId::With) {
-            self.identifier_list_spanned()?
+            self.trait_supertrait_list_spanned()?
         } else {
             Vec::new()
         };
 
         self.expect_punct(PunctuationId::Colon, "Expected ':' after class header")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
 
-        let (mut fields, methods) = self.fields_and_methods()?;
+        let docstring = self.optional_leading_block_docstring();
+
+        let (fields, method_aliases, method_partials, properties, methods) = self.fields_and_methods()?;
 
         self.expect(&TokenKind::Dedent, "Expected dedent after class body")?;
-
-        // If the class is public, promote all field visibilities to public.
-        if matches!(visibility, Visibility::Public) {
-            for f in &mut fields {
-                f.node.visibility = Visibility::Public;
-            }
-        }
 
         Ok(ClassDecl {
             visibility,
@@ -84,7 +85,11 @@ impl<'a> Parser<'a> {
             type_params,
             extends,
             traits,
+            docstring,
             fields,
+            method_aliases,
+            method_partials,
+            properties,
             methods,
         })
     }
@@ -105,17 +110,14 @@ impl<'a> Parser<'a> {
         };
         self.expect_punct(PunctuationId::Colon, "Expected ':' after trait header")?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
 
+        let docstring = self.optional_leading_block_docstring();
+
+        let mut method_aliases = Vec::new();
+        let mut method_partials = Vec::new();
+        let mut properties = Vec::new();
         let mut methods = Vec::new();
-        self.skip_newlines();
-
-        // Skip optional docstring at the start of the trait body
-        if let TokenKind::String(_) = &self.peek().kind {
-            self.advance();
-            self.skip_newlines();
-        }
-
         // Allow empty trait body with just 'pass'
         if self.match_keyword(KeywordId::Pass) {
             self.skip_newlines();
@@ -125,7 +127,27 @@ impl<'a> Parser<'a> {
                 if let Some(err) = self.inactive_soft_keyword_error() {
                     return Err(err);
                 }
-                methods.push(self.method_decl(method_decorators)?);
+                if self.starts_method_partial_decl() {
+                    if !method_decorators.is_empty() {
+                        return Err(CompileError::syntax(
+                            "Method partial declarations cannot have decorators".to_string(),
+                            method_decorators[0].span,
+                        ));
+                    }
+                    method_partials.push(self.method_partial_decl()?);
+                } else if self.starts_method_alias_decl() {
+                    if !method_decorators.is_empty() {
+                        return Err(CompileError::syntax(
+                            "Method alias declarations cannot have decorators".to_string(),
+                            method_decorators[0].span,
+                        ));
+                    }
+                    method_aliases.push(self.method_alias_decl()?);
+                } else if self.starts_property_decl() {
+                    properties.push(self.property_decl(method_decorators, true)?);
+                } else {
+                    methods.push(self.method_decl(method_decorators, true)?);
+                }
                 self.skip_newlines();
             }
         }
@@ -138,6 +160,10 @@ impl<'a> Parser<'a> {
             name,
             type_params,
             traits,
+            docstring,
+            method_aliases,
+            method_partials,
+            properties,
             methods,
         })
     }
@@ -145,6 +171,9 @@ impl<'a> Parser<'a> {
     /// Parse fields and methods.
     fn fields_and_methods(&mut self) -> Result<FieldsAndMethods, CompileError> {
         let mut fields = Vec::new();
+        let mut method_aliases = Vec::new();
+        let mut method_partials = Vec::new();
+        let mut properties = Vec::new();
         let mut methods = Vec::new();
 
         self.skip_newlines();
@@ -163,7 +192,25 @@ impl<'a> Parser<'a> {
 
             // Check if it's a method (`def` or surface-modifier-prefixed `def`).
             if self.starts_surface_function_decl() {
-                methods.push(self.method_decl(decorators)?);
+                methods.push(self.method_decl(decorators, false)?);
+            } else if self.starts_surface_property_decl() {
+                properties.push(self.property_decl(decorators, false)?);
+            } else if self.starts_method_partial_decl() {
+                if !decorators.is_empty() {
+                    return Err(CompileError::syntax(
+                        "Method partial declarations cannot have decorators".to_string(),
+                        decorators[0].span,
+                    ));
+                }
+                method_partials.push(self.method_partial_decl()?);
+            } else if self.starts_method_alias_decl() {
+                if !decorators.is_empty() {
+                    return Err(CompileError::syntax(
+                        "Method alias declarations cannot have decorators".to_string(),
+                        decorators[0].span,
+                    ));
+                }
+                method_aliases.push(self.method_alias_decl()?);
             } else {
                 // It's a field
                 if !decorators.is_empty() {
@@ -174,7 +221,104 @@ impl<'a> Parser<'a> {
             self.skip_newlines();
         }
 
-        Ok((fields, methods))
+        Ok((fields, method_aliases, method_partials, properties, methods))
+    }
+
+    /// Return whether the current tokens start a contextual RFC 046 property declaration.
+    fn starts_property_decl(&self) -> bool {
+        self.peek_ident_text("property")
+    }
+
+    /// Return whether the current tokens start either a plain property or a modifier-prefixed property declaration.
+    fn starts_surface_property_decl(&self) -> bool {
+        let mut idx = self.pos;
+        if matches!(
+            self.tokens.get(idx).map(|token| &token.kind),
+            Some(TokenKind::Keyword(KeywordId::Pub))
+        ) {
+            idx += 1;
+        }
+
+        let mut saw_modifier = false;
+        while let Some(token) = self.tokens.get(idx) {
+            let id = match &token.kind {
+                TokenKind::Keyword(id) => Some(*id),
+                TokenKind::Ident(name) => incan_core::lang::keywords::from_str(name),
+                _ => None,
+            };
+            let Some(id) = id else {
+                break;
+            };
+            if !self.active_soft_keywords.contains(&id)
+                || !self.keyword_supports_surface_usage(id, KeywordSurfaceKind::DeclarationModifier)
+            {
+                break;
+            }
+            saw_modifier = true;
+            idx += 1;
+        }
+
+        (idx == self.pos || saw_modifier || self.check_keyword(KeywordId::Pub))
+            && matches!(
+                self.tokens.get(idx).map(|token| &token.kind),
+                Some(TokenKind::Ident(name)) if name == "property"
+            )
+    }
+
+    /// Return whether the current token pair starts a same-type method alias declaration.
+    fn starts_method_alias_decl(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident(_)) && self.peek_next().kind.is_operator(OperatorId::Eq)
+    }
+
+    /// Return whether the current tokens start a same-type method partial declaration.
+    fn starts_method_partial_decl(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident(_))
+            && self.peek_next().kind.is_operator(OperatorId::Eq)
+            && matches!(
+                self.tokens.get(self.pos + 2).map(|token| &token.kind),
+                Some(TokenKind::Ident(name)) if name == "partial"
+            )
+    }
+
+    /// Parse a same-type method alias declaration inside a type body.
+    fn method_alias_decl(&mut self) -> Result<Spanned<MethodAliasDecl>, CompileError> {
+        let start = self.current_span().start;
+        let name = self.identifier_or_from_keyword()?;
+        self.expect_op(OperatorId::Eq, "Expected '=' in method alias declaration")?;
+        let explicit_marker = self.match_ident_text("alias");
+        let target = self.identifier_or_from_keyword()?;
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Spanned::new(
+            MethodAliasDecl {
+                name,
+                target,
+                explicit_marker,
+            },
+            Span::new(start, end),
+        ))
+    }
+
+    /// Parse a same-type method partial declaration inside a method-bearing type body.
+    fn method_partial_decl(&mut self) -> Result<Spanned<MethodPartialDecl>, CompileError> {
+        let start = self.current_span().start;
+        let name = self.identifier_or_from_keyword()?;
+        self.expect_op(OperatorId::Eq, "Expected '=' in method partial declaration")?;
+        if !self.match_ident_text("partial") {
+            return Err(errors::expected_token_message(
+                "Expected 'partial' in method partial declaration",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        let target = self.identifier_or_from_keyword()?;
+        self.expect_punct(PunctuationId::LParen, "Expected '(' after method partial target")?;
+        let args = self.partial_args()?;
+        self.expect_punct(PunctuationId::RParen, "Expected ')' after method partial arguments")?;
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Spanned::new(
+            MethodPartialDecl { name, target, args },
+            Span::new(start, end),
+        ))
     }
 
     fn field_metadata(&mut self) -> Result<FieldMetadata, CompileError> {

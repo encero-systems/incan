@@ -5,6 +5,21 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll};
 
+/// Runtime bridge trait for async tasks that produce `T`.
+///
+/// This trait encodes the `Future<Output = T> + Send + 'static` contract in a shape that Incan generic bounds can
+/// reference directly (`TaskFuture with RuntimeFuture[T]`).
+pub trait RuntimeFuture<T>: Future<Output = T> + Send + 'static {}
+
+impl<T, TaskFuture> RuntimeFuture<T> for TaskFuture where TaskFuture: Future<Output = T> + Send + 'static {}
+
+/// Runtime bridge trait for blocking callables that produce `T`.
+///
+/// This trait encodes `FnOnce() -> T + Send + 'static` for Incan generic bounds (`TaskFn with RuntimeFnOnce[T]`).
+pub trait RuntimeFnOnce<T>: FnOnce() -> T + Send + 'static {}
+
+impl<T, TaskFn> RuntimeFnOnce<T> for TaskFn where TaskFn: FnOnce() -> T + Send + 'static {}
+
 /// Error returned when a spawned task does not complete successfully.
 #[must_use]
 #[derive(Clone)]
@@ -117,6 +132,7 @@ pub async fn yield_now() {
 #[cfg(test)]
 mod tests {
     use super::{spawn, spawn_blocking};
+    use tokio::sync::oneshot;
 
     #[tokio::test]
     async fn join_handle_await_surfaces_task_join_error() {
@@ -130,6 +146,19 @@ mod tests {
             assert!(err.is_panic());
             assert!(!err.message().is_empty());
         }
+    }
+
+    #[tokio::test]
+    async fn dropping_join_handle_detaches_without_cancelling_task() -> Result<(), Box<dyn std::error::Error>> {
+        let (sender, receiver) = oneshot::channel::<i32>();
+        let handle = spawn(async move {
+            let _ = sender.send(23);
+        });
+
+        drop(handle);
+
+        assert_eq!(receiver.await?, 23);
+        Ok(())
     }
 
     #[tokio::test]

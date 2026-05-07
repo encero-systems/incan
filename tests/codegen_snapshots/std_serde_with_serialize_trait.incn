@@ -1,0 +1,7 @@
+from std.serde.json import Serialize
+
+model Payload with Serialize:
+    value: int
+
+def main() -> str:
+    return Payload(value=1).to_json()

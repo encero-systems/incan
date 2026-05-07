@@ -1,0 +1,35 @@
+# Installs the nightly toolchain with rustup, retrying on transient static.rust-lang.org failures.
+# Use after `dtolnay/rust-toolchain@stable` so `rustup` is available.
+name: Install nightly toolchain (with retries)
+description: >
+  Runs `rustup toolchain install nightly` with exponential backoff. CI occasionally sees
+  "Connection reset by peer" when syncing the nightly channel manifest; retries absorb that flake.
+inputs:
+  components:
+    description: Space-separated rustup components (e.g. rustfmt)
+    required: false
+    default: ''
+runs:
+  using: composite
+  steps:
+    - name: rustup toolchain install nightly
+      shell: bash
+      env:
+        COMPONENTS: ${{ inputs.components }}
+      run: |
+        set -euo pipefail
+        ARGS=(toolchain install nightly --profile minimal --allow-downgrade --no-self-update)
+        if [ -n "${COMPONENTS}" ]; then
+          for c in ${COMPONENTS}; do
+            ARGS+=(--component "${c}")
+          done
+        fi
+        for attempt in 0 1 2 3 4; do
+          if rustup "${ARGS[@]}"; then
+            exit 0
+          fi
+          delay=$((attempt * 10))
+          echo "rustup nightly install failed (attempt ${attempt}/5); retrying in ${delay}s..." >&2
+          sleep "${delay}"
+        done
+        exit 1

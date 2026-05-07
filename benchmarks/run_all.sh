@@ -72,8 +72,8 @@ run_benchmark() {
         return 1
     fi
     cd "$dir"
-    # Copy the built binary to local directory
-    local incan_bin="$PROJECT_ROOT/target/incan/$basename/target/release/$basename"
+    # Generated crates share `target/incan/.cargo-target/release/` (see `ProjectGenerator::cargo_target_dir`).
+    local incan_bin="$PROJECT_ROOT/target/incan/.cargo-target/release/$basename"
     cp "$incan_bin" "${basename}_incan" || {
         echo "  Failed to copy Incan binary"
         return 1

@@ -238,6 +238,27 @@ impl LibraryManifestIndex {
         map
     }
 
+    /// Return normalized imported-library DSL surfaces keyed by dependency key.
+    pub fn library_imported_dsl_surfaces(&self) -> crate::frontend::parser::ImportedLibraryDslSurfaces {
+        let mut map = HashMap::new();
+
+        for (dependency_key, entry) in &self.entries {
+            let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
+                continue;
+            };
+
+            let Some(vocab) = &manifest.vocab else {
+                continue;
+            };
+
+            if !vocab.dsl_surfaces.is_empty() {
+                map.insert(dependency_key.clone(), vocab.dsl_surfaces.clone());
+            }
+        }
+
+        map
+    }
+
     /// Return merged provider-required Cargo dependencies from all loaded library manifests.
     ///
     /// Requirements are merged by crate name. Equivalent specs are deduplicated; incompatible specs return
@@ -890,7 +911,15 @@ widgets = { path = "deps/broken" }
                 }],
                 valid_decorators: vec!["route".to_string()],
             }],
-            dsl_surfaces: Vec::new(),
+            dsl_surfaces: vec![
+                incan_vocab::DslSurface::on_import("widgets.dsl")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                            .in_declaration_body("query")
+                            .with_receiver(incan_vocab::ScopedSurfaceReceiver::OwningDeclaration),
+                    ),
+            ],
             provider_manifest: incan_vocab::LibraryManifest::default(),
             desugarer_artifact: None,
         });
@@ -921,6 +950,12 @@ widgets = { path = "deps/widgets-lib" }
             incan_vocab::KeywordSurfaceKind::FunctionDecl
         );
         assert_eq!(regs[0].valid_decorators, vec!["route".to_string()]);
+        let surfaces = index.library_imported_dsl_surfaces();
+        let widgets_surfaces = surfaces
+            .get("widgets")
+            .ok_or("missing imported DSL surfaces for dependency key")?;
+        assert_eq!(widgets_surfaces.len(), 1);
+        assert_eq!(widgets_surfaces[0].scoped_surfaces[0].key, "query.field");
 
         Ok(())
     }
@@ -1124,9 +1159,10 @@ analytics = { path = "deps/analytics-lib" }
         let parsed = ProjectManifest::from_str(manifest_content, &consumer_manifest_path)?;
         let index = LibraryManifestIndex::from_project_manifest(&parsed);
 
-        let error = index
-            .merged_provider_required_dependencies()
-            .expect_err("expected conflicting provider dependency requirements");
+        let error = match index.merged_provider_required_dependencies() {
+            Err(error) => error,
+            Ok(_) => panic!("expected conflicting provider dependency requirements"),
+        };
         assert!(
             matches!(error, ProviderRequirementError::DependencyConflict { ref crate_name, .. } if crate_name == "serde_json"),
             "unexpected error: {error}"

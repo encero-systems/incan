@@ -12,4 +12,23 @@ where
     tokio::time::timeout(clamp_seconds(seconds), task).await.ok()
 }
 
-pub use select_timeout as runtime_select_timeout;
+#[cfg(test)]
+mod tests {
+    use super::select_timeout;
+
+    #[tokio::test]
+    async fn select_timeout_returns_some_when_task_completes() {
+        let result = select_timeout(0.1, async { 99 }).await;
+        assert_eq!(result, Some(99));
+    }
+
+    #[tokio::test]
+    async fn select_timeout_returns_none_when_deadline_expires() {
+        let result = select_timeout(0.001, async {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            1
+        })
+        .await;
+        assert_eq!(result, None);
+    }
+}

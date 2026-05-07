@@ -21,6 +21,7 @@ const FLOW_KEYWORDS: &[KeywordId] = &[
     KeywordId::If,
     KeywordId::Else,
     KeywordId::Elif,
+    KeywordId::Loop,
     KeywordId::While,
     KeywordId::For,
     KeywordId::Match,
@@ -32,7 +33,7 @@ const FLOW_KEYWORDS: &[KeywordId] = &[
     KeywordId::Pass,
 ];
 
-const CONST_KEYWORDS: &[KeywordId] = &[KeywordId::Const];
+const CONST_KEYWORDS: &[KeywordId] = &[KeywordId::Const, KeywordId::Static];
 const ASYNC_KEYWORDS: &[KeywordId] = &[KeywordId::Async, KeywordId::Await];
 const DECLARATION_KEYWORDS: &[KeywordId] = &[
     KeywordId::Def,
@@ -42,6 +43,7 @@ const DECLARATION_KEYWORDS: &[KeywordId] = &[
     KeywordId::Enum,
     KeywordId::Newtype,
     KeywordId::Type,
+    KeywordId::Alias,
 ];
 const IMPORT_KEYWORDS: &[KeywordId] = &[
     KeywordId::Import,
@@ -65,7 +67,7 @@ const LOGICAL_OPERATOR_KEYWORDS: &[KeywordId] = &[
 const TRUE_KEYWORDS: &[KeywordId] = &[KeywordId::True];
 const FALSE_KEYWORDS: &[KeywordId] = &[KeywordId::False];
 const NONE_KEYWORDS: &[KeywordId] = &[KeywordId::None];
-const SELF_KEYWORDS: &[KeywordId] = &[KeywordId::SelfKw];
+const SELF_KEYWORDS: &[KeywordId] = &[KeywordId::SelfKw, KeywordId::Cls];
 
 /// Registry-backed regex buckets for VS Code/TextMate grammar generation.
 pub const VSCODE_KEYWORD_BUCKETS: &[VscodeKeywordBucket] = &[

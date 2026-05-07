@@ -109,10 +109,10 @@ Incan has enum-dispatched methods in IR (`MethodKind`) and emission logic in `em
 
 **End-to-end checklist:**
 
-- **IR method enum**: add a new variant and name mapping
-    - `src/backend/ir/expr.rs` → `enum MethodKind` + `MethodKind::from_name()`
-- **Lowering**: automatic (uses `MethodKind::from_name(name)` for all method calls)
-    - `src/backend/ir/lower/expr.rs` already handles this
+- **IR method enum**: add a variant to the appropriate method family and classify it for supported receiver types
+    - `src/backend/ir/expr.rs` → `enum MethodKind` + `MethodKind::for_receiver()`
+- **Lowering**: receiver-aware classification for builtin-family receivers
+    - `src/backend/ir/lower/expr.rs` calls `MethodKind::for_receiver(&receiver.ty, name)` for method calls
 - **Emission**: emit the Rust code for the new method
     - `src/backend/ir/emit/expressions/methods.rs` → `emit_known_method_call()`
 - **Docs/tests**: add/adjust as needed

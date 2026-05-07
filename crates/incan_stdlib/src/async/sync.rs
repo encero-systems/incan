@@ -1,7 +1,6 @@
 //! Tokio-backed synchronization adapters for `std.async.sync`.
 
 use std::fmt;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 
 fn lock_std_mutex<T>(mutex: &StdMutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -56,14 +55,27 @@ pub struct SemaphorePermit(#[allow(dead_code)] tokio::sync::OwnedSemaphorePermit
 #[derive(Clone, Copy, Default)]
 pub struct SemaphoreAcquireError;
 
-struct BarrierState {
-    barrier: tokio::sync::Barrier,
+struct BarrierGeneration {
+    generation: usize,
+    active: usize,
+    next_slot: usize,
+    free_slots: Vec<usize>,
+}
+
+struct BarrierInner {
     parties: usize,
-    arrivals: AtomicUsize,
+    state: StdMutex<BarrierGeneration>,
+    released: tokio::sync::Notify,
 }
 
 /// Runtime barrier wrapper.
-pub struct Barrier(Arc<BarrierState>);
+pub struct Barrier(Arc<BarrierInner>);
+
+struct BarrierRegistration {
+    inner: Option<Arc<BarrierInner>>,
+    generation: usize,
+    slot: usize,
+}
 
 impl<T> Clone for Mutex<T> {
     fn clone(&self) -> Self {
@@ -150,6 +162,34 @@ impl fmt::Display for SemaphoreAcquireError {
 }
 
 impl std::error::Error for SemaphoreAcquireError {}
+
+impl Drop for BarrierRegistration {
+    /// Withdraw the participant from the active generation if the wait future is cancelled before release.
+    fn drop(&mut self) {
+        let Some(inner) = self.inner.take() else {
+            return;
+        };
+
+        let mut state = lock_std_mutex(&inner.state);
+        if state.generation == self.generation {
+            debug_assert!(
+                state.active > 0,
+                "barrier cancellation should withdraw an active participant"
+            );
+            if state.active > 0 {
+                state.active -= 1;
+                state.free_slots.push(self.slot);
+            }
+        }
+    }
+}
+
+impl BarrierRegistration {
+    /// Mark the registration as completed so dropping the finished wait future does not withdraw it.
+    fn disarm(&mut self) {
+        self.inner = None;
+    }
+}
 
 impl SemaphoreAcquireError {
     /// Human-readable error message for Incan-facing wrappers.
@@ -293,18 +333,73 @@ impl Barrier {
     /// Create a new barrier.
     pub fn new(count: i64) -> Self {
         let parties = normalize_barrier_count(count);
-        Self(Arc::new(BarrierState {
-            barrier: tokio::sync::Barrier::new(parties),
+        Self(Arc::new(BarrierInner {
             parties,
-            arrivals: AtomicUsize::new(0),
+            state: StdMutex::new(BarrierGeneration {
+                generation: 0,
+                active: 0,
+                next_slot: 0,
+                free_slots: Vec::new(),
+            }),
+            released: tokio::sync::Notify::new(),
         }))
     }
 
-    /// Wait for the remaining participants and return the caller's arrival index.
+    /// Wait for the remaining participants and return the caller's generation slot.
+    ///
+    /// Cancellation before release withdraws the participant from the current generation and frees its slot. Remaining
+    /// participants still need enough active arrivals to complete the generation. Slots are unique within a completed
+    /// generation, but cancellation can cause later participants to reuse freed slots, so callers must not treat the
+    /// returned value as chronological arrival order.
     pub async fn wait(&self) -> i64 {
-        let arrival = self.0.arrivals.fetch_add(1, Ordering::SeqCst) % self.0.parties;
-        self.0.barrier.wait().await;
-        i64::try_from(arrival).unwrap_or(i64::MAX)
+        let (generation, slot, completes_generation) = {
+            let mut state = lock_std_mutex(&self.0.state);
+            let generation = state.generation;
+            let slot = state.free_slots.pop().unwrap_or_else(|| {
+                debug_assert!(
+                    state.next_slot < self.0.parties,
+                    "barrier slot allocation should stay within party count"
+                );
+                let slot = state.next_slot;
+                state.next_slot += 1;
+                slot
+            });
+
+            state.active = state.active.saturating_add(1);
+            let completes_generation = state.active == self.0.parties;
+
+            if completes_generation {
+                state.generation = state.generation.wrapping_add(1);
+                state.active = 0;
+                state.next_slot = 0;
+                state.free_slots.clear();
+            }
+
+            (generation, slot, completes_generation)
+        };
+
+        if completes_generation {
+            self.0.released.notify_waiters();
+            return i64::try_from(slot).unwrap_or(i64::MAX);
+        }
+
+        let mut registration = BarrierRegistration {
+            inner: Some(self.0.clone()),
+            generation,
+            slot,
+        };
+
+        loop {
+            let released = self.0.released.notified();
+            {
+                let state = lock_std_mutex(&self.0.state);
+                if state.generation != generation {
+                    registration.disarm();
+                    return i64::try_from(slot).unwrap_or(i64::MAX);
+                }
+            }
+            released.await;
+        }
     }
 }
 
@@ -442,7 +537,21 @@ pub use semaphore_try_acquire as runtime_semaphore_try_acquire;
 
 #[cfg(test)]
 mod tests {
-    use super::Semaphore;
+    use super::{Barrier, Semaphore, lock_std_mutex};
+    use std::time::Duration;
+
+    async fn wait_for_active(barrier: &Barrier, expected: usize) {
+        for _ in 0..100 {
+            let active = lock_std_mutex(&barrier.0.state).active;
+            if active == expected {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        }
+
+        let active = lock_std_mutex(&barrier.0.state).active;
+        assert_eq!(active, expected);
+    }
 
     #[tokio::test]
     async fn semaphore_acquire_returns_error_when_closed() {
@@ -459,5 +568,95 @@ mod tests {
             assert_eq!(err.message(), "failed to acquire semaphore permit: semaphore closed");
             assert!(err.source().is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn barrier_wait_returns_unique_generation_slots() -> Result<(), Box<dyn std::error::Error>> {
+        let barrier = Barrier::new(3);
+
+        let first = tokio::spawn({
+            let barrier = barrier.clone();
+            async move { barrier.wait().await }
+        });
+        let second = tokio::spawn({
+            let barrier = barrier.clone();
+            async move { barrier.wait().await }
+        });
+
+        wait_for_active(&barrier, 2).await;
+
+        let third = barrier.wait().await;
+        let first = first.await?;
+        let second = second.await?;
+        let mut arrivals = vec![first, second, third];
+        arrivals.sort_unstable();
+
+        assert_eq!(arrivals, vec![0, 1, 2]);
+        assert_eq!(lock_std_mutex(&barrier.0.state).active, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn barrier_cancelled_waiter_withdraws_from_generation() -> Result<(), Box<dyn std::error::Error>> {
+        let barrier = Barrier::new(2);
+        let cancelled = tokio::spawn({
+            let barrier = barrier.clone();
+            async move { barrier.wait().await }
+        });
+
+        wait_for_active(&barrier, 1).await;
+        cancelled.abort();
+        let error = match cancelled.await {
+            Ok(_) => {
+                let error: Box<dyn std::error::Error> = Box::new(std::io::Error::other(
+                    "aborted barrier waiter should return a join error",
+                ));
+                return Err(error);
+            }
+            Err(error) => error,
+        };
+        assert!(error.is_cancelled());
+        wait_for_active(&barrier, 0).await;
+
+        let replacement = tokio::spawn({
+            let barrier = barrier.clone();
+            async move { barrier.wait().await }
+        });
+
+        wait_for_active(&barrier, 1).await;
+
+        let current = tokio::time::timeout(Duration::from_millis(100), barrier.wait()).await?;
+        let replacement = replacement.await?;
+        let mut arrivals = vec![replacement, current];
+        arrivals.sort_unstable();
+
+        assert_eq!(arrivals, vec![0, 1]);
+        assert_eq!(lock_std_mutex(&barrier.0.state).active, 0);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn barrier_can_be_reused_after_completed_generation() -> Result<(), Box<dyn std::error::Error>> {
+        let barrier = Barrier::new(2);
+
+        let first = tokio::spawn({
+            let barrier = barrier.clone();
+            async move { barrier.wait().await }
+        });
+        wait_for_active(&barrier, 1).await;
+        let second = barrier.wait().await;
+        let first = first.await?;
+        assert_eq!(first + second, 1);
+
+        let third = tokio::spawn({
+            let barrier = barrier.clone();
+            async move { barrier.wait().await }
+        });
+        wait_for_active(&barrier, 1).await;
+        let fourth = barrier.wait().await;
+        let third = third.await?;
+        assert_eq!(third + fourth, 1);
+        assert_eq!(lock_std_mutex(&barrier.0.state).active, 0);
+        Ok(())
     }
 }

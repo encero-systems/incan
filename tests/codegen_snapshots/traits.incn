@@ -20,7 +20,7 @@ trait Comparable:
 
 # Class implementing single trait
 class Dog with Named:
-    name: str
+    pub name: str
 
 # Class implementing trait with methods
 class Rectangle with Shape:

@@ -1,0 +1,16 @@
+"""RFC 054: explicit call-site type arguments lower to Rust turbofish on calls and method calls."""
+
+def id[T](x: T) -> T:
+    return x
+
+
+class Boxed:
+    def pick[T](self, value: T) -> T:
+        return value
+
+
+def main() -> int:
+    let a = id[int](1)
+    let b = Boxed()
+    let c = b.pick[int](2)
+    return a + c

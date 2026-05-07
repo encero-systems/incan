@@ -7,12 +7,15 @@ use super::type_refs::type_ref_from_resolved;
 use super::validation::validate_raw_manifest;
 use super::wire::RawLibraryManifest;
 use super::{DslSurface, LIBRARY_MANIFEST_FORMAT, VocabKeywordRegistration, VocabProviderManifest};
+use crate::frontend::api_metadata::CheckedApiMetadataPackage;
+use crate::frontend::contract_metadata::ContractMetadataPackage as ModelContractMetadataPackage;
 use crate::frontend::library_exports::{
-    CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind, CheckedFunctionExport,
-    CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedTraitExport, CheckedTypeAliasExport,
+    CheckedAliasExport, CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind,
+    CheckedFunctionExport, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedPartialExport,
+    CheckedPartialTargetKind, CheckedPresetValue, CheckedStaticExport, CheckedTraitExport, CheckedTypeAliasExport,
     CheckedTypeBound, CheckedTypeParam,
 };
-use crate::frontend::symbols::ResolvedType;
+use crate::frontend::symbols::{CallableParam, ValueEnumBacking, ValueEnumValue};
 
 /// Errors surfaced while reading, writing, parsing, serializing, or validating `.incnlib` manifests.
 #[derive(Debug, thiserror::Error)]
@@ -39,7 +42,7 @@ pub enum LibraryManifestError {
 /// This is the compiler-facing form used after the raw transport payload has been validated and decoded. It captures
 /// the exported library surface, optional vocab metadata, and optional soft-keyword activations in a transport-agnostic
 /// shape.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct LibraryManifest {
     /// Published library name.
     pub name: String,
@@ -55,11 +58,15 @@ pub struct LibraryManifest {
     pub vocab: Option<VocabExports>,
     /// Optional soft-keyword activations exported by this library.
     pub soft_keywords: SoftKeywordExports,
+    /// Optional RFC 048 checked metadata embedded in the manifest.
+    pub contract_metadata: LibraryContractMetadata,
 }
 
 /// Public library exports grouped by declaration kind.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LibraryExports {
+    pub aliases: Vec<AliasExport>,
+    pub partials: Vec<PartialExport>,
     pub models: Vec<ModelExport>,
     pub classes: Vec<ClassExport>,
     pub functions: Vec<FunctionExport>,
@@ -68,6 +75,92 @@ pub struct LibraryExports {
     pub type_aliases: Vec<TypeAliasExport>,
     pub newtypes: Vec<NewtypeExport>,
     pub consts: Vec<ConstExport>,
+    pub statics: Vec<StaticExport>,
+}
+
+/// Exported declaration-level alias metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AliasExport {
+    pub name: String,
+    pub target_path: Vec<String>,
+}
+
+/// Exported partial callable preset metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PartialExport {
+    pub name: String,
+    pub target_path: Vec<String>,
+    pub target_kind: PartialTargetKindExport,
+    pub presets: Vec<PartialPresetExport>,
+    pub type_params: Vec<TypeParamExport>,
+    pub params: Vec<ParamExport>,
+    pub return_type: TypeRef,
+    pub is_async: bool,
+}
+
+/// Semantic kind of the callable target projected by a public partial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PartialTargetKindExport {
+    Function,
+    ModelConstructor,
+    ClassConstructor,
+    NewtypeConstructor,
+    Partial,
+    Unknown,
+}
+
+/// One preset keyword published by a partial callable preset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PartialPresetExport {
+    pub name: String,
+    pub ty: TypeRef,
+    pub value: PresetValueExport,
+}
+
+/// Metadata-safe preset expression value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum PresetValueExport {
+    Int(i64),
+    Float(String),
+    Bool(bool),
+    String(String),
+    Bytes(Vec<u8>),
+    None,
+    List(Vec<PresetValueExport>),
+    Dict(Vec<PresetDictEntryExport>),
+    ConstRef(Vec<String>),
+    ModelLiteral {
+        name: String,
+        fields: Vec<PresetModelFieldExport>,
+    },
+    Unsupported,
+}
+
+/// One metadata-safe dict preset entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresetDictEntryExport {
+    pub key: PresetValueExport,
+    pub value: PresetValueExport,
+}
+
+/// One metadata-safe model-literal preset field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresetModelFieldExport {
+    pub name: String,
+    pub value: PresetValueExport,
+}
+
+/// RFC 048 metadata persisted into `.incnlib`.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct LibraryContractMetadata {
+    /// Canonical model bundles that this artifact publishes.
+    #[serde(default)]
+    pub models: ModelContractMetadataPackage,
+    /// Checked public API metadata extracted from the producer source.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api: Option<CheckedApiMetadataPackage>,
 }
 
 /// Soft keywords that become active when the library is imported.
@@ -160,6 +253,8 @@ pub enum TypeRef {
     SelfType,
     /// A reference type.
     Ref { inner: Box<TypeRef> },
+    /// A canonical Rust path imported through `rust::...`.
+    RustPath { path: String },
     /// A placeholder used when the manifest intentionally preserves unknown type information.
     Unknown,
 }
@@ -190,6 +285,9 @@ pub enum ReceiverExport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MethodExport {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias_of: Option<String>,
+    pub type_params: Vec<TypeParamExport>,
     /// Receiver requirement when the method is invoked on a type instance.
     pub receiver: Option<ReceiverExport>,
     pub params: Vec<ParamExport>,
@@ -200,11 +298,25 @@ pub struct MethodExport {
     pub has_body: bool,
 }
 
-/// One exported positional parameter.
+/// One exported callable parameter.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ParamExport {
     pub name: String,
     pub ty: TypeRef,
+    #[serde(default)]
+    pub kind: ParamKindExport,
+    #[serde(default)]
+    pub has_default: bool,
+}
+
+/// Exported callable parameter kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ParamKindExport {
+    #[default]
+    Normal,
+    RestPositional,
+    RestKeyword,
 }
 
 /// Exported function signature metadata.
@@ -232,6 +344,12 @@ pub struct ModelExport {
     pub type_params: Vec<TypeParamExport>,
     /// Traits implemented by the model.
     pub traits: Vec<String>,
+    /// Traits implemented by the model, including generic trait arguments when present.
+    #[serde(default)]
+    pub trait_adoptions: Vec<TypeBoundExport>,
+    /// `@derive(...)` names (empty for manifests predating this field).
+    #[serde(default)]
+    pub derives: Vec<String>,
     pub fields: Vec<FieldExport>,
     pub methods: Vec<MethodExport>,
 }
@@ -245,6 +363,12 @@ pub struct ClassExport {
     pub extends: Option<String>,
     /// Traits implemented by the class.
     pub traits: Vec<String>,
+    /// Traits implemented by the class, including generic trait arguments when present.
+    #[serde(default)]
+    pub trait_adoptions: Vec<TypeBoundExport>,
+    /// `@derive(...)` names (empty for manifests predating this field).
+    #[serde(default)]
+    pub derives: Vec<String>,
     pub fields: Vec<FieldExport>,
     pub methods: Vec<MethodExport>,
 }
@@ -274,14 +398,49 @@ pub struct FieldRequirementExport {
 pub struct EnumExport {
     pub name: String,
     pub type_params: Vec<TypeParamExport>,
+    /// Traits implemented by the enum.
+    #[serde(default)]
+    pub traits: Vec<String>,
+    /// Traits implemented by the enum, including generic trait arguments when present.
+    #[serde(default)]
+    pub trait_adoptions: Vec<TypeBoundExport>,
+    /// Primitive backing type for RFC 032 value enums.
+    #[serde(default)]
+    pub value_type: Option<EnumValueTypeExport>,
     pub variants: Vec<EnumVariantExport>,
+    /// Methods and associated functions exposed by the enum.
+    #[serde(default)]
+    pub methods: Vec<MethodExport>,
+    /// `@derive(...)` names (empty for manifests predating this field).
+    #[serde(default)]
+    pub derives: Vec<String>,
 }
 
-/// One exported enum variant and its positional payload fields.
+/// Exported backing type for a value enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum EnumValueTypeExport {
+    #[serde(rename = "str")]
+    Str,
+    #[serde(rename = "int")]
+    Int,
+}
+
+/// One exported enum variant, including positional payload fields and optional value-enum metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EnumVariantExport {
     pub name: String,
     pub fields: Vec<TypeRef>,
+    /// Raw value for RFC 032 value enum variants.
+    #[serde(default)]
+    pub value: Option<EnumValueExport>,
+}
+
+/// Exported raw value for one value enum variant.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum EnumValueExport {
+    Str(String),
+    Int(i64),
 }
 
 /// Exported newtype metadata.
@@ -289,6 +448,9 @@ pub struct EnumVariantExport {
 pub struct NewtypeExport {
     pub name: String,
     pub type_params: Vec<TypeParamExport>,
+    /// Whether this newtype is a zero-cost Rust type alias (`type X = rusttype RustX`).
+    #[serde(default)]
+    pub is_rusttype: bool,
     /// Underlying wrapped type.
     pub underlying: TypeRef,
     pub methods: Vec<MethodExport>,
@@ -297,6 +459,13 @@ pub struct NewtypeExport {
 /// Exported constant metadata.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ConstExport {
+    pub name: String,
+    pub ty: TypeRef,
+}
+
+/// Exported static metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct StaticExport {
     pub name: String,
     pub ty: TypeRef,
 }
@@ -312,6 +481,7 @@ impl LibraryManifest {
             exports: LibraryExports::default(),
             vocab: None,
             soft_keywords: SoftKeywordExports::default(),
+            contract_metadata: LibraryContractMetadata::default(),
         }
     }
 
@@ -364,6 +534,7 @@ impl LibraryManifest {
 }
 
 impl LibraryExports {
+    /// Build manifest exports from checked frontend exports.
     fn from_checked_exports(exports: &[CheckedNamedExport]) -> Self {
         let mut model = Self::default();
 
@@ -371,6 +542,12 @@ impl LibraryExports {
             match &export.kind {
                 CheckedExportKind::Function(function_export) => {
                     model.functions.push(function_export_from_checked(function_export));
+                }
+                CheckedExportKind::Partial(partial_export) => {
+                    model.partials.push(partial_export_from_checked(partial_export));
+                }
+                CheckedExportKind::Alias(alias_export) => {
+                    model.aliases.push(alias_export_from_checked(alias_export));
                 }
                 CheckedExportKind::TypeAlias(type_alias_export) => {
                     model
@@ -395,6 +572,9 @@ impl LibraryExports {
                 CheckedExportKind::Const(const_export) => {
                     model.consts.push(const_export_from_checked(const_export));
                 }
+                CheckedExportKind::Static(static_export) => {
+                    model.statics.push(static_export_from_checked(static_export));
+                }
             }
         }
 
@@ -402,8 +582,11 @@ impl LibraryExports {
         model
     }
 
+    /// Sort every export group by stable public name.
     fn sort_deterministically(&mut self) {
         self.models.sort_by(|left, right| left.name.cmp(&right.name));
+        self.aliases.sort_by(|left, right| left.name.cmp(&right.name));
+        self.partials.sort_by(|left, right| left.name.cmp(&right.name));
         self.classes.sort_by(|left, right| left.name.cmp(&right.name));
         self.functions.sort_by(|left, right| left.name.cmp(&right.name));
         self.traits.sort_by(|left, right| left.name.cmp(&right.name));
@@ -411,6 +594,85 @@ impl LibraryExports {
         self.type_aliases.sort_by(|left, right| left.name.cmp(&right.name));
         self.newtypes.sort_by(|left, right| left.name.cmp(&right.name));
         self.consts.sort_by(|left, right| left.name.cmp(&right.name));
+        self.statics.sort_by(|left, right| left.name.cmp(&right.name));
+    }
+}
+
+/// Convert checked alias metadata into manifest alias metadata.
+fn alias_export_from_checked(export: &CheckedAliasExport) -> AliasExport {
+    AliasExport {
+        name: export.name.clone(),
+        target_path: export.target_path.clone(),
+    }
+}
+
+/// Convert checked partial metadata into manifest partial export metadata.
+fn partial_export_from_checked(export: &CheckedPartialExport) -> PartialExport {
+    PartialExport {
+        name: export.name.clone(),
+        target_path: export.target_path.clone(),
+        target_kind: partial_target_kind_from_checked(export.target_kind),
+        presets: export
+            .presets
+            .iter()
+            .map(|preset| PartialPresetExport {
+                name: preset.name.clone(),
+                ty: type_ref_from_resolved(&preset.ty),
+                value: preset_value_from_checked(&preset.value),
+            })
+            .collect(),
+        type_params: export.type_params.iter().map(type_param_from_checked).collect(),
+        params: params_from_checked(&export.params),
+        return_type: type_ref_from_resolved(&export.return_type),
+        is_async: export.is_async,
+    }
+}
+
+/// Convert checked partial target kinds into the manifest vocabulary.
+fn partial_target_kind_from_checked(kind: CheckedPartialTargetKind) -> PartialTargetKindExport {
+    match kind {
+        CheckedPartialTargetKind::Function => PartialTargetKindExport::Function,
+        CheckedPartialTargetKind::ModelConstructor => PartialTargetKindExport::ModelConstructor,
+        CheckedPartialTargetKind::ClassConstructor => PartialTargetKindExport::ClassConstructor,
+        CheckedPartialTargetKind::NewtypeConstructor => PartialTargetKindExport::NewtypeConstructor,
+        CheckedPartialTargetKind::Partial => PartialTargetKindExport::Partial,
+        CheckedPartialTargetKind::Unknown => PartialTargetKindExport::Unknown,
+    }
+}
+
+/// Convert checked preset values into the manifest value vocabulary.
+fn preset_value_from_checked(value: &CheckedPresetValue) -> PresetValueExport {
+    match value {
+        CheckedPresetValue::Int(value) => PresetValueExport::Int(*value),
+        CheckedPresetValue::Float(value) => PresetValueExport::Float(value.to_string()),
+        CheckedPresetValue::Bool(value) => PresetValueExport::Bool(*value),
+        CheckedPresetValue::String(value) => PresetValueExport::String(value.clone()),
+        CheckedPresetValue::Bytes(value) => PresetValueExport::Bytes(value.clone()),
+        CheckedPresetValue::None => PresetValueExport::None,
+        CheckedPresetValue::List(values) => {
+            PresetValueExport::List(values.iter().map(preset_value_from_checked).collect())
+        }
+        CheckedPresetValue::Dict(entries) => PresetValueExport::Dict(
+            entries
+                .iter()
+                .map(|(key, value)| PresetDictEntryExport {
+                    key: preset_value_from_checked(key),
+                    value: preset_value_from_checked(value),
+                })
+                .collect(),
+        ),
+        CheckedPresetValue::ConstRef(path) => PresetValueExport::ConstRef(path.clone()),
+        CheckedPresetValue::ModelLiteral { name, fields } => PresetValueExport::ModelLiteral {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(field, value)| PresetModelFieldExport {
+                    name: field.clone(),
+                    value: preset_value_from_checked(value),
+                })
+                .collect(),
+        },
+        CheckedPresetValue::Unsupported => PresetValueExport::Unsupported,
     }
 }
 
@@ -428,14 +690,26 @@ fn type_bound_from_checked(bound: &CheckedTypeBound) -> TypeBoundExport {
     }
 }
 
-fn params_from_checked(params: &[(String, ResolvedType)]) -> Vec<ParamExport> {
+fn params_from_checked(params: &[CallableParam]) -> Vec<ParamExport> {
     params
         .iter()
-        .map(|(name, ty)| ParamExport {
-            name: name.clone(),
-            ty: type_ref_from_resolved(ty),
+        .filter_map(|param| {
+            Some(ParamExport {
+                name: param.name.clone()?,
+                ty: type_ref_from_resolved(&param.ty),
+                kind: param_kind_from_ast(param.kind),
+                has_default: param.has_default,
+            })
         })
         .collect()
+}
+
+fn param_kind_from_ast(kind: crate::frontend::ast::ParamKind) -> ParamKindExport {
+    match kind {
+        crate::frontend::ast::ParamKind::Normal => ParamKindExport::Normal,
+        crate::frontend::ast::ParamKind::RestPositional => ParamKindExport::RestPositional,
+        crate::frontend::ast::ParamKind::RestKeyword => ParamKindExport::RestKeyword,
+    }
 }
 
 fn receiver_from_checked(receiver: Option<crate::frontend::ast::Receiver>) -> Option<ReceiverExport> {
@@ -445,9 +719,12 @@ fn receiver_from_checked(receiver: Option<crate::frontend::ast::Receiver>) -> Op
     })
 }
 
+/// Convert checked method metadata into manifest method metadata.
 fn method_from_checked(method: &crate::frontend::library_exports::CheckedMethod) -> MethodExport {
     MethodExport {
         name: method.name.clone(),
+        alias_of: method.alias_of.clone(),
+        type_params: method.type_params.iter().map(type_param_from_checked).collect(),
         receiver: receiver_from_checked(method.receiver),
         params: params_from_checked(&method.params),
         return_type: type_ref_from_resolved(&method.return_type),
@@ -484,22 +761,28 @@ fn type_alias_export_from_checked(export: &CheckedTypeAliasExport) -> TypeAliasE
     }
 }
 
+/// Convert a checked model export into the serialized manifest model shape.
 fn model_export_from_checked(export: &CheckedModelExport) -> ModelExport {
     ModelExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
         traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
+        derives: export.derives.clone(),
         fields: export.fields.iter().map(field_from_checked).collect(),
         methods: export.methods.iter().map(method_from_checked).collect(),
     }
 }
 
+/// Convert a checked class export into the serialized manifest class shape.
 fn class_export_from_checked(export: &CheckedClassExport) -> ClassExport {
     ClassExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
         extends: export.extends.clone(),
         traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
+        derives: export.derives.clone(),
         fields: export.fields.iter().map(field_from_checked).collect(),
         methods: export.methods.iter().map(method_from_checked).collect(),
     }
@@ -529,25 +812,50 @@ fn trait_export_from_checked(export: &CheckedTraitExport) -> TraitExport {
     }
 }
 
+/// Convert a checked enum export into the manifest enum contract.
 fn enum_export_from_checked(export: &CheckedEnumExport) -> EnumExport {
     EnumExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
+        traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
+        value_type: export.value_type.map(value_enum_type_from_checked),
         variants: export
             .variants
             .iter()
             .map(|variant| EnumVariantExport {
                 name: variant.name.clone(),
                 fields: variant.fields.iter().map(type_ref_from_resolved).collect(),
+                value: variant.value.as_ref().map(value_enum_value_from_checked),
             })
             .collect(),
+        methods: export.methods.iter().map(method_from_checked).collect(),
+        derives: export.derives.clone(),
     }
 }
 
+/// Convert checked value-enum backing metadata into the manifest representation.
+fn value_enum_type_from_checked(value_type: ValueEnumBacking) -> EnumValueTypeExport {
+    match value_type {
+        ValueEnumBacking::Str => EnumValueTypeExport::Str,
+        ValueEnumBacking::Int => EnumValueTypeExport::Int,
+    }
+}
+
+/// Convert one checked value-enum raw value into the manifest representation.
+fn value_enum_value_from_checked(value: &ValueEnumValue) -> EnumValueExport {
+    match value {
+        ValueEnumValue::Str(value) => EnumValueExport::Str(value.clone()),
+        ValueEnumValue::Int(value) => EnumValueExport::Int(*value),
+    }
+}
+
+/// Convert a checked newtype export into the serialized manifest shape.
 fn newtype_export_from_checked(export: &CheckedNewtypeExport) -> NewtypeExport {
     NewtypeExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
+        is_rusttype: export.is_rusttype,
         underlying: type_ref_from_resolved(&export.underlying),
         methods: export.methods.iter().map(method_from_checked).collect(),
     }
@@ -555,6 +863,13 @@ fn newtype_export_from_checked(export: &CheckedNewtypeExport) -> NewtypeExport {
 
 fn const_export_from_checked(export: &CheckedConstExport) -> ConstExport {
     ConstExport {
+        name: export.name.clone(),
+        ty: type_ref_from_resolved(&export.ty),
+    }
+}
+
+fn static_export_from_checked(export: &CheckedStaticExport) -> StaticExport {
+    StaticExport {
         name: export.name.clone(),
         ty: type_ref_from_resolved(&export.ty),
     }

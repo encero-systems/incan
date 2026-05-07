@@ -4,8 +4,9 @@ use std::path::{Path, PathBuf};
 
 use crate::cli::commands::common::resolve_stdlib_module_source_path;
 use crate::cli::prelude::ParsedModule;
-use crate::frontend::ast::{Declaration, ImportKind, Program};
+use crate::frontend::ast::Program;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::module::{SourceModuleImportResolution, resolve_program_source_imports};
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{diagnostics, lexer, parser};
 use incan_core::lang::stdlib;
@@ -39,6 +40,34 @@ fn queue_incan_stdlib_source_module(
     Ok(())
 }
 
+/// Queue one canonical source-import resolution for test dependency collection.
+fn queue_resolved_source_import(
+    resolution: SourceModuleImportResolution,
+    incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
+    processed: &HashSet<PathBuf>,
+    to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
+) -> Result<(), String> {
+    match resolution {
+        SourceModuleImportResolution::Stdlib { module_path } => {
+            if stdlib::stdlib_stub_path(&module_path).is_some() {
+                queue_incan_stdlib_source_module(
+                    &module_path,
+                    incan_source_stdlib_module_paths,
+                    processed,
+                    to_process,
+                )?;
+            }
+        }
+        SourceModuleImportResolution::Local(module_ref) => {
+            if !processed.contains(&module_ref.file_path) {
+                to_process.push((module_ref.file_path, module_ref.module_name, module_ref.path_segments));
+            }
+        }
+        SourceModuleImportResolution::External => {}
+    }
+    Ok(())
+}
+
 /// Collect source modules referenced by a test file's imports.
 ///
 /// Walks the test AST for `from <module> import ...` statements that reference user modules and materialized stdlib
@@ -46,10 +75,11 @@ fn queue_incan_stdlib_source_module(
 /// `src/greet.incn` — the same file that `src/main.incn` uses.
 ///
 /// Collected modules include transitive dependencies (e.g. if `greet.incn` imports `utils.incn`, it is collected too).
-pub(super) fn collect_source_modules_for_test(
+pub(crate) fn collect_source_modules_for_test(
     test_ast: &Program,
     source_root: &Path,
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+    library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
     library_manifest_index: Option<&LibraryManifestIndex>,
 ) -> Result<Vec<ParsedModule>, String> {
     let mut modules = Vec::new();
@@ -58,85 +88,13 @@ pub(super) fn collect_source_modules_for_test(
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
 
     // ---- Walk test AST to find user module imports ----
-    for decl in &test_ast.declarations {
-        let Declaration::Import(import) = &decl.node else {
-            continue;
-        };
-
-        let import_path = match &import.kind {
-            ImportKind::From { module, .. } if !module.segments.is_empty() => Some(module),
-            ImportKind::Module(path) if !path.segments.is_empty() => Some(path),
-            _ => continue,
-        };
-
-        let Some(path) = import_path else { continue };
-
-        if path.parent_levels == 0
-            && !path.is_absolute
-            && path
-                .segments
-                .first()
-                .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
-        {
-            if stdlib::stdlib_stub_path(&path.segments).is_some() {
-                queue_incan_stdlib_source_module(
-                    &path.segments,
-                    &mut incan_source_stdlib_module_paths,
-                    &processed,
-                    &mut to_process,
-                )?;
-            }
-            continue;
-        }
-
-        // Skip other stdlib and rust crate imports.
-        if path
-            .segments
-            .first()
-            .is_some_and(|s| s == stdlib::STDLIB_ROOT || s == "rust")
-        {
-            continue;
-        }
-        // Skip relative imports (e.g. `from ..src.greet`) — those are the old pattern.
-        if path.parent_levels > 0 || path.is_absolute {
-            continue;
-        }
-
-        let module_segments = match &import.kind {
-            ImportKind::From { module, .. } => module.segments.clone(),
-            ImportKind::Module(p) => {
-                if p.segments.len() > 1 {
-                    p.segments[..p.segments.len() - 1].to_vec()
-                } else {
-                    p.segments.clone()
-                }
-            }
-            _ => continue,
-        };
-
-        if module_segments.is_empty() {
-            continue;
-        }
-
-        // Resolve against the source root.
-        let mut file_path = source_root.to_path_buf();
-        for seg in &module_segments {
-            file_path = file_path.join(seg);
-        }
-        file_path.set_extension("incn");
-
-        if !file_path.exists() {
-            // Try .incan extension as fallback.
-            file_path.set_extension("incan");
-            if !file_path.exists() {
-                continue; // Not a source module — might be a built-in or typo.
-            }
-        }
-
-        let module_name = module_segments.join("_");
-        if !processed.contains(&file_path) {
-            to_process.push((file_path, module_name, module_segments));
-        }
+    for resolved in resolve_program_source_imports(test_ast, source_root, Some(source_root)) {
+        queue_resolved_source_import(
+            resolved.resolution,
+            &mut incan_source_stdlib_module_paths,
+            &processed,
+            &mut to_process,
+        )?;
     }
 
     // ---- Recursively collect modules and their transitive dependencies ----
@@ -159,14 +117,19 @@ pub(super) fn collect_source_modules_for_test(
         })?;
 
         let fp = file_path.to_string_lossy();
-        let mut ast =
-            parser::parse_with_context(&tokens, Some(fp.as_ref()), library_imported_vocab).map_err(|errs| {
-                let mut msg = String::new();
-                for err in &errs {
-                    msg.push_str(&diagnostics::format_error(&fp, &source, err));
-                }
-                msg
-            })?;
+        let mut ast = parser::parse_with_context_and_surfaces(
+            &tokens,
+            Some(fp.as_ref()),
+            library_imported_vocab,
+            library_imported_dsl_surfaces,
+        )
+        .map_err(|errs| {
+            let mut msg = String::new();
+            for err in &errs {
+                msg.push_str(&diagnostics::format_error(&fp, &source, err));
+            }
+            msg
+        })?;
         if let Some(index) = library_manifest_index {
             vocab_desugar_pass::desugar_program_vocab_blocks(&mut ast, Some(fp.as_ref()), index).map_err(|errs| {
                 let mut msg = String::new();
@@ -183,76 +146,14 @@ pub(super) fn collect_source_modules_for_test(
         }
 
         // Walk this module's imports for transitive dependencies.
-        for decl in &ast.declarations {
-            let Declaration::Import(import) = &decl.node else {
-                continue;
-            };
-            let dep_path = match &import.kind {
-                ImportKind::From { module, .. } if !module.segments.is_empty() => Some(module),
-                ImportKind::Module(p) if !p.segments.is_empty() => Some(p),
-                _ => continue,
-            };
-            let Some(dep) = dep_path else { continue };
-            if dep.parent_levels == 0
-                && !dep.is_absolute
-                && dep
-                    .segments
-                    .first()
-                    .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
-            {
-                if stdlib::stdlib_stub_path(&dep.segments).is_some() {
-                    queue_incan_stdlib_source_module(
-                        &dep.segments,
-                        &mut incan_source_stdlib_module_paths,
-                        &processed,
-                        &mut to_process,
-                    )?;
-                }
-                continue;
-            }
-            if dep
-                .segments
-                .first()
-                .is_some_and(|s| s == stdlib::STDLIB_ROOT || s == "rust")
-            {
-                continue;
-            }
-            if dep.parent_levels > 0 || dep.is_absolute {
-                continue;
-            }
-
-            let dep_segments = match &import.kind {
-                ImportKind::From { module, .. } => module.segments.clone(),
-                ImportKind::Module(p) => {
-                    if p.segments.len() > 1 {
-                        p.segments[..p.segments.len() - 1].to_vec()
-                    } else {
-                        p.segments.clone()
-                    }
-                }
-                _ => continue,
-            };
-
-            if dep_segments.is_empty() {
-                continue;
-            }
-
-            let mut dep_file = source_root.to_path_buf();
-            for seg in &dep_segments {
-                dep_file = dep_file.join(seg);
-            }
-            dep_file.set_extension("incn");
-            if !dep_file.exists() {
-                dep_file.set_extension("incan");
-                if !dep_file.exists() {
-                    continue;
-                }
-            }
-
-            let dep_name = dep_segments.join("_");
-            if !processed.contains(&dep_file) {
-                to_process.push((dep_file, dep_name, dep_segments));
-            }
+        let current_base = file_path.parent().unwrap_or(source_root);
+        for resolved in resolve_program_source_imports(&ast, current_base, Some(source_root)) {
+            queue_resolved_source_import(
+                resolved.resolution,
+                &mut incan_source_stdlib_module_paths,
+                &processed,
+                &mut to_process,
+            )?;
         }
 
         modules.push(ParsedModule {
@@ -265,4 +166,53 @@ pub(super) fn collect_source_modules_for_test(
     }
 
     Ok(modules)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::collect_source_modules_for_test;
+    use crate::frontend::{lexer, parser};
+    use std::path::Path;
+
+    #[test]
+    fn test_runner_collects_nested_package_modules() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let src_dir = project_root.join("src");
+        let tests_dir = project_root.join("tests");
+        std::fs::create_dir_all(src_dir.join("dataset"))?;
+        std::fs::create_dir_all(&tests_dir)?;
+
+        std::fs::write(
+            src_dir.join("dataset").join("mod.incn"),
+            "pub trait DataSet[T]:\n    pass\n",
+        )?;
+        std::fs::write(
+            src_dir.join("dataset").join("ops.incn"),
+            "from dataset.mod import DataSet\npub def filter_ds[T](ds: DataSet[T]) -> DataSet[T]:\n    return ds\n",
+        )?;
+        let test_source = "from dataset.mod import DataSet\nfrom dataset.ops import filter_ds\n";
+        let tokens = lexer::lex(test_source).map_err(|errs| errs[0].message.clone())?;
+        let ast = parser::parse_with_context(&tokens, Some("tests/test_dataset.incn"), None)
+            .map_err(|errs| errs[0].message.clone())?;
+
+        let modules = collect_source_modules_for_test(&ast, &src_dir, None, None, None)?;
+
+        let dataset_mod = modules
+            .iter()
+            .find(|module| module.file_path.ends_with(Path::new("dataset").join("mod.incn")))
+            .ok_or("expected dataset/mod.incn to be collected")?;
+        assert_eq!(dataset_mod.path_segments, vec!["dataset".to_string()]);
+
+        let dataset_ops = modules
+            .iter()
+            .find(|module| module.file_path.ends_with(Path::new("dataset").join("ops.incn")))
+            .ok_or("expected dataset/ops.incn to be collected")?;
+        assert_eq!(
+            dataset_ops.path_segments,
+            vec!["dataset".to_string(), "ops".to_string()]
+        );
+
+        Ok(())
+    }
 }

@@ -68,7 +68,9 @@ When a wire format uses keywords like `"type"` or `"from"`, keep a safe canonica
 an alias.
 
 ```incan
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 model Account:
     type_ as "type": str
 

@@ -17,6 +17,28 @@ use super::super::super::expr::{IrExprKind, TypedExpr, UnaryOp};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 
+/// Normalize dictionary index probes to the borrow shape expected by runtime lookup helpers.
+///
+/// `Dict[str, V]` should accept borrowed string probes (`"x"`, `&str`, `String`) without forcing owned
+/// `String` materialization at every `dict[key]` read site. Non-string dictionaries keep the ordinary `&key` lookup
+/// shape.
+fn emit_dict_lookup_index_key(object: &TypedExpr, index: &TypedExpr, emitted: TokenStream) -> TokenStream {
+    match &object.ty {
+        IrType::Dict(key_ty, _)
+            if matches!(
+                key_ty.as_ref(),
+                IrType::String | IrType::StrRef | IrType::StaticStr | IrType::FrozenStr
+            ) =>
+        {
+            match &index.ty {
+                IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr => emitted,
+                _ => quote! { <_ as AsRef<str>>::as_ref(&#emitted) },
+            }
+        }
+        _ => quote! { &#emitted },
+    }
+}
+
 impl<'a> IrEmitter<'a> {
     /// Emit an index expression.
     ///
@@ -29,6 +51,25 @@ impl<'a> IrEmitter<'a> {
         object: &TypedExpr,
         index: &TypedExpr,
     ) -> Result<TokenStream, EmitError> {
+        if Self::expr_is_storage_rooted(object) {
+            let rewritten = Self::rewrite_storage_root_expr(
+                &TypedExpr::new(
+                    IrExprKind::Index {
+                        object: Box::new(object.clone()),
+                        index: Box::new(index.clone()),
+                    },
+                    match &object.ty {
+                        IrType::List(elem) => (**elem).clone(),
+                        IrType::Dict(_, value) => (**value).clone(),
+                        _ => IrType::Unknown,
+                    },
+                ),
+                "__incan_static_value",
+            );
+            let inner = self.emit_expr(&rewritten)?;
+            return self.emit_storage_with_ref(object, inner);
+        }
+
         let o = self.emit_expr(object)?;
         let obj_ty = match &object.ty {
             IrType::Ref(inner) | IrType::RefMut(inner) => inner.as_ref(),
@@ -44,10 +85,11 @@ impl<'a> IrEmitter<'a> {
         match obj_ty {
             IrType::Dict(_, v) => {
                 let i = self.emit_expr(index)?;
+                let key = emit_dict_lookup_index_key(object, index, i);
                 if v.is_copy() {
-                    Ok(quote! { *incan_stdlib::collections::dict_get(&#o, &#i) })
+                    Ok(quote! { *incan_stdlib::collections::dict_get(&#o, #key) })
                 } else {
-                    Ok(quote! { incan_stdlib::collections::dict_get(&#o, &#i).clone() })
+                    Ok(quote! { incan_stdlib::collections::dict_get(&#o, #key).clone() })
                 }
             }
             IrType::List(elem) => {
@@ -61,9 +103,8 @@ impl<'a> IrEmitter<'a> {
             }
             // Fallback for unknown/unsupported index targets.
             //
-            // We keep this path total so codegen can continue even when the IR type is not a known container.
-            // This may panic with Rust-native messages for invalid indices; we will tighten this as more container
-            // types are routed through typed stdlib helpers.
+            // Keep this path total for external/unknown receivers that do not yet have a safe helper-backed route.
+            // Known typed list/dict/string surfaces must use the canonical stdlib helpers above.
             _ => {
                 let index_expr = self.emit_index_with_negative_handling(object, index, &o)?;
                 match obj_ty {
@@ -148,6 +189,21 @@ impl<'a> IrEmitter<'a> {
     /// - Tuple field access (`tuple.0` → `tuple.0`)
     /// - Regular struct field access (`obj.field` → `obj.field`)
     pub(in super::super) fn emit_field_expr(&self, object: &TypedExpr, field: &str) -> Result<TokenStream, EmitError> {
+        if Self::expr_is_storage_rooted(object) {
+            let rewritten = Self::rewrite_storage_root_expr(
+                &TypedExpr::new(
+                    IrExprKind::Field {
+                        object: Box::new(object.clone()),
+                        field: field.to_string(),
+                    },
+                    IrType::Unknown,
+                ),
+                "__incan_static_value",
+            );
+            let inner = self.emit_expr(&rewritten)?;
+            return self.emit_storage_with_ref(object, inner);
+        }
+
         let o = self.emit_expr(object)?;
 
         // Check if this is an enum variant access using the actual enum registry, not capitalization heuristics

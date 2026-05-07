@@ -1,0 +1,8 @@
+"""
+Producer library for the pro-level synthetic studiokit vocab example.
+
+The consumer imports this library through `pub::studiokit`, which activates the sibling vocab companion metadata during
+`incan build --lib`.
+"""
+
+pub from info import studiokit_name

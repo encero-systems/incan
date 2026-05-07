@@ -45,8 +45,8 @@ impl AstLowering {
             }
         }
 
-        // Note: Serialize/Deserialize derives for newtypes are added post-lowering by `add_serde_to_newtypes` in
-        // codegen.rs, which selectively adds only the derives that are actually needed.
+        // Note: serde derives for newtypes are added post-lowering by `add_serde_to_newtypes` in codegen.rs, which
+        // selectively adds only the derives that are actually needed.
         Ok(IrStruct {
             name: n.name.clone(),
             fields,
@@ -54,6 +54,7 @@ impl AstLowering {
             visibility: Self::map_visibility(n.visibility),
             type_params: Self::lower_type_params(&n.type_params),
             derive_rust_modules,
+            lint_allows: self.extract_rust_lint_allows(&n.decorators),
         })
     }
 }

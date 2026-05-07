@@ -45,6 +45,28 @@ Prefix a declaration with `pub` to **export** it so other modules can import it.
 
 For more detail on `pub` (including how it affects `model`/`class` fields), see: [Models & Classes](../../explanation/models_and_classes/index.md).
 
+### Exporting an alternate name
+
+Use a symbol alias when a module should expose another name for the same callable or type:
+
+```incan
+# strings.incn
+pub def shout(s: str) -> str:
+    return s.strip().upper()
+
+pub yell = shout
+```
+
+```incan
+# main.incn
+from strings import yell
+
+def main() -> None:
+    println(yell("  hello  "))
+```
+
+`yell` is an alias of `shout`, not a copied function body. The target must already be a supported declaration, and a public alias must target a public symbol. For the full contract, see [Symbol aliases](../../reference/symbol_aliases.md).
+
 ## Import styles
 
 Incan supports two styles you can mix:
@@ -65,6 +87,23 @@ The reference documents how parent/root paths work:
 - Project root: `crate`
 
 See: [Imports and modules (reference)](../../reference/imports_and_modules.md).
+
+## Module-owned state with `static`
+
+Sometimes a module does not just export functions and types.  
+Sometimes it owns long-lived runtime state.
+
+That is what `static` is for:
+
+--8<-- "snippets/module_state.md"
+
+Important:
+
+- `static` is *runtime* state, not a compile-time constant
+- imported `pub static` names refer to the same live storage
+- `static` always needs an explicit type and initializer
+
+Use `const` for baked compile-time data (constants).
 
 ## Try it
 
@@ -93,8 +132,11 @@ See: [Imports and modules (reference)](../../reference/imports_and_modules.md).
 ## What to learn next
 
 - Explanation: [Imports and modules](../../explanation/imports_and_modules.md)
+- Explanation: [Module static storage](../../explanation/static_storage.md)
 - How-to: [Imports and modules (how-to)](../../how-to/imports_and_modules.md)
+- How-to: [Module state](../../how-to/module_state.md)
 - Reference: [Imports and modules (reference)](../../reference/imports_and_modules.md)
+- Reference: [Static storage](../../reference/static_storage.md)
 
 ## Next
 

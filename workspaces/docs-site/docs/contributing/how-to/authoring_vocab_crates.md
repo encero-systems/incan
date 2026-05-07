@@ -85,7 +85,7 @@ path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-incan_vocab = "0.1"
+incan_vocab = "0.3"
 ```
 
 Keep the companion crate as a real Rust crate with `Cargo.toml` and `src/lib.rs`, even when the DSL description itself is quite small.
@@ -130,6 +130,160 @@ Key rules:
 - `LibraryManifest` is where you describe exported module metadata plus any Cargo dependencies or stdlib features that must travel with the library artifact.
 - `KeywordRegistration` remains available only as a lower-level escape hatch for especially simple or incremental cases.
 
+## 4. Add scoped surface forms
+
+Scoped DSL surface forms can be registered alongside the declaration that owns them. Use scoped surfaces when a glyph or expression shape should have meaning only inside an explicit DSL block, while remaining ordinary syntax or an error elsewhere:
+
+Start with the consumer syntax you want to enable:
+
+```incan
+from pub::querykit import querykit_name
+
+def main() -> None:
+    query:
+        .amount > 100
+        .customer_id
+        orders |> paid_orders
+        orders.filter(.status == "paid").select(.region)
+```
+
+That surface has four distinct jobs:
+
+- `query:` introduces the owning DSL block.
+- `.amount` and `.customer_id` are expression-form surfaces owned by the `query:` block body.
+- `orders |> paid_orders` is an operator-like surface owned by the same block body.
+- `.status` and `.region` are expression-form surfaces owned by query method arguments, not by every method call in the file.
+
+The registration describes those jobs directly:
+
+| Consumer surface           | Descriptor shape                                           | Eligibility                           | Receiver               |
+| -------------------------- | ---------------------------------------------------------- | ------------------------------------- | ---------------------- |
+| `query:`                   | `DeclarationSurface::named("query")`                       | import-activated by `pub::querykit`   | none                   |
+| `.amount`                  | `ScopedSurfaceDescriptor::leading_dot_path("query.field")` | `in_declaration_body("query")`        | owning declaration     |
+| `orders |> paid_orders`    | `ScopedSurfaceDescriptor::operator("query.pipe", "|>")`    | `in_declaration_body("query")`        | none                   |
+| `.status` in `filter(...)` | `leading_dot_path("query.method_field")`                   | `in_call_argument("query", "filter")` | custom method receiver |
+
+The descriptor key is intentionally separate from the glyph or source text. The key is the stable identity that later compiler phases and the desugarer see. For example, `query.pipe` can use `|>` today and still remain a stable semantic concept if the library later adds aliases or richer validation.
+
+Once accepted, the compiler hands the desugarer typed payloads rather than raw source text:
+
+```text
+.amount
+  descriptor_key: query.field
+  payload: leading-dot path ["amount"]
+
+orders |> paid_orders
+  descriptor_key: query.pipe
+  payload: scoped glyph "|>" with left and right expression operands
+
+.status inside filter(...)
+  descriptor_key: query.method_field
+  payload: leading-dot path ["status"]
+```
+
+This is the point of RFC 040: the DSL author registers where a surface is legal, the parser preserves what it means, and the desugarer consumes structured artifacts instead of guessing by string matching.
+
+Here is the matching companion-crate registration:
+
+```rust
+use incan_vocab::{
+    DeclarationSurface, DslSurface, ScopedSurfaceDescriptor, ScopedSurfaceDiagnosticKind,
+    ScopedSurfaceDiagnosticTemplate, ScopedSurfaceEligibility, ScopedSurfaceMisuseScope, ScopedSurfaceReceiver,
+    VocabRegistration,
+};
+
+pub fn library_vocab() -> VocabRegistration {
+    VocabRegistration::new().with_surface(
+        DslSurface::on_import("querykit")
+            .with_declaration(
+                DeclarationSurface::named("query")
+                    .with_statement_body(),
+            )
+            .with_scoped_surface(
+                ScopedSurfaceDescriptor::operator("query.pipe", "|>")
+                    .in_declaration_body("query")
+                    .pairwise_chain(),
+            )
+            .with_scoped_surface(
+                ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                    .in_declaration_body("query")
+                    .with_receiver(ScopedSurfaceReceiver::OwningDeclaration)
+                    .with_misuse_scope(ScopedSurfaceMisuseScope::ActivatingFile)
+                    .with_diagnostic(
+                        ScopedSurfaceDiagnosticTemplate::new(
+                            "query-field-outside-scope",
+                            ScopedSurfaceDiagnosticKind::OutsideScope,
+                            "query field shorthand is only valid inside query blocks",
+                        )
+                        .with_help("move this expression into a `query:` block"),
+                    ),
+            ),
+            .with_scoped_surface(
+                ScopedSurfaceDescriptor::leading_dot_path("query.method_field")
+                    .with_eligibilities([
+                        ScopedSurfaceEligibility::call_argument("query", "filter"),
+                        ScopedSurfaceEligibility::call_argument("query", "select"),
+                    ])
+                    .with_receiver(ScopedSurfaceReceiver::custom("method-receiver")),
+            ),
+    )
+}
+```
+
+The descriptor `key` must be stable. The compiler preserves it on accepted surface artifacts and uses it for diagnostics, formatter metadata, and desugarer handoff. Expression-form descriptors such as leading-dot paths must declare receiver derivation; operator-like glyph descriptors can expose formatter hints such as `pairwise_chain()`. RFC 040 supports selected descriptor-gated non-core glyphs such as `|>`, `%>%`, `:=`, and `===`; broader language-shaped token forms remain RFC 081 work.
+
+## 5. Add scoped symbols
+
+Scoped symbols are identifier calls owned by a DSL position. They are useful when a DSL needs concise names such as `sum(...)` or `count(...)` without changing ordinary Incan resolution in the rest of the file.
+
+Inside an eligible DSL position, a matching scoped symbol descriptor is the local meaning. It wins over lexical names, imports, module names, and builtin fallback, the same way an inner variable binding wins over an outer binding. Outside the owning DSL scope, the same spelling remains an ordinary call.
+
+```incan
+from pub::querykit import querykit_name
+
+def main(values: list[int]) -> int:
+    query:
+        sum(.amount)                 # querykit's scoped symbol
+        std.builtins.sum(values)     # explicit core builtin escape
+
+    return sum(values)               # ordinary Incan call resolution
+```
+
+Register scoped symbols on the same `DslSurface` as the declaration that owns them:
+
+```rust
+use incan_vocab::{
+    ClauseSurface, DeclarationSurface, DslSurface, ScopedSymbolDescriptor,
+    ScopedSymbolDiagnosticKind, ScopedSymbolDiagnosticTemplate, ScopedSymbolMisuseScope,
+    VocabRegistration,
+};
+
+pub fn library_vocab() -> VocabRegistration {
+    VocabRegistration::new().with_surface(
+        DslSurface::on_import("querykit")
+            .with_declaration(
+                DeclarationSurface::named("query")
+                    .with_clause(ClauseSurface::expr("SELECT")),
+            )
+            .with_scoped_symbol(
+                ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                    .in_clause_body("query", "SELECT")
+                    .with_misuse_scope(ScopedSymbolMisuseScope::ActiveDsl)
+                    .with_diagnostic(
+                        ScopedSymbolDiagnosticTemplate::new(
+                            "query-sum-outside-select",
+                            ScopedSymbolDiagnosticKind::OutsideEligiblePosition,
+                            "query aggregate `sum` is only valid inside SELECT clauses",
+                        )
+                        .with_help("move `sum(...)` into a SELECT clause"),
+                    ),
+            ),
+    )
+}
+```
+
+Use `ScopedSymbolMisuseScope::ActiveDsl` only when the spelling is a strong signal of DSL intent inside the owning DSL. That gives authors targeted diagnostics for "active DSL, wrong position" while preserving ordinary Incan behavior outside the DSL scope.
+
 If your desugared output needs extra runtime requirements, declare them in `LibraryManifest`:
 
 ```rust
@@ -167,7 +321,7 @@ Then the desugarer can emit `IncanExpr::Helper("filter".to_string())`, and the c
 - each `exported_name` must point at a real public export from the library artifact
 - empty keys or export names are rejected before the `.incnlib` artifact is written
 
-## 4. Add an optional desugarer
+## 6. Add an optional desugarer
 
 Parser activation alone teaches the compiler how to recognize your DSL surface. If the DSL needs custom lowering, register a Rust desugarer from the same `library_vocab()` bundle.
 
@@ -218,7 +372,7 @@ This emits the `desugar_block` entrypoint and required `__incan_*` memory global
 
 Malformed artifact paths, invalid checksums, or missing ABI exports fail the producer build early instead of surfacing later in consumer projects.
 
-## 5. Build the library artifact
+## 7. Build the library artifact
 
 Run library mode from the Incan project root:
 
@@ -235,7 +389,7 @@ This requires `src/lib.incn`. During the build, Incan:
 
 Any serialized JSON sidecars or extraction glue are tooling details rather than part of the standard authoring workflow.
 
-## 6. Consume the DSL from another project
+## 8. Consume the DSL from another project
 
 The consumer depends on the built library artifact:
 

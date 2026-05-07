@@ -22,10 +22,10 @@ impl AstLowering {
     /// Extract an integer literal value from an AST expression.
     pub(in crate::backend::ir::lower) fn extract_int_literal(expr: &Spanned<ast::Expr>) -> Option<i64> {
         match &expr.node {
-            ast::Expr::Literal(ast::Literal::Int(n)) => Some(*n),
+            ast::Expr::Literal(ast::Literal::Int(il)) => Some(il.value),
             ast::Expr::Unary(ast::UnaryOp::Neg, inner) => {
-                if let ast::Expr::Literal(ast::Literal::Int(n)) = &inner.node {
-                    Some(-n)
+                if let ast::Expr::Literal(ast::Literal::Int(il)) = &inner.node {
+                    Some(-il.value)
                 } else {
                     None
                 }

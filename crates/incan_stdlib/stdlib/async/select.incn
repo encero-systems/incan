@@ -1,11 +1,17 @@
 """
 Async select helpers.
 
-RFC 023 intentionally keeps this surface minimal: only the timeout-based selection helper is exposed here. Multi-branch
-race/select combinators remain a deliberate follow-up for later awaitable-concurrency RFC work.
+This surface intentionally remains minimal: only the timeout-based selection helper is exposed here.
+Multi-branch race/select combinators remain a deliberate follow-up for later awaitable-concurrency work.
 
 `select_timeout(seconds, task)` returns `Some(value)` when the task finishes before the timeout and `None` when the
 deadline expires first.
+
+Cancellation contract:
+
+- `select_timeout()` cancels the supplied future when the deadline wins.
+- Cancelling `select_timeout()` before it resolves also drops the supplied future.
+- Use `std.async.task.spawn()` first when work must be durable once spawned instead of cancelled by timeout.
 
 Example:
     match await select_timeout(0.5, fetch_user()):
@@ -14,4 +20,18 @@ Example:
 """
 
 import std.async
-from rust::incan_stdlib::async::select import select_timeout
+from rust::incan_stdlib::async::time import clamp_seconds
+from rust::incan_stdlib::async::task import RuntimeFuture
+from rust::tokio::time import timeout as tokio_timeout
+
+pub async def select_timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Option[T]:
+    """
+    Returns `Some(value)` when `task` completes before the timeout.
+    Returns `None` when the timeout expires first.
+
+    If the timeout wins, the supplied future is cancelled by being dropped. Spawn the work first when the operation must
+    continue after the timeout path returns.
+    """
+    match await tokio_timeout(clamp_seconds(seconds), task):
+        Ok(value) => return Some(value)
+        Err(_err) => return None

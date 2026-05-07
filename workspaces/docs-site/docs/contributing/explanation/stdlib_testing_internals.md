@@ -4,10 +4,10 @@ This page documents the internal integration model, runtime boundary design, and
 `std.testing` stdlib module. It is aimed at compiler contributors, not Incan users.
 
 > For the user-facing guide, see [Language → How-to → `std.testing` guide].
-> For the API reference, see [Language → Reference → Testing].
+> For the API reference, see [Standard library reference → `std.testing`].
 
 [Language → How-to → `std.testing` guide]:../../language/how-to/testing_stdlib.md
-[Language → Reference → Testing]:../../language/reference/testing.md
+[Standard library reference → `std.testing`]:../../language/reference/stdlib/testing.md
 
 ## Integration model (RFC 023 Phase 5)
 
@@ -17,13 +17,14 @@ This page documents the internal integration model, runtime boundary design, and
 - **Rust module mapping**: the file declares `rust.module("incan_stdlib::testing")`, routing host-boundary calls to the
   `incan_stdlib::testing` Rust module.
 - **Incan-implemented assertions**: `assert`, `assert_eq`, `assert_ne`, `assert_true`, `assert_false`, `assert_is_some`,
-  `assert_is_none`, `assert_is_ok`, `assert_is_err` are all written in Incan source. They delegate to `fail()` /
+  `assert_is_none`, `assert_is_ok`, `assert_is_err`, and `fail` are all written in Incan source. They delegate to
   `fail_t()` for the actual panic.
 - **Host-boundary primitives** (`@rust.extern`):
-    - `fail(msg)` / `fail_t[T](msg)` — panic primitives implemented in `incan_stdlib::testing`.
-    - `assert_raises` — not yet implemented (FIXME in stdlib source).
+    - `fail_t[T](msg)` — generic panic primitive implemented in `incan_stdlib::testing`.
     - Marker entrypoints (`skip`, `xfail`, `slow`, `fixture`, `parametrize`) — their Rust implementations intentionally
       panic with a "runtime misuse" message; they exist only to satisfy the extern boundary.
+- **Known blocker**:
+    - `assert_raises` remains unimplemented as an Incan-side placeholder (fails via `fail_t`) until parser/lowering support for `assert ... raises ...` lands.
 - **Marker metadata**: each marker extern carries `metadata={...}` on its `@rust.extern` annotation. `incan test` reads
   this metadata from the parsed stdlib source (via `src/frontend/testing_markers.rs`) as the single source of truth for
   marker semantics.

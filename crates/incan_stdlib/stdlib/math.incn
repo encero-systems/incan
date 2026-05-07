@@ -17,6 +17,13 @@ math.NAN          - Not a Number
 Functions
 =========
 
+Integer:
+  math.gcd(a, b)  - Greatest common divisor
+  math.lcm(a, b)  - Lowest common multiple
+
+Integer notes:
+  gcd/lcm raise ValueError if the mathematical result exceeds Incan's signed 64-bit int range
+
 Basic:
   math.sqrt(x)    - Square root
   math.abs(x)     - Absolute value
@@ -28,6 +35,7 @@ Power/Log:
   math.exp(x)     - e raised to power x
   math.log(x)     - Natural logarithm (base e)
   math.log10(x)   - Base-10 logarithm
+  math.log2(x)    - Base-2 logarithm
 
 Trigonometric:
   math.sin(x)     - Sine (radians)
@@ -36,33 +44,42 @@ Trigonometric:
   math.asin(x)    - Arc sine
   math.acos(x)    - Arc cosine
   math.atan(x)    - Arc tangent
+  math.atan2(y,x) - Two-argument arctangent
 
 Hyperbolic:
   math.sinh(x)    - Hyperbolic sine
   math.cosh(x)    - Hyperbolic cosine
   math.tanh(x)    - Hyperbolic tangent
+
+Geometry:
+  math.hypot(x,y) - Euclidean distance sqrt(x*x + y*y)
 """
 
 from rust::std::f64::consts import PI as RUST_PI, E as RUST_E, TAU as RUST_TAU
 from rust::std::f64 import INFINITY as RUST_INFINITY, NAN as RUST_NAN
+from rust::incan_stdlib::num import gcd_i64 as rust_gcd, lcm_i64 as rust_lcm
 from rust::libm import (
     sqrt as rust_sqrt,
     fabs as rust_abs,
     floor as rust_floor,
     ceil as rust_ceil,
+    round as rust_round,
     pow as rust_pow,
     exp as rust_exp,
     log as rust_log,
     log10 as rust_log10,
+    log2 as rust_log2,
     sin as rust_sin,
     cos as rust_cos,
     tan as rust_tan,
     asin as rust_asin,
     acos as rust_acos,
     atan as rust_atan,
+    atan2 as rust_atan2,
     sinh as rust_sinh,
     cosh as rust_cosh,
     tanh as rust_tanh,
+    hypot as rust_hypot,
 )
 
 pub const PI: float = RUST_PI
@@ -70,6 +87,17 @@ pub const E: float = RUST_E
 pub const TAU: float = RUST_TAU
 pub const INFINITY: float = RUST_INFINITY
 pub const NAN: float = RUST_NAN
+
+
+# ============================================================================
+# Integer functions
+# ============================================================================
+pub def gcd(a: int, b: int) -> int:
+    return rust_gcd(a, b)
+
+
+pub def lcm(a: int, b: int) -> int:
+    return rust_lcm(a, b)
 
 
 # ============================================================================
@@ -90,6 +118,9 @@ pub def floor(x: float) -> float:
 pub def ceil(x: float) -> float:
     return rust_ceil(x)
 
+pub def round(x: float) -> float:
+    return rust_round(x)
+
 
 # ============================================================================
 # Power/Log functions
@@ -108,6 +139,9 @@ pub def log(x: float) -> float:
 
 pub def log10(x: float) -> float:
     return rust_log10(x)
+
+pub def log2(x: float) -> float:
+    return rust_log2(x)
 
 
 # ============================================================================
@@ -136,6 +170,9 @@ pub def acos(x: float) -> float:
 pub def atan(x: float) -> float:
     return rust_atan(x)
 
+pub def atan2(y: float, x: float) -> float:
+    return rust_atan2(y, x)
+
 
 # ============================================================================
 # Hyperbolic functions
@@ -150,3 +187,10 @@ pub def cosh(x: float) -> float:
 
 pub def tanh(x: float) -> float:
     return rust_tanh(x)
+
+
+# ============================================================================
+# Geometry functions
+# ============================================================================
+pub def hypot(x: float, y: float) -> float:
+    return rust_hypot(x, y)

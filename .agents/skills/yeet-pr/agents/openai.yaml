@@ -1,0 +1,4 @@
+interface:
+  display_name: "Yeet PR"
+  short_description: "Publish PRs with Incan standards"
+  default_prompt: "Use $yeet-pr to commit, push, and open a draft PR using the repository standards."

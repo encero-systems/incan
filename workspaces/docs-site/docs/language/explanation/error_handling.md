@@ -7,8 +7,8 @@ Incan treats errors as **values**: functions that can fail return a `Result[T, E
 
 ```incan
 def load_config(path: Path) -> Result[Config, AppError]:
-    content = path.read_text().map_err(AppError.Io)?
-    config = parse_toml[Config](content).map_err(AppError.Parse)?
+    bytes = path.read_bytes().map_err(AppError.Io)?
+    config = parse_binary_config[Config](bytes).map_err(AppError.Parse)?
     return Ok(config)
 ```
 
@@ -40,8 +40,8 @@ The key ideas:
 
     ```incan
     def load_config(path: Path) -> Result[Config, AppError]:
-        content = path.read_text().map_err(AppError.Io)?
-        config = parse_toml[Config](content).map_err(AppError.Parse)?
+        bytes = path.read_bytes().map_err(AppError.Io)?
+        config = parse_binary_config[Config](bytes).map_err(AppError.Parse)?
         return Ok(config)
     ```
 
@@ -93,13 +93,13 @@ The key ideas:
     }
     ```
 
-    ```incan
-    def load_config(path: Path) -> Result[Config, AppError]:
-        content = path.read_text().map_err(AppError.Io)?
-        config = parse_toml[Config](content).map_err(AppError.Parse)?
-        return Ok(config)
+```incan
+def load_config(path: Path) -> Result[Config, AppError]:
+    bytes = path.read_bytes().map_err(AppError.Io)?
+    config = parse_binary_config[Config](bytes).map_err(AppError.Parse)?
+    return Ok(config)
 
-    def load_config_or_default(path: Path) -> Config:
+def load_config_or_default(path: Path) -> Config:
         match load_config(path):
             Ok(cfg) => return cfg
             Err(_) => return default_config()
@@ -191,8 +191,8 @@ Use this when you want to convert one error type into another at a boundary.
 
 ```incan
 def load_config(path: Path) -> Result[Config, AppError]:
-    content = path.read_text().map_err(AppError.Io)?
-    config = parse_toml[Config](content).map_err(AppError.Parse)?
+    bytes = path.read_bytes().map_err(AppError.Io)?
+    config = parse_binary_config[Config](bytes).map_err(AppError.Parse)?
     return Ok(config)
 ```
 
@@ -230,6 +230,7 @@ Prefer:
 ## See also
 
 - [Example: Error Handling](https://github.com/dannys-code-corner/incan/blob/main/examples/intermediate/error_handling.incn)
+- [Fallible and infallible paths](../tutorials/fallible_and_infallible_paths.md)
 - [Async programming](../how-to/async_programming.md)
 - [Error handling recipes](../how-to/error_handling_recipes.md)
 - [Error trait](../reference/stdlib_traits/error.md)

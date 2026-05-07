@@ -6,6 +6,15 @@ on:
   release:
     types: [ published ]
   workflow_dispatch:
+    inputs:
+      docs_version:
+        description: "Docs version to deploy, for example dev, v0.1, or v0.2"
+        required: false
+        default: dev
+      source_ref:
+        description: "Git ref to build from"
+        required: false
+        default: main
 
 permissions:
   contents: write
@@ -18,11 +27,12 @@ jobs:
       run:
         working-directory: workspaces/docs-site
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
+          ref: ${{ github.event.inputs.source_ref || github.ref }}
           fetch-depth: 0
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.11"
 
@@ -36,8 +46,29 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Publish shared docs assets
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'git worktree remove --force "$tmp" >/dev/null 2>&1 || true' EXIT
+
+          git fetch origin +gh-pages:gh-pages
+          git worktree add "$tmp" gh-pages
+
+          rm -rf "$tmp/shared/incapunk"
+          mkdir -p "$tmp/shared"
+          cp -R docs/shared/incapunk "$tmp/shared/incapunk"
+
+          git -C "$tmp" add -A shared/incapunk
+          if git -C "$tmp" diff --cached --quiet; then
+            exit 0
+          fi
+
+          git -C "$tmp" commit -m "Update shared docs assets"
+          git -C "$tmp" push origin gh-pages
+
       - name: Deploy dev from main
-        if: github.event_name != 'release'
+        if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && github.event.inputs.docs_version == 'dev')
         run: |
           export INCAN_DOCS_BASE_PREFIX="dev"
           python -m mkdocs build --strict
@@ -45,14 +76,24 @@ jobs:
           mike set-default --push dev
 
       - name: Deploy versioned docs from release
-        if: github.event_name == 'release'
+        if: github.event_name == 'release' || (github.event_name == 'workflow_dispatch' && github.event.inputs.docs_version != 'dev')
         env:
           TAG: ${{ github.event.release.tag_name }}
+          DOCS_VERSION: ${{ github.event.inputs.docs_version }}
         run: |
-          # Strip monorepo prefix: incan-v0.1.0 → v0.1.0 → v0.1
-          VERSION="${TAG#incan-}"
-          MINOR="${VERSION%.*}"
+          # Strip monorepo prefix for release tags: incan-v0.1.0 -> v0.1.0 -> v0.1.
+          if [ -n "${DOCS_VERSION}" ]; then
+            MINOR="${DOCS_VERSION}"
+          else
+            VERSION="${TAG#incan-}"
+            MINOR="${VERSION%.*}"
+          fi
+
+          if ! printf '%s' "${MINOR}" | grep -Eq '^v[0-9]+\.[0-9]+$'; then
+            echo "docs_version must look like v0.1 or v0.2, got: ${MINOR}" >&2
+            exit 1
+          fi
+
           export INCAN_DOCS_BASE_PREFIX="${MINOR}"
           python -m mkdocs build --strict
           mike deploy --push "${MINOR}"
-

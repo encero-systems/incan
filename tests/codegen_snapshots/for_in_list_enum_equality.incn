@@ -1,0 +1,14 @@
+"""Issue #195: for-in over list[E] must allow E == E in generated Rust."""
+
+enum RootKind:
+    A
+    B
+
+def matches_any(root_kind: RootKind, required: list[RootKind]) -> bool:
+    for expected in required:
+        if expected == root_kind:
+            return true
+    return false
+
+def main() -> None:
+    print(matches_any(RootKind.A, [RootKind.A]))

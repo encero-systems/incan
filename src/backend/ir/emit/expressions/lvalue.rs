@@ -118,6 +118,14 @@ impl<'a> IrEmitter<'a> {
                 let n = Self::rust_ident(name);
                 Ok(quote! { #n })
             }
+            AssignTarget::StaticBinding(name) => {
+                let n = Self::rust_ident(name);
+                Ok(quote! { #n })
+            }
+            AssignTarget::Static(name) => {
+                let n = Self::rust_static_ident(name);
+                Ok(quote! { #n })
+            }
             AssignTarget::Field { object, field } => {
                 let o = self.emit_lvalue_expr(object)?;
                 let f = format_ident!("{}", field);

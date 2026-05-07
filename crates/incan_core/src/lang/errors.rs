@@ -13,6 +13,19 @@ pub type ExceptionInfo = LangItemInfo<ErrorKind>;
 /// Registry of builtin exception kinds.
 pub const EXCEPTIONS: &[ExceptionInfo] = &[
     info(
+        ErrorKind::AssertionError,
+        "AssertionError",
+        "Raised when a language assertion or std.testing assertion helper fails.",
+        RFC::_018,
+        Since(0, 3),
+        &[Example {
+            code: r#"def main() -> None:
+    assert 1 == 2, "math broke"
+"#,
+            note: Some("Panics at runtime with `AssertionError: math broke`."),
+        }],
+    ),
+    info(
         ErrorKind::ValueError,
         "ValueError",
         "Raised when an operation receives a value of the right type but an invalid value.",
@@ -77,7 +90,7 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
     info(
         ErrorKind::IndexError,
         "IndexError",
-        "Raised when an index is out of bounds (e.g. string/list indexing).",
+        "Raised when an index is out of bounds (e.g. string/list indexing) or when calling `list.pop()` on an empty list.",
         RFC::_000,
         Since(0, 1),
         &[
@@ -93,6 +106,13 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
     print(xs[99])
 "#,
                 note: Some("Panics at runtime with `IndexError: index 99 out of range for list of length 3`."),
+            },
+            Example {
+                code: r#"def main() -> None:
+    xs: list[int] = []
+    _ = xs.pop()
+"#,
+                note: Some("Panics at runtime with `IndexError: pop from empty list`."),
             },
         ],
     ),
@@ -117,7 +137,9 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
         RFC::_000,
         Since(0, 1),
         &[Example {
-            code: r#"@derive(Deserialize)
+            code: r#"from std.serde.json import Deserialize
+
+@derive(Deserialize)
 model User:
     name: str
 
@@ -164,13 +186,18 @@ pub fn from_str(name: &str) -> Option<ErrorKind> {
 
 /// Return full metadata for an exception kind.
 ///
-/// ## Panics
-/// - If the registry is missing an entry for `kind` (programming error).
-pub fn info_for(kind: ErrorKind) -> &'static ExceptionInfo {
-    EXCEPTIONS
-        .iter()
-        .find(|e| e.id == kind)
-        .expect("INVARIANT: exception info missing")
+/// The lookup is exhaustive over the closed enum, so adding an exception kind requires updating this match at compile
+/// time.
+pub fn info_for(kind: ErrorKind) -> ExceptionInfo {
+    match kind {
+        ErrorKind::AssertionError => EXCEPTIONS[0],
+        ErrorKind::ValueError => EXCEPTIONS[1],
+        ErrorKind::TypeError => EXCEPTIONS[2],
+        ErrorKind::ZeroDivisionError => EXCEPTIONS[3],
+        ErrorKind::IndexError => EXCEPTIONS[4],
+        ErrorKind::KeyError => EXCEPTIONS[5],
+        ErrorKind::JsonDecodeError => EXCEPTIONS[6],
+    }
 }
 
 const fn info(

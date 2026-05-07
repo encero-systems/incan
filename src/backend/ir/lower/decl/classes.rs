@@ -35,6 +35,7 @@ impl AstLowering {
         }
 
         let (mut derives, derive_rust_modules) = self.extract_derives(&c.decorators);
+        self.extend_derives_with_adopted_serde_traits(&mut derives, &c.traits);
 
         let debug = derives::as_str(DeriveId::Debug);
         let clone = derives::as_str(DeriveId::Clone);
@@ -62,6 +63,7 @@ impl AstLowering {
             visibility: Self::map_visibility(c.visibility),
             type_params: Self::lower_type_params(&c.type_params),
             derive_rust_modules,
+            lint_allows: self.extract_rust_lint_allows(&c.decorators),
         })
     }
 
@@ -112,13 +114,30 @@ impl AstLowering {
                 self.collect_inherited_methods(parent_name, methods)?;
             }
 
-            // Then add/override with this class's own methods
-            // If a method with the same name exists, remove it first (child overrides parent)
-            for m in &class.methods {
-                // Remove any existing method with the same name
-                methods.retain(|existing| existing.node.name != m.node.name);
-                // Add the new method
-                methods.push(m.clone());
+            // Then add/override with this class's own methods. Remove inherited methods shadowed by this class, but
+            // keep same-name overloads declared together in the class.
+            let local_method_names: std::collections::HashSet<&str> =
+                class.methods.iter().map(|m| m.node.name.as_str()).collect();
+            methods.retain(|existing| !local_method_names.contains(existing.node.name.as_str()));
+            methods.extend(class.methods.iter().cloned());
+        }
+        Ok(())
+    }
+
+    /// Recursively collect all computed properties from this class and parent classes.
+    pub(in crate::backend::ir::lower) fn collect_inherited_properties(
+        &self,
+        class_name: &str,
+        properties: &mut Vec<Spanned<ast::PropertyDecl>>,
+    ) -> Result<(), LoweringError> {
+        if let Some(class) = self.class_decls.get(class_name) {
+            if let Some(parent_name) = &class.extends {
+                self.collect_inherited_properties(parent_name, properties)?;
+            }
+
+            for property in &class.properties {
+                properties.retain(|existing| existing.node.name != property.node.name);
+                properties.push(property.clone());
             }
         }
         Ok(())

@@ -311,6 +311,7 @@ fn create_extraction_workspace_dir() -> CliResult<PathBuf> {
     Ok(dir)
 }
 
+/// Write the temporary Cargo package that calls the companion crate's `library_vocab()` entrypoint.
 fn write_extraction_runner_manifest(
     helper_root: &Path,
     companion_crate_root: &Path,
@@ -327,9 +328,29 @@ fn write_extraction_runner_manifest(
             "failed to write vocab extraction helper manifest {}: {err}",
             helper_manifest.display()
         ))
-    })
+    })?;
+    copy_workspace_lockfile_to_extraction_runner(helper_root)
 }
 
+/// Seed the temporary helper with the repo lockfile so path-only vocab tests do not re-resolve crates.io.
+fn copy_workspace_lockfile_to_extraction_runner(helper_root: &Path) -> CliResult<()> {
+    let workspace_lockfile = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock");
+    if !workspace_lockfile.is_file() {
+        return Ok(());
+    }
+
+    let helper_lockfile = helper_root.join("Cargo.lock");
+    fs::copy(&workspace_lockfile, &helper_lockfile).map_err(|err| {
+        CliError::failure(format!(
+            "failed to copy workspace lockfile {} to vocab extraction helper {}: {err}",
+            workspace_lockfile.display(),
+            helper_lockfile.display()
+        ))
+    })?;
+    Ok(())
+}
+
+/// Write the Rust entrypoint for the temporary Cargo package that prints serialized vocab metadata.
 fn write_extraction_runner_source(helper_root: &Path) -> CliResult<()> {
     let source_path = helper_root.join("src").join("main.rs");
     let source = "fn main() {\n    let registration = companion::library_vocab();\n    let metadata = registration.metadata();\n    let text = match serde_json::to_string_pretty(&metadata) {\n        Ok(text) => text,\n        Err(err) => {\n            eprintln!(\"failed to serialize registration metadata: {err}\");\n            std::process::exit(1);\n        }\n    };\n    print!(\"{text}\");\n}\n";
@@ -674,6 +695,25 @@ mod tests {
             incan_vocab::KeywordActivation::OnImport {
                 namespace: "widgets.dsl".to_string()
             }
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn extraction_runner_manifest_reuses_workspace_lockfile() -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let helper_root = temp.path().join("runner");
+        let companion_root = temp.path().join("vocab_companion");
+        fs::create_dir_all(helper_root.join("src"))?;
+        fs::create_dir_all(&companion_root)?;
+
+        write_extraction_runner_manifest(&helper_root, &companion_root, "widgets_vocab_companion")?;
+
+        let manifest = fs::read_to_string(helper_root.join("Cargo.toml"))?;
+        assert!(manifest.contains("serde_json = \"1.0\""));
+        assert!(
+            helper_root.join("Cargo.lock").is_file(),
+            "helper runner should inherit the workspace lockfile"
         );
         Ok(())
     }

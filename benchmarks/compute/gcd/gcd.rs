@@ -1,15 +1,37 @@
-// GCD Benchmark
-// Compute GCD for many number pairs using Euclidean algorithm
+// Compute GCD for many number pairs.
+// Uses Stein's algorithm to give Rust a stronger baseline against std.math.gcd.
 
 fn gcd(a: i64, b: i64) -> i64 {
-    let mut x = a;
-    let mut y = b;
-    while y != 0 {
-        let temp = y;
-        y = x % y;
-        x = temp;
+    let mut m = a;
+    let mut n = b;
+
+    if m == 0 || n == 0 {
+        return (m | n).abs();
     }
-    x
+
+    let shift = (m | n).trailing_zeros();
+
+    if m == i64::MIN || n == i64::MIN {
+        return (1_i64 << shift).abs();
+    }
+
+    m = m.abs();
+    n = n.abs();
+
+    m >>= m.trailing_zeros();
+    n >>= n.trailing_zeros();
+
+    while m != n {
+        if m > n {
+            m -= n;
+            m >>= m.trailing_zeros();
+        } else {
+            n -= m;
+            n >>= n.trailing_zeros();
+        }
+    }
+
+    m << shift
 }
 
 fn main() {

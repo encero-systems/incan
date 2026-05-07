@@ -3,18 +3,69 @@
 //! This module validates `match` expressions by type-checking each arm, binding pattern variables,
 //! and ensuring exhaustiveness for enums, `Result`, and `Option`.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
+use incan_core::interop::RustItemKind;
 use incan_core::lang::surface::constructors;
 use incan_core::lang::surface::constructors::ConstructorId;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 use super::TypeChecker;
 
+#[derive(Clone)]
+struct PatternBinding {
+    ty: ResolvedType,
+    span: Span,
+}
+
+/// Return a stable name list for binding-set comparison and diagnostics.
+fn sorted_binding_names(bindings: &HashMap<String, PatternBinding>) -> Vec<String> {
+    let mut names: Vec<_> = bindings.keys().cloned().collect();
+    names.sort();
+    names
+}
+
 impl TypeChecker {
+    /// Split a constructor pattern name into its optional enum qualifier and variant segment.
+    ///
+    /// The parser normalizes qualified surface patterns like `Color.Red` to `Color::Red`, while bare constructors
+    /// such as `Some` and `Ok` keep the unqualified spelling. Match checking needs both pieces separately so
+    /// qualifier validation and variant symbol lookup stay consistent.
+    fn split_pattern_constructor_name(name: &str) -> (Option<&str>, &str) {
+        match name.rsplit_once("::") {
+            Some((qualifier, variant)) => (Some(qualifier), variant),
+            None => (None, name),
+        }
+    }
+
+    /// Whether an explicit pattern qualifier names the same enum-like scrutinee type being matched.
+    fn pattern_qualifier_matches_expected_type(expected_ty: &ResolvedType, qualifier: &str) -> bool {
+        match expected_ty {
+            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => qualifier == type_name,
+            _ => false,
+        }
+    }
+
+    /// Resolve the member type targeted by a union type pattern.
+    fn union_pattern_member_type(&self, expected_ty: &ResolvedType, name: &str) -> Option<ResolvedType> {
+        let target_ty = resolve_type(&Type::Simple(name.to_string()), &self.symbols);
+        let members = if let Some(members) = expected_ty.union_members() {
+            members
+        } else if let Some(inner) = expected_ty.option_inner_type() {
+            inner.union_members()?
+        } else {
+            return None;
+        };
+
+        members
+            .iter()
+            .find(|member| self.types_compatible(member, &target_ty) && self.types_compatible(&target_ty, member))
+            .cloned()
+    }
+
     /// Type-check a `match` expression and return its resolved type.
     pub(in crate::frontend::typechecker::check_expr) fn check_match(
         &mut self,
@@ -50,7 +101,11 @@ impl TypeChecker {
     }
 
     /// Type-check a pattern against an expected type, defining bindings in the current scope.
-    fn check_pattern(&mut self, pattern: &Spanned<Pattern>, expected_ty: &ResolvedType) {
+    pub(in crate::frontend::typechecker) fn check_pattern(
+        &mut self,
+        pattern: &Spanned<Pattern>,
+        expected_ty: &ResolvedType,
+    ) {
         match &pattern.node {
             Pattern::Wildcard => {}
             Pattern::Binding(name) => {
@@ -65,9 +120,40 @@ impl TypeChecker {
                     scope: 0,
                 });
             }
+            Pattern::Group(inner) => {
+                self.check_pattern(inner, expected_ty);
+            }
+            Pattern::Or(alternatives) => {
+                self.check_or_pattern(alternatives, expected_ty);
+            }
             Pattern::Literal(_) => {}
             Pattern::Constructor(name, sub_patterns) => {
-                if let Some(cid) = constructors::from_str(name.as_str()) {
+                let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.as_str());
+                if enum_qualifier_opt.is_none()
+                    && let Some(member_ty) = self.union_pattern_member_type(expected_ty, ctor_name)
+                {
+                    let mut positional = None;
+                    for arg in sub_patterns {
+                        match arg {
+                            PatternArg::Positional(pat) => {
+                                positional = Some(pat);
+                                break;
+                            }
+                            PatternArg::Named(_, pat) => {
+                                self.errors.push(errors::named_pattern_not_supported(name, pat.span));
+                            }
+                        }
+                    }
+                    if let Some(pat) = positional {
+                        self.check_pattern(pat, &member_ty);
+                    }
+                    return;
+                }
+
+                let qualifier_matches_expected = enum_qualifier_opt
+                    .is_none_or(|qualifier| Self::pattern_qualifier_matches_expected_type(expected_ty, qualifier));
+
+                if qualifier_matches_expected && let Some(cid) = constructors::from_str(ctor_name) {
                     match cid {
                         ConstructorId::Ok => {
                             if let ResolvedType::Generic(type_name, args) = expected_ty
@@ -195,32 +281,64 @@ impl TypeChecker {
 
                 let variant_name = ctor_name;
 
+                let positional_count = sub_patterns
+                    .iter()
+                    .filter(|a| matches!(a, PatternArg::Positional(_)))
+                    .count();
+
+                let rust_resolution =
+                    self.rust_enum_constructor_payload_types(expected_ty, name.as_str(), positional_count);
                 let field_types: Option<Vec<ResolvedType>> = self
                     .symbols
-                    .lookup(variant_name)
-                    .and_then(|id| self.symbols.get(id))
-                    .and_then(|sym| {
+                    .all_symbols()
+                    .iter()
+                    .rev()
+                    .find_map(|sym| {
+                        if sym.name != variant_name {
+                            return None;
+                        }
                         if let SymbolKind::Variant(info) = &sym.kind {
-                            Some(info.fields.clone())
+                            if self.match_variant_symbol_applies_to_scrutinee(
+                                expected_ty,
+                                info,
+                                positional_count,
+                                enum_qualifier_opt,
+                            ) {
+                                Some(info.fields.clone())
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
+                    })
+                    .or_else(|| match rust_resolution.as_ref() {
+                        Some(RustEnumPatternResolution::PayloadTypes(fields)) => Some(fields.clone()),
+                        Some(RustEnumPatternResolution::QualifierMismatch) | None => None,
                     });
 
-                if let Some(fields) = field_types {
-                    let mut idx = 0usize;
-                    for arg in sub_patterns {
-                        match arg {
-                            PatternArg::Positional(pat) => {
-                                if let Some(field_ty) = fields.get(idx) {
-                                    self.check_pattern(pat, field_ty);
-                                }
-                                idx += 1;
-                            }
-                            PatternArg::Named(_, pat) => {
-                                self.errors.push(errors::named_pattern_not_supported(name, pat.span));
-                            }
+                match field_types {
+                    Some(fields) => {
+                        self.check_constructor_subpatterns_enum_like(
+                            name.as_str(),
+                            sub_patterns,
+                            Some(fields.as_slice()),
+                        );
+                    }
+                    None => {
+                        let permissive = self.match_subject_allows_unknown_rust_enum_payloads(
+                            expected_ty,
+                            name.as_str(),
+                            rust_resolution.as_ref(),
+                        );
+                        if !permissive && !matches!(expected_ty, ResolvedType::Unknown) {
+                            self.errors.push(errors::unknown_match_constructor_pattern(
+                                name.as_str(),
+                                &expected_ty.to_string(),
+                                pattern.span,
+                            ));
                         }
+                        self.check_constructor_subpatterns_enum_like(name.as_str(), sub_patterns, None);
                     }
                 }
             }
@@ -234,13 +352,269 @@ impl TypeChecker {
         }
     }
 
+    /// Type-check alternatives in isolated scopes, then define only the agreed binding set in the surrounding arm
+    /// scope.
+    ///
+    /// Without the isolation step, `A(x) | B(y)` would accidentally leak both `x` and `y` into the branch body even
+    /// though no single successful match can provide both names. RFC 071 requires every alternative to bind the same
+    /// names with the same types before any branch-local binding is made visible.
+    fn check_or_pattern(&mut self, alternatives: &[Spanned<Pattern>], expected_ty: &ResolvedType) {
+        let mut binding_sets = Vec::new();
+
+        for alternative in alternatives {
+            let before = self.symbols.all_symbols().len();
+            self.symbols.enter_scope(ScopeKind::Block);
+            self.check_pattern(alternative, expected_ty);
+            let bindings = self.collect_pattern_bindings_since(before);
+            self.symbols.exit_scope();
+            binding_sets.push((alternative.span, bindings));
+        }
+
+        let Some((_, first_bindings)) = binding_sets.first() else {
+            return;
+        };
+
+        let expected_names = sorted_binding_names(first_bindings);
+        let mut agreement_ok = true;
+
+        for (span, bindings) in binding_sets.iter().skip(1) {
+            let found_names = sorted_binding_names(bindings);
+            if found_names != expected_names {
+                self.errors.push(errors::pattern_alternation_binding_mismatch(
+                    &expected_names,
+                    &found_names,
+                    *span,
+                ));
+                agreement_ok = false;
+                continue;
+            }
+
+            for name in &expected_names {
+                let Some(expected) = first_bindings.get(name) else {
+                    continue;
+                };
+                let Some(found) = bindings.get(name) else {
+                    continue;
+                };
+                if expected.ty != found.ty {
+                    self.errors.push(errors::pattern_alternation_binding_type_mismatch(
+                        name,
+                        &expected.ty.to_string(),
+                        &found.ty.to_string(),
+                        found.span,
+                    ));
+                    agreement_ok = false;
+                }
+            }
+        }
+
+        if !agreement_ok {
+            return;
+        }
+
+        for name in expected_names {
+            let Some(binding) = first_bindings.get(&name) else {
+                continue;
+            };
+            self.symbols.define(Symbol {
+                name,
+                kind: SymbolKind::Variable(VariableInfo {
+                    ty: binding.ty.clone(),
+                    is_mutable: false,
+                    is_used: false,
+                }),
+                span: binding.span,
+                scope: 0,
+            });
+        }
+    }
+
+    /// Collect variable bindings defined while checking one isolated alternation alternative.
+    fn collect_pattern_bindings_since(&self, start: usize) -> HashMap<String, PatternBinding> {
+        self.symbols
+            .all_symbols()
+            .iter()
+            .skip(start)
+            .filter_map(|symbol| match &symbol.kind {
+                SymbolKind::Variable(info) => Some((
+                    symbol.name.clone(),
+                    PatternBinding {
+                        ty: info.ty.clone(),
+                        span: symbol.span,
+                    },
+                )),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Positional sub-patterns for enum-like constructor patterns: known payload types per index, or all
+    /// [`ResolvedType::Unknown`] when `known_fields` is `None` (Rust interop best-effort).
+    fn check_constructor_subpatterns_enum_like(
+        &mut self,
+        ctor_label: &str,
+        sub_patterns: &[PatternArg],
+        known_fields: Option<&[ResolvedType]>,
+    ) {
+        let mut idx = 0usize;
+        for arg in sub_patterns {
+            match arg {
+                PatternArg::Positional(pat) => {
+                    if let Some(fields) = known_fields {
+                        if let Some(field_ty) = fields.get(idx) {
+                            self.check_pattern(pat, field_ty);
+                        }
+                    } else {
+                        self.check_pattern(pat, &ResolvedType::Unknown);
+                    }
+                    idx += 1;
+                }
+                PatternArg::Named(_, pat) => {
+                    self.errors
+                        .push(errors::named_pattern_not_supported(ctor_label, pat.span));
+                }
+            }
+        }
+    }
+
+    /// When constructor payload types are missing, only Rust-backed match subjects use permissive
+    /// [`ResolvedType::Unknown`] payload checking, and only when the written constructor does not already prove the
+    /// pattern is invalid (for example an explicit mismatched rusttype qualifier).
+    fn match_subject_allows_unknown_rust_enum_payloads(
+        &self,
+        expected_ty: &ResolvedType,
+        pattern_full_name: &str,
+        rust_resolution: Option<&RustEnumPatternResolution>,
+    ) -> bool {
+        let is_rust_backed = match expected_ty {
+            ResolvedType::RustPath(_) => true,
+            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => {
+                self.lookup_type_info(type_name).is_some_and(|info| {
+                    matches!(
+                        info,
+                        TypeInfo::Newtype(nt) if nt.is_rusttype && matches!(&nt.underlying, ResolvedType::RustPath(_))
+                    )
+                })
+            }
+            _ => false,
+        };
+        if !is_rust_backed {
+            return false;
+        }
+
+        match rust_resolution {
+            Some(RustEnumPatternResolution::PayloadTypes(_)) => true,
+            Some(RustEnumPatternResolution::QualifierMismatch) => false,
+            None => !pattern_full_name.contains("::"),
+        }
+    }
+
+    /// Whether a [`SymbolKind::Variant`] from the symbol table actually describes this match scrutinee.
+    ///
+    /// rust-inspect metadata and library manifests register variant names (e.g. `Root`) at module scope. A `rusttype`
+    /// alias such as `PlanRel` uses a **different** Incan name than the backing Rust enum (`Sender`), so we must not
+    /// let an unrelated `Root` stub with empty payload metadata shadow [`Self::rust_enum_constructor_payload_types`],
+    /// or payload bindings in the pattern are never registered and the arm body sees `Unknown symbol`. Source enums can
+    /// also reuse variant names across distinct enums, so qualified patterns must check the enum name in addition to
+    /// the short variant symbol.
+    fn match_variant_symbol_applies_to_scrutinee(
+        &self,
+        expected_ty: &ResolvedType,
+        info: &VariantInfo,
+        positional_count: usize,
+        enum_qualifier_opt: Option<&str>,
+    ) -> bool {
+        if positional_count > info.fields.len() {
+            return false;
+        }
+        if enum_qualifier_opt.is_some_and(|qualifier| qualifier != info.enum_name) {
+            return false;
+        }
+        match expected_ty {
+            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => info.enum_name == *type_name,
+            // Scrutinee is a bare Rust path: module-level variant symbols are Incan-/manifest-scoped names.
+            ResolvedType::RustPath(_) => false,
+            _ => false,
+        }
+    }
+
+    /// Tuple-variant payload types for `match` patterns on Rust-backed enum surfaces.
+    ///
+    /// Incan registers [`SymbolKind::Variant`] for source/manifest enums; imported Rust enums and prost-style oneofs
+    /// are usually spelled as a `rusttype` / [`TypeInfo::Newtype`] wrapper over [`ResolvedType::RustPath`]. For a
+    /// single positional sub-pattern, the payload type is `RustPath("{backing}::{variant}")`, consistent with Rust
+    /// field/member path composition in `check_expr::access`. Multiple positional patterns without precise metadata use
+    /// [`ResolvedType::Unknown`] per slot.
+    ///
+    /// When the scrutinee is already [`ResolvedType::RustPath`], any `Type::Variant` prefix in the pattern is not
+    /// validated against that path (unlike [`ResolvedType::Named`] rusttypes, where the prefix must match the Incan
+    /// type name). Payload typing still uses `{scrutinee_rust_path}::{variant}`.
+    fn rust_enum_constructor_payload_types(
+        &self,
+        expected_ty: &ResolvedType,
+        pattern_full_name: &str,
+        positional_count: usize,
+    ) -> Option<RustEnumPatternResolution> {
+        let (enum_qualifier_opt, variant_segment) = match pattern_full_name.rsplit_once("::") {
+            Some((e, v)) => (Some(e), v),
+            None => (None, pattern_full_name),
+        };
+
+        let base_rust_path: String = match expected_ty {
+            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => {
+                if let Some(q) = enum_qualifier_opt
+                    && q != type_name.as_str()
+                {
+                    return Some(RustEnumPatternResolution::QualifierMismatch);
+                }
+                let info = self.lookup_type_info(type_name)?;
+                match info {
+                    TypeInfo::Newtype(nt) if nt.is_rusttype => match &nt.underlying {
+                        ResolvedType::RustPath(p) => p.clone(),
+                        _ => return None,
+                    },
+                    _ => return None,
+                }
+            }
+            ResolvedType::RustPath(p) => p.clone(),
+            _ => return None,
+        };
+
+        let (metadata_rust_path, _) = self.rust_path_base_and_args(base_rust_path.as_str());
+        if let Some(meta) = self.rust_item_metadata_for_path(metadata_rust_path.as_str())
+            && let RustItemKind::Type(info) = meta.kind
+            && let Some(variant) = info.variants.iter().find(|variant| variant.name == variant_segment)
+        {
+            let fields: Vec<ResolvedType> = variant
+                .fields
+                .iter()
+                .map(|field| self.resolved_type_from_rust_shape(field))
+                .collect();
+            return Some(RustEnumPatternResolution::payloads(fields));
+        }
+
+        Some(RustEnumPatternResolution::payloads(match positional_count {
+            0 => vec![],
+            1 => vec![ResolvedType::RustPath(format!("{base_rust_path}::{variant_segment}"))],
+            n => (0..n).map(|_| ResolvedType::Unknown).collect(),
+        }))
+    }
+
     /// Check that a match expression covers all possible cases.
     ///
     /// For enums, `Result`, and `Option`, verifies every variant is handled. Wildcards
     /// (`_`) satisfy all remaining cases. Emits a [`non_exhaustive_match`](errors::non_exhaustive_match)
     /// error if patterns are missing.
     fn check_match_exhaustiveness(&mut self, subject_ty: &ResolvedType, arms: &[Spanned<MatchArm>], span: Span) {
-        let variants = if let ResolvedType::Named(name) = subject_ty {
+        let variants = if let Some(members) = subject_ty.union_members() {
+            Some(members.iter().map(ToString::to_string).collect())
+        } else if let Some(inner) = subject_ty.option_inner_type()
+            && let Some(members) = inner.union_members()
+        {
+            let mut variants: Vec<String> = members.iter().map(ToString::to_string).collect();
+            variants.push(constructors::as_str(ConstructorId::None).to_string());
+            Some(variants)
+        } else if let ResolvedType::Named(name) = subject_ty {
             match self.lookup_type_info(name) {
                 Some(TypeInfo::Enum(enum_info)) => Some(enum_info.variants.clone()),
                 _ => None,
@@ -266,23 +640,7 @@ impl TypeChecker {
             let mut has_wildcard = false;
 
             for arm in arms {
-                match &arm.node.pattern.node {
-                    Pattern::Wildcard | Pattern::Binding(_) => {
-                        has_wildcard = true;
-                    }
-                    Pattern::Literal(Literal::None) if subject_ty.is_option() => {
-                        covered.insert(constructors::as_str(ConstructorId::None).to_string());
-                    }
-                    Pattern::Constructor(name, _) => {
-                        let variant_name = if name.contains("::") {
-                            name.split("::").last().unwrap_or(name).to_string()
-                        } else {
-                            name.clone()
-                        };
-                        covered.insert(variant_name);
-                    }
-                    _ => {}
-                }
+                self.collect_pattern_coverage(&arm.node.pattern.node, subject_ty, &mut covered, &mut has_wildcard);
             }
 
             if !has_wildcard {
@@ -293,5 +651,57 @@ impl TypeChecker {
                 }
             }
         }
+    }
+
+    /// Add the variants covered by a pattern to the match-exhaustiveness accumulator.
+    fn collect_pattern_coverage(
+        &self,
+        pattern: &Pattern,
+        subject_ty: &ResolvedType,
+        covered: &mut HashSet<String>,
+        has_wildcard: &mut bool,
+    ) {
+        match pattern {
+            Pattern::Wildcard | Pattern::Binding(_) => {
+                *has_wildcard = true;
+            }
+            Pattern::Literal(Literal::None) if subject_ty.is_option() => {
+                covered.insert(constructors::as_str(ConstructorId::None).to_string());
+            }
+            Pattern::Constructor(name, _) => {
+                let variant_name = if subject_ty.union_members().is_some()
+                    || subject_ty
+                        .option_inner_type()
+                        .is_some_and(|inner| inner.union_members().is_some())
+                {
+                    resolve_type(&Type::Simple(name.clone()), &self.symbols).to_string()
+                } else if name.contains("::") {
+                    name.split("::").last().unwrap_or(name).to_string()
+                } else {
+                    name.clone()
+                };
+                covered.insert(variant_name);
+            }
+            Pattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.collect_pattern_coverage(&alternative.node, subject_ty, covered, has_wildcard);
+                }
+            }
+            Pattern::Group(inner) => {
+                self.collect_pattern_coverage(&inner.node, subject_ty, covered, has_wildcard);
+            }
+            _ => {}
+        }
+    }
+}
+
+enum RustEnumPatternResolution {
+    PayloadTypes(Vec<ResolvedType>),
+    QualifierMismatch,
+}
+
+impl RustEnumPatternResolution {
+    fn payloads(fields: Vec<ResolvedType>) -> Self {
+        Self::PayloadTypes(fields)
     }
 }

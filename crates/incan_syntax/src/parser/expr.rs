@@ -46,11 +46,27 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse comparison expressions and route registered scoped glyphs before ordinary core operators.
     fn comparison(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let mut left = self.range_expr()?;
 
         loop {
-            let op = if self.match_token(&TokenKind::Operator(OperatorId::EqEq)) {
+            if let Some((active, glyph)) = self.consume_active_scoped_glyph() {
+                let right = if active.descriptor.family == incan_vocab::ScopedSurfaceFamily::BindingLike {
+                    self.comparison()?
+                } else {
+                    self.range_expr()?
+                };
+                let span = left.span.merge(right.span);
+                left = self.scoped_glyph_binary_from_active(&active, &glyph, left.clone(), right, span);
+                continue;
+            }
+
+            let op = if self.match_token(&TokenKind::Operator(OperatorId::PipeForward)) {
+                BinaryOp::PipeForward
+            } else if self.match_token(&TokenKind::Operator(OperatorId::PipeBackward)) {
+                BinaryOp::PipeBackward
+            } else if self.match_token(&TokenKind::Operator(OperatorId::EqEq)) {
                 BinaryOp::Eq
             } else if self.match_token(&TokenKind::Operator(OperatorId::NotEq)) {
                 BinaryOp::NotEq
@@ -69,14 +85,35 @@ impl<'a> Parser<'a> {
                 self.advance(); // in
                 BinaryOp::NotIn
             } else if self.match_token(&TokenKind::Keyword(KeywordId::Is)) {
-                BinaryOp::Is
+                if self.match_token(&TokenKind::Keyword(KeywordId::Not)) {
+                    BinaryOp::IsNot
+                } else {
+                    BinaryOp::Is
+                }
             } else {
                 break;
             };
 
             let right = self.range_expr()?;
             let span = left.span.merge(right.span);
-            left = Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span);
+            let glyph = match op {
+                BinaryOp::PipeForward => Some("|>"),
+                BinaryOp::PipeBackward => Some("<|"),
+                BinaryOp::Eq => Some("=="),
+                BinaryOp::NotEq => Some("!="),
+                BinaryOp::Lt => Some("<"),
+                BinaryOp::Gt => Some(">"),
+                BinaryOp::LtEq => Some("<="),
+                BinaryOp::GtEq => Some(">="),
+                _ => None,
+            };
+            left = if let Some(glyph) = glyph
+                && let Some(surface) = self.scoped_glyph_binary(glyph, left.clone(), right.clone(), span)
+            {
+                surface
+            } else {
+                Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span)
+            };
         }
 
         Ok(left)
@@ -84,7 +121,7 @@ impl<'a> Parser<'a> {
 
     /// Parse range expressions: `start..end` or `start..=end`
     fn range_expr(&mut self) -> Result<Spanned<Expr>, CompileError> {
-        let left = self.additive()?;
+        let left = self.bit_or()?;
 
         // Check for range operators
         let is_inclusive = if self.match_token(&TokenKind::Operator(OperatorId::DotDotEq)) {
@@ -95,7 +132,7 @@ impl<'a> Parser<'a> {
             return Ok(left);
         };
 
-        let right = self.additive()?;
+        let right = self.bit_or()?;
         let span = left.span.merge(right.span);
 
         Ok(Spanned::new(
@@ -108,6 +145,92 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse bitwise-or expressions while preserving scoped vocab ownership of `|`.
+    fn bit_or(&mut self) -> Result<Spanned<Expr>, CompileError> {
+        let mut left = self.bit_xor()?;
+
+        loop {
+            if self.active_scoped_glyph_surface_descriptor("|").is_some() {
+                break;
+            }
+            if !(self.match_token(&TokenKind::Punctuation(PunctuationId::Pipe))
+                || self.match_token(&TokenKind::Operator(OperatorId::Pipe)))
+            {
+                break;
+            }
+
+            let right = self.bit_xor()?;
+            let span = left.span.merge(right.span);
+            left = Spanned::new(Expr::Binary(Box::new(left), BinaryOp::BitOr, Box::new(right)), span);
+        }
+
+        Ok(left)
+    }
+
+    /// Parse bitwise-xor expressions unless the active vocab scope owns `^`.
+    fn bit_xor(&mut self) -> Result<Spanned<Expr>, CompileError> {
+        let mut left = self.bit_and()?;
+
+        loop {
+            if self.active_scoped_glyph_surface_descriptor("^").is_some()
+                || !self.match_token(&TokenKind::Operator(OperatorId::Caret))
+            {
+                break;
+            }
+
+            let right = self.bit_and()?;
+            let span = left.span.merge(right.span);
+            left = Spanned::new(Expr::Binary(Box::new(left), BinaryOp::BitXor, Box::new(right)), span);
+        }
+
+        Ok(left)
+    }
+
+    /// Parse bitwise-and expressions unless the active vocab scope owns `&`.
+    fn bit_and(&mut self) -> Result<Spanned<Expr>, CompileError> {
+        let mut left = self.shift()?;
+
+        loop {
+            if self.active_scoped_glyph_surface_descriptor("&").is_some()
+                || !self.match_token(&TokenKind::Operator(OperatorId::Amp))
+            {
+                break;
+            }
+
+            let right = self.shift()?;
+            let span = left.span.merge(right.span);
+            left = Spanned::new(Expr::Binary(Box::new(left), BinaryOp::BitAnd, Box::new(right)), span);
+        }
+
+        Ok(left)
+    }
+
+    /// Parse bit-shift expressions, deferring to vocab glyph handlers when scoped.
+    fn shift(&mut self) -> Result<Spanned<Expr>, CompileError> {
+        let mut left = self.additive()?;
+
+        loop {
+            let op = if self.active_scoped_glyph_surface_descriptor("<<").is_none()
+                && self.match_token(&TokenKind::Operator(OperatorId::Shl))
+            {
+                BinaryOp::Shl
+            } else if self.active_scoped_glyph_surface_descriptor(">>").is_none()
+                && self.match_token(&TokenKind::Operator(OperatorId::Shr))
+            {
+                BinaryOp::Shr
+            } else {
+                break;
+            };
+
+            let right = self.additive()?;
+            let span = left.span.merge(right.span);
+            left = Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span);
+        }
+
+        Ok(left)
+    }
+
+    /// Parse additive expressions, preserving DSL-owned `+`/`-` glyphs in eligible vocab blocks.
     fn additive(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let mut left = self.multiplicative()?;
 
@@ -122,18 +245,31 @@ impl<'a> Parser<'a> {
 
             let right = self.multiplicative()?;
             let span = left.span.merge(right.span);
-            left = Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span);
+            let glyph = match op {
+                BinaryOp::Add => "+",
+                BinaryOp::Sub => "-",
+                _ => unreachable!("additive parser only emits additive operators"),
+            };
+            left = self
+                .scoped_glyph_binary(glyph, left.clone(), right.clone(), span)
+                .unwrap_or_else(|| Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span));
         }
 
         Ok(left)
     }
 
+    /// Parse multiplicative expressions, preserving DSL-owned glyphs in eligible vocab blocks.
     fn multiplicative(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let mut left = self.power()?;
 
         loop {
             let op = if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
                 BinaryOp::Mul
+            } else if self.active_scoped_glyph_surface_descriptor("@").is_none()
+                && (self.match_token(&TokenKind::Punctuation(PunctuationId::At))
+                    || self.match_token(&TokenKind::Operator(OperatorId::MatMul)))
+            {
+                BinaryOp::MatMul
             } else if self.match_token(&TokenKind::Operator(OperatorId::SlashSlash)) {
                 // Check // before / since lexer produces distinct tokens
                 BinaryOp::FloorDiv
@@ -147,10 +283,60 @@ impl<'a> Parser<'a> {
 
             let right = self.power()?;
             let span = left.span.merge(right.span);
-            left = Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span);
+            let glyph = match op {
+                BinaryOp::Mul => "*",
+                BinaryOp::MatMul => "@",
+                BinaryOp::FloorDiv => "//",
+                BinaryOp::Div => "/",
+                BinaryOp::Mod => "%",
+                _ => unreachable!("multiplicative parser only emits multiplicative operators"),
+            };
+            left = self
+                .scoped_glyph_binary(glyph, left.clone(), right.clone(), span)
+                .unwrap_or_else(|| Spanned::new(Expr::Binary(Box::new(left), op, Box::new(right)), span));
         }
 
         Ok(left)
+    }
+
+    /// Build a scoped-surface binary glyph expression when an active descriptor owns the glyph.
+    fn scoped_glyph_binary(
+        &self,
+        glyph: &str,
+        left: Spanned<Expr>,
+        right: Spanned<Expr>,
+        span: Span,
+    ) -> Option<Spanned<Expr>> {
+        let active = self.active_scoped_glyph_surface_descriptor(glyph)?;
+        Some(self.scoped_glyph_binary_from_active(active, glyph, left, right, span))
+    }
+
+    /// Build a scoped-surface binary glyph expression from a descriptor that has already matched the current context.
+    fn scoped_glyph_binary_from_active(
+        &self,
+        active: &ActiveScopedSurfaceDescriptor,
+        glyph: &str,
+        left: Spanned<Expr>,
+        right: Spanned<Expr>,
+        span: Span,
+    ) -> Spanned<Expr> {
+        let owner = self.scoped_surface_owner(active);
+
+        Spanned::new(
+            Expr::Surface(Box::new(SurfaceExpr {
+                key: SurfaceFeatureKey::ScopedDslSurface {
+                    dependency_key: active.dependency_key.clone(),
+                    descriptor_key: active.descriptor.key.clone(),
+                },
+                payload: SurfaceExprPayload::ScopedGlyph {
+                    glyph: glyph.to_string(),
+                    left: Box::new(left),
+                    right: Box::new(right),
+                    owner,
+                },
+            })),
+            span,
+        )
     }
 
     fn power(&mut self) -> Result<Spanned<Expr>, CompileError> {
@@ -166,12 +352,18 @@ impl<'a> Parser<'a> {
         Ok(left)
     }
 
+    /// Parse prefix unary expressions, including RFC 028 bitwise inversion.
     fn unary(&mut self) -> Result<Spanned<Expr>, CompileError> {
         if self.match_token(&TokenKind::Operator(OperatorId::Minus)) {
             let start = self.tokens[self.pos - 1].span.start;
             let expr = self.unary()?;
             let span = Span::new(start, expr.span.end);
             Ok(Spanned::new(Expr::Unary(UnaryOp::Neg, Box::new(expr)), span))
+        } else if self.match_token(&TokenKind::Operator(OperatorId::Tilde)) {
+            let start = self.tokens[self.pos - 1].span.start;
+            let expr = self.unary()?;
+            let span = Span::new(start, expr.span.end);
+            Ok(Spanned::new(Expr::Unary(UnaryOp::Invert, Box::new(expr)), span))
         } else if let Some(id) = self.current_surface_keyword(KeywordSurfaceKind::PrefixExpression) {
             self.advance();
             let start = self.tokens[self.pos - 1].span.start;
@@ -189,6 +381,7 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse postfix forms such as calls, method calls, field access, indexing, and `?`.
     fn postfix(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let mut expr = self.primary()?;
 
@@ -198,9 +391,9 @@ impl<'a> Parser<'a> {
                 expr = Spanned::new(Expr::Try(Box::new(expr)), span);
             } else if self.match_token(&TokenKind::Punctuation(PunctuationId::Dot)) {
                 // Check for tuple index access (.0, .1, etc) vs field/method access
-                if let TokenKind::Int(n) = &self.peek().kind {
+                if let TokenKind::Int(il) = &self.peek().kind {
                     // Tuple index access: expr.0, expr.1
-                    let idx = *n;
+                    let idx = il.value;
                     self.advance();
                     let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
                     // Use the index as a string field name
@@ -208,20 +401,52 @@ impl<'a> Parser<'a> {
                 } else {
                     // Allow keywords like "None" as field/variant names
                     let name = self.identifier_or_any_keyword()?;
-                    if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
-                        let args = self.call_args()?;
+                    let type_args = self.call_site_type_args()?;
+                    if !type_args.is_empty() && !self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
+                        return Err(errors::expected_token_message(
+                            "Expected '(' after explicit method type arguments",
+                            &format!("{:?}", self.peek().kind),
+                            self.peek().span,
+                        ));
+                    }
+                    if (type_args.is_empty() && self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)))
+                        || !type_args.is_empty()
+                    {
+                        let args = self.call_args_for(Some(name.clone()))?;
                         self.expect(
                             &TokenKind::Punctuation(PunctuationId::RParen),
                             "Expected ')' after arguments",
                         )?;
                         let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
-                        expr = Spanned::new(Expr::MethodCall(Box::new(expr), name, args), span);
+                        expr = Spanned::new(Expr::MethodCall(Box::new(expr), name, type_args, args), span);
                     } else {
                         let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
                         expr = Spanned::new(Expr::Field(Box::new(expr), name), span);
                     }
                 }
-            } else if self.match_token(&TokenKind::Punctuation(PunctuationId::LBracket)) {
+            } else if self.check(&TokenKind::Punctuation(PunctuationId::LBracket)) {
+                if matches!(expr.node, Expr::Ident(_) | Expr::Field(_, _)) {
+                    let type_args = self.call_site_type_args()?;
+                    if !type_args.is_empty() {
+                        self.expect(
+                            &TokenKind::Punctuation(PunctuationId::LParen),
+                            "Expected '(' after explicit function type arguments",
+                        )?;
+                        let args = self.call_args_for(self.call_argument_target(&expr))?;
+                        self.expect(
+                            &TokenKind::Punctuation(PunctuationId::RParen),
+                            "Expected ')' after arguments",
+                        )?;
+                        let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
+                        expr = Spanned::new(Expr::Call(Box::new(expr), type_args, args), span);
+                        continue;
+                    }
+                }
+
+                self.expect(
+                    &TokenKind::Punctuation(PunctuationId::LBracket),
+                    "Expected '[' before index/slice",
+                )?;
                 // Check for slice syntax: [start:end] or [start:end:step]
                 let result = self.index_or_slice()?;
                 self.expect(
@@ -234,19 +459,112 @@ impl<'a> Parser<'a> {
                     IndexOrSlice::Slice(slice) => Spanned::new(Expr::Slice(Box::new(expr), slice), span),
                 };
             } else if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
-                let args = self.call_args()?;
+                let args = self.call_args_for(self.call_argument_target(&expr))?;
                 self.expect(
                     &TokenKind::Punctuation(PunctuationId::RParen),
                     "Expected ')' after arguments",
                 )?;
                 let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
-                expr = Spanned::new(Expr::Call(Box::new(expr), args), span);
+                expr = if let Expr::Ident(name) = &expr.node {
+                    if let Some(active) = self.active_scoped_symbol_descriptor(name, span)? {
+                        Spanned::new(
+                            Expr::Surface(Box::new(SurfaceExpr {
+                                key: SurfaceFeatureKey::ScopedDslSurface {
+                                    dependency_key: active.dependency_key.clone(),
+                                    descriptor_key: active.descriptor.key.clone(),
+                                },
+                                payload: SurfaceExprPayload::ScopedSymbolCall {
+                                    symbol: name.clone(),
+                                    args,
+                                    owner: self.scoped_symbol_owner(active),
+                                },
+                            })),
+                            span,
+                        )
+                    } else if let Some(error) = self.scoped_symbol_misuse_error(name, span)? {
+                        return Err(error);
+                    } else {
+                        Spanned::new(Expr::Call(Box::new(expr), Vec::new(), args), span)
+                    }
+                } else {
+                    Spanned::new(Expr::Call(Box::new(expr), Vec::new(), args), span)
+                };
             } else {
                 break;
             }
         }
 
         Ok(expr)
+    }
+
+    /// Parse one call-site type argument: either a full [`Type`] or the inference placeholder `_`.
+    fn call_site_type_arg(&mut self) -> Result<Spanned<Type>, CompileError> {
+        if let TokenKind::Ident(name) = &self.peek().kind
+            && name == "_"
+        {
+            let span = self.peek().span;
+            self.advance();
+            return Ok(Spanned::new(Type::Infer, span));
+        }
+        self.type_expr()
+    }
+
+    /// Parse optional explicit call-site type arguments (`[T, U]`) without consuming non-call brackets.
+    ///
+    /// This is intentionally conservative: we only treat brackets as call-site type args when the matching `]` is followed immediately by `(`.
+    fn call_site_type_args(&mut self) -> Result<Vec<Spanned<Type>>, CompileError> {
+        if !self.check(&TokenKind::Punctuation(PunctuationId::LBracket)) {
+            return Ok(Vec::new());
+        }
+
+        // Cheap lookahead: only attempt type parsing when the matching `]` is followed by `(`.
+        // This prevents speculative type parsing from consuming ordinary index expressions like `arr[0]`.
+        let mut depth: isize = 0;
+        let mut i = self.pos;
+        let mut closing: Option<usize> = None;
+        while i < self.tokens.len() {
+            match self.tokens[i].kind {
+                TokenKind::Punctuation(PunctuationId::LBracket) => depth += 1,
+                TokenKind::Punctuation(PunctuationId::RBracket) => {
+                    depth -= 1;
+                    if depth == 0 {
+                        closing = Some(i);
+                        break;
+                    }
+                }
+                TokenKind::Eof => break,
+                _ => {}
+            }
+            i += 1;
+        }
+        let Some(close_idx) = closing else {
+            return Ok(Vec::new());
+        };
+        let next_idx = close_idx + 1;
+        if next_idx >= self.tokens.len()
+            || self.tokens[next_idx].kind != TokenKind::Punctuation(PunctuationId::LParen)
+        {
+            return Ok(Vec::new());
+        }
+
+        self.advance(); // consume `[`
+        let mut args = Vec::new();
+        if !self.check(&TokenKind::Punctuation(PunctuationId::RBracket)) {
+            loop {
+                args.push(self.call_site_type_arg()?);
+                if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                    break;
+                }
+                if self.check(&TokenKind::Punctuation(PunctuationId::RBracket)) {
+                    break;
+                }
+            }
+        }
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::RBracket),
+            "Expected ']' after explicit call type arguments",
+        )?;
+        Ok(args)
     }
 
     /// Parse index or slice expression inside brackets
@@ -307,8 +625,18 @@ impl<'a> Parser<'a> {
         }))
     }
 
+    /// Parse primary expressions, including descriptor-enabled leading-dot scoped surfaces.
     fn primary(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let start = self.current_span().start;
+
+        if self.check(&TokenKind::Punctuation(PunctuationId::Dot)) {
+            if let Some(expr) = self.try_scoped_leading_dot_path(start)? {
+                return Ok(expr);
+            }
+            if let Some(err) = self.scoped_leading_dot_outside_scope_error(start) {
+                return Err(err);
+            }
+        }
 
         // Yield expression (for fixtures/generators)
         if self.match_token(&TokenKind::Keyword(KeywordId::Yield)) {
@@ -333,10 +661,20 @@ impl<'a> Parser<'a> {
             return self.if_expr(start);
         }
 
+        // Loop expression
+        if self.check_keyword(KeywordId::Loop) {
+            return self.loop_expr(start);
+        }
+
         // self
         if self.match_token(&TokenKind::Keyword(KeywordId::SelfKw)) {
             let end = self.tokens[self.pos - 1].span.end;
             return Ok(Spanned::new(Expr::SelfExpr, Span::new(start, end)));
+        }
+
+        // Local partial callable preset expression.
+        if self.match_ident_text("partial") {
+            return self.partial_expr(start);
         }
 
         // Literals
@@ -386,17 +724,520 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse `partial Target(name=value)` after the `partial` marker has already been consumed.
+    fn partial_expr(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
+        let template = self.postfix()?;
+        let end = template.span.end;
+        let partial = self.partial_expr_from_call_template(template)?;
+        Ok(Spanned::new(Expr::Partial(Box::new(partial)), Span::new(start, end)))
+    }
+
+    /// Split the final call in a local partial template into a callable target plus keyword presets.
+    fn partial_expr_from_call_template(&mut self, template: Spanned<Expr>) -> Result<PartialExpr, CompileError> {
+        match template.node {
+            Expr::Call(target, type_args, args) => Ok(PartialExpr {
+                target,
+                type_args,
+                args: self.partial_args_from_call_args(args, template.span)?,
+            }),
+            Expr::MethodCall(receiver, method, type_args, args) => {
+                let target_span = Span::new(receiver.span.start, template.span.end);
+                Ok(PartialExpr {
+                    target: Box::new(Spanned::new(Expr::Field(receiver, method), target_span)),
+                    type_args,
+                    args: self.partial_args_from_call_args(args, template.span)?,
+                })
+            }
+            _ => Err(CompileError::syntax(
+                "Expected partial target call template `Target(name=value)`".to_string(),
+                template.span,
+            )),
+        }
+    }
+
+    /// Parse a descriptor-enabled leading-dot path if the current DSL block accepts one.
+    fn try_scoped_leading_dot_path(&mut self, start: usize) -> Result<Option<Spanned<Expr>>, CompileError> {
+        let Some(active) = self.active_leading_dot_surface_descriptor() else {
+            return Ok(None);
+        };
+        let dependency_key = active.dependency_key.clone();
+        let descriptor_key = active.descriptor.key.clone();
+        let receiver = active
+            .descriptor
+            .receiver
+            .clone()
+            .unwrap_or(incan_vocab::ScopedSurfaceReceiver::OwningDeclaration);
+        let owner = self.scoped_surface_owner(active);
+        let (min_segments, max_segments) = match &active.descriptor.syntax {
+            incan_vocab::ScopedSurfaceSyntax::LeadingDotPath {
+                min_segments,
+                max_segments,
+            } => (*min_segments as usize, max_segments.map(usize::from)),
+            _ => return Ok(None),
+        };
+
+        let mut segments = Vec::new();
+        loop {
+            self.expect_punct(PunctuationId::Dot, "Expected '.' at start of scoped leading-dot path")?;
+            segments.push(self.identifier_or_any_keyword()?);
+            if max_segments.is_some_and(|max_segments| segments.len() >= max_segments) {
+                break;
+            }
+            if !self.check(&TokenKind::Punctuation(PunctuationId::Dot)) {
+                break;
+            }
+            if !matches!(self.peek_next().kind, TokenKind::Ident(_) | TokenKind::Keyword(_)) {
+                break;
+            }
+        }
+
+        if segments.len() < min_segments {
+            return Err(errors::expected_expression(
+                "scoped leading-dot path",
+                Span::new(start, self.current_span().end),
+            ));
+        }
+
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Some(Spanned::new(
+            Expr::Surface(Box::new(SurfaceExpr {
+                key: SurfaceFeatureKey::ScopedDslSurface {
+                    dependency_key,
+                    descriptor_key,
+                },
+                payload: SurfaceExprPayload::LeadingDotPath {
+                    segments,
+                    receiver,
+                    owner,
+                },
+            })),
+            Span::new(start, end),
+        )))
+    }
+
+    /// Return the first active leading-dot descriptor accepted by the current scoped context.
+    fn active_leading_dot_surface_descriptor(&self) -> Option<&ActiveScopedSurfaceDescriptor> {
+        self.active_scoped_surface_descriptors.iter().find(|active| {
+            active.descriptor.family == incan_vocab::ScopedSurfaceFamily::ExpressionForm
+                && matches!(
+                    active.descriptor.syntax,
+                    incan_vocab::ScopedSurfaceSyntax::LeadingDotPath { .. }
+                )
+                && active.descriptor.eligible_in.iter().any(|eligibility| {
+                    self.scoped_surface_eligibility_accepts_current_context(eligibility)
+                })
+        })
+    }
+
+    /// Build an author-provided outside-scope diagnostic for an active leading-dot descriptor.
+    fn scoped_leading_dot_outside_scope_error(&self, start: usize) -> Option<CompileError> {
+        if !matches!(self.peek_next().kind, TokenKind::Ident(_) | TokenKind::Keyword(_)) {
+            return None;
+        }
+        let active = self.active_scoped_surface_descriptors.iter().find(|active| {
+            active.descriptor.family == incan_vocab::ScopedSurfaceFamily::ExpressionForm
+                && !matches!(
+                    active.descriptor.misuse_scope,
+                    incan_vocab::ScopedSurfaceMisuseScope::None
+                )
+                && matches!(
+                    active.descriptor.syntax,
+                    incan_vocab::ScopedSurfaceSyntax::LeadingDotPath { .. }
+                )
+        })?;
+        let diagnostic = active.descriptor.diagnostics.iter().find(|diagnostic| {
+            diagnostic.kind == incan_vocab::ScopedSurfaceDiagnosticKind::OutsideScope
+        });
+        let message = diagnostic
+            .map(|diagnostic| diagnostic.message.clone())
+            .unwrap_or_else(|| {
+                format!(
+                    "Scoped surface `{}` is not valid in this position",
+                    active.descriptor.key
+                )
+            });
+        let mut error = CompileError::syntax(message, Span::new(start, self.peek_next().span.end));
+        if let Some(code) = diagnostic.map(|diagnostic| diagnostic.code.as_str()).filter(|code| !code.is_empty()) {
+            error = error.with_note(format!("diagnostic code: {code}"));
+        }
+        if let Some(help) = diagnostic.and_then(|diagnostic| diagnostic.help.as_deref()) {
+            error = error.with_hint(help);
+        }
+        Some(error)
+    }
+
+    /// Return the first active operator-like or binding-like glyph descriptor accepted by the current context.
+    fn active_scoped_glyph_surface_descriptor(&self, glyph: &str) -> Option<&ActiveScopedSurfaceDescriptor> {
+        self.active_scoped_surface_descriptors.iter().find(|active| {
+            matches!(
+                active.descriptor.family,
+                incan_vocab::ScopedSurfaceFamily::OperatorLike | incan_vocab::ScopedSurfaceFamily::BindingLike
+            )
+                && matches!(
+                    &active.descriptor.syntax,
+                    incan_vocab::ScopedSurfaceSyntax::Glyph { spelling } if spelling == glyph
+                )
+                && active.descriptor.eligible_in.iter().any(|eligibility| {
+                    self.scoped_surface_eligibility_accepts_current_context(eligibility)
+                })
+        })
+    }
+
+    /// Return the innermost active scoped-symbol descriptor accepted by the current context.
+    fn active_scoped_symbol_descriptor(
+        &self,
+        symbol: &str,
+        span: Span,
+    ) -> Result<Option<&ActiveScopedSymbolDescriptor>, CompileError> {
+        let matches: Vec<_> = self
+            .active_scoped_symbol_descriptors
+            .iter()
+            .filter(|active| {
+                active.descriptor.symbol == symbol
+                    && active
+                        .descriptor
+                        .eligible_in
+                        .iter()
+                        .any(|eligibility| self.scoped_symbol_eligibility_accepts_current_context(eligibility))
+            })
+            .collect();
+        let Some(max_depth) = matches
+            .iter()
+            .map(|active| self.scoped_symbol_owner_depth(active))
+            .max()
+        else {
+            return Ok(None);
+        };
+        let mut best = matches
+            .into_iter()
+            .filter(|active| self.scoped_symbol_owner_depth(active) == max_depth);
+        let first = best.next();
+        if best.next().is_some() {
+            return Err(CompileError::syntax(
+                format!("Ambiguous scoped symbol `{symbol}` in this DSL position"),
+                span,
+            )
+            .with_hint("Use explicit qualification or adjust the active DSL symbol descriptors"));
+        }
+        Ok(first)
+    }
+
+    /// Build a descriptor-owned diagnostic for a scoped symbol used inside its active DSL but outside an eligible position.
+    fn scoped_symbol_misuse_error(
+        &self,
+        symbol: &str,
+        span: Span,
+    ) -> Result<Option<CompileError>, CompileError> {
+        let matches: Vec<_> = self
+            .active_scoped_symbol_descriptors
+            .iter()
+            .filter(|active| {
+                active.descriptor.symbol == symbol
+                    && active.descriptor.misuse_scope == incan_vocab::ScopedSymbolMisuseScope::ActiveDsl
+                    && active
+                        .descriptor
+                        .eligible_in
+                        .iter()
+                        .any(|eligibility| self.scoped_symbol_eligibility_is_inside_owning_dsl(eligibility))
+            })
+            .collect();
+        let Some(max_depth) = matches
+            .iter()
+            .filter_map(|active| self.scoped_symbol_owner_declaration_depth(active))
+            .max()
+        else {
+            return Ok(None);
+        };
+        let mut best = matches
+            .into_iter()
+            .filter(|active| self.scoped_symbol_owner_declaration_depth(active) == Some(max_depth));
+        let Some(active) = best.next() else {
+            return Ok(None);
+        };
+        if best.next().is_some() {
+            return Err(CompileError::syntax(
+                format!("Ambiguous scoped symbol `{symbol}` in this DSL position"),
+                span,
+            )
+            .with_hint("Use explicit qualification or adjust the active DSL symbol descriptors"));
+        }
+
+        let diagnostic = active.descriptor.diagnostics.iter().find(|diagnostic| {
+            diagnostic.kind == incan_vocab::ScopedSymbolDiagnosticKind::OutsideEligiblePosition
+        });
+        let message = diagnostic
+            .map(|diagnostic| diagnostic.message.clone())
+            .unwrap_or_else(|| {
+                format!(
+                    "Scoped symbol `{}` is not valid in this DSL position",
+                    active.descriptor.symbol
+                )
+            });
+        let mut error = CompileError::syntax(message, span);
+        if let Some(code) = diagnostic.map(|diagnostic| diagnostic.code.as_str()).filter(|code| !code.is_empty()) {
+            error = error.with_note(format!("diagnostic code: {code}"));
+        }
+        if let Some(help) = diagnostic.and_then(|diagnostic| diagnostic.help.as_deref()) {
+            error = error.with_hint(help);
+        }
+        Ok(Some(error))
+    }
+
+    /// Consume the longest active scoped glyph at the current token position.
+    fn consume_active_scoped_glyph(&mut self) -> Option<(ActiveScopedSurfaceDescriptor, String)> {
+        let mut best: Option<(ActiveScopedSurfaceDescriptor, String, usize)> = None;
+
+        for active in &self.active_scoped_surface_descriptors {
+            if !matches!(
+                active.descriptor.family,
+                incan_vocab::ScopedSurfaceFamily::OperatorLike | incan_vocab::ScopedSurfaceFamily::BindingLike
+            ) {
+                continue;
+            }
+            if !active
+                .descriptor
+                .eligible_in
+                .iter()
+                .any(|eligibility| self.scoped_surface_eligibility_accepts_current_context(eligibility))
+            {
+                continue;
+            }
+            let incan_vocab::ScopedSurfaceSyntax::Glyph { spelling } = &active.descriptor.syntax else {
+                continue;
+            };
+            let Some(token_count) = self.scoped_glyph_token_count_at(spelling, self.pos) else {
+                continue;
+            };
+
+            let should_replace = best
+                .as_ref()
+                .map(|(_, current_spelling, current_count)| {
+                    token_count > *current_count
+                        || (token_count == *current_count && spelling.len() > current_spelling.len())
+                })
+                .unwrap_or(true);
+            if should_replace {
+                best = Some((active.clone(), spelling.clone(), token_count));
+            }
+        }
+
+        let (active, spelling, token_count) = best?;
+        for _ in 0..token_count {
+            self.advance();
+        }
+        Some((active, spelling))
+    }
+
+    /// Return whether an active scoped glyph starts `offset` tokens after the current parser position.
+    fn active_scoped_glyph_starts_at_offset(&self, offset: usize) -> bool {
+        let pos = self.pos.saturating_add(offset);
+        self.active_scoped_surface_descriptors.iter().any(|active| {
+            matches!(
+                active.descriptor.family,
+                incan_vocab::ScopedSurfaceFamily::OperatorLike | incan_vocab::ScopedSurfaceFamily::BindingLike
+            ) && active
+                .descriptor
+                .eligible_in
+                .iter()
+                .any(|eligibility| self.scoped_surface_eligibility_accepts_current_context(eligibility))
+                && matches!(
+                    &active.descriptor.syntax,
+                    incan_vocab::ScopedSurfaceSyntax::Glyph { spelling }
+                        if self.scoped_glyph_token_count_at(spelling, pos).is_some()
+                )
+        })
+    }
+
+    /// Return the number of tokens that compose `spelling` at `pos`, if the token spellings match exactly.
+    fn scoped_glyph_token_count_at(&self, spelling: &str, pos: usize) -> Option<usize> {
+        let mut matched = String::new();
+        let mut idx = pos;
+
+        while matched.len() < spelling.len() {
+            let piece = self.token_symbol_spelling(idx)?;
+            matched.push_str(piece);
+            if !spelling.starts_with(&matched) {
+                return None;
+            }
+            idx += 1;
+        }
+
+        if matched == spelling {
+            Some(idx - pos)
+        } else {
+            None
+        }
+    }
+
+    /// Return the source spelling for an operator or punctuation token at `idx`.
+    fn token_symbol_spelling(&self, idx: usize) -> Option<&'static str> {
+        match self.tokens.get(idx).map(|token| &token.kind)? {
+            TokenKind::Operator(id) => Some(incan_core::lang::operators::info_for(*id).spellings[0]),
+            TokenKind::Punctuation(id) => Some(incan_core::lang::punctuation::as_str(*id)),
+            _ => None,
+        }
+    }
+
+    /// Return whether a scoped-surface eligibility matches the parser's current scoped context.
+    fn scoped_surface_eligibility_accepts_current_context(
+        &self,
+        eligibility: &incan_vocab::ScopedSurfaceEligibility,
+    ) -> bool {
+        match eligibility.position {
+            incan_vocab::ScopedSurfacePosition::DeclarationBody => {
+                self.vocab_block_stack.last() == Some(&eligibility.declaration)
+            }
+            incan_vocab::ScopedSurfacePosition::ClauseBody => self.current_vocab_clause_matches(
+                eligibility.declaration.as_str(),
+                eligibility.clause.as_deref(),
+            ),
+            incan_vocab::ScopedSurfacePosition::CallArgument => self
+                .scoped_call_argument_stack
+                .last()
+                .is_some_and(|context| eligibility.call.as_deref() == Some(context.call.as_str())),
+            incan_vocab::ScopedSurfacePosition::DeclarationHead => false,
+            _ => false,
+        }
+    }
+
+    /// Return whether a scoped-symbol eligibility matches the parser's current scoped context.
+    fn scoped_symbol_eligibility_accepts_current_context(
+        &self,
+        eligibility: &incan_vocab::ScopedSymbolEligibility,
+    ) -> bool {
+        match eligibility.position {
+            incan_vocab::ScopedSymbolPosition::DeclarationBody => {
+                self.vocab_block_stack.last() == Some(&eligibility.declaration)
+            }
+            incan_vocab::ScopedSymbolPosition::ClauseBody => self.current_vocab_clause_matches(
+                eligibility.declaration.as_str(),
+                eligibility.clause.as_deref(),
+            ),
+            incan_vocab::ScopedSymbolPosition::CallArgument => self
+                .scoped_call_argument_stack
+                .last()
+                .is_some_and(|context| eligibility.call.as_deref() == Some(context.call.as_str()))
+                && self.vocab_block_stack.iter().any(|declaration| declaration == &eligibility.declaration),
+            _ => false,
+        }
+    }
+
+    /// Return whether the current parser position is inside the owning DSL declaration for an eligibility rule.
+    fn scoped_symbol_eligibility_is_inside_owning_dsl(
+        &self,
+        eligibility: &incan_vocab::ScopedSymbolEligibility,
+    ) -> bool {
+        self.vocab_block_stack
+            .iter()
+            .any(|declaration| declaration == &eligibility.declaration)
+    }
+
+    /// Return whether the current vocab stack is positioned inside a clause-like nested vocab block.
+    fn current_vocab_clause_matches(&self, declaration: &str, clause: Option<&str>) -> bool {
+        let Some(clause) = clause else {
+            return false;
+        };
+        let Some(clause_depth) = self
+            .vocab_block_stack
+            .iter()
+            .rposition(|active| active == clause)
+        else {
+            return false;
+        };
+        self.vocab_block_stack
+            .iter()
+            .take(clause_depth)
+            .any(|active| active == declaration)
+    }
+
+    /// Build the owner metadata attached to a scoped-surface AST payload.
+    fn scoped_surface_owner(&self, active: &ActiveScopedSurfaceDescriptor) -> ScopedSurfaceOwner {
+        active
+            .descriptor
+            .eligible_in
+            .iter()
+            .find(|eligibility| self.scoped_surface_eligibility_accepts_current_context(eligibility))
+            .map(|eligibility| ScopedSurfaceOwner {
+                declaration: eligibility.declaration.clone(),
+                clause: eligibility.clause.clone(),
+                call: eligibility.call.clone(),
+            })
+            .unwrap_or_else(|| ScopedSurfaceOwner {
+                declaration: self.vocab_block_stack.last().cloned().unwrap_or_default(),
+                clause: None,
+                call: self
+                    .scoped_call_argument_stack
+                    .last()
+                    .map(|context| context.call.clone()),
+            })
+    }
+
+    /// Build the owner metadata attached to a scoped-symbol AST payload.
+    fn scoped_symbol_owner(&self, active: &ActiveScopedSymbolDescriptor) -> ScopedSurfaceOwner {
+        active
+            .descriptor
+            .eligible_in
+            .iter()
+            .find(|eligibility| self.scoped_symbol_eligibility_accepts_current_context(eligibility))
+            .map(|eligibility| ScopedSurfaceOwner {
+                declaration: eligibility.declaration.clone(),
+                clause: eligibility.clause.clone(),
+                call: eligibility.call.clone(),
+            })
+            .unwrap_or_else(|| ScopedSurfaceOwner {
+                declaration: self.vocab_block_stack.last().cloned().unwrap_or_default(),
+                clause: None,
+                call: self
+                    .scoped_call_argument_stack
+                    .last()
+                    .map(|context| context.call.clone()),
+            })
+    }
+
+    /// Return a lexical-depth proxy for nested scoped-symbol ownership.
+    fn scoped_symbol_owner_depth(&self, active: &ActiveScopedSymbolDescriptor) -> usize {
+        self.scoped_symbol_owner_declaration_depth(active).unwrap_or(0)
+    }
+
+    /// Return the innermost active declaration depth that can own this scoped symbol.
+    fn scoped_symbol_owner_declaration_depth(&self, active: &ActiveScopedSymbolDescriptor) -> Option<usize> {
+        active
+            .descriptor
+            .eligible_in
+            .iter()
+            .filter_map(|eligibility| {
+                self.vocab_block_stack
+                    .iter()
+                    .rposition(|declaration| declaration == &eligibility.declaration)
+            })
+            .max()
+    }
+
+    /// Return the function or method name whose argument list is about to be parsed.
+    fn call_argument_target(&self, expr: &Spanned<Expr>) -> Option<String> {
+        match &expr.node {
+            Expr::Ident(name) | Expr::Field(_, name) => Some(name.clone()),
+            _ => None,
+        }
+    }
+
+    /// Parse a literal token at the current parser position, if one is present.
     fn try_literal(&mut self) -> Option<Literal> {
         match &self.peek().kind {
-            TokenKind::Int(n) => {
-                let n = *n;
+            TokenKind::Int(il) => {
+                let il = il.clone();
                 self.advance();
-                Some(Literal::Int(n))
+                Some(Literal::Int(il))
             }
-            TokenKind::Float(f) => {
-                let f = *f;
+            TokenKind::Float(fl) => {
+                let fl = fl.clone();
                 self.advance();
-                Some(Literal::Float(f))
+                Some(Literal::Float(fl))
+            }
+            TokenKind::Decimal(dl) => {
+                let dl = dl.clone();
+                self.advance();
+                Some(Literal::Decimal(dl))
             }
             TokenKind::String(s) => {
                 let s = s.clone();
@@ -445,6 +1286,7 @@ impl<'a> Parser<'a> {
         self.shift_expr_spans(&mut expr.node, offset);
     }
 
+    /// Recursively shift expression spans parsed from an f-string interpolation back into outer-source coordinates.
     fn shift_expr_spans(&self, expr: &mut Expr, offset: usize) {
         match expr {
             Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
@@ -455,11 +1297,14 @@ impl<'a> Parser<'a> {
             Expr::Unary(_, operand) | Expr::Try(operand) | Expr::Paren(operand) => {
                 self.shift_spanned_expr(operand, offset);
             }
-            Expr::Call(callee, args) => {
+            Expr::Call(callee, _type_args, args) => {
                 self.shift_spanned_expr(callee, offset);
                 for arg in args {
                     match arg {
-                        CallArg::Positional(value) | CallArg::Named(_, value) => {
+                        CallArg::Positional(value)
+                        | CallArg::Named(_, value)
+                        | CallArg::PositionalUnpack(value)
+                        | CallArg::KeywordUnpack(value) => {
                             self.shift_spanned_expr(value, offset);
                         }
                     }
@@ -484,14 +1329,26 @@ impl<'a> Parser<'a> {
             Expr::Field(base, _) => {
                 self.shift_spanned_expr(base, offset);
             }
-            Expr::MethodCall(base, _, args) => {
+            Expr::MethodCall(base, _, _type_args, args) => {
                 self.shift_spanned_expr(base, offset);
                 for arg in args {
                     match arg {
-                        CallArg::Positional(value) | CallArg::Named(_, value) => {
+                        CallArg::Positional(value)
+                        | CallArg::Named(_, value)
+                        | CallArg::PositionalUnpack(value)
+                        | CallArg::KeywordUnpack(value) => {
                             self.shift_spanned_expr(value, offset);
                         }
                     }
+                }
+            }
+            Expr::Partial(partial) => {
+                self.shift_spanned_expr(&mut partial.target, offset);
+                for arg in &mut partial.type_args {
+                    arg.span = Span::new(arg.span.start + offset, arg.span.end + offset);
+                }
+                for arg in &mut partial.args {
+                    self.shift_spanned_expr(&mut arg.value, offset);
                 }
             }
             Expr::Match(subject, arms) => {
@@ -510,11 +1367,21 @@ impl<'a> Parser<'a> {
             Expr::If(if_expr) => {
                 self.shift_spanned_expr(&mut if_expr.condition, offset);
             }
+            Expr::Loop(_) => {}
+            Expr::Generator(generator) => {
+                self.shift_spanned_expr(&mut generator.expr, offset);
+                for clause in &mut generator.clauses {
+                    self.shift_comprehension_clause(clause, offset);
+                }
+            }
             Expr::ListComp(comp) => {
                 self.shift_spanned_expr(&mut comp.expr, offset);
                 self.shift_spanned_expr(&mut comp.iter, offset);
                 if let Some(filter) = &mut comp.filter {
                     self.shift_spanned_expr(filter, offset);
+                }
+                for clause in &mut comp.clauses {
+                    self.shift_comprehension_clause(clause, offset);
                 }
             }
             Expr::DictComp(comp) => {
@@ -524,25 +1391,45 @@ impl<'a> Parser<'a> {
                 if let Some(filter) = &mut comp.filter {
                     self.shift_spanned_expr(filter, offset);
                 }
+                for clause in &mut comp.clauses {
+                    self.shift_comprehension_clause(clause, offset);
+                }
             }
             Expr::Closure(_, body) => {
                 self.shift_spanned_expr(body, offset);
             }
-            Expr::Tuple(elems) | Expr::List(elems) | Expr::Set(elems) => {
+            Expr::Tuple(elems) | Expr::Set(elems) => {
                 for elem in elems {
                     self.shift_spanned_expr(elem, offset);
                 }
             }
+            Expr::List(entries) => {
+                for entry in entries {
+                    match entry {
+                        ListEntry::Element(value) | ListEntry::Spread(value) => {
+                            self.shift_spanned_expr(value, offset);
+                        }
+                    }
+                }
+            }
             Expr::Dict(entries) => {
-                for (key, value) in entries {
-                    self.shift_spanned_expr(key, offset);
-                    self.shift_spanned_expr(value, offset);
+                for entry in entries {
+                    match entry {
+                        DictEntry::Pair(key, value) => {
+                            self.shift_spanned_expr(key, offset);
+                            self.shift_spanned_expr(value, offset);
+                        }
+                        DictEntry::Spread(value) => self.shift_spanned_expr(value, offset),
+                    }
                 }
             }
             Expr::Constructor(_, args) => {
                 for arg in args {
                     match arg {
-                        CallArg::Positional(value) | CallArg::Named(_, value) => {
+                        CallArg::Positional(value)
+                        | CallArg::Named(_, value)
+                        | CallArg::PositionalUnpack(value)
+                        | CallArg::KeywordUnpack(value) => {
                             self.shift_spanned_expr(value, offset);
                         }
                     }
@@ -568,7 +1455,30 @@ impl<'a> Parser<'a> {
             }
             Expr::Surface(surface_expr) => match &mut surface_expr.payload {
                 SurfaceExprPayload::PrefixUnary(value) => self.shift_spanned_expr(value, offset),
+                SurfaceExprPayload::LeadingDotPath { .. } => {}
+                SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                    self.shift_spanned_expr(left, offset);
+                    self.shift_spanned_expr(right, offset);
+                }
+                SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                    for arg in args {
+                        match arg {
+                            CallArg::Positional(expr)
+                            | CallArg::Named(_, expr)
+                            | CallArg::PositionalUnpack(expr)
+                            | CallArg::KeywordUnpack(expr) => self.shift_spanned_expr(expr, offset),
+                        }
+                    }
+                }
             },
+        }
+    }
+
+    /// Shift expression spans that live inside a comprehension clause.
+    fn shift_comprehension_clause(&self, clause: &mut ComprehensionClause, offset: usize) {
+        match clause {
+            ComprehensionClause::For { iter, .. } => self.shift_spanned_expr(iter, offset),
+            ComprehensionClause::If(condition) => self.shift_spanned_expr(condition, offset),
         }
     }
 
@@ -606,13 +1516,24 @@ impl<'a> Parser<'a> {
             "Expected ':' after match subject",
         )?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
 
         let mut arms = Vec::new();
         self.skip_newlines();
+        let mut next_leading = 0u8;
         while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
-            arms.push(self.match_arm()?);
-            self.skip_newlines();
+            let mut arm = self.match_arm()?;
+            arm.leading_blank_lines = next_leading;
+            arms.push(arm);
+
+            next_leading = self.consume_inter_statement_blank_prefix();
+            if next_leading > 0
+                && self.check(&TokenKind::Dedent)
+                && self.dedent_is_followed_by_outer_statement()
+            {
+                self.pending_dedent_blank_lines = self.pending_dedent_blank_lines.max(next_leading);
+                next_leading = 0;
+            }
         }
 
         self.expect(&TokenKind::Dedent, "Expected dedent after match body")?;
@@ -644,7 +1565,7 @@ impl<'a> Parser<'a> {
 
             // Check if inline or block
             if self.match_token(&TokenKind::Newline) {
-                self.expect(&TokenKind::Indent, "Expected indented block")?;
+                self.expect_suite_indent("Expected indented block")?;
                 let body = self.block()?;
                 self.expect(&TokenKind::Dedent, "Expected dedent after case body")?;
                 let end = self.tokens[self.pos - 1].span.end;
@@ -660,8 +1581,6 @@ impl<'a> Parser<'a> {
                 // Inline: could be expression or statement (like `return 0`)
                 // Try parsing as a single statement and wrap in block
                 let stmt = self.inline_statement()?;
-                // Consume trailing newline after inline statement
-                self.match_token(&TokenKind::Newline);
                 let end = stmt.span.end;
                 return Ok(Spanned::new(
                     MatchArm {
@@ -684,7 +1603,7 @@ impl<'a> Parser<'a> {
 
         // Check for block or expression
         if self.match_token(&TokenKind::Newline) {
-            self.expect(&TokenKind::Indent, "Expected indented block")?;
+            self.expect_suite_indent("Expected indented block")?;
             let body = self.block()?;
             self.expect(&TokenKind::Dedent, "Expected dedent after arm body")?;
             let end = self.tokens[self.pos - 1].span.end;
@@ -698,7 +1617,6 @@ impl<'a> Parser<'a> {
             ))
         } else {
             let stmt = self.inline_statement()?;
-            self.match_token(&TokenKind::Newline);
             let end = stmt.span.end;
             let body = if let Statement::Expr(expr) = &stmt.node {
                 MatchBody::Expr(expr.clone())
@@ -716,7 +1634,32 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse a full match-pattern grammar node, including top-level `|` alternation.
     fn pattern(&mut self) -> Result<Spanned<Pattern>, CompileError> {
+        let start = self.current_span().start;
+        let first = self.pattern_atom()?;
+
+        if !self.match_token(&TokenKind::Punctuation(PunctuationId::Pipe)) {
+            return Ok(first);
+        }
+
+        let mut patterns = vec![first];
+        loop {
+            patterns.push(self.pattern_atom()?);
+            if !self.match_token(&TokenKind::Punctuation(PunctuationId::Pipe)) {
+                break;
+            }
+        }
+
+        let end = patterns.last().map(|pattern| pattern.span.end).unwrap_or(start);
+        Ok(Spanned::new(Pattern::Or(patterns), Span::new(start, end)))
+    }
+
+    /// Parse one non-alternation pattern atom.
+    ///
+    /// Grouped patterns recurse through [`Self::pattern`] so `(A | B)` remains one grouped alternation rather than a
+    /// tuple pattern.
+    fn pattern_atom(&mut self) -> Result<Spanned<Pattern>, CompileError> {
         let start = self.current_span().start;
 
         // Wildcard
@@ -736,7 +1679,27 @@ impl<'a> Parser<'a> {
 
         // Tuple pattern
         if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
+            if self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+                self.advance();
+                let end = self.tokens[self.pos - 1].span.end;
+                return Ok(Spanned::new(Pattern::Tuple(Vec::new()), Span::new(start, end)));
+            }
+
+            let first = self.pattern()?;
+            if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                self.expect(
+                    &TokenKind::Punctuation(PunctuationId::RParen),
+                    "Expected ')' after grouped pattern",
+                )?;
+                let end = self.tokens[self.pos - 1].span.end;
+                return Ok(Spanned::new(
+                    Pattern::Group(Box::new(first)),
+                    Span::new(start, end),
+                ));
+            }
+
             let mut patterns = Vec::new();
+            patterns.push(first);
             if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
                 loop {
                     patterns.push(self.pattern()?);
@@ -843,14 +1806,14 @@ impl<'a> Parser<'a> {
             "Expected ':' after if condition",
         )?;
         self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        self.expect_suite_indent("Expected indented block")?;
         let then_body = self.block()?;
         self.expect(&TokenKind::Dedent, "Expected dedent after if body")?;
 
         let else_body = if self.match_token(&TokenKind::Keyword(KeywordId::Else)) {
             self.expect(&TokenKind::Punctuation(PunctuationId::Colon), "Expected ':' after else")?;
             self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-            self.expect(&TokenKind::Indent, "Expected indented block")?;
+            self.expect_suite_indent("Expected indented block")?;
             let body = self.block()?;
             self.expect(&TokenKind::Dedent, "Expected dedent after else body")?;
             Some(body)
@@ -869,6 +1832,25 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    fn loop_expr(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
+        self.expect(&TokenKind::Keyword(KeywordId::Loop), "Expected 'loop'")?;
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::Colon),
+            "Expected ':' after loop",
+        )?;
+        self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+        self.expect(&TokenKind::Indent, "Expected indented block")?;
+        let body = self.block()?;
+        self.expect(&TokenKind::Dedent, "Expected dedent after loop body")?;
+
+        let end = self.tokens[self.pos - 1].span.end;
+        Ok(Spanned::new(
+            Expr::Loop(Box::new(LoopExpr { body })),
+            Span::new(start, end),
+        ))
+    }
+
+    /// Parse a bracketed expression as either a list literal, list comprehension, or list spread form.
     fn list_or_comp(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         // Implicit line continuation: skip newlines after [
         self.skip_newlines();
@@ -879,17 +1861,14 @@ impl<'a> Parser<'a> {
             return Ok(Spanned::new(Expr::List(Vec::new()), Span::new(start, end)));
         }
 
-        let first = self.expression()?;
+        let first = self.list_entry()?;
         self.skip_newlines();
 
         // Check for comprehension
-        if self.match_token(&TokenKind::Keyword(KeywordId::For)) {
-            self.skip_newlines();
-            let var = self.identifier()?;
-            self.skip_newlines();
-            self.expect(&TokenKind::Keyword(KeywordId::In), "Expected 'in' in comprehension")?;
-            self.skip_newlines();
-            let iter = self.expression()?;
+        if let ListEntry::Element(first_expr) = &first
+            && self.match_token(&TokenKind::Keyword(KeywordId::For))
+        {
+            let (pattern, iter, for_clause) = self.comprehension_for_clause_after_for()?;
             self.skip_newlines();
             let filter = if self.match_token(&TokenKind::Keyword(KeywordId::If)) {
                 self.skip_newlines();
@@ -897,6 +1876,10 @@ impl<'a> Parser<'a> {
             } else {
                 None
             };
+            let mut clauses = vec![for_clause];
+            if let Some(condition) = &filter {
+                clauses.push(ComprehensionClause::If(condition.clone()));
+            }
             self.skip_newlines();
             self.expect(
                 &TokenKind::Punctuation(PunctuationId::RBracket),
@@ -905,10 +1888,11 @@ impl<'a> Parser<'a> {
             let end = self.tokens[self.pos - 1].span.end;
             return Ok(Spanned::new(
                 Expr::ListComp(Box::new(ListComp {
-                    expr: first,
-                    var,
+                    expr: first_expr.clone(),
+                    pattern,
                     iter,
                     filter,
+                    clauses,
                 })),
                 Span::new(start, end),
             ));
@@ -921,7 +1905,7 @@ impl<'a> Parser<'a> {
             if self.check(&TokenKind::Punctuation(PunctuationId::RBracket)) {
                 break;
             }
-            elements.push(self.expression()?);
+            elements.push(self.list_entry()?);
             self.skip_newlines();
         }
         self.expect(
@@ -932,6 +1916,25 @@ impl<'a> Parser<'a> {
         Ok(Spanned::new(Expr::List(elements), Span::new(start, end)))
     }
 
+    /// Parse one list literal entry, including RFC 038 `*expr` spread and invalid `**expr` diagnostics.
+    fn list_entry(&mut self) -> Result<ListEntry, CompileError> {
+        if self.match_token(&TokenKind::Operator(OperatorId::StarStar)) {
+            return Err(errors::invalid_list_spread_marker(self.tokens[self.pos - 1].span));
+        }
+
+        if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
+            let marker_start = self.tokens[self.pos - 1].span.start;
+            let value = self.expression()?;
+            return Ok(ListEntry::Spread(Spanned::new(
+                value.node,
+                Span::new(marker_start, value.span.end),
+            )));
+        }
+
+        Ok(ListEntry::Element(self.expression()?))
+    }
+
+    /// Parse a brace expression as a dictionary, set, comprehension, or RFC 038 dictionary spread literal.
     fn dict_or_comp(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         // Implicit line continuation: skip newlines after {
         self.skip_newlines();
@@ -940,6 +1943,15 @@ impl<'a> Parser<'a> {
         if self.match_token(&TokenKind::Punctuation(PunctuationId::RBrace)) {
             let end = self.tokens[self.pos - 1].span.end;
             return Ok(Spanned::new(Expr::Dict(Vec::new()), Span::new(start, end)));
+        }
+
+        if self.check(&TokenKind::Operator(OperatorId::StarStar)) {
+            let first = self.dict_entry()?;
+            return self.finish_dict_literal(start, first);
+        }
+
+        if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
+            return Err(errors::invalid_dict_spread_marker(self.tokens[self.pos - 1].span));
         }
 
         let first = self.expression()?;
@@ -954,12 +1966,7 @@ impl<'a> Parser<'a> {
 
             // Check for comprehension
             if self.match_token(&TokenKind::Keyword(KeywordId::For)) {
-                self.skip_newlines();
-                let var = self.identifier()?;
-                self.skip_newlines();
-                self.expect(&TokenKind::Keyword(KeywordId::In), "Expected 'in' in comprehension")?;
-                self.skip_newlines();
-                let iter = self.expression()?;
+                let (pattern, iter, for_clause) = self.comprehension_for_clause_after_for()?;
                 self.skip_newlines();
                 let filter = if self.match_token(&TokenKind::Keyword(KeywordId::If)) {
                     self.skip_newlines();
@@ -967,6 +1974,10 @@ impl<'a> Parser<'a> {
                 } else {
                     None
                 };
+                let mut clauses = vec![for_clause];
+                if let Some(condition) = &filter {
+                    clauses.push(ComprehensionClause::If(condition.clone()));
+                }
                 self.skip_newlines();
                 self.expect(
                     &TokenKind::Punctuation(PunctuationId::RBrace),
@@ -977,38 +1988,17 @@ impl<'a> Parser<'a> {
                     Expr::DictComp(Box::new(DictComp {
                         key: first,
                         value: first_value,
-                        var,
+                        pattern,
                         iter,
                         filter,
+                        clauses,
                     })),
                     Span::new(start, end),
                 ));
             }
 
             // Dict literal
-            let mut entries = vec![(first, first_value)];
-            while self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
-                self.skip_newlines();
-                if self.check(&TokenKind::Punctuation(PunctuationId::RBrace)) {
-                    break;
-                }
-                let key = self.expression()?;
-                self.skip_newlines();
-                self.expect(
-                    &TokenKind::Punctuation(PunctuationId::Colon),
-                    "Expected ':' in dict entry",
-                )?;
-                self.skip_newlines();
-                let value = self.expression()?;
-                self.skip_newlines();
-                entries.push((key, value));
-            }
-            self.expect(
-                &TokenKind::Punctuation(PunctuationId::RBrace),
-                "Expected '}' after dict",
-            )?;
-            let end = self.tokens[self.pos - 1].span.end;
-            Ok(Spanned::new(Expr::Dict(entries), Span::new(start, end)))
+            self.finish_dict_literal(start, DictEntry::Pair(first, first_value))
         } else {
             // It's a set literal: {expr, expr, ...}
             let mut elements = vec![first];
@@ -1017,6 +2007,11 @@ impl<'a> Parser<'a> {
                 if self.check(&TokenKind::Punctuation(PunctuationId::RBrace)) {
                     break;
                 }
+                if self.match_token(&TokenKind::Operator(OperatorId::Star))
+                    || self.match_token(&TokenKind::Operator(OperatorId::StarStar))
+                {
+                    return Err(errors::set_literal_spread_not_supported(self.tokens[self.pos - 1].span));
+                }
                 elements.push(self.expression()?);
                 self.skip_newlines();
             }
@@ -1024,6 +2019,93 @@ impl<'a> Parser<'a> {
             let end = self.tokens[self.pos - 1].span.end;
             Ok(Spanned::new(Expr::Set(elements), Span::new(start, end)))
         }
+    }
+
+    /// Finish parsing a dictionary literal after the first entry has already been disambiguated.
+    fn finish_dict_literal(&mut self, start: usize, first: DictEntry) -> Result<Spanned<Expr>, CompileError> {
+        self.skip_newlines();
+
+        let mut entries = vec![first];
+        while self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+            self.skip_newlines();
+            if self.check(&TokenKind::Punctuation(PunctuationId::RBrace)) {
+                break;
+            }
+            entries.push(self.dict_entry()?);
+            self.skip_newlines();
+        }
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::RBrace),
+            "Expected '}' after dict",
+        )?;
+        let end = self.tokens[self.pos - 1].span.end;
+        Ok(Spanned::new(Expr::Dict(entries), Span::new(start, end)))
+    }
+
+    /// Parse one dictionary literal entry, including `key: value`, `**expr` spread, and invalid `*expr` diagnostics.
+    fn dict_entry(&mut self) -> Result<DictEntry, CompileError> {
+        if self.match_token(&TokenKind::Operator(OperatorId::StarStar)) {
+            let marker_start = self.tokens[self.pos - 1].span.start;
+            let value = self.expression()?;
+            return Ok(DictEntry::Spread(Spanned::new(
+                value.node,
+                Span::new(marker_start, value.span.end),
+            )));
+        }
+
+        if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
+            return Err(errors::invalid_dict_spread_marker(self.tokens[self.pos - 1].span));
+        }
+
+        let key = self.expression()?;
+        self.skip_newlines();
+        self.expect(
+            &TokenKind::Punctuation(PunctuationId::Colon),
+            "Expected ':' in dict entry",
+        )?;
+        self.skip_newlines();
+        let value = self.expression()?;
+        Ok(DictEntry::Pair(key, value))
+    }
+
+    /// Parse a `for pattern in iter` comprehension clause after the leading `for` token has been consumed.
+    fn comprehension_for_clause_after_for(
+        &mut self,
+    ) -> Result<(Spanned<Pattern>, Spanned<Expr>, ComprehensionClause), CompileError> {
+        self.skip_newlines();
+        let pattern = self.for_binding_pattern()?;
+        self.skip_newlines();
+        self.expect(&TokenKind::Keyword(KeywordId::In), "Expected 'in' in comprehension")?;
+        self.skip_newlines();
+        let iter = self.expression()?;
+        let clause = ComprehensionClause::For {
+            pattern: pattern.clone(),
+            iter: iter.clone(),
+        };
+        Ok((pattern, iter, clause))
+    }
+
+    /// Parse the full comprehension-clause tail used by generator expressions.
+    fn generator_clauses_after_for(&mut self) -> Result<Vec<ComprehensionClause>, CompileError> {
+        let (_, _, first_for) = self.comprehension_for_clause_after_for()?;
+        let mut clauses = vec![first_for];
+
+        loop {
+            self.skip_newlines();
+            if self.match_token(&TokenKind::Keyword(KeywordId::If)) {
+                self.skip_newlines();
+                clauses.push(ComprehensionClause::If(self.expression()?));
+                continue;
+            }
+            if self.match_token(&TokenKind::Keyword(KeywordId::For)) {
+                let (_, _, clause) = self.comprehension_for_clause_after_for()?;
+                clauses.push(clause);
+                continue;
+            }
+            break;
+        }
+
+        Ok(clauses)
     }
 
     fn paren_or_tuple(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
@@ -1048,6 +2130,23 @@ impl<'a> Parser<'a> {
 
         let first = self.expression()?;
         self.skip_newlines();
+
+        if self.match_token(&TokenKind::Keyword(KeywordId::For)) {
+            let clauses = self.generator_clauses_after_for()?;
+            self.skip_newlines();
+            self.expect(
+                &TokenKind::Punctuation(PunctuationId::RParen),
+                "Expected ')' after generator expression",
+            )?;
+            let end = self.tokens[self.pos - 1].span.end;
+            return Ok(Spanned::new(
+                Expr::Generator(Box::new(GeneratorExpr {
+                    expr: first,
+                    clauses,
+                })),
+                Span::new(start, end),
+            ));
+        }
 
         // Check for tuple (needs comma)
         if self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
@@ -1118,6 +2217,7 @@ impl<'a> Parser<'a> {
                     params.push(Spanned::new(
                         Param {
                             is_mut: false,
+                            kind: ParamKind::Normal,
                             name: name.clone(),
                             ty: inferred_ty,
                             default: None,
@@ -1131,6 +2231,19 @@ impl<'a> Parser<'a> {
             }
         }
         Ok(params)
+    }
+
+    /// Parse call arguments while temporarily enabling descriptors scoped to the named call target.
+    fn call_args_for(&mut self, call: Option<String>) -> Result<Vec<CallArg>, CompileError> {
+        let pushed_context = call.map(|call| {
+            self.scoped_call_argument_stack
+                .push(ScopedCallArgumentContext { call });
+        });
+        let result = self.call_args();
+        if pushed_context.is_some() {
+            self.scoped_call_argument_stack.pop();
+        }
+        result
     }
 
     fn call_args(&mut self) -> Result<Vec<CallArg>, CompileError> {
@@ -1166,6 +2279,24 @@ impl<'a> Parser<'a> {
                     }
                     continue;
                 }
+                if self.match_token(&TokenKind::Operator(OperatorId::StarStar)) {
+                    let expr = self.expression()?;
+                    self.skip_newlines();
+                    args.push(CallArg::KeywordUnpack(expr));
+                    if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                        break;
+                    }
+                    continue;
+                }
+                if self.match_token(&TokenKind::Operator(OperatorId::Star)) {
+                    let expr = self.expression()?;
+                    self.skip_newlines();
+                    args.push(CallArg::PositionalUnpack(expr));
+                    if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                        break;
+                    }
+                    continue;
+                }
                 let expr = self.expression()?;
                 self.skip_newlines();
                 args.push(CallArg::Positional(expr));
@@ -1177,5 +2308,61 @@ impl<'a> Parser<'a> {
         Ok(args)
     }
 
-}
+    /// Parse the keyword-only argument list inside a partial call template.
+    fn partial_args(&mut self) -> Result<Vec<PartialArg>, CompileError> {
+        self.skip_newlines();
 
+        let mut args = Vec::new();
+        if !self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+            loop {
+                self.skip_newlines();
+                if self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+                    break;
+                }
+
+                if !matches!(self.peek().kind, TokenKind::Ident(_) | TokenKind::Keyword(_))
+                    || !self.peek_next().kind.is_operator(OperatorId::Eq)
+                {
+                    return Err(CompileError::syntax(
+                        "Partial presets only support keyword arguments".to_string(),
+                        self.current_span(),
+                    ));
+                }
+
+                let name = self.identifier_or_any_keyword()?;
+                self.expect_op(OperatorId::Eq, "Expected '=' after partial preset name")?;
+                self.skip_newlines();
+                let value = self.expression()?;
+                self.skip_newlines();
+                args.push(PartialArg { name, value });
+
+                if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                    break;
+                }
+            }
+        }
+        Ok(args)
+    }
+
+    /// Convert an ordinary parsed call argument list into RFC 084 keyword-only partial presets.
+    fn partial_args_from_call_args(
+        &self,
+        args: Vec<CallArg>,
+        _template_span: Span,
+    ) -> Result<Vec<PartialArg>, CompileError> {
+        let mut partial_args = Vec::new();
+        for arg in args {
+            match arg {
+                CallArg::Named(name, value) => partial_args.push(PartialArg { name, value }),
+                CallArg::Positional(value) | CallArg::PositionalUnpack(value) | CallArg::KeywordUnpack(value) => {
+                    return Err(CompileError::syntax(
+                        "Partial presets only support keyword arguments".to_string(),
+                        value.span,
+                    ));
+                }
+            }
+        }
+        Ok(partial_args)
+    }
+
+}

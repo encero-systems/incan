@@ -1,0 +1,14 @@
+"""RFC 049: if let + while let"""
+
+def first(opt: Option[int]) -> int:
+  if let Some(value) = opt:
+    return value
+  return 0
+
+def sum_once(opt: Option[int]) -> int:
+  mut total = 0
+  mut current = opt
+  while let Some(value) = current:
+    total = total + value
+    current = None
+  return total

@@ -24,6 +24,6 @@ pub mod plan;
 pub mod runner;
 
 // Re-export public types so `crate::backend::project::ProjectGenerator` (etc.) still works.
-pub use generator::ProjectGenerator;
+pub use generator::{ProjectGenerator, RunProfile};
 pub use plan::{CargoCommand, CompilationPlan, ExecutionResult, Executor, PlannedDirectory, PlannedFile};
 pub use runner::{BuildResult, RunResult};

@@ -1,0 +1,28 @@
+"""Issue #217: codegen snapshot for `match` on a `rusttype`-wrapped Rust enum.
+
+`PlanRel` aliases `rust::mail::Sender` (stdlib fixture). The arm `PlanRel.Root(root)`
+must bind `root` with the composed Rust payload path so lowering type-checks.
+
+`id` and `touch` keep bindings used in generated Rust without unused-variable noise.
+"""
+from rust::mail import Sender as RustSender
+
+def id[T](x: T) -> T:
+  return x
+
+def touch[T](_: T) -> None:
+  pass
+
+type PlanRel = rusttype RustSender:
+  def noop(self) -> None:
+    ...
+
+def f(x: PlanRel) -> None:
+  match x:
+    PlanRel.Root(root) =>
+      touch(id(root))
+    _ =>
+      touch(id(x))
+
+def main() -> None:
+  pass

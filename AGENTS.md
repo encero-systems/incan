@@ -11,10 +11,12 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 > **CRITICAL — THE USER DECIDES WHAT IS RELEVANT.** Scope, PR boundaries, and which files “belong” on a branch are **the maintainer’s call**, not the agent’s. Never label work as “unrelated PR noise,” “cleanup,” or “hygiene” as a reason to remove or revert it. Always check with the user when in doubt.
 >
 > **FORBIDDEN without explicit user approval that quotes the exact paths or commands:** anything that overwrites or deletes uncommitted work — including `git checkout -- <path>`, `git restore <path>`, `git clean`, `git reset --hard`, `stash drop`, or equivalent. If you believe files should be split, reverted, or left out of a PR, **state that and ask**; do not run destructive git operations on your own initiative.
+>
+> **Commits and pushes:** The maintainer commits code unless they **explicitly** ask you to run `git commit` or `git push`. Implement and test in the working tree; offer a suggested commit message as text. The `/start-work` skill states the same rule.
 
 ## Key References
 
-|         Document         |                                         Path                                         |
+| Document                 | Path                                                                                 |
 | ------------------------ | ------------------------------------------------------------------------------------ |
 | Rust coding conventions  | [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`] |
 | Project architecture     | [`workspaces/docs-site/docs/contributing/explanation/architecture.md`]               |
@@ -22,7 +24,7 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 | Writing RFCs             | [`workspaces/docs-site/docs/contributing/how-to/writing_rfcs.md`]                    |
 | Contributor guide        | [`CONTRIBUTING.md`]                                                                  |
 | GitHub issue templates   | [`.github/ISSUE_TEMPLATE/`]                                                          |
-| Implementation learnings | [`.cursor/agents/learnings.md`]                                                      |
+| Implementation learnings | [`.agents/learnings.md`]                                                             |
 
 [`workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md`]: workspaces/docs-site/docs/contributing/explanation/readable-maintainable-rust.md
 [`workspaces/docs-site/docs/contributing/explanation/architecture.md`]: workspaces/docs-site/docs/contributing/explanation/architecture.md
@@ -30,7 +32,9 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 [`workspaces/docs-site/docs/contributing/how-to/writing_rfcs.md`]: workspaces/docs-site/docs/contributing/how-to/writing_rfcs.md
 [`CONTRIBUTING.md`]: CONTRIBUTING.md
 [`.github/ISSUE_TEMPLATE/`]: .github/ISSUE_TEMPLATE/
-[`.cursor/agents/learnings.md`]: .cursor/agents/learnings.md
+[`.agents/learnings.md`]: .agents/learnings.md
+
+Skills, learnings, and agent notes live under **this repository’s** `.agents/` directory (committed here).
 
 ## General Workflow
 
@@ -39,22 +43,46 @@ Incan is a Python-like language that compiles to Rust. The compiler itself is wr
 3. **Run tests**: `make test` must pass before considering work complete. Run targeted tests during development; run the full suite when you finish.
 4. **Update snapshots**: `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests` to update changed snapshots.
 5. **Boy Scout Rule**: Leave every file you touch in better shape than you found it — fix stale TODOs, missing doc comments, unused imports, misleading names.
-6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed public APIs and non-obvious internal helpers.
+6. **Documentation gate (mandatory)**: Before finalizing any change, audit every touched Rust module and ensure rustdocs are present and accurate for all new/changed functions and methods in changed Rust source files. This is enforced mechanically by `scripts/check_changed_rustdocs.py` through `make pre-commit-fast` and `make pre-commit`.
+
+### Pattern intake before edits
+
+Before touching production code, tests, or docs for a non-trivial change, do a short pattern intake:
+
+- Identify the active area: parser, typechecker, lowering, emission, stdlib, CLI/tooling, docs, or tests.
+- Read 2-3 nearby files that already implement the same kind of behavior. Prefer same-stage and same-domain precedents over generic Rust examples.
+- Name the source-of-truth boundary or registry when one exists, such as the RFC, stdlib registry, diagnostics catalog, ownership policy, or CLI contract.
+- State which verification path must prove the change, including whether parser/typechecker coverage, codegen snapshots, integration tests, docs build, or feature-specific builds are required.
+
+Do not substitute broad advice like "follow Rust best practices" for local precedent. Incan patterns are stage- and boundary-specific; copying a shape from the wrong compiler layer is a common way to create drift.
+
+### Rust compiler error intake
+
+When debugging a Rust compiler error, capture the full error context before proposing a fix:
+
+- the exact command that failed;
+- the complete diagnostic, including error code, notes, help text, and secondary spans;
+- active feature flags or build mode, especially default build vs. `rust-metadata`;
+- the relevant function signature and nearby type definitions;
+- the local files or tests that establish the intended pattern.
+
+Classify the root cause before editing: lifetime/borrow across boundary, trait bound, feature gate/build-mode mismatch, orphan/coherence rule, missing import, or pipeline-stage wiring. Avoid applying a local `.clone()`, `.into()`, `.as_ref()`, or type annotation workaround until the owning boundary is clear.
 
 ### Common commands
 
-|                          Command                          |                     Purpose                      |
-| --------------------------------------------------------- | ------------------------------------------------ |
-| `make build`                                              | Debug build (fast)                               |
-| `make release`                                            | Optimized build                                  |
-| `make test`                                               | Run all tests                                    |
-| `make fmt`                                                | Format Rust code (`cargo +nightly fmt`)          |
-| `make lint`                                               | Run clippy                                       |
-| `make check`                                              | Format check + clippy                            |
-| `make pre-commit`                                         | Fast local gate (format check + `cargo check`)   |
-| `make pre-commit-full`                                    | Full local gate (format check + tests + clippy)  |
-| `make examples`                                           | Smoke test all examples (requires release build) |
-| `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests` | Update codegen snapshots                         |
+| Command                                                   | Purpose                                                               |
+| --------------------------------------------------------- | --------------------------------------------------------------------- |
+| `make build`                                              | Debug build (fast)                                                    |
+| `make release`                                            | Optimized build                                                       |
+| `make test`                                               | Run all tests                                                         |
+| `make fmt`                                                | Format Rust code (`cargo +nightly fmt`)                               |
+| `make lint`                                               | Run clippy                                                            |
+| `make check`                                              | Format check + clippy                                                 |
+| `make pre-commit-fast`                                    | Fast local gate (format check + `cargo check`)                        |
+| `make pre-commit`                                         | Full local gate (full checks + smoke-test-fast)                       |
+| `make smoke-tests`                                        | Full smoke test: tests + release canary + examples + benchmarks-incan |
+| `make examples`                                           | Smoke test all examples (requires release build)                      |
+| `INSTA_UPDATE=1 cargo test --test codegen_snapshot_tests` | Update codegen snapshots                                              |
 
 ## Docs-site Workflow (MkDocs Material)
 
@@ -92,8 +120,12 @@ Guidelines:
 
 ### Formatting
 
-- Wrap rustdoc prose naturally — don't worry about line length.
+- **Do not manually optimize Rust comment or rustdoc line length.** Agents do not need to worry about rustdoc line length at all; `make fmt` takes care of formatting.
+- **Do not introduce staircase-wrapped prose** in `///`, `//!`, or prose `//` comments. Avoid mechanically chopping one paragraph into many short lines.
+- **Keep Rust prose comments paragraph-shaped.** Break lines only when structure requires it: bullets, tables, code blocks, deliberate emphasis, or a clean sentence/ clause boundary that genuinely improves readability.
+- **Prefer fewer fuller lines over many short lines** in Rust prose comments. If a rustdoc paragraph reads like a narrow column, it is probably wrong.
 - Use `make fmt` to format the codebase after making changes, and before running tests.
+- If you touch comment prose that is already awkwardly short-wrapped, rewrite it as a natural paragraph before running `make fmt`; do not assume rustfmt will expand it for you.
 
 ### Documentation requirements (mandatory)
 
@@ -101,15 +133,20 @@ Agents must treat documentation updates as part of implementation, not optional 
 
 - **Public API docs are required**: Any new/changed `pub` module, type, enum variant intent, struct field intent (when not obvious), and function/method must have rustdoc that explains purpose and contract.
 - **Error types need variant-level docs**: For `thiserror` enums and diagnostic types, document what each variant represents and when it is emitted.
-- **Non-obvious internal helpers need concise docs**: If a private function encodes protocol/runtime/bridge behavior, add a short rustdoc or precise inline comment describing invariants and expected inputs/outputs.
+- **Non-trivial functions and methods need docs**: New or changed functions/methods should carry rustdoc/doc comments unless they are genuinely tiny and self-evident local helpers. Prefer documenting all touched functions over debating edge cases.
+- **Cross-stage and boundary helpers always need docs**: Parser/typechecker/lowering/emission/interop/conversion helpers must document purpose, invariants, and why the boundary exists, even when they are private.
+- **Tiny obvious helpers are the only exception**: A very small private helper may skip rustdoc only when its name and body make the intent completely obvious and there are no invariants, fallback paths, ownership assumptions, or feature-gated behaviors to explain.
 - **Behavioral boundaries must be explicit**: For pipeline boundaries (parser -> desugar -> typecheck -> lowering), docs should state what must and must not cross the boundary.
+- **Docs should explain why, not narrate syntax**: Explain purpose, contracts, fallbacks, ownership/borrowing assumptions, and misuse risks. Avoid comments that merely restate the code line-by-line.
+- **Rust prose comments should not be manually hard-wrapped for width**: when editing `///`, `//!`, or prose `//` comments, keep the prose natural and let formatting tools do their job. Short, choppy comment wrapping is considered a documentation defect.
+- **Changed Rust source functions and methods must have rustdoc**: the mechanical gate checks changed Rust source files and fails if a function or method definition lacks a preceding rustdoc block.
 - **Done criterion**: Do not mark work complete until this rustdoc audit is done for all touched files.
 
 ## Rust Anti-Patterns to Avoid
 
 The project style guide covers broad principles. This section is a concrete quick-reference of patterns agents **must not** introduce.
 
-|                  Instead of                   |                 Prefer                 |                                Why                                |
+| Instead of                                    | Prefer                                 | Why                                                               |
 | --------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------- |
 | `.unwrap()` / `.expect("…")` **anywhere**     | `?`, `.context()`, or explicit `match` | Panics crash the compiler; deny lints reject these in CI          |
 | `.clone()` to appease the borrow checker      | Restructure ownership or borrow        | Hides design issues and adds unnecessary allocations              |
@@ -168,7 +205,7 @@ Key directories:
 
 ## Code Locations Reference
 
-|     Feature      |                         Parser                         |                             Typechecker                             |    Lowering     |    Emission     |
+| Feature          | Parser                                                 | Typechecker                                                         | Lowering        | Emission        |
 | ---------------- | ------------------------------------------------------ | ------------------------------------------------------------------- | --------------- | --------------- |
 | Field metadata   | `parser/decl.rs`                                       | `check_decl.rs`                                                     | `lower/decl.rs` | `emit/decls.rs` |
 | Alias resolution | -                                                      | `check_expr/access.rs`, `calls.rs`, `match_.rs`                     | `lower/expr.rs` | -               |
@@ -180,29 +217,29 @@ Key directories:
 
 ### Skills
 
-Skills are reusable workflows in `.cursor/skills/`. Use them by name when the task matches:
+Skills are reusable workflows in `.agents/skills/`. Use them by name when the task matches:
 
-|      Skill       |              Trigger               |                           What it does                            |
-| ---------------- | ---------------------------------- | ----------------------------------------------------------------- |
-| `/start-work`    | Starting work on an issue or RFC   | Creates branch, gathers context from issue/RFC, checks learnings  |
-| `/test`          | Writing tests for a change         | Guides test selection, provides correct patterns per compiler stage |
-| `/review`        | Code review, PR review             | Runs the full Incan-aware review checklist                        |
-| `/write-rfc`     | Drafting a new RFC                 | Scaffolds an RFC with correct structure and conventions            |
-| `/review-rfc`    | Checking an RFC before submission  | Validates formatting, structure, content, and status-specific rules |
-| `/bump-rfc`      | Promoting an RFC status            | Handles Draft -> Planned -> In Progress -> Done transitions       |
-| `/add-learning`  | Recording a reusable insight       | Appends to learnings file with correct format and topic grouping  |
+| Skill           | Trigger                           | What it does                                                                                                                            |
+| --------------- | --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `/start-work`   | Starting work on an issue or RFC  | Creates branch, gathers context from issue/RFC, checks learnings; does **not** commit (maintainer-only commits unless explicitly asked) |
+| `/test`         | Writing tests for a change        | Guides test selection, provides correct patterns per compiler stage                                                                     |
+| `/review`       | Code review, PR review            | Runs the full Incan-aware review checklist                                                                                              |
+| `/write-rfc`    | Drafting a new RFC                | Scaffolds an RFC with correct structure and conventions                                                                                 |
+| `/review-rfc`   | Checking an RFC before submission | Validates formatting, structure, content, and status-specific rules                                                                     |
+| `/bump-rfc`     | Promoting an RFC status           | Handles Draft -> Planned -> In Progress -> Done transitions                                                                             |
+| `/add-learning` | Recording a reusable insight      | Appends to learnings file with correct format and topic grouping                                                                        |
 
 ### Agents
 
-Subagents in `.cursor/agents/` run as isolated specialists that can be delegated to:
+Subagents in `.agents/` run as isolated specialists that can be delegated to:
 
-|    Agent     |                  When it's used                  |                         What it does                          |
+| Agent        | When it's used                                   | What it does                                                  |
 | ------------ | ------------------------------------------------ | ------------------------------------------------------------- |
 | `test-suite` | Validating changes, checking regressions, pre-PR | Analyzes diff, runs targeted tests, checks snapshots + clippy |
 
 ## Implementation Learnings
 
-Past RFC and issue implementations produced reusable insights. These are maintained in [`.cursor/agents/learnings.md`]. **Read the relevant section before starting work on any RFC implementation or any change that touches the parser, typechecker, or lowering stages.**
+Past RFC and issue implementations produced reusable insights. These are maintained in [`.agents/learnings.md`]. **Read the relevant section before starting work on any RFC implementation or any change that touches the parser, typechecker, or lowering stages.**
 
 - **RFC 021** — Field Metadata & Aliases: pipeline flow, typechecker-vs-lowering pitfalls, scope restrictions, reflection helpers
 - **RFC 005** — Rust Interop: parser warnings, LSP/CLI wiring, `Program` struct stability

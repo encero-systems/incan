@@ -4,7 +4,8 @@
 
 use std::collections::HashMap;
 
-use crate::frontend::ast::{Receiver, Span, Type};
+use crate::frontend::ast::{ParamKind, Receiver, Span, Type, TypeConstraintKey};
+use incan_core::interop::RustItemMetadata;
 use incan_core::lang::builtins::{self, BuiltinFnId};
 use incan_core::lang::conventions;
 use incan_core::lang::surface::constructors;
@@ -19,6 +20,9 @@ use incan_core::lang::types::stringlike::StringLikeId;
 
 /// Unique identifier for symbols
 pub type SymbolId = usize;
+
+/// Canonical semantic name for anonymous union types (RFC 029).
+pub const UNION_TYPE_NAME: &str = "Union";
 
 /// Symbol table managing all named entities
 #[derive(Debug, Default)]
@@ -41,6 +45,7 @@ impl SymbolTable {
         table
     }
 
+    /// Populate the root scope with built-in type symbols.
     fn add_builtins(&mut self) {
         // Builtin types (from the canonical `incan_core::lang::types` registries).
         //
@@ -70,6 +75,7 @@ impl SymbolTable {
         // Unit-ish types that are not yet modeled in `incan_core::lang::types`.
         builtin_types.push(conventions::UNIT_TYPE_NAME);
         builtin_types.push(conventions::NONE_TYPE_NAME);
+        builtin_types.push(UNION_TYPE_NAME);
 
         // Deduplicate to avoid defining the same builtin twice.
         let mut seen: std::collections::HashSet<&'static str> = std::collections::HashSet::new();
@@ -89,6 +95,8 @@ impl SymbolTable {
                 kind: SymbolKind::Trait(TraitInfo {
                     type_params: vec![],
                     methods: HashMap::new(),
+                    method_aliases: HashMap::new(),
+                    properties: HashMap::new(),
                     requires: vec![],
                     supertraits: vec![],
                 }),
@@ -144,11 +152,12 @@ impl SymbolTable {
             self.define(Symbol {
                 name: name.to_string(),
                 kind: SymbolKind::Function(FunctionInfo {
-                    params: vec![("msg".to_string(), ResolvedType::Str)],
+                    params: vec![CallableParam::named("msg", ResolvedType::Str, ParamKind::Normal)],
                     return_type: ResolvedType::Unit,
                     is_async: false,
                     type_params: vec![],
                     type_param_bounds: HashMap::new(),
+                    type_param_bound_details: HashMap::new(),
                 }),
                 span: Span::default(),
                 scope: 0,
@@ -157,11 +166,16 @@ impl SymbolTable {
         self.define(Symbol {
             name: builtins::as_str(BuiltinFnId::Len).to_string(),
             kind: SymbolKind::Function(FunctionInfo {
-                params: vec![("collection".to_string(), ResolvedType::Unknown)],
+                params: vec![CallableParam::named(
+                    "collection",
+                    ResolvedType::Unknown,
+                    ParamKind::Normal,
+                )],
                 return_type: ResolvedType::Int,
                 is_async: false,
                 type_params: vec![],
                 type_param_bounds: HashMap::new(),
+                type_param_bound_details: HashMap::new(),
             }),
             span: Span::default(),
             scope: 0,
@@ -170,11 +184,12 @@ impl SymbolTable {
         self.define(Symbol {
             name: builtins::as_str(BuiltinFnId::Range).to_string(),
             kind: SymbolKind::Function(FunctionInfo {
-                params: vec![("n".to_string(), ResolvedType::Int)],
+                params: vec![CallableParam::named("n", ResolvedType::Int, ParamKind::Normal)],
                 return_type: ResolvedType::Named("Range".to_string()), // Iterator-like
                 is_async: false,
                 type_params: vec![],
                 type_param_bounds: HashMap::new(),
+                type_param_bound_details: HashMap::new(),
             }),
             span: Span::default(),
             scope: 0,
@@ -330,11 +345,39 @@ pub struct Symbol {
     pub scope: usize,
 }
 
+/// How a `rust::...` import binding relates to Rust’s module/type namespace (RFC 041).
+///
+/// Incan does not run the Rust type checker here; this classification is derived from import syntax only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RustImportBindingKind {
+    /// `import rust::crate_name` — binds the crate root as a namespace (not a concrete type).
+    CrateRoot,
+    /// `import rust::crate_name::a::b::...` with at least one path segment after the crate name.
+    RootedPath,
+    /// `from rust::... import item` — binds a single imported Rust item.
+    FromImport,
+}
+
+/// Provenance for a symbol that refers into a Rust dependency via `rust::` (RFC 041).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RustItemInfo {
+    /// Crate name (first segment after `rust::` in the import source).
+    pub crate_name: String,
+    /// Canonical path used for diagnostics and future lowering: `crate::module::Item` (same string the import
+    /// collector already built, joined with `::`).
+    pub path: String,
+    pub binding: RustImportBindingKind,
+    /// Optional extracted Rust semantic metadata (RFC 041).
+    pub metadata: Option<RustItemMetadata>,
+}
+
 /// Kind of symbol
 #[derive(Debug, Clone)]
 pub enum SymbolKind {
     /// Variable/binding
     Variable(VariableInfo),
+    /// Module static storage cell.
+    Static(StaticInfo),
     /// Function
     Function(FunctionInfo),
     /// Type (class, model, newtype, enum, builtin)
@@ -347,8 +390,10 @@ pub enum SymbolKind {
     Variant(VariantInfo),
     /// Field
     Field(FieldInfo),
-    /// Rust crate import (import rust::...)
-    RustModule { crate_name: String, path: String },
+    /// Computed property
+    Property(PropertyInfo),
+    /// Rust dependency import (`import rust::...` / `from rust::... import ...`, RFC 005 / RFC 041).
+    RustItem(RustItemInfo),
 }
 
 /// Variable information
@@ -359,15 +404,76 @@ pub struct VariableInfo {
     pub is_used: bool,
 }
 
+/// Module static storage metadata.
+#[derive(Debug, Clone)]
+pub struct StaticInfo {
+    pub ty: ResolvedType,
+    pub is_public: bool,
+    pub is_imported: bool,
+    pub is_used: bool,
+}
+
 /// Function information
 #[derive(Debug, Clone)]
 pub struct FunctionInfo {
-    pub params: Vec<(String, ResolvedType)>,
+    pub params: Vec<CallableParam>,
     pub return_type: ResolvedType,
     pub is_async: bool,
     pub type_params: Vec<String>,
     /// Explicit source-declared bounds per type parameter (RFC 023), keyed by type parameter name.
     pub type_param_bounds: HashMap<String, Vec<String>>,
+    /// Resolved source-declared bounds, preserving generic type arguments such as `T with Serialize[F]`.
+    pub type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>>,
+}
+
+/// Callable parameter metadata preserved after type resolution.
+///
+/// RFC 038 requires callable values to retain rest-parameter shape instead of collapsing to a flat list of types. The
+/// optional `name` lets explicit `Callable[...]` types keep unnamed fixed parameters while declarations and methods
+/// preserve names for keyword binding.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CallableParam {
+    pub name: Option<String>,
+    pub ty: ResolvedType,
+    pub kind: ParamKind,
+    pub has_default: bool,
+}
+
+impl CallableParam {
+    /// Build metadata for a source-declared callable parameter.
+    pub fn named(name: impl Into<String>, ty: ResolvedType, kind: ParamKind) -> Self {
+        Self {
+            name: Some(name.into()),
+            ty,
+            kind,
+            has_default: false,
+        }
+    }
+
+    /// Build metadata for a source-declared callable parameter with default-value information.
+    pub fn named_with_default(name: impl Into<String>, ty: ResolvedType, kind: ParamKind, has_default: bool) -> Self {
+        Self {
+            name: Some(name.into()),
+            ty,
+            kind,
+            has_default,
+        }
+    }
+
+    /// Build metadata for an unnamed fixed parameter in a function type.
+    pub fn positional(ty: ResolvedType) -> Self {
+        Self {
+            name: None,
+            ty,
+            kind: ParamKind::Normal,
+            has_default: false,
+        }
+    }
+
+    /// Return the source name when the callable metadata has one.
+    pub fn name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
 }
 
 /// Type information
@@ -387,9 +493,13 @@ pub struct ClassInfo {
     pub type_params: Vec<String>,
     pub extends: Option<String>,
     pub traits: Vec<String>,
+    pub trait_adoptions: Vec<TypeBoundInfo>,
     pub derives: Vec<String>,
     pub fields: HashMap<String, FieldInfo>,
+    pub properties: HashMap<String, PropertyInfo>,
     pub methods: HashMap<String, MethodInfo>,
+    pub method_overloads: HashMap<String, Vec<MethodInfo>>,
+    pub method_aliases: HashMap<String, String>,
 }
 
 /// Model information
@@ -397,24 +507,108 @@ pub struct ClassInfo {
 pub struct ModelInfo {
     pub type_params: Vec<String>,
     pub traits: Vec<String>,
+    pub trait_adoptions: Vec<TypeBoundInfo>,
     pub derives: Vec<String>,
     pub fields: HashMap<String, FieldInfo>,
+    pub properties: HashMap<String, PropertyInfo>,
     pub methods: HashMap<String, MethodInfo>,
+    pub method_overloads: HashMap<String, Vec<MethodInfo>>,
+    pub method_aliases: HashMap<String, String>,
 }
 
 /// Newtype information
 #[derive(Debug, Clone)]
 pub struct NewtypeInfo {
     pub type_params: Vec<String>,
+    pub is_rusttype: bool,
+    /// Set when this `rusttype` declares at least one `interop:` edge (used by later pipeline stages).
+    pub has_interop: bool,
     pub underlying: ResolvedType,
+    /// RFC 017 constrained primitive predicates carried by the declared underlying type.
+    pub constraints: Vec<NewtypePrimitiveConstraint>,
+    /// Whether RFC 017 implicit coercion is permitted for this newtype.
+    pub implicit_coercion_enabled: bool,
+    /// Alias-to-target method rebinding map declared inside the type body (`alias = target`).
+    ///
+    /// Example: `send_now = try_send` is stored as `"send_now" -> "try_send"`.
+    pub method_rebindings: HashMap<String, String>,
+    pub method_aliases: HashMap<String, String>,
     pub methods: HashMap<String, MethodInfo>,
+}
+
+/// One resolved constrained primitive predicate on a newtype underlying type.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NewtypePrimitiveConstraint {
+    pub key: TypeConstraintKey,
+    pub value: i64,
+    pub repr: String,
 }
 
 /// Enum information
 #[derive(Debug, Clone)]
 pub struct EnumInfo {
     pub type_params: Vec<String>,
+    /// Explicit traits adopted by this enum via `with`, using source-level trait names.
+    pub traits: Vec<String>,
+    /// Explicit traits adopted by this enum, preserving generic trait arguments when present.
+    pub trait_adoptions: Vec<TypeBoundInfo>,
     pub variants: Vec<String>,
+    pub value_enum: Option<ValueEnumInfo>,
+    /// Names from `@derive(...)` (same vocabulary as models/classes).
+    pub derives: Vec<String>,
+    /// Inherent methods and associated functions declared in the enum body.
+    pub methods: HashMap<String, MethodInfo>,
+    /// All enum method declarations grouped by name for trait-backed overload resolution.
+    pub method_overloads: HashMap<String, Vec<MethodInfo>>,
+}
+
+/// RFC 032 value enum metadata.
+#[derive(Debug, Clone)]
+pub struct ValueEnumInfo {
+    pub value_type: ValueEnumBacking,
+    pub values: HashMap<String, ValueEnumValue>,
+}
+
+/// Backing primitive kind for a value enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValueEnumBacking {
+    Str,
+    Int,
+}
+
+impl ValueEnumBacking {
+    /// Return the ordinary Incan primitive type represented by this backing kind.
+    pub fn resolved_type(self) -> ResolvedType {
+        match self {
+            Self::Str => ResolvedType::Str,
+            Self::Int => ResolvedType::Int,
+        }
+    }
+
+    /// Return the surface spelling used in diagnostics for this backing kind.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Str => "str",
+            Self::Int => "int",
+        }
+    }
+}
+
+/// Literal value assigned to one value enum variant.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum ValueEnumValue {
+    Str(String),
+    Int(i64),
+}
+
+impl ValueEnumValue {
+    /// Return the raw value in a diagnostic-friendly display form.
+    pub fn display_value(&self) -> String {
+        match self {
+            Self::Str(value) => format!("{value:?}"),
+            Self::Int(value) => value.to_string(),
+        }
+    }
 }
 
 /// Trait information
@@ -426,6 +620,8 @@ pub struct TraitInfo {
     /// Each entry is `(trait_name, type_arguments)`; use an empty `type_arguments` list for a non-generic supertrait.
     pub supertraits: Vec<(String, Vec<ResolvedType>)>,
     pub methods: HashMap<String, MethodInfo>,
+    pub method_aliases: HashMap<String, String>,
+    pub properties: HashMap<String, PropertyInfo>,
     pub requires: Vec<(String, ResolvedType)>, // Required fields
 }
 
@@ -447,19 +643,42 @@ pub struct VariantInfo {
 #[derive(Debug, Clone)]
 pub struct FieldInfo {
     pub ty: ResolvedType,
+    pub visibility: crate::frontend::ast::Visibility,
+    pub owner: Option<String>,
     pub has_default: bool,
     pub alias: Option<String>,
     pub description: Option<String>,
 }
 
+/// Computed property information.
+#[derive(Debug, Clone)]
+pub struct PropertyInfo {
+    pub return_type: ResolvedType,
+    pub visibility: crate::frontend::ast::Visibility,
+    pub owner: Option<String>,
+    /// False for abstract trait property requirements.
+    pub has_body: bool,
+}
+
 /// Method information
 #[derive(Debug, Clone)]
 pub struct MethodInfo {
+    pub type_params: Vec<String>,
+    pub type_param_bounds: HashMap<String, Vec<String>>,
+    pub type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>>,
     pub receiver: Option<Receiver>,
-    pub params: Vec<(String, ResolvedType)>,
+    pub params: Vec<CallableParam>,
     pub return_type: ResolvedType,
     pub is_async: bool,
     pub has_body: bool, // false for abstract methods (...)
+    pub alias_of: Option<String>,
+}
+
+/// Resolved type-parameter bound metadata preserved for export/import paths.
+#[derive(Debug, Clone)]
+pub struct TypeBoundInfo {
+    pub name: String,
+    pub type_args: Vec<ResolvedType>,
 }
 
 /// Resolved type (after type checking)
@@ -468,6 +687,8 @@ pub enum ResolvedType {
     /// Primitive types
     Int,
     Float,
+    /// Exact-width numeric type introduced by RFC 009.
+    Numeric(NumericTypeId),
     Bool,
     Str,
     Bytes,
@@ -482,8 +703,8 @@ pub enum ResolvedType {
     Named(String),
     /// Generic type with arguments
     Generic(String, Vec<ResolvedType>),
-    /// Function type
-    Function(Vec<ResolvedType>, Box<ResolvedType>),
+    /// Function type, including rest-parameter shape when known.
+    Function(Vec<CallableParam>, Box<ResolvedType>),
     /// Tuple type
     Tuple(Vec<ResolvedType>),
     /// Type variable (for generics)
@@ -496,6 +717,19 @@ pub enum ResolvedType {
     /// - This is currently compiler-internal (not a user-spellable surface type).
     /// - It exists to model Rust interop semantics like `HashMap::get` returning `Option<&V>`.
     Ref(Box<ResolvedType>),
+    /// Internal mutable reference type (borrowed `&mut T`).
+    ///
+    /// ## Notes
+    /// - This is currently compiler-internal (not a user-spellable surface type).
+    /// - It exists to preserve mutable Rust interop signatures through IR lowering.
+    RefMut(Box<ResolvedType>),
+    /// Rust import with a known canonical path (`crate::...` string), RFC 041.
+    ///
+    /// Lowers to backend `IrType::Unknown` until dedicated IR typing exists; provenance also lives on
+    /// [`SymbolKind::RustItem`].
+    RustPath(String),
+    /// Call-site `_` placeholder in bracketed type arguments (RFC 054); resolved away before lowering.
+    CallSiteInfer,
     /// Unknown/error type
     Unknown,
 }
@@ -517,6 +751,19 @@ impl ResolvedType {
         )
     }
 
+    /// Check if this is an anonymous union type.
+    pub fn is_union(&self) -> bool {
+        matches!(self, ResolvedType::Generic(name, _) if name == UNION_TYPE_NAME)
+    }
+
+    /// Get the normalized member list from `Union[...]`.
+    pub fn union_members(&self) -> Option<&[ResolvedType]> {
+        match self {
+            ResolvedType::Generic(name, args) if name == UNION_TYPE_NAME => Some(args.as_slice()),
+            _ => None,
+        }
+    }
+
     /// Get the Ok type from Result[T, E]
     pub fn result_ok_type(&self) -> Option<&ResolvedType> {
         match self {
@@ -529,7 +776,7 @@ impl ResolvedType {
         }
     }
 
-    /// Get the Err type from Result[T, E]
+    /// Get the Err type from `Result[T, E]`.
     pub fn result_err_type(&self) -> Option<&ResolvedType> {
         match self {
             ResolvedType::Generic(name, args)
@@ -541,7 +788,7 @@ impl ResolvedType {
         }
     }
 
-    /// Get the inner type from Option[T]
+    /// Get the inner type from `Option[T]`.
     pub fn option_inner_type(&self) -> Option<&ResolvedType> {
         match self {
             ResolvedType::Generic(name, args)
@@ -552,13 +799,27 @@ impl ResolvedType {
             _ => None,
         }
     }
+
+    /// Get the yielded element type from `Generator[T]`.
+    pub fn generator_element_type(&self) -> Option<&ResolvedType> {
+        match self {
+            ResolvedType::Generic(name, args)
+                if collections::from_str(name.as_str()) == Some(CollectionTypeId::Generator) && !args.is_empty() =>
+            {
+                Some(&args[0])
+            }
+            _ => None,
+        }
+    }
 }
 
 impl std::fmt::Display for ResolvedType {
+    /// Format a resolved type using user-facing Incan type syntax.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             ResolvedType::Int => write!(f, "int"),
             ResolvedType::Float => write!(f, "float"),
+            ResolvedType::Numeric(id) => write!(f, "{}", numerics::as_str(*id)),
             ResolvedType::Bool => write!(f, "bool"),
             ResolvedType::Str => write!(f, "str"),
             ResolvedType::Bytes => write!(f, "bytes"),
@@ -585,7 +846,11 @@ impl std::fmt::Display for ResolvedType {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", p)?;
+                    match p.kind {
+                        ParamKind::Normal => write!(f, "{}", p.ty)?,
+                        ParamKind::RestPositional => write!(f, "*{}", p.ty)?,
+                        ParamKind::RestKeyword => write!(f, "**{}", p.ty)?,
+                    }
                 }
                 write!(f, ") -> {}", ret)
             }
@@ -602,8 +867,43 @@ impl std::fmt::Display for ResolvedType {
             ResolvedType::TypeVar(name) => write!(f, "{}", name),
             ResolvedType::SelfType => write!(f, "Self"),
             ResolvedType::Ref(inner) => write!(f, "&{}", inner),
+            ResolvedType::RefMut(inner) => write!(f, "&mut {}", inner),
+            ResolvedType::RustPath(path) => write!(f, "rust::{}", path),
+            ResolvedType::CallSiteInfer => write!(f, "_"),
             ResolvedType::Unknown => write!(f, "?"),
         }
+    }
+}
+
+/// Construct the canonical semantic form for an anonymous union.
+///
+/// This flattens nested unions, removes duplicates, sorts members by display for deterministic equality, and rewrites
+/// `None`/`Unit`-containing unions through `Option[...]` as required by RFC 029.
+pub fn union_ty(members: Vec<ResolvedType>) -> ResolvedType {
+    let mut flattened = Vec::new();
+    let mut contains_none = false;
+
+    for member in members {
+        match member {
+            ResolvedType::Generic(name, args) if name == UNION_TYPE_NAME => flattened.extend(args),
+            ResolvedType::Unit => contains_none = true,
+            other => flattened.push(other),
+        }
+    }
+
+    flattened.sort_by_key(|member| member.to_string());
+    flattened.dedup();
+
+    let inner = match flattened.as_slice() {
+        [] => ResolvedType::Unit,
+        [single] => single.clone(),
+        _ => ResolvedType::Generic(UNION_TYPE_NAME.to_string(), flattened),
+    };
+
+    if contains_none {
+        ResolvedType::Generic(collections::as_str(CollectionTypeId::Option).to_string(), vec![inner])
+    } else {
+        inner
     }
 }
 
@@ -618,14 +918,45 @@ fn normalize_type_name(name: &str) -> String {
     name.to_string()
 }
 
+/// Resolve `a::b::c` in type position when `a` is a `rust::` import binding (module or item).
+fn resolve_qualified_rust_type_path(segments: &[String], symbols: &SymbolTable) -> ResolvedType {
+    if segments.len() < 2 {
+        return ResolvedType::Unknown;
+    }
+    let Some(root) = segments.first() else {
+        return ResolvedType::Unknown;
+    };
+    let Some(id) = symbols.lookup(root) else {
+        return ResolvedType::Unknown;
+    };
+    let Some(sym) = symbols.get(id) else {
+        return ResolvedType::Unknown;
+    };
+    let SymbolKind::RustItem(info) = &sym.kind else {
+        return ResolvedType::Unknown;
+    };
+    let mut path = info.path.clone();
+    for seg in segments.iter().skip(1) {
+        path.push_str("::");
+        path.push_str(seg);
+    }
+    ResolvedType::RustPath(path)
+}
+
+/// Resolve an AST type annotation into the canonical semantic type representation.
 pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
     match ty {
+        Type::Qualified(segments) => resolve_qualified_rust_type_path(segments, symbols),
         Type::Simple(name) => {
             if let Some(id) = numerics::from_str(name.as_str()) {
-                return match id {
-                    NumericTypeId::Int => ResolvedType::Int,
-                    NumericTypeId::Float => ResolvedType::Float,
-                    NumericTypeId::Bool => ResolvedType::Bool,
+                return match name.as_str() {
+                    "int" => ResolvedType::Int,
+                    "float" => ResolvedType::Float,
+                    "bool" => ResolvedType::Bool,
+                    _ => match id {
+                        NumericTypeId::Bool => ResolvedType::Bool,
+                        _ => ResolvedType::Numeric(id),
+                    },
                 };
             }
             if let Some(id) = stringlike::from_str(name.as_str()) {
@@ -647,6 +978,17 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
             match name.as_str() {
                 conventions::UNIT_TYPE_NAME | conventions::NONE_TYPE_NAME => ResolvedType::Unit,
                 _ => {
+                    if let Some(id) = symbols.lookup(name)
+                        && let Some(sym) = symbols.get(id)
+                        && let SymbolKind::RustItem(info) = &sym.kind
+                    {
+                        return match info.binding {
+                            RustImportBindingKind::CrateRoot => ResolvedType::Unknown,
+                            RustImportBindingKind::RootedPath | RustImportBindingKind::FromImport => {
+                                ResolvedType::RustPath(info.path.clone())
+                            }
+                        };
+                    }
                     // Check if it's a known type
                     if symbols.lookup(name).is_some() {
                         ResolvedType::Named(name.clone())
@@ -657,6 +999,10 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
                 }
             }
         }
+        Type::ConstrainedPrimitive(name, _) => {
+            let base = Type::Simple(name.clone());
+            resolve_type(&base, symbols)
+        }
         Type::Generic(name, args) => {
             let resolved_args: Vec<_> = args.iter().map(|a| resolve_type(&a.node, symbols)).collect();
             // Normalize type name for built-in generics (aliases → canonical spellings).
@@ -664,6 +1010,10 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
             let normalized_name = id
                 .map(|id| collections::as_str(id).to_string())
                 .unwrap_or_else(|| normalize_type_name(name));
+
+            if normalized_name == UNION_TYPE_NAME {
+                return union_ty(resolved_args);
+            }
 
             match id {
                 Some(CollectionTypeId::FrozenList) => {
@@ -682,17 +1032,24 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
                 _ => ResolvedType::Generic(normalized_name, resolved_args),
             }
         }
+        Type::IntLiteral(value) => ResolvedType::TypeVar(value.repr.clone()),
         Type::Function(params, ret) => {
-            let resolved_params: Vec<_> = params.iter().map(|p| resolve_type(&p.node, symbols)).collect();
+            let resolved_params: Vec<_> = params
+                .iter()
+                .map(|p| CallableParam::positional(resolve_type(&p.node, symbols)))
+                .collect();
             let resolved_ret = resolve_type(&ret.node, symbols);
             ResolvedType::Function(resolved_params, Box::new(resolved_ret))
         }
+        Type::Ref(inner) => ResolvedType::Ref(Box::new(resolve_type(&inner.node, symbols))),
+        Type::RefMut(inner) => ResolvedType::RefMut(Box::new(resolve_type(&inner.node, symbols))),
         Type::Unit => ResolvedType::Unit,
         Type::Tuple(elems) => {
             let resolved_elems: Vec<_> = elems.iter().map(|e| resolve_type(&e.node, symbols)).collect();
             ResolvedType::Tuple(resolved_elems)
         }
         Type::SelfType => ResolvedType::SelfType,
+        Type::Infer => ResolvedType::CallSiteInfer,
     }
 }
 
@@ -783,7 +1140,10 @@ mod tests {
         let ty = resolve_type(&fn_single, &symbols);
         assert_eq!(
             ty,
-            ResolvedType::Function(vec![ResolvedType::Int], Box::new(ResolvedType::Int))
+            ResolvedType::Function(
+                vec![CallableParam::positional(ResolvedType::Int)],
+                Box::new(ResolvedType::Int),
+            )
         );
 
         // (int, str) -> bool (multi param)
@@ -797,7 +1157,76 @@ mod tests {
         let ty = resolve_type(&fn_multi, &symbols);
         assert_eq!(
             ty,
-            ResolvedType::Function(vec![ResolvedType::Int, ResolvedType::Str], Box::new(ResolvedType::Bool))
+            ResolvedType::Function(
+                vec![
+                    CallableParam::positional(ResolvedType::Int),
+                    CallableParam::positional(ResolvedType::Str),
+                ],
+                Box::new(ResolvedType::Bool),
+            )
         );
+    }
+
+    #[test]
+    fn resolve_type_preserves_existing_int_float_bool_names() {
+        let symbols = SymbolTable::new();
+
+        assert_eq!(
+            resolve_type(&Type::Simple("int".to_string()), &symbols),
+            ResolvedType::Int
+        );
+        assert_eq!(
+            resolve_type(&Type::Simple("float".to_string()), &symbols),
+            ResolvedType::Float
+        );
+        assert_eq!(
+            resolve_type(&Type::Simple("bool".to_string()), &symbols),
+            ResolvedType::Bool
+        );
+    }
+
+    #[test]
+    fn resolve_type_maps_exact_width_and_alias_numeric_names() {
+        let symbols = SymbolTable::new();
+
+        assert_eq!(
+            resolve_type(&Type::Simple("i64".to_string()), &symbols),
+            ResolvedType::Numeric(NumericTypeId::I64)
+        );
+        assert_eq!(
+            resolve_type(&Type::Simple("integer".to_string()), &symbols),
+            ResolvedType::Numeric(NumericTypeId::I32)
+        );
+        assert_eq!(
+            resolve_type(&Type::Simple("byte".to_string()), &symbols),
+            ResolvedType::Numeric(NumericTypeId::U8)
+        );
+        assert_eq!(
+            resolve_type(&Type::Simple("real".to_string()), &symbols),
+            ResolvedType::Numeric(NumericTypeId::F32)
+        );
+        assert_eq!(
+            resolve_type(&Type::Simple("double".to_string()), &symbols),
+            ResolvedType::Numeric(NumericTypeId::F64)
+        );
+    }
+
+    #[test]
+    fn resolve_type_qualified_rust_module_item() {
+        let mut table = SymbolTable::new();
+        table.define(Symbol {
+            name: "proto_type".to_string(),
+            kind: SymbolKind::RustItem(RustItemInfo {
+                crate_name: "substrait".to_string(),
+                path: "substrait::proto::type".to_string(),
+                binding: RustImportBindingKind::FromImport,
+                metadata: None,
+            }),
+            span: Span::default(),
+            scope: 0,
+        });
+        let ty = Type::Qualified(vec!["proto_type".to_string(), "Binary".to_string()]);
+        let r = resolve_type(&ty, &table);
+        assert_eq!(r, ResolvedType::RustPath("substrait::proto::type::Binary".to_string()));
     }
 }

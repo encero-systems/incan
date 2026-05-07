@@ -1,5 +1,5 @@
 """
-Async time primitives backed by explicit runtime adapters.
+Async time primitives backed by direct Rust interop.
 
 This module is the user-facing timing surface for `std.async`. It exposes:
 
@@ -7,10 +7,18 @@ This module is the user-facing timing surface for `std.async`. It exposes:
 - `sleep_ms(milliseconds)` for integer millisecond delays
 - `timeout(seconds, task)` for deadline-bound async work
 - `timeout_ms(milliseconds, task)` for integer millisecond deadlines
+- `timeout_join(seconds, handle)` for deadline-bound waiting on spawned work that must keep running
+- `timeout_join_ms(milliseconds, handle)` for integer millisecond durable join deadlines
 
-The public contract lives in this `.incn` file. The executor-facing leaves live in `incan_stdlib::async::time`.
-For now, `timeout()` and `timeout_ms()` remain direct runtime-backed imports because their Rust-side generic `Future`
-bounds are not yet expressible cleanly in local Incan wrappers.
+Cancellation contracts:
+
+- `sleep()` and `sleep_ms()` are cancel-safe: cancelling the sleep future stops waiting and has no side effect.
+- `timeout()` and `timeout_ms()` cancel the supplied future when the deadline expires.
+- Cancelling a `timeout()` or `timeout_ms()` call before it resolves also drops the supplied future.
+- `timeout_join()` and `timeout_join_ms()` do not cancel the spawned task when the deadline expires; they return the
+  still-live handle in `TimeoutJoinOutcome.TimedOut(handle)`.
+- Cancelling a `timeout_join()` or `timeout_join_ms()` call before it resolves drops the handle owned by the helper. The
+  task continues running, but the caller loses observability unless it has arranged another completion path.
 
 Examples:
     await sleep(0.25)
@@ -26,15 +34,21 @@ Examples:
 """
 
 import std.async
+from std.traits.error import Error
+from rust::incan_stdlib::async::task import JoinHandle, RuntimeFuture
 from rust::incan_stdlib::async::time import (
-    TimeoutError as RawTimeoutError,
-    sleep as runtime_sleep,
-    sleep_ms as runtime_sleep_ms,
-    timeout,
-    timeout_ms,
+    TimeoutJoinOutcome as RustTimeoutJoinOutcome,
+    clamp_seconds,
+    clamp_millis,
+    timeout_join as rust_timeout_join,
+    timeout_join_ms as rust_timeout_join_ms,
+)
+from rust::tokio::time import (
+    sleep as tokio_sleep,
+    timeout as tokio_timeout,
 )
 
-pub type TimeoutError = newtype RawTimeoutError:
+pub model TimeoutError with Error:
     """
     Error returned when a timeout expires before the awaited task completes.
 
@@ -45,10 +59,10 @@ pub type TimeoutError = newtype RawTimeoutError:
     """
 
     def message(self) -> str:
-        return self.0.message()
+        return "operation timed out"
 
     def source(self) -> Option[str]:
-        return self.0.source()
+        return None
 
 
 pub model Duration:
@@ -84,6 +98,17 @@ pub model Duration:
         return Duration(secs=whole, nanos=nanos)
 
 
+pub type TimeoutJoinOutcome[T] = rusttype RustTimeoutJoinOutcome[T]:
+    """
+    Result of waiting on a spawned task with a deadline.
+
+    Variants:
+        Completed(value): the task completed successfully before the deadline.
+        JoinFailed(err): the task finished before the deadline but failed while joining.
+        TimedOut(handle): the deadline expired and the task handle is still live.
+    """
+
+
 pub async def sleep(seconds: float) -> None:
     """
     Sleep for a floating-point second duration.
@@ -91,7 +116,7 @@ pub async def sleep(seconds: float) -> None:
     Example:
         await sleep(0.1)
     """
-    await runtime_sleep(seconds)
+    await tokio_sleep(clamp_seconds(seconds))
 
 
 pub async def sleep_ms(milliseconds: int) -> None:
@@ -101,4 +126,50 @@ pub async def sleep_ms(milliseconds: int) -> None:
     Example:
         await sleep_ms(100)
     """
-    await runtime_sleep_ms(milliseconds)
+    await tokio_sleep(clamp_millis(milliseconds))
+
+
+pub async def timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Result[T, TimeoutError]:
+    """
+    Await `task` with a floating-point second timeout.
+
+    If the deadline expires, the supplied future is cancelled by being dropped. This is cancel-safe for futures that do
+    not need to finish after their final suspension point; spawn the work first if it must be durable once spawned.
+    """
+    match await tokio_timeout(clamp_seconds(seconds), task):
+        Ok(value) => return Ok(value)
+        Err(_err) => return Err(TimeoutError())
+
+
+pub async def timeout_ms[T with (Send, Static), TaskFuture with RuntimeFuture[T]](milliseconds: int, task: TaskFuture) -> Result[T, TimeoutError]:
+    """
+    Await `task` with an integer millisecond timeout.
+
+    If the deadline expires, the supplied future is cancelled by being dropped. This is cancel-safe for futures that do
+    not need to finish after their final suspension point; spawn the work first if it must be durable once spawned.
+    """
+    match await tokio_timeout(clamp_millis(milliseconds), task):
+        Ok(value) => return Ok(value)
+        Err(_err) => return Err(TimeoutError())
+
+
+pub async def timeout_join[T with (Send, Static)](seconds: float, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]:
+    """
+    Wait up to `seconds` for a spawned task without cancelling it when the deadline expires.
+
+    Returns `TimeoutJoinOutcome.Completed(value)` when the task completes successfully,
+    `TimeoutJoinOutcome.JoinFailed(err)` when the task finishes with a join error, and
+    `TimeoutJoinOutcome.TimedOut(handle)` when the deadline wins. In the timeout case, `handle` remains live and can be
+    awaited, stored, or aborted explicitly. For blocking work created with `spawn_blocking()`, `abort()` can only prevent
+    work that has not started yet.
+    """
+    return await rust_timeout_join(seconds, handle)
+
+
+pub async def timeout_join_ms[T with (Send, Static)](milliseconds: int, handle: JoinHandle[T]) -> TimeoutJoinOutcome[T]:
+    """
+    Wait up to `milliseconds` for a spawned task without cancelling it when the deadline expires.
+
+    This is the millisecond-duration form of `timeout_join()`.
+    """
+    return await rust_timeout_join_ms(milliseconds, handle)

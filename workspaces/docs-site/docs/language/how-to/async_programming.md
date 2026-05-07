@@ -30,6 +30,17 @@ def main() -> None:
 
 ## Core Concepts
 
+### Cancellation Vocabulary
+
+Async APIs in `std.async` document cancellation with four contract terms:
+
+| Term | Meaning |
+| ---- | ------- |
+| `cancel-safe` | Cancelling a pending wait does not consume the value, acquire the resource, or otherwise complete the operation. |
+| `cancel-safe-but-lossy` | Cancelling the wait does not complete the operation, but a value or queue position owned by that wait may be lost. |
+| `not cancel-safe` | Cancelling a pending wait can break the operation's coordination contract or leave other participants waiting. |
+| `durable once spawned` | Work continues after it is spawned unless it finishes or is explicitly aborted; dropping the handle detaches the work and loses the result. |
+
 ### Async Functions
 
 Declare async functions with `async def`:
@@ -54,6 +65,11 @@ async def process() -> str:
     result = await transform(data)
     return result
 ```
+
+`await` is only valid inside `async def` bodies and **async** methods. Using `await` in an ordinary `def` or sync method is a type error. Calling an async function or method as a direct value without `await` produces a compiler warning; pass async work to task APIs such as `spawn()` when another async API should consume it.
+
+!!! info "Coming from Python?"
+    Incan's `await` follows the same rules as in Python: it is disallowed outside an `async` scope.
 
 ## Time Primitives
 
@@ -83,6 +99,27 @@ async def demo() -> None:
         case Err(e): println("Operation timed out")
 ```
 
+`timeout()` and `timeout_ms()` cancel the supplied future when the deadline expires. That is appropriate for ordinary request work where the timed-out operation should stop. If the work must keep running after the deadline path returns, spawn it first and use `timeout_join()` so the timeout result preserves the live `JoinHandle`.
+
+### timeout_join
+
+Wait for spawned work without cancelling it when the deadline expires:
+
+```incan
+from std.async.task import spawn
+from std.async.time import timeout_join, TimeoutJoinOutcome
+
+handle = spawn(write_audit_event(event))
+
+match await timeout_join(1.0, handle):
+    case TimeoutJoinOutcome.Completed(_): println("audit event written")
+    case TimeoutJoinOutcome.JoinFailed(err): println(err.message())
+    case TimeoutJoinOutcome.TimedOut(live_handle):
+        remember(live_handle)
+```
+
+Use `timeout_join()` for side-effecting work that must keep running once spawned, such as durable writes, protocol commits, and file flushes. On timeout, the task continues running and `TimeoutJoinOutcome.TimedOut(handle)` carries the live handle so you can await it later, store it in a task registry, or abort it deliberately. If an outer cancellation boundary cancels the `timeout_join()` call itself before it returns, the helper-owned handle is dropped and the task is detached unless you arranged another completion path. For `spawn_blocking()` handles, `abort()` can only prevent queued work from starting; blocking work that has already started must finish on its own.
+
 ## Task Spawning
 
 ### spawn
@@ -108,6 +145,8 @@ result = await handle
 println(f"Background task returned: {result}")
 ```
 
+Spawned tasks are durable once spawned. Dropping `handle` detaches the task and loses the result; it does not cancel the task. Use `handle.abort()` when an async task should be cancelled.
+
 ### spawn_blocking
 
 Run CPU-intensive or blocking code on a dedicated thread:
@@ -124,6 +163,8 @@ def heavy_computation() -> int:
 # Won't block the async runtime
 result = await spawn_blocking(heavy_computation)
 ```
+
+`spawn_blocking()` is for bounded blocking work that eventually finishes on its own. Dropping its `JoinHandle` detaches the work and loses the result, and `abort()` cannot stop blocking work after it starts running. `abort()` can only prevent a queued blocking task from starting.
 
 ### yield_now
 
@@ -176,10 +217,27 @@ async def producer() -> None:
 
 # Receiver - blocks until message available
 async def consumer() -> None:
-    while True:
-        match await rx.recv():
-            case Some(msg): println(f"Got: {msg}")
-            case None: break  # All senders dropped, channel closed
+    while let Some(msg) = await rx.recv():
+        println(f"Got: {msg}")
+```
+
+Cancellation contracts:
+
+- `tx.send(value)` is cancel-safe-but-lossy. If it is cancelled while waiting for bounded-channel capacity, the value is not sent and is dropped.
+- `tx.reserve()` waits for capacity before a value is committed. Use it for critical sends where cancellation must not drop the message value.
+- `permit.send(value)` is synchronous and either delivers the value or returns it in `SendError[T]`.
+- `rx.recv()` is cancel-safe. If it is cancelled while waiting, no message is removed from the channel.
+- `try_send()` and `try_recv()` return immediately, so there is no pending wait to cancel.
+
+Reserve capacity before building or moving a critical message:
+
+```incan
+match await tx.reserve():
+    Ok(permit) =>
+        match permit.send("audit-event"):
+            Ok(_) => println("sent")
+            Err(err) => println(f"send failed: {err.value}")
+    Err(err) => println(err.message())
 ```
 
 **Multiple producers** (clone the sender):
@@ -206,10 +264,8 @@ spawn(async () -> None:
 
 # Single consumer receives from all producers
 async def consume() -> None:
-    while True:
-        match await rx.recv():
-            case Some(n): println(f"Received: {n}")
-            case None: break
+    while let Some(n) = await rx.recv():
+        println(f"Received: {n}")
 ```
 
 !!! note "Coming from Python?"
@@ -290,6 +346,8 @@ match await rx.recv():
     case Err(e): println("Sender dropped without sending")
 ```
 
+The one-shot receiver is cancel-safe: cancelling `rx.recv()` does not consume the value. `tx.send(value)` is synchronous, so it either delivers the value or returns it immediately if the receiver is gone.
+
 **Common pattern - returning results from spawned tasks:**
 
 ```incan
@@ -348,7 +406,7 @@ Mutual exclusion — ensures only **one task** can access the wrapped value at a
 
 **API:**
 
-- `Mutex(value)` — Create a mutex wrapping a value
+- `Mutex.new(value)` — Create a mutex wrapping a value
 - `await mutex.lock()` — Acquire lock, returns a guard
 - `guard.get()` — Read the value
 - `guard.set(new_value)` — Write a new value
@@ -357,7 +415,7 @@ Mutual exclusion — ensures only **one task** can access the wrapped value at a
 ```incan
 from std.async.sync import Mutex
 
-shared_counter = Mutex(0)
+shared_counter = Mutex.new(0)
 
 async def increment() -> None:
     guard = await shared_counter.lock()  # Blocks until lock acquired
@@ -365,6 +423,8 @@ async def increment() -> None:
     guard.set(current + 1)
     # Lock released when guard goes out of scope
 ```
+
+`mutex.lock()` is cancel-safe-but-lossy: cancellation before the guard is returned does not acquire the lock, but the waiter loses its place in the fairness queue.
 
 !!! note "Python comparison"
     Python uses a lock separate from the data. Incan wraps the data (`Mutex[T]`), so the lock and value are kept together.
@@ -383,7 +443,7 @@ async def increment():
 from std.async.sync import Mutex
 
 # Incan - lock wraps the data
-counter = Mutex(0)
+counter = Mutex.new(0)
 
 async def increment() -> None:
     guard = await counter.lock()
@@ -399,7 +459,7 @@ More efficient than Mutex when reads are frequent.
 
 **API:**
 
-- `RwLock(value)` — Create an RwLock wrapping a value
+- `RwLock.new(value)` — Create an RwLock wrapping a value
 - `await rwlock.read()` — Acquire read lock (shared with other readers)
 - `await rwlock.write()` — Acquire write lock (exclusive)
 - `guard.get()` — Read the value
@@ -408,7 +468,7 @@ More efficient than Mutex when reads are frequent.
 ```incan
 from std.async.sync import RwLock
 
-config = RwLock(Config(debug=False))
+config = RwLock.new(Config(debug=False))
 
 async def read_config() -> bool:
     guard = await config.read()  # Multiple readers allowed simultaneously
@@ -418,6 +478,8 @@ async def update_config(debug: bool) -> None:
     guard = await config.write()  # Waits for all readers, then exclusive
     guard.set(Config(debug=debug))
 ```
+
+`rwlock.read()` and `rwlock.write()` are cancel-safe-but-lossy: cancellation before a guard is returned does not acquire the lock, but the waiter loses its place in the fairness queue.
 
 !!! note "Coming from Python?"
     Python's `asyncio` doesn't have `RwLock`. This is a Rust/systems programming concept.
@@ -432,7 +494,7 @@ Counting semaphore — limits how many tasks can access a resource concurrently 
 
 **API:**
 
-- `Semaphore(n)` — Create with n permits
+- `Semaphore.new(n)` — Create with n permits
 - `await sem.acquire()` — Wait for and acquire a permit
 - Permit auto-releases when it goes out of scope
 
@@ -440,7 +502,7 @@ Counting semaphore — limits how many tasks can access a resource concurrently 
 from std.async.sync import Semaphore
 
 # Allow max 3 concurrent connections
-connection_limit = Semaphore(3)
+connection_limit = Semaphore.new(3)
 
 async def make_request() -> Response:
     permit = await connection_limit.acquire()  # Blocks if no permits
@@ -448,6 +510,8 @@ async def make_request() -> Response:
     # Permit released automatically when permit goes out of scope
     return response
 ```
+
+`sem.acquire()` is cancel-safe-but-lossy: cancellation before a permit is returned does not acquire a permit, but the waiter loses its place in the fairness queue.
 
 !!! note "Python equivalent"
     `asyncio.Semaphore(n)` works the same way.
@@ -460,13 +524,13 @@ Synchronization point — makes N tasks wait until **all of them** reach the bar
 
 **API:**
 
-- `Barrier(n)` — Create barrier for n tasks
+- `Barrier.new(n)` — Create barrier for n tasks
 - `await barrier.wait()` — Wait until all n tasks reach this point
 
 ```incan
 from std.async.sync import Barrier
 
-barrier = Barrier(3)  # Wait for 3 tasks
+barrier = Barrier.new(3)  # Wait for 3 tasks
 
 async def worker(id: int) -> None:
     println(f"Worker {id} starting phase 1")
@@ -477,6 +541,8 @@ async def worker(id: int) -> None:
     println(f"Worker {id} starting phase 2")  # All start phase 2 together
 ```
 
+`barrier.wait()` is cancellation-aware before release: cancelling a pending wait withdraws that participant from the current generation and frees its slot. Remaining participants still need enough active arrivals to complete the generation, so workflows that allow independent participant cancellation should also define how replacement participants arrive or how the whole phase is abandoned. The returned slot is unique within a completed generation, but cancellation can reuse freed slots, so do not treat it as chronological arrival order.
+
 !!! note "Python equivalent"
     `asyncio.Barrier(n)` (added in Python 3.11) works the same way.
 
@@ -485,42 +551,7 @@ async def worker(id: int) -> None:
 See [examples/advanced/async_sync.incn](https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_sync.incn)
 for a runnable demo of all four primitives.
 
-## Select (Racing Futures)
-
-### select2
-
-Race two futures, get whichever completes first:
-
-```incan
-from std.async.select import select2
-from std.async.time import sleep
-
-async def fast() -> str:
-    await sleep(0.1)
-    return "fast"
-
-async def slow() -> str:
-    await sleep(1.0)
-    return "slow"
-
-match await select2(fast, slow):
-    case Either.Left(result): println(f"Fast won: {result}")
-    case Either.Right(result): println(f"Slow won: {result}")
-```
-
-### select3
-
-Race three futures:
-
-```incan
-from std.async.select import select3
-
-result = await select3(op1, op2, op3)
-match result:
-    case Either3.First(v): println("op1 won")
-    case Either3.Second(v): println("op2 won")
-    case Either3.Third(v): println("op3 won")
-```
+## Select and Future Race
 
 ### select_timeout
 
@@ -533,6 +564,10 @@ match await select_timeout(2.0, slow_operation):
     case Some(result): println(f"Got: {result}")
     case None: println("Timed out, using default")
 ```
+
+`select_timeout()` has the same cancellation contract as `timeout()`: if the deadline wins, the supplied future is cancelled. Use it only when the timed-out future may be safely abandoned. For spawned work that must continue, use `timeout_join()` instead.
+
+Future `race` syntax is planned as first-completion-wins composition. Losing race arms are cancelled, so loser arms must not contain side effects that are required for correctness after their final suspension point. Put required cleanup in cancellation-safe resources, or spawn durable work before the race and use a handle-preserving wait such as `timeout_join()` when you still need the result.
 
 ## Runtime Integration
 
@@ -607,9 +642,9 @@ tx, rx = channel[Data](100)
 tx, rx = unbounded_channel[Data]()
 ```
 
-### 4. Handle Cancellation
+### 4. Handle Cancellation Explicitly
 
-Tasks can be cancelled when their handles are dropped:
+Dropping a task handle detaches the task and loses its result. It does not cancel the task:
 
 ```incan
 from std.async.task import spawn
@@ -620,10 +655,11 @@ async def cancellable_work() -> str:
     return "done"
 
 handle = spawn(cancellable_work)
-# If we don't await handle, the task is cancelled!
-# Always await or explicitly ignore:
-_ = handle  # Explicit ignore (task continues)
+# This detaches the task and loses the result; the task keeps running.
+_ = handle
 ```
+
+Use `handle.abort()` when an async task should be cancelled. For blocking work created with `spawn_blocking()`, `abort()` only has a chance to prevent execution before the blocking task starts.
 
 ## Error Handling
 
@@ -640,8 +676,7 @@ match result:
 
 ### Channel Closed
 
-When sending fails because the receiver was dropped, `SendError[T]` contains the value that couldn't be sent in its
-`.value` field:
+When sending fails because the receiver was dropped, `SendError[T]` contains the value that couldn't be sent in its `.value` field:
 
 ```incan
 from std.async.channel import Sender

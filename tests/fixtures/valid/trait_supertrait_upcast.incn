@@ -1,0 +1,10 @@
+trait Root:
+    def r(self) -> int: ...
+
+
+trait Mid with Root:
+    def m(self) -> int: ...
+
+
+def to_root(x: Mid) -> Root:
+    return x

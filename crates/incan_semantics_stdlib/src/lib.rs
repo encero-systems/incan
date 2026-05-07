@@ -29,8 +29,9 @@ use incan_core::lang::keywords::KeywordId;
 use incan_core::lang::stdlib;
 use incan_semantics_core::{
     AssertShape, DecoratorFeature, RuntimeRequirement, SurfaceCallTarget, SurfaceExprLoweringAction,
-    SurfaceExprPayloadKind, SurfaceExprTypeCheck, SurfaceFeatureKey, SurfaceModifierKind, SurfaceSemanticsPack,
-    SurfaceStmtLoweringAction, SurfaceStmtPayloadKind, SurfaceStmtTypeCheck, decorator_feature_from_id,
+    SurfaceExprPayloadKind, SurfaceExprTypeCheck, SurfaceFeatureKey, SurfaceModifierKind, SurfaceModifierTypeCheck,
+    SurfaceSemanticsPack, SurfaceStmtLoweringAction, SurfaceStmtPayloadKind, SurfaceStmtTypeCheck,
+    decorator_feature_from_id,
 };
 
 /// Stdlib semantics pack implementation.
@@ -132,6 +133,16 @@ impl SurfaceSemanticsPack for StdlibSemanticsPack {
         #[cfg(feature = "std_async")]
         if matches!(key, SurfaceFeatureKey::SoftKeyword(KeywordId::Await)) {
             return Some(SurfaceExprTypeCheck::AwaitCheck);
+        }
+        let _ = key;
+        None
+    }
+
+    /// Route `async` declaration modifiers to async callable validation when `std_async` is enabled.
+    fn typecheck_surface_modifier_action(&self, key: &SurfaceFeatureKey) -> Option<SurfaceModifierTypeCheck> {
+        #[cfg(feature = "std_async")]
+        if matches!(key, SurfaceFeatureKey::SoftKeyword(KeywordId::Async)) {
+            return Some(SurfaceModifierTypeCheck::AsyncCallable);
         }
         let _ = key;
         None

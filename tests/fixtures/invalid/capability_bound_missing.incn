@@ -1,0 +1,21 @@
+trait Capability:
+    def capability(self) -> int: ...
+
+
+trait Other:
+    def other(self) -> int: ...
+
+
+model Plain with Other:
+    value: int
+
+    def other(self) -> int:
+        return self.value
+
+
+def require_capability[T with Capability](value: T) -> T:
+    return value
+
+
+def main() -> Plain:
+    return require_capability(Plain(value=1))

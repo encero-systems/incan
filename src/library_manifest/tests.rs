@@ -26,6 +26,8 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
                     },
                 ],
             },
+            kind: ParamKindExport::Normal,
+            has_default: false,
         }],
         return_type: TypeRef::Function {
             params: vec![TypeRef::Tuple {
@@ -53,6 +55,212 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
 }
 
 #[test]
+fn manifest_io_round_trip_preserves_partial_exports() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.partials.push(PartialExport {
+        name: "get".to_string(),
+        target_path: vec!["route".to_string()],
+        target_kind: PartialTargetKindExport::Function,
+        presets: vec![PartialPresetExport {
+            name: "method".to_string(),
+            ty: TypeRef::Named {
+                name: "str".to_string(),
+            },
+            value: PresetValueExport::String("GET".to_string()),
+        }],
+        type_params: Vec::new(),
+        params: vec![
+            ParamExport {
+                name: "method".to_string(),
+                ty: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+                kind: ParamKindExport::Normal,
+                has_default: true,
+            },
+            ParamExport {
+                name: "path".to_string(),
+                ty: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+                kind: ParamKindExport::Normal,
+                has_default: false,
+            },
+        ],
+        return_type: TypeRef::Named {
+            name: "str".to_string(),
+        },
+        is_async: false,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("partials.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_validation_rejects_invalid_partial_exports() -> Result<(), Box<dyn std::error::Error>> {
+    let mut base = LibraryManifest::new("mylib", "0.1.0");
+    base.exports.partials.push(PartialExport {
+        name: "get".to_string(),
+        target_path: vec!["route".to_string()],
+        target_kind: PartialTargetKindExport::Function,
+        presets: vec![PartialPresetExport {
+            name: "method".to_string(),
+            ty: TypeRef::Named {
+                name: "str".to_string(),
+            },
+            value: PresetValueExport::String("GET".to_string()),
+        }],
+        type_params: Vec::new(),
+        params: Vec::new(),
+        return_type: TypeRef::Named {
+            name: "str".to_string(),
+        },
+        is_async: false,
+    });
+
+    for (manifest, expected) in [
+        {
+            let mut manifest = base.clone();
+            manifest.exports.partials[0].presets.clear();
+            (manifest, "must declare at least one preset")
+        },
+        {
+            let mut manifest = base.clone();
+            let duplicate = manifest.exports.partials[0].presets[0].clone();
+            manifest.exports.partials[0].presets.push(duplicate);
+            (manifest, "repeats preset `method`")
+        },
+    ] {
+        let tmp = tempfile::tempdir()?;
+        let path = tmp.path().join("invalid-partials.incnlib");
+        let err = manifest
+            .write_to_path(&path)
+            .expect_err("invalid partial manifest should fail validation");
+        assert!(
+            err.to_string().contains(expected),
+            "expected validation error containing `{expected}`, got `{err}`"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.functions.push(FunctionExport {
+        name: "collect".to_string(),
+        type_params: Vec::new(),
+        params: vec![
+            ParamExport {
+                name: "items".to_string(),
+                ty: TypeRef::Named {
+                    name: "int".to_string(),
+                },
+                kind: ParamKindExport::RestPositional,
+                has_default: false,
+            },
+            ParamExport {
+                name: "labels".to_string(),
+                ty: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+                kind: ParamKindExport::RestKeyword,
+                has_default: false,
+            },
+        ],
+        return_type: TypeRef::Named {
+            name: "int".to_string(),
+        },
+        is_async: false,
+    });
+    manifest.exports.classes.push(ClassExport {
+        name: "Collector".to_string(),
+        type_params: Vec::new(),
+        extends: None,
+        traits: Vec::new(),
+        trait_adoptions: Vec::new(),
+        derives: Vec::new(),
+        fields: Vec::new(),
+        methods: vec![MethodExport {
+            alias_of: None,
+            name: "collect".to_string(),
+            type_params: Vec::new(),
+            receiver: Some(ReceiverExport::Immutable),
+            params: vec![ParamExport {
+                name: "items".to_string(),
+                ty: TypeRef::Named {
+                    name: "int".to_string(),
+                },
+                kind: ParamKindExport::RestPositional,
+                has_default: false,
+            }],
+            return_type: TypeRef::Named {
+                name: "int".to_string(),
+            },
+            is_async: false,
+            has_body: true,
+        }],
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("rest_params.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_validation_rejects_invalid_rest_parameter_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.functions.push(FunctionExport {
+        name: "bad_collect".to_string(),
+        type_params: Vec::new(),
+        params: vec![
+            ParamExport {
+                name: "labels".to_string(),
+                ty: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+                kind: ParamKindExport::RestKeyword,
+                has_default: false,
+            },
+            ParamExport {
+                name: "value".to_string(),
+                ty: TypeRef::Named {
+                    name: "int".to_string(),
+                },
+                kind: ParamKindExport::Normal,
+                has_default: false,
+            },
+        ],
+        return_type: TypeRef::Named {
+            name: "int".to_string(),
+        },
+        is_async: false,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("invalid_rest_params.incnlib");
+    let err = manifest
+        .write_to_path(&path)
+        .expect_err("expected invalid rest parameter metadata to fail validation");
+    assert!(
+        err.to_string()
+            .contains("cannot appear after a `**kwargs` rest parameter"),
+        "unexpected validation error: {err}"
+    );
+    Ok(())
+}
+
+#[test]
 fn manifest_io_round_trip_preserves_trait_supertraits() -> Result<(), Box<dyn std::error::Error>> {
     let mut manifest = LibraryManifest::new("mylib", "0.1.0");
     manifest.exports.traits.push(TraitExport {
@@ -68,6 +276,335 @@ fn manifest_io_round_trip_preserves_trait_supertraits() -> Result<(), Box<dyn st
 
     let tmp = tempfile::tempdir()?;
     let path = tmp.path().join("traits.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_value_enum_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.enums.push(EnumExport {
+        name: "Status".to_string(),
+        type_params: Vec::new(),
+        traits: Vec::new(),
+        trait_adoptions: Vec::new(),
+        value_type: Some(EnumValueTypeExport::Str),
+        variants: vec![
+            EnumVariantExport {
+                name: "Active".to_string(),
+                fields: Vec::new(),
+                value: Some(EnumValueExport::Str("active".to_string())),
+            },
+            EnumVariantExport {
+                name: "Disabled".to_string(),
+                fields: Vec::new(),
+                value: Some(EnumValueExport::Str("disabled".to_string())),
+            },
+        ],
+        methods: Vec::new(),
+        derives: Vec::new(),
+    });
+    manifest.exports.enums.push(EnumExport {
+        name: "HttpStatus".to_string(),
+        type_params: Vec::new(),
+        traits: Vec::new(),
+        trait_adoptions: Vec::new(),
+        value_type: Some(EnumValueTypeExport::Int),
+        variants: vec![
+            EnumVariantExport {
+                name: "Ok".to_string(),
+                fields: Vec::new(),
+                value: Some(EnumValueExport::Int(200)),
+            },
+            EnumVariantExport {
+                name: "NotFound".to_string(),
+                fields: Vec::new(),
+                value: Some(EnumValueExport::Int(404)),
+            },
+        ],
+        methods: Vec::new(),
+        derives: Vec::new(),
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("value_enum.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_enum_traits_and_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.enums.push(EnumExport {
+        name: "Status".to_string(),
+        type_params: Vec::new(),
+        traits: vec!["Labelled".to_string()],
+        trait_adoptions: Vec::new(),
+        value_type: None,
+        variants: vec![EnumVariantExport {
+            name: "Active".to_string(),
+            fields: Vec::new(),
+            value: None,
+        }],
+        methods: vec![MethodExport {
+            alias_of: None,
+            name: "label".to_string(),
+            type_params: Vec::new(),
+            receiver: Some(ReceiverExport::Immutable),
+            params: Vec::new(),
+            return_type: TypeRef::Named {
+                name: "str".to_string(),
+            },
+            is_async: false,
+            has_body: true,
+        }],
+        derives: Vec::new(),
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("enum_methods.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_reader_rejects_incomplete_value_enum_metadata() {
+    let content = format!(
+        r#"{{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "0.1.0",
+  "manifest_format": {},
+  "exports": {{
+    "enums": [
+      {{
+        "name": "Status",
+        "type_params": [],
+        "value_type": "str",
+        "variants": [
+          {{ "name": "Active", "fields": [], "value": "active" }},
+          {{ "name": "Disabled", "fields": [] }}
+        ],
+        "derives": []
+      }}
+    ]
+  }},
+  "soft_keywords": {{}}
+}}"#,
+        LIBRARY_MANIFEST_FORMAT
+    );
+    let err = LibraryManifest::from_json_str(&content);
+    assert!(
+        matches!(err, Err(LibraryManifestError::Invalid(ref msg)) if msg.contains("is missing a raw value")),
+        "expected missing value enum metadata diagnostic, got {err:?}"
+    );
+}
+
+#[test]
+fn manifest_reader_rejects_mismatched_value_enum_metadata() {
+    let content = format!(
+        r#"{{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "0.1.0",
+  "manifest_format": {},
+  "exports": {{
+    "enums": [
+      {{
+        "name": "Status",
+        "type_params": [],
+        "value_type": "int",
+        "variants": [
+          {{ "name": "Active", "fields": [], "value": "active" }}
+        ],
+        "derives": []
+      }}
+    ]
+  }},
+  "soft_keywords": {{}}
+}}"#,
+        LIBRARY_MANIFEST_FORMAT
+    );
+    let err = LibraryManifest::from_json_str(&content);
+    assert!(
+        matches!(err, Err(LibraryManifestError::Invalid(ref msg)) if msg.contains("does not match backing type `int`")),
+        "expected mismatched value enum metadata diagnostic, got {err:?}"
+    );
+}
+
+#[test]
+fn manifest_reader_rejects_duplicate_value_enum_metadata() {
+    let content = format!(
+        r#"{{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "0.1.0",
+  "manifest_format": {},
+  "exports": {{
+    "enums": [
+      {{
+        "name": "Status",
+        "type_params": [],
+        "value_type": "str",
+        "variants": [
+          {{ "name": "Active", "fields": [], "value": "active" }},
+          {{ "name": "Enabled", "fields": [], "value": "active" }}
+        ],
+        "derives": []
+      }}
+    ]
+  }},
+  "soft_keywords": {{}}
+}}"#,
+        LIBRARY_MANIFEST_FORMAT
+    );
+    let err = LibraryManifest::from_json_str(&content);
+    assert!(
+        matches!(err, Err(LibraryManifestError::Invalid(ref msg)) if msg.contains("duplicate raw value `active`")),
+        "expected duplicate value enum metadata diagnostic, got {err:?}"
+    );
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_generic_method_type_params() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.classes.push(ClassExport {
+        name: "Box".to_string(),
+        type_params: Vec::new(),
+        extends: None,
+        traits: Vec::new(),
+        trait_adoptions: Vec::new(),
+        derives: Vec::new(),
+        fields: Vec::new(),
+        methods: vec![MethodExport {
+            alias_of: None,
+            name: "get".to_string(),
+            type_params: vec![TypeParamExport {
+                name: "T".to_string(),
+                bounds: vec![TypeBoundExport {
+                    name: "Clone".to_string(),
+                    type_args: Vec::new(),
+                }],
+            }],
+            receiver: Some(ReceiverExport::Immutable),
+            params: vec![ParamExport {
+                name: "value".to_string(),
+                ty: TypeRef::TypeParam { name: "T".to_string() },
+                kind: ParamKindExport::Normal,
+                has_default: false,
+            }],
+            return_type: TypeRef::TypeParam { name: "T".to_string() },
+            is_async: false,
+            has_body: true,
+        }],
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("classes.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_model_and_class_derives() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.models.push(ModelExport {
+        name: "Record".to_string(),
+        type_params: Vec::new(),
+        traits: Vec::new(),
+        trait_adoptions: Vec::new(),
+        derives: vec!["Clone".to_string()],
+        fields: Vec::new(),
+        methods: Vec::new(),
+    });
+    manifest.exports.classes.push(ClassExport {
+        name: "Carrier".to_string(),
+        type_params: Vec::new(),
+        extends: None,
+        traits: Vec::new(),
+        trait_adoptions: Vec::new(),
+        derives: vec!["Clone".to_string(), "Debug".to_string()],
+        fields: Vec::new(),
+        methods: Vec::new(),
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("derives.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_type_trait_adoptions() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    let convert_int = TypeBoundExport {
+        name: "Convert".to_string(),
+        type_args: vec![TypeRef::Named {
+            name: "int".to_string(),
+        }],
+    };
+    let convert_float = TypeBoundExport {
+        name: "Convert".to_string(),
+        type_args: vec![TypeRef::Named {
+            name: "float".to_string(),
+        }],
+    };
+    manifest.exports.models.push(ModelExport {
+        name: "Record".to_string(),
+        type_params: Vec::new(),
+        traits: vec!["Convert".to_string(), "Convert".to_string()],
+        trait_adoptions: vec![convert_int.clone(), convert_float.clone()],
+        derives: Vec::new(),
+        fields: Vec::new(),
+        methods: Vec::new(),
+    });
+    manifest.exports.classes.push(ClassExport {
+        name: "Carrier".to_string(),
+        type_params: Vec::new(),
+        extends: None,
+        traits: vec!["Decode".to_string()],
+        trait_adoptions: vec![TypeBoundExport {
+            name: "Decode".to_string(),
+            type_args: vec![TypeRef::Named {
+                name: "str".to_string(),
+            }],
+        }],
+        derives: Vec::new(),
+        fields: Vec::new(),
+        methods: Vec::new(),
+    });
+    manifest.exports.enums.push(EnumExport {
+        name: "Token".to_string(),
+        type_params: Vec::new(),
+        traits: vec!["Convert".to_string(), "Convert".to_string()],
+        trait_adoptions: vec![convert_int, convert_float],
+        value_type: None,
+        variants: vec![EnumVariantExport {
+            name: "Number".to_string(),
+            fields: Vec::new(),
+            value: None,
+        }],
+        methods: Vec::new(),
+        derives: Vec::new(),
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("trait_adoptions.incnlib");
     manifest.write_to_path(&path)?;
     let loaded = LibraryManifest::read_from_path(&path)?;
 
@@ -184,6 +721,433 @@ fn manifest_io_round_trip_preserves_vocab_payload() -> Result<(), Box<dyn std::e
     let loaded = LibraryManifest::read_from_path(&path)?;
 
     assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_scoped_surface_descriptors() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .desugars_to_expression()
+                        .with_clauses([
+                            incan_vocab::ClauseSurface::expr("FROM").required(),
+                            incan_vocab::ClauseSurface::expr_list("SELECT").required().after("FROM"),
+                        ]),
+                )
+                .with_scoped_surfaces([
+                    incan_vocab::ScopedSurfaceDescriptor::operator("query.pipe", "|>")
+                        .in_clause_body("query", "SELECT")
+                        .with_misuse_scope(incan_vocab::ScopedSurfaceMisuseScope::ActivatingFile)
+                        .with_diagnostic(incan_vocab::ScopedSurfaceDiagnosticTemplate::new(
+                            "query-pipe-outside-scope",
+                            incan_vocab::ScopedSurfaceDiagnosticKind::OutsideScope,
+                            "`|>` is only valid inside query SELECT clauses",
+                        ))
+                        .pairwise_chain(),
+                    incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                        .in_clause_body("query", "SELECT")
+                        .with_receiver(incan_vocab::ScopedSurfaceReceiver::clause("FROM")),
+                    incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.arg_field")
+                        .with_eligibilities([
+                            incan_vocab::ScopedSurfaceEligibility::call_argument("query", "filter"),
+                            incan_vocab::ScopedSurfaceEligibility::call_argument("query", "select"),
+                        ])
+                        .with_receiver(incan_vocab::ScopedSurfaceReceiver::custom("method-receiver")),
+                ]),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("mylib.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    let Some(loaded_vocab) = loaded.vocab.as_ref() else {
+        return Err("expected vocab payload to round-trip".into());
+    };
+    let scoped_surfaces = &loaded_vocab.dsl_surfaces[0].scoped_surfaces;
+    assert_eq!(loaded, manifest);
+    assert_eq!(scoped_surfaces.len(), 3);
+    assert_eq!(
+        scoped_surfaces[0].format_hint.chain_mode,
+        incan_vocab::ScopedSurfaceChainMode::Pairwise
+    );
+    assert_eq!(
+        scoped_surfaces[1].receiver,
+        Some(incan_vocab::ScopedSurfaceReceiver::clause("FROM"))
+    );
+    assert_eq!(scoped_surfaces[2].eligible_in[0].call.as_deref(), Some("filter"));
+    assert_eq!(
+        scoped_surfaces[2].receiver,
+        Some(incan_vocab::ScopedSurfaceReceiver::custom("method-receiver"))
+    );
+    Ok(())
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_scoped_symbol_descriptors() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .desugars_to_expression()
+                        .with_clauses([
+                            incan_vocab::ClauseSurface::expr("FROM").required(),
+                            incan_vocab::ClauseSurface::expr_list("SELECT").required().after("FROM"),
+                        ]),
+                )
+                .with_scoped_symbols([
+                    incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                        .in_clause_body("query", "SELECT")
+                        .with_role(
+                            incan_vocab::ScopedSymbolRoleMetadata::new("aggregate.sum")
+                                .with_label("Sum")
+                                .with_description("Sum aggregate"),
+                        )
+                        .with_misuse_scope(incan_vocab::ScopedSymbolMisuseScope::ActiveDsl)
+                        .with_diagnostic(incan_vocab::ScopedSymbolDiagnosticTemplate::new(
+                            "query-sum-outside-select",
+                            incan_vocab::ScopedSymbolDiagnosticKind::OutsideEligiblePosition,
+                            "`sum` is only a query aggregate inside SELECT clauses",
+                        )),
+                    incan_vocab::ScopedSymbolDescriptor::aggregate("query.count", "count").with_eligibilities([
+                        incan_vocab::ScopedSymbolEligibility::clause_body("query", "SELECT"),
+                        incan_vocab::ScopedSymbolEligibility::call_argument("query", "window"),
+                    ]),
+                ]),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("mylib.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    let Some(loaded_vocab) = loaded.vocab.as_ref() else {
+        return Err("expected vocab payload to round-trip".into());
+    };
+    let scoped_symbols = &loaded_vocab.dsl_surfaces[0].scoped_symbols;
+    assert_eq!(loaded, manifest);
+    assert_eq!(scoped_symbols.len(), 2);
+    assert_eq!(scoped_symbols[0].symbol, "sum");
+    assert_eq!(scoped_symbols[0].family, incan_vocab::ScopedSymbolFamily::AggregateLike);
+    assert_eq!(
+        scoped_symbols[0].role.as_ref().map(|role| role.key.as_str()),
+        Some("aggregate.sum")
+    );
+    assert_eq!(scoped_symbols[1].eligible_in[1].call.as_deref(), Some("window"));
+    assert_eq!(
+        scoped_symbols[0].diagnostics[0].kind,
+        incan_vocab::ScopedSymbolDiagnosticKind::OutsideEligiblePosition
+    );
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_empty_scoped_symbol_descriptor_key() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                )
+                .with_scoped_symbol(
+                    incan_vocab::ScopedSymbolDescriptor::aggregate("", "sum").in_clause_body("query", "SELECT"),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("vocab scoped symbol descriptor key cannot be empty")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_empty_scoped_symbol_spelling() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                )
+                .with_scoped_symbol(
+                    incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "").in_clause_body("query", "SELECT"),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("symbol cannot be empty")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_hard_keyword_scoped_symbol_spelling() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                )
+                .with_scoped_symbol(
+                    incan_vocab::ScopedSymbolDescriptor::function("query.from", "from")
+                        .in_clause_body("query", "SELECT"),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("cannot be a hard keyword")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_malformed_scoped_symbol_eligibility() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                )
+                .with_scoped_symbol(
+                    incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum").with_eligibility(
+                        incan_vocab::ScopedSymbolEligibility {
+                            declaration: "query".to_string(),
+                            clause: None,
+                            call: None,
+                            position: incan_vocab::ScopedSymbolPosition::ClauseBody,
+                        },
+                    ),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("clause-body eligibility must declare a clause")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_ambiguous_scoped_symbol_descriptors() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    let query_surface = incan_vocab::DslSurface::on_import("mylib.query")
+        .with_declaration(
+            incan_vocab::DeclarationSurface::named("query").with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+        )
+        .with_scoped_symbols([
+            incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum.primary", "sum")
+                .in_clause_body("query", "SELECT"),
+            incan_vocab::ScopedSymbolDescriptor::function("query.sum.secondary", "sum")
+                .in_clause_body("query", "SELECT"),
+        ]);
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![query_surface],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("ambiguous scoped symbol descriptor")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_malformed_scoped_symbol_diagnostics() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                )
+                .with_scoped_symbol(
+                    incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                        .in_clause_body("query", "SELECT")
+                        .with_diagnostic(incan_vocab::ScopedSymbolDiagnosticTemplate::new(
+                            "query-sum-outside-select",
+                            incan_vocab::ScopedSymbolDiagnosticKind::OutsideEligiblePosition,
+                            "`sum` is only valid inside SELECT",
+                        ))
+                        .with_diagnostic(incan_vocab::ScopedSymbolDiagnosticTemplate::new(
+                            "query-sum-outside-select",
+                            incan_vocab::ScopedSymbolDiagnosticKind::AmbiguousResolution,
+                            "use an explicit qualifier to disambiguate `sum`",
+                        )),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("contains duplicate diagnostic code")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_ambiguous_scoped_surface_descriptors() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    let query_surface = incan_vocab::DslSurface::on_import("mylib.query")
+        .with_declaration(
+            incan_vocab::DeclarationSurface::named("query").with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+        )
+        .with_scoped_surfaces([
+            incan_vocab::ScopedSurfaceDescriptor::operator("query.pipe.primary", "|>")
+                .in_clause_body("query", "SELECT"),
+            incan_vocab::ScopedSurfaceDescriptor::operator("query.pipe.secondary", "|>")
+                .in_clause_body("query", "SELECT"),
+        ]);
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![query_surface],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("ambiguous scoped surface descriptor")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_expression_form_without_receiver() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                )
+                .with_scoped_surface(
+                    incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                        .in_clause_body("query", "SELECT"),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("must declare receiver derivation")
+    ));
+    Ok(())
+}
+
+#[test]
+fn manifest_writer_rejects_declaration_head_scoped_surface_position() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.vocab = Some(VocabExports {
+        crate_path: "crates/mylib_vocab".to_string(),
+        package_name: "mylib_vocab".to_string(),
+        keyword_registrations: Vec::new(),
+        dsl_surfaces: vec![
+            incan_vocab::DslSurface::on_import("mylib.query")
+                .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                .with_scoped_surface(
+                    incan_vocab::ScopedSurfaceDescriptor::operator("query.pipe", "|>")
+                        .with_eligibility(incan_vocab::ScopedSurfaceEligibility::declaration_head("query")),
+                ),
+        ],
+        provider_manifest: incan_vocab::LibraryManifest::default(),
+        desugarer_artifact: None,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let err = manifest.write_to_path(&tmp.path().join("mylib.incnlib"));
+    assert!(matches!(
+        err,
+        Err(LibraryManifestError::Invalid(msg)) if msg.contains("declaration-head eligibility is not supported yet")
+    ));
     Ok(())
 }
 

@@ -5,14 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ClassExport;
 use super::{
-    ConstExport, DslSurface, EnumExport, FunctionExport, LibraryExports, LibraryManifest, LibraryManifestError,
-    ModelExport, NewtypeExport, SoftKeywordActivation, SoftKeywordExports, TraitExport, TypeAliasExport,
-    VocabDesugarerArtifact, VocabExports, VocabKeywordRegistration, VocabProviderManifest,
+    AliasExport, ClassExport, ConstExport, DslSurface, EnumExport, FunctionExport, LibraryContractMetadata,
+    LibraryExports, LibraryManifest, LibraryManifestError, ModelExport, NewtypeExport, PartialExport,
+    SoftKeywordActivation, SoftKeywordExports, StaticExport, TraitExport, TypeAliasExport, VocabDesugarerArtifact,
+    VocabExports, VocabKeywordRegistration, VocabProviderManifest,
 };
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(super) struct RawLibraryManifest {
     pub(super) name: String,
     pub(super) version: String,
@@ -22,10 +22,16 @@ pub(super) struct RawLibraryManifest {
     #[serde(default)]
     pub(super) vocab: Option<RawVocabExports>,
     pub(super) soft_keywords: RawSoftKeywordExports,
+    #[serde(default)]
+    pub(super) contract_metadata: LibraryContractMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub(super) struct RawLibraryExports {
+    #[serde(default)]
+    pub(super) aliases: Vec<AliasExport>,
+    #[serde(default)]
+    pub(super) partials: Vec<PartialExport>,
     #[serde(default)]
     pub(super) models: Vec<ModelExport>,
     #[serde(default)]
@@ -42,6 +48,8 @@ pub(super) struct RawLibraryExports {
     pub(super) newtypes: Vec<NewtypeExport>,
     #[serde(default)]
     pub(super) consts: Vec<ConstExport>,
+    #[serde(default)]
+    pub(super) statics: Vec<StaticExport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -65,6 +73,7 @@ pub(super) struct RawVocabExports {
 }
 
 impl RawLibraryManifest {
+    /// Convert the compiler-facing manifest model into the serialized manifest transport shape.
     pub(super) fn from_semantic(semantic: &LibraryManifest) -> Self {
         Self {
             name: semantic.name.clone(),
@@ -72,6 +81,8 @@ impl RawLibraryManifest {
             incan_version: semantic.incan_version.clone(),
             manifest_format: semantic.manifest_format,
             exports: RawLibraryExports {
+                aliases: semantic.exports.aliases.clone(),
+                partials: semantic.exports.partials.clone(),
                 models: semantic.exports.models.clone(),
                 classes: semantic.exports.classes.clone(),
                 functions: semantic.exports.functions.clone(),
@@ -80,6 +91,7 @@ impl RawLibraryManifest {
                 type_aliases: semantic.exports.type_aliases.clone(),
                 newtypes: semantic.exports.newtypes.clone(),
                 consts: semantic.exports.consts.clone(),
+                statics: semantic.exports.statics.clone(),
             },
             vocab: semantic.vocab.as_ref().map(|vocab| RawVocabExports {
                 crate_path: vocab.crate_path.clone(),
@@ -92,9 +104,11 @@ impl RawLibraryManifest {
             soft_keywords: RawSoftKeywordExports {
                 activations: semantic.soft_keywords.activations.clone(),
             },
+            contract_metadata: semantic.contract_metadata.clone(),
         }
     }
 
+    /// Decode a validated raw manifest into the compiler-facing manifest model.
     pub(super) fn into_semantic(self) -> Result<LibraryManifest, LibraryManifestError> {
         Ok(LibraryManifest {
             name: self.name,
@@ -102,6 +116,8 @@ impl RawLibraryManifest {
             incan_version: self.incan_version,
             manifest_format: self.manifest_format,
             exports: LibraryExports {
+                aliases: self.exports.aliases,
+                partials: self.exports.partials,
                 models: self.exports.models,
                 classes: self.exports.classes,
                 functions: self.exports.functions,
@@ -110,6 +126,7 @@ impl RawLibraryManifest {
                 type_aliases: self.exports.type_aliases,
                 newtypes: self.exports.newtypes,
                 consts: self.exports.consts,
+                statics: self.exports.statics,
             },
             vocab: self.vocab.map(|vocab| VocabExports {
                 crate_path: vocab.crate_path,
@@ -122,6 +139,7 @@ impl RawLibraryManifest {
             soft_keywords: SoftKeywordExports {
                 activations: self.soft_keywords.activations,
             },
+            contract_metadata: self.contract_metadata,
         })
     }
 }

@@ -6,12 +6,12 @@
 use std::collections::HashMap;
 
 use crate::frontend::ast::{
-    ClassDecl, Declaration, EnumDecl, FunctionDecl, ModelDecl, NewtypeDecl, Program, TraitBound, TraitDecl,
-    TypeAliasDecl, TypeParam, Visibility,
+    AliasDecl, ClassDecl, Declaration, DictEntry, EnumDecl, Expr, FunctionDecl, ListEntry, Literal, ModelDecl,
+    NewtypeDecl, PartialDecl, Program, TraitBound, TraitDecl, TypeAliasDecl, TypeParam, Visibility,
 };
 use crate::frontend::symbols::{
-    ClassInfo, EnumInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, SymbolKind,
-    TraitInfo, TypeInfo, resolve_type,
+    CallableParam, ClassInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, SymbolKind,
+    TraitInfo, TypeBoundInfo, TypeInfo, ValueEnumBacking, ValueEnumValue, VariableInfo, resolve_type,
 };
 use crate::frontend::typechecker::TypeChecker;
 
@@ -39,8 +39,10 @@ pub struct CheckedField {
 #[derive(Debug, Clone)]
 pub struct CheckedMethod {
     pub name: String,
+    pub alias_of: Option<String>,
+    pub type_params: Vec<CheckedTypeParam>,
     pub receiver: Option<crate::frontend::ast::Receiver>,
-    pub params: Vec<(String, ResolvedType)>,
+    pub params: Vec<CallableParam>,
     pub return_type: ResolvedType,
     pub is_async: bool,
     pub has_body: bool,
@@ -50,9 +52,56 @@ pub struct CheckedMethod {
 pub struct CheckedFunctionExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
-    pub params: Vec<(String, ResolvedType)>,
+    pub params: Vec<CallableParam>,
     pub return_type: ResolvedType,
     pub is_async: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedPartialExport {
+    pub name: String,
+    pub target_path: Vec<String>,
+    pub target_kind: CheckedPartialTargetKind,
+    pub presets: Vec<CheckedPartialPreset>,
+    pub type_params: Vec<CheckedTypeParam>,
+    pub params: Vec<CallableParam>,
+    pub return_type: ResolvedType,
+    pub is_async: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckedPartialTargetKind {
+    Function,
+    ModelConstructor,
+    ClassConstructor,
+    NewtypeConstructor,
+    Partial,
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedPartialPreset {
+    pub name: String,
+    pub ty: ResolvedType,
+    pub value: CheckedPresetValue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CheckedPresetValue {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+    Bytes(Vec<u8>),
+    None,
+    List(Vec<CheckedPresetValue>),
+    Dict(Vec<(CheckedPresetValue, CheckedPresetValue)>),
+    ConstRef(Vec<String>),
+    ModelLiteral {
+        name: String,
+        fields: Vec<(String, CheckedPresetValue)>,
+    },
+    Unsupported,
 }
 
 #[derive(Debug, Clone)]
@@ -63,10 +112,19 @@ pub struct CheckedTypeAliasExport {
 }
 
 #[derive(Debug, Clone)]
+pub struct CheckedAliasExport {
+    pub name: String,
+    pub target_path: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
 pub struct CheckedModelExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
     pub traits: Vec<String>,
+    pub trait_adoptions: Vec<CheckedTypeBound>,
+    /// `@derive(...)` names that must remain available to `pub::` consumers.
+    pub derives: Vec<String>,
     pub fields: Vec<CheckedField>,
     pub methods: Vec<CheckedMethod>,
 }
@@ -77,6 +135,9 @@ pub struct CheckedClassExport {
     pub type_params: Vec<CheckedTypeParam>,
     pub extends: Option<String>,
     pub traits: Vec<String>,
+    pub trait_adoptions: Vec<CheckedTypeBound>,
+    /// `@derive(...)` names that must remain available to `pub::` consumers.
+    pub derives: Vec<String>,
     pub fields: Vec<CheckedField>,
     pub methods: Vec<CheckedMethod>,
 }
@@ -95,19 +156,26 @@ pub struct CheckedTraitExport {
 pub struct CheckedEnumVariant {
     pub name: String,
     pub fields: Vec<ResolvedType>,
+    pub value: Option<ValueEnumValue>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CheckedEnumExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
+    pub traits: Vec<String>,
+    pub trait_adoptions: Vec<CheckedTypeBound>,
+    pub value_type: Option<ValueEnumBacking>,
     pub variants: Vec<CheckedEnumVariant>,
+    pub methods: Vec<CheckedMethod>,
+    pub derives: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
 pub struct CheckedNewtypeExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
+    pub is_rusttype: bool,
     pub underlying: ResolvedType,
     pub methods: Vec<CheckedMethod>,
 }
@@ -119,8 +187,16 @@ pub struct CheckedConstExport {
 }
 
 #[derive(Debug, Clone)]
+pub struct CheckedStaticExport {
+    pub name: String,
+    pub ty: ResolvedType,
+}
+
+#[derive(Debug, Clone)]
 pub enum CheckedExportKind {
     Function(CheckedFunctionExport),
+    Partial(CheckedPartialExport),
+    Alias(CheckedAliasExport),
     TypeAlias(CheckedTypeAliasExport),
     Model(CheckedModelExport),
     Class(CheckedClassExport),
@@ -128,6 +204,7 @@ pub enum CheckedExportKind {
     Enum(CheckedEnumExport),
     Newtype(CheckedNewtypeExport),
     Const(CheckedConstExport),
+    Static(CheckedStaticExport),
 }
 
 #[derive(Debug, Clone)]
@@ -136,6 +213,7 @@ pub struct CheckedNamedExport {
     pub kind: CheckedExportKind,
 }
 
+/// Collect checked public exports from one program while preserving alias identity.
 pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) -> Vec<CheckedNamedExport> {
     let mut exports = Vec::new();
 
@@ -203,6 +281,27 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                     });
                 }
             }
+            Declaration::Static(static_decl) if matches!(static_decl.visibility, Visibility::Public) => {
+                if let Some(export) = checked_static_export(static_decl.name.as_str(), checker) {
+                    exports.push(CheckedNamedExport {
+                        name: export.name.clone(),
+                        kind: CheckedExportKind::Static(export),
+                    });
+                }
+            }
+            Declaration::Alias(alias) if matches!(alias.visibility, Visibility::Public) => {
+                if let Some(export) = checked_alias_export(alias, checker) {
+                    exports.push(export);
+                }
+            }
+            Declaration::Partial(partial) if matches!(partial.visibility, Visibility::Public) => {
+                if let Some(export) = checked_partial_export(partial, checker) {
+                    exports.push(CheckedNamedExport {
+                        name: export.name.clone(),
+                        kind: CheckedExportKind::Partial(export),
+                    });
+                }
+            }
             _ => {}
         }
     }
@@ -211,24 +310,200 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
     exports
 }
 
+/// Build a checked public export entry for a module-level alias.
+fn checked_alias_export(alias: &AliasDecl, checker: &TypeChecker) -> Option<CheckedNamedExport> {
+    checker.lookup_symbol(alias.name.as_str())?;
+    Some(CheckedNamedExport {
+        name: alias.name.clone(),
+        kind: CheckedExportKind::Alias(CheckedAliasExport {
+            name: alias.name.clone(),
+            target_path: alias.target.segments.clone(),
+        }),
+    })
+}
+
+/// Build checked export metadata for a public partial callable preset.
+fn checked_partial_export(partial: &PartialDecl, checker: &TypeChecker) -> Option<CheckedPartialExport> {
+    let symbol = checker.lookup_symbol(partial.name.as_str())?;
+    let SymbolKind::Function(info) = &symbol.kind else {
+        return None;
+    };
+    let presets = partial
+        .args
+        .iter()
+        .map(|arg| CheckedPartialPreset {
+            name: arg.name.clone(),
+            ty: info
+                .params
+                .iter()
+                .find(|param| param.name() == Some(arg.name.as_str()))
+                .map(|param| param.ty.clone())
+                .unwrap_or(ResolvedType::Unknown),
+            value: checked_preset_value(&arg.value.node),
+        })
+        .collect();
+    Some(CheckedPartialExport {
+        name: partial.name.clone(),
+        target_path: partial.target.segments.clone(),
+        target_kind: checked_partial_target_kind(partial, checker),
+        presets,
+        type_params: info
+            .type_params
+            .iter()
+            .map(|name| CheckedTypeParam {
+                name: name.clone(),
+                bounds: info
+                    .type_param_bound_details
+                    .get(name)
+                    .map_or_else(Vec::new, |bounds| map_type_bound_infos(bounds)),
+            })
+            .collect(),
+        params: info.params.clone(),
+        return_type: info.return_type.clone(),
+        is_async: info.is_async,
+    })
+}
+
+/// Classify the direct target kind for manifest/API partial provenance.
+fn checked_partial_target_kind(partial: &PartialDecl, checker: &TypeChecker) -> CheckedPartialTargetKind {
+    let [target] = partial.target.segments.as_slice() else {
+        return CheckedPartialTargetKind::Unknown;
+    };
+    match checker.lookup_symbol(target).map(|symbol| &symbol.kind) {
+        Some(SymbolKind::Function(_)) => CheckedPartialTargetKind::Function,
+        Some(SymbolKind::Type(TypeInfo::Model(_))) => CheckedPartialTargetKind::ModelConstructor,
+        Some(SymbolKind::Type(TypeInfo::Class(_))) => CheckedPartialTargetKind::ClassConstructor,
+        Some(SymbolKind::Type(TypeInfo::Newtype(_))) => CheckedPartialTargetKind::NewtypeConstructor,
+        Some(SymbolKind::Type(_) | SymbolKind::Trait(_) | SymbolKind::Variable(_) | SymbolKind::Static(_))
+        | Some(SymbolKind::Field(_))
+        | Some(SymbolKind::Property(_))
+        | Some(SymbolKind::Module(_))
+        | Some(SymbolKind::Variant(_))
+        | Some(SymbolKind::RustItem(_))
+        | None => CheckedPartialTargetKind::Unknown,
+    }
+}
+
+/// Convert a preset expression into the metadata-safe subset used by public partial provenance.
+fn checked_preset_value(expr: &Expr) -> CheckedPresetValue {
+    match expr {
+        Expr::Literal(literal) => checked_preset_literal(literal),
+        Expr::Ident(name) => CheckedPresetValue::ConstRef(vec![name.clone()]),
+        Expr::Field(base, field) => {
+            let mut path = checked_preset_path(&base.node);
+            if path.is_empty() {
+                CheckedPresetValue::Unsupported
+            } else {
+                path.push(field.clone());
+                CheckedPresetValue::ConstRef(path)
+            }
+        }
+        Expr::List(entries) => CheckedPresetValue::List(
+            entries
+                .iter()
+                .map(|entry| match entry {
+                    ListEntry::Element(value) => checked_preset_value(&value.node),
+                    ListEntry::Spread(_) => CheckedPresetValue::Unsupported,
+                })
+                .collect(),
+        ),
+        Expr::Dict(entries) => {
+            let pairs = entries
+                .iter()
+                .map(|entry| match entry {
+                    DictEntry::Pair(key, value) => (checked_preset_value(&key.node), checked_preset_value(&value.node)),
+                    DictEntry::Spread(_) => (CheckedPresetValue::Unsupported, CheckedPresetValue::Unsupported),
+                })
+                .collect();
+            CheckedPresetValue::Dict(pairs)
+        }
+        Expr::Call(callee, _type_args, args) => {
+            let path = checked_preset_path(&callee.node);
+            let [name] = path.as_slice() else {
+                return CheckedPresetValue::Unsupported;
+            };
+            let mut fields = Vec::new();
+            for arg in args {
+                let crate::frontend::ast::CallArg::Named(field, value) = arg else {
+                    return CheckedPresetValue::Unsupported;
+                };
+                fields.push((field.clone(), checked_preset_value(&value.node)));
+            }
+            CheckedPresetValue::ModelLiteral {
+                name: name.clone(),
+                fields,
+            }
+        }
+        Expr::Constructor(name, args) => {
+            let mut fields = Vec::new();
+            for arg in args {
+                let crate::frontend::ast::CallArg::Named(field, value) = arg else {
+                    return CheckedPresetValue::Unsupported;
+                };
+                fields.push((field.clone(), checked_preset_value(&value.node)));
+            }
+            CheckedPresetValue::ModelLiteral {
+                name: name.clone(),
+                fields,
+            }
+        }
+        _ => CheckedPresetValue::Unsupported,
+    }
+}
+
+/// Convert a literal preset expression into checked partial export metadata.
+fn checked_preset_literal(literal: &Literal) -> CheckedPresetValue {
+    match literal {
+        Literal::Int(value) => CheckedPresetValue::Int(value.value),
+        Literal::Float(value) => CheckedPresetValue::Float(value.value),
+        Literal::Decimal(value) => CheckedPresetValue::String(value.repr.clone()),
+        Literal::String(value) => CheckedPresetValue::String(value.clone()),
+        Literal::Bytes(value) => CheckedPresetValue::Bytes(value.clone()),
+        Literal::Bool(value) => CheckedPresetValue::Bool(*value),
+        Literal::None => CheckedPresetValue::None,
+    }
+}
+
+/// Extract a dotted constant/model path from a metadata-safe preset expression.
+fn checked_preset_path(expr: &Expr) -> Vec<String> {
+    match expr {
+        Expr::Ident(name) => vec![name.clone()],
+        Expr::Field(base, field) => {
+            let mut path = checked_preset_path(&base.node);
+            path.push(field.clone());
+            path
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Build checked export metadata for a function or callable-valued decorated function binding.
 fn checked_function_export(function: &FunctionDecl, checker: &TypeChecker) -> Option<CheckedFunctionExport> {
     let symbol = checker.lookup_symbol(function.name.as_str())?;
-    let SymbolKind::Function(FunctionInfo {
-        params,
-        return_type,
-        is_async,
-        ..
-    }) = &symbol.kind
-    else {
-        return None;
+    let (params, return_type, is_async) = match &symbol.kind {
+        SymbolKind::Function(FunctionInfo {
+            params,
+            return_type,
+            is_async,
+            ..
+        }) => (params.clone(), return_type.clone(), *is_async),
+        SymbolKind::Variable(VariableInfo {
+            ty: ResolvedType::Function(params, return_type),
+            ..
+        }) => {
+            // Callable values do not yet carry asyncness, so preserve the source declaration marker until decorator
+            // typing records async callable metadata explicitly.
+            (params.clone(), return_type.as_ref().clone(), function.is_async())
+        }
+        _ => return None,
     };
 
     Some(CheckedFunctionExport {
         name: function.name.clone(),
         type_params: checked_type_params(&function.type_params, checker),
-        params: params.clone(),
-        return_type: return_type.clone(),
-        is_async: *is_async,
+        params,
+        return_type,
+        is_async,
     })
 }
 
@@ -241,12 +516,15 @@ fn checked_type_alias_export(alias: &TypeAliasDecl, checker: &TypeChecker) -> Ch
     }
 }
 
+/// Extract a checked public model export from collected model symbol metadata.
 fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<CheckedModelExport> {
     let symbol = checker.lookup_symbol(model.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Model(ModelInfo {
         traits,
+        trait_adoptions,
+        derives,
         fields,
-        methods,
+        method_overloads,
         ..
     })) = &symbol.kind
     else {
@@ -257,18 +535,23 @@ fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<Chec
         name: model.name.clone(),
         type_params: checked_type_params(&model.type_params, checker),
         traits: sorted_vec(traits.to_vec()),
+        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
+        derives: sorted_vec(derives.to_vec()),
         fields: map_fields(fields),
-        methods: map_methods(methods),
+        methods: map_method_overloads(method_overloads),
     })
 }
 
+/// Extract a checked public class export from collected class symbol metadata.
 fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<CheckedClassExport> {
     let symbol = checker.lookup_symbol(class.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Class(ClassInfo {
         extends,
         traits,
+        trait_adoptions,
+        derives,
         fields,
-        methods,
+        method_overloads,
         ..
     })) = &symbol.kind
     else {
@@ -280,8 +563,10 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
         type_params: checked_type_params(&class.type_params, checker),
         extends: extends.clone(),
         traits: sorted_vec(traits.to_vec()),
+        trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
+        derives: sorted_vec(derives.to_vec()),
         fields: map_fields(fields),
-        methods: map_methods(methods),
+        methods: map_method_overloads(method_overloads),
     })
 }
 
@@ -312,9 +597,10 @@ fn checked_trait_export(trait_decl: &TraitDecl, checker: &TypeChecker) -> Option
     })
 }
 
+/// Extract the checked public enum contract, including value-enum metadata when present.
 fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<CheckedEnumExport> {
     let symbol = checker.lookup_symbol(enum_decl.name.as_str())?;
-    let SymbolKind::Type(TypeInfo::Enum(EnumInfo { .. })) = &symbol.kind else {
+    let SymbolKind::Type(TypeInfo::Enum(enum_info)) = &symbol.kind else {
         return None;
     };
 
@@ -338,20 +624,33 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
         variants.push(CheckedEnumVariant {
             name: variant.node.name.clone(),
             fields,
+            value: enum_info
+                .value_enum
+                .as_ref()
+                .and_then(|value_enum| value_enum.values.get(&variant.node.name).cloned()),
         });
     }
 
     Some(CheckedEnumExport {
         name: enum_decl.name.clone(),
         type_params: checked_type_params(&enum_decl.type_params, checker),
+        traits: sorted_vec(enum_info.traits.clone()),
+        trait_adoptions: sorted_type_bounds(map_type_bound_infos(&enum_info.trait_adoptions)),
+        value_type: enum_info.value_enum.as_ref().map(|value_enum| value_enum.value_type),
         variants,
+        methods: map_method_overloads(&enum_info.method_overloads),
+        derives: sorted_vec(enum_info.derives.clone()),
     })
 }
 
+/// Build a manifest-ready newtype export from the checked symbol metadata.
 fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> Option<CheckedNewtypeExport> {
     let symbol = checker.lookup_symbol(newtype_decl.name.as_str())?;
     let SymbolKind::Type(TypeInfo::Newtype(NewtypeInfo {
-        underlying, methods, ..
+        is_rusttype,
+        underlying,
+        methods,
+        ..
     })) = &symbol.kind
     else {
         return None;
@@ -360,6 +659,7 @@ fn checked_newtype_export(newtype_decl: &NewtypeDecl, checker: &TypeChecker) -> 
     Some(CheckedNewtypeExport {
         name: newtype_decl.name.clone(),
         type_params: checked_type_params(&newtype_decl.type_params, checker),
+        is_rusttype: *is_rusttype,
         underlying: underlying.clone(),
         methods: map_methods(methods),
     })
@@ -373,6 +673,17 @@ fn checked_const_export(const_name: &str, checker: &TypeChecker) -> Option<Check
     Some(CheckedConstExport {
         name: const_name.to_string(),
         ty: variable_info.ty.clone(),
+    })
+}
+
+fn checked_static_export(static_name: &str, checker: &TypeChecker) -> Option<CheckedStaticExport> {
+    let symbol = checker.lookup_symbol(static_name)?;
+    let SymbolKind::Static(static_info) = &symbol.kind else {
+        return None;
+    };
+    Some(CheckedStaticExport {
+        name: static_name.to_string(),
+        ty: static_info.ty.clone(),
     })
 }
 
@@ -400,6 +711,32 @@ fn checked_trait_bounds(bounds: &[TraitBound], checker: &TypeChecker) -> Vec<Che
         .collect()
 }
 
+/// Convert collected trait adoption metadata into the manifest-ready checked bound shape.
+fn map_type_bound_infos(bounds: &[TypeBoundInfo]) -> Vec<CheckedTypeBound> {
+    bounds
+        .iter()
+        .map(|bound| CheckedTypeBound {
+            name: bound.name.clone(),
+            type_args: bound.type_args.clone(),
+        })
+        .collect()
+}
+
+/// Sort generic trait adoptions deterministically for stable library manifests.
+fn sorted_type_bounds(mut bounds: Vec<CheckedTypeBound>) -> Vec<CheckedTypeBound> {
+    bounds.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| type_args_sort_key(&left.type_args).cmp(&type_args_sort_key(&right.type_args)))
+    });
+    bounds
+}
+
+/// Render type arguments into a deterministic key for sorting trait adoptions.
+fn type_args_sort_key(args: &[ResolvedType]) -> String {
+    args.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")
+}
+
 fn map_fields(fields: &HashMap<String, FieldInfo>) -> Vec<CheckedField> {
     let mut entries: Vec<_> = fields
         .iter()
@@ -415,20 +752,73 @@ fn map_fields(fields: &HashMap<String, FieldInfo>) -> Vec<CheckedField> {
     entries
 }
 
+/// Convert legacy one-method-per-name metadata into checked export methods.
 fn map_methods(methods: &HashMap<String, MethodInfo>) -> Vec<CheckedMethod> {
     let mut entries: Vec<_> = methods
         .iter()
-        .map(|(name, info)| CheckedMethod {
-            name: name.clone(),
-            receiver: info.receiver,
-            params: info.params.clone(),
-            return_type: info.return_type.clone(),
-            is_async: info.is_async,
-            has_body: info.has_body,
-        })
+        .map(|(name, info)| checked_method_from_info(name, info))
         .collect();
     entries.sort_by(|left, right| left.name.cmp(&right.name));
     entries
+}
+
+/// Flatten same-name overload groups into manifest-ready checked methods without losing RFC 025 trait implementations.
+fn map_method_overloads(method_overloads: &HashMap<String, Vec<MethodInfo>>) -> Vec<CheckedMethod> {
+    let mut entries: Vec<_> = method_overloads
+        .iter()
+        .flat_map(|(name, overloads)| overloads.iter().map(|info| checked_method_from_info(name, info)))
+        .collect();
+    entries.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then_with(|| method_signature_sort_key(left).cmp(&method_signature_sort_key(right)))
+    });
+    entries
+}
+
+/// Convert one semantic method entry into the checked export shape.
+fn checked_method_from_info(name: &str, info: &MethodInfo) -> CheckedMethod {
+    CheckedMethod {
+        name: name.to_string(),
+        alias_of: info.alias_of.clone(),
+        type_params: info
+            .type_params
+            .iter()
+            .map(|type_param| CheckedTypeParam {
+                name: type_param.clone(),
+                bounds: info
+                    .type_param_bound_details
+                    .get(type_param)
+                    .cloned()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|bound| CheckedTypeBound {
+                        name: bound.name,
+                        type_args: bound.type_args,
+                    })
+                    .collect(),
+            })
+            .collect(),
+        receiver: info.receiver,
+        params: info.params.clone(),
+        return_type: info.return_type.clone(),
+        is_async: info.is_async,
+        has_body: info.has_body,
+    }
+}
+
+/// Render a deterministic method-signature sort key for overload groups.
+fn method_signature_sort_key(method: &CheckedMethod) -> String {
+    let params = method
+        .params
+        .iter()
+        .map(|param| {
+            let name = param.name().unwrap_or("_");
+            format!("{name}:{}", param.ty)
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    format!("({params})->{}", method.return_type)
 }
 
 fn sorted_vec(mut values: Vec<String>) -> Vec<String> {

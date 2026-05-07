@@ -15,7 +15,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 
 - [Editor Setup](how-to/editor_setup.md)
 - [LSP](how-to/lsp.md)
-- [Formatting](how-to/formatting.md)
+- [Formatting with `incan fmt`](how-to/formatting.md)
 - [Testing](how-to/testing.md)
 
 ## Reference (look up)

@@ -257,6 +257,17 @@ pub enum IncanBinaryOp {
     Sub,
     Mul,
     Div,
+    FloorDiv,
+    Mod,
+    Pow,
+    MatMul,
+    PipeForward,
+    PipeBackward,
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
     Eq,
     NotEq,
     Lt,
@@ -274,6 +285,7 @@ pub enum IncanBinaryOp {
 pub enum IncanUnaryOp {
     Neg,
     Not,
+    Invert,
 }
 
 /// A minimal public expression surface for desugaring contracts.
@@ -313,6 +325,66 @@ pub enum IncanExpr {
         callee: Box<IncanExpr>,
         args: Vec<IncanExpr>,
     },
+    /// DSL-owned scoped identifier call accepted by the compiler.
+    ScopedSymbolCall(IncanScopedSymbolCall),
     /// Field access.
     Field { object: Box<IncanExpr>, field: String },
+    /// DSL-owned scoped surface expression accepted by the compiler.
+    ScopedSurface(IncanScopedSurfaceExpr),
+}
+
+/// Public desugarer-facing representation of an accepted scoped-surface expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct IncanScopedSurfaceExpr {
+    pub dependency_key: String,
+    pub descriptor_key: String,
+    pub payload: IncanScopedSurfacePayload,
+}
+
+/// Public desugarer-facing representation of an accepted scoped identifier call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct IncanScopedSymbolCall {
+    /// Provider dependency key from the importing manifest context.
+    pub dependency_key: String,
+    /// Stable descriptor key from [`crate::ScopedSymbolDescriptor`].
+    pub descriptor_key: String,
+    /// Original identifier spelling accepted in the eligible DSL position.
+    pub symbol: String,
+    /// Positional call arguments preserved for the desugarer.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub args: Vec<IncanExpr>,
+    /// Accepted owner context for the scoped symbol occurrence.
+    pub owner: IncanScopedSurfaceOwner,
+}
+
+/// Public desugarer-facing payload for an accepted scoped-surface expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+pub enum IncanScopedSurfacePayload {
+    /// Leading-dot path with an implicit receiver.
+    LeadingDotPath {
+        segments: Vec<String>,
+        receiver: crate::ScopedSurfaceReceiver,
+        owner: IncanScopedSurfaceOwner,
+    },
+    /// DSL-owned binary glyph.
+    ScopedGlyph {
+        glyph: String,
+        left: Box<IncanExpr>,
+        right: Box<IncanExpr>,
+        owner: IncanScopedSurfaceOwner,
+    },
+}
+
+/// Public owner context for an accepted scoped-surface expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct IncanScopedSurfaceOwner {
+    pub declaration: String,
+    pub clause: Option<String>,
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub call: Option<String>,
 }

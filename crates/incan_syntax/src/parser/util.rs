@@ -78,6 +78,28 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parse an identifier, allowing the hard `from` keyword in declaration-name position.
+    ///
+    /// This keeps `def from(...)` available for stdlib conversion hooks without widening every declaration-name site to
+    /// arbitrary keywords.
+    fn identifier_or_from_keyword(&mut self) -> Result<Ident, CompileError> {
+        match &self.peek().kind {
+            TokenKind::Ident(name) => {
+                let name = name.clone();
+                self.advance();
+                Ok(name)
+            }
+            TokenKind::Keyword(KeywordId::From) => {
+                self.advance();
+                Ok("from".to_string())
+            }
+            _ => Err(errors::expected_identifier(
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            )),
+        }
+    }
+
     /// Parse an identifier in import/decorator paths, allowing specific keyword segments (e.g. `std.async`, `rust.extern`).
     fn identifier_or_import_keyword(&mut self) -> Result<Ident, CompileError> {
         match &self.peek().kind {
@@ -97,13 +119,19 @@ impl<'a> Parser<'a> {
         }
     }
 
-    /// Parse a list of identifiers and return them as spanned tokens.
-    fn identifier_list_spanned(&mut self) -> Result<Vec<Spanned<Ident>>, CompileError> {
-        let mut idents = vec![self.identifier_spanned()?];
-        while self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
-            idents.push(self.identifier_spanned()?);
+    /// Return `true` when the current token is an identifier with exact text `value`.
+    fn peek_ident_text(&self, value: &str) -> bool {
+        matches!(&self.peek().kind, TokenKind::Ident(name) if name == value)
+    }
+
+    /// Consume the current token when it is an identifier with exact text `value`.
+    fn match_ident_text(&mut self, value: &str) -> bool {
+        if self.peek_ident_text(value) {
+            self.advance();
+            true
+        } else {
+            false
         }
-        Ok(idents)
     }
 
     /// Parse a string literal and return it as a spanned token.

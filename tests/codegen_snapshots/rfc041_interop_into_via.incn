@@ -1,0 +1,16 @@
+from rust::std::env import var
+from rust::std::string import String as RustString
+
+type Name = rusttype RustString:
+    def parse(raw: str) -> Name:
+        ...
+
+    def as_str(self) -> str:
+        ...
+
+    interop:
+        into str via Name.as_str
+
+def main() -> None:
+    name = Name.parse("alice@example.com")
+    var(name)

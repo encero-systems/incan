@@ -94,6 +94,35 @@ import crate::lib::database::Connection
 
 The compiler finds the project root by looking for `Cargo.toml` or a `src/` directory.
 
+## Exported aliases
+
+Modules can export an alias for an existing public symbol:
+
+```incan
+# stats.incn
+pub def avg(x: int, y: int) -> int:
+  return (x + y) // 2
+
+pub mean = avg
+```
+
+Consumers import the alias like any other public symbol:
+
+```incan
+from stats import mean
+
+def main() -> int:
+  return mean(10, 20)
+```
+
+An import alias is local to the importing module:
+
+```incan
+from stats import mean as average_value
+```
+
+For the full alias contract, including method aliases and rejected forms, see [Symbol aliases](symbol_aliases.md).
+
 ### Path summary
 
 | Incan path     | Meaning                | Rust equivalent |
@@ -131,6 +160,8 @@ Many types have a canonical (generated-reference) name and a lowercase alias use
 - Aliases: `list[T]`, `dict[K, V]`, `set[T]`
 - Rust interop alias: `Vec[T]` (accepted as `List[T]`)
 
+When passing a direct `list[T]` to an external Rust function or method that expects `Vec<U>`, Incan emits element-level `.into()` conversions and leaves Rust to validate the required `From<T>` implementation.
+
 The generated language reference shows the canonical name and aliases in one place:
 [Language reference (generated)](language.md).
 
@@ -162,6 +193,17 @@ set()               # Empty Set
 set(iterable)       # Convert to Set
 ```
 
+Every core builtin function is also reachable through `std.builtins.<name>`. This is an explicit escape path for code
+that needs the core builtin when an inner scope or an imported DSL gives the unqualified name a different meaning:
+
+```incan
+def total(values: list[int]) -> int:
+  return std.builtins.sum(values)
+```
+
+`std.builtins` is typechecker-only. It has no source stub or emitted runtime module, and builtin types such as `int`,
+`List[T]`, and `Result[T, E]` remain root prelude types.
+
 ## Special import: `import this`
 
 `import this` is always available and prints the Incan “Zen” design principles when imported:
@@ -169,6 +211,8 @@ set(iterable)       # Convert to Set
 ```bash
 incan run -c "import this"
 ```
+
+--8<-- "_snippets/language/zen_of_incan.md"
 
 ## Incan standard library (`std.*`)
 
@@ -180,7 +224,7 @@ import — no manual feature flags needed.
 
 ### Available modules
 
-|      Module      |                  Description                  | Activates feature |
+| Module           | Description                                   | Activates feature |
 | ---------------- | --------------------------------------------- | ----------------- |
 | `std.web`        | Web framework (routes, responses, extractors) | `web` (Axum)      |
 | `std.testing`    | Test fixtures and assertions                  | —                 |
@@ -190,11 +234,11 @@ import — no manual feature flags needed.
 | `std.derives.*`  | Derive helpers (`string`, `comparison`, ...)  | —                 |
 | `std.traits.*`   | Core traits (`ops`, `convert`, `error`, ...)  | —                 |
 | `std.math`       | Math constants and functions                  | —                 |
+| `std.builtins`   | Explicit core builtin-function escape path    | —                 |
 
 ### Soft keywords
 
-Some language keywords are **import-activated** (soft keywords). They behave like identifiers by default and only become
-reserved keywords after importing a particular `std.*` namespace.
+Some language keywords are **import-activated** (soft keywords). They behave like identifiers by default and only become reserved keywords after importing a particular `std.*` namespace.
 
 Currently:
 
@@ -246,7 +290,7 @@ import models as std
 
 ## Stdlib module: `std.math`
 
-<!-- TODO: move this to its own section -->
+See the stdlib reference page: [Standard library reference: `std.math`](stdlib/math.md).
 
 You must import `std.math` before use:
 
@@ -254,18 +298,18 @@ You must import `std.math` before use:
 import std.math
 
 def main() -> None:
-    println(f"pi={math.pi}")
+    println(f"pi={math.PI}")
 ```
 
 ### Available constants
 
-| Constant   | Description                 |
-| ---------- | --------------------------- |
-| `math.pi`  | π (3.14159...)              |
-| `math.e`   | Euler’s number (2.71828...) |
-| `math.tau` | τ = 2π (6.28318...)         |
-| `math.inf` | Positive infinity           |
-| `math.nan` | Not a Number                |
+| Constant        | Description                 |
+| --------------- | --------------------------- |
+| `math.PI`       | π (3.14159...)              |
+| `math.E`        | Euler’s number (2.71828...) |
+| `math.TAU`      | τ = 2π (6.28318...)         |
+| `math.INFINITY` | Positive infinity           |
+| `math.NAN`      | Not a Number                |
 
 ### Available functions
 
@@ -287,6 +331,40 @@ def main() -> None:
 | `math.atan2(y, x)`                             | Two-argument arctangent       |
 | `math.hypot(x, y)`                             | Euclidean distance √(x² + y²) |
 
+## Stdlib module: `std.async`
+
+See generated/curated stdlib signatures: [Standard library reference: `std.async`](stdlib/async.md).
+
+`std.async` includes runtime support for asynchronous programming and activates the `async`/`await` soft keywords when imported.
+
+You can import time helpers directly:
+
+```incan
+from std.async.time import sleep, timeout
+```
+
+Or import a complete surface from the prelude:
+
+```incan
+from std.async.prelude import *
+```
+
+### Time helpers
+
+| Function                | Description                      |
+| ----------------------- | -------------------------------- |
+| `sleep`, `sleep_ms`     | Delay the current task           |
+| `timeout`, `timeout_ms` | Bound async work with a deadline |
+
+### Concurrency helpers
+
+| API                                       | Description                  |
+| ----------------------------------------- | ---------------------------- |
+| `spawn`, `spawn_blocking`                 | Start async or blocking work |
+| `channel`, `unbounded_channel`, `oneshot` | Message passing primitives   |
+| `select_timeout`                          | Timeout-based select utility |
+| `yield_now`                               | Yield to scheduler           |
+
 ## Rust standard library access
 
 To import from Rust’s standard library, use the `rust::` prefix:
@@ -307,11 +385,8 @@ etc.) where available.
 
 ## Rust crates vs Incan modules (important)
 
-- **External crates**: Prefer `rust::...` imports (e.g. `import rust::serde_json`), which also enables automatic
-  dependency management for generated `Cargo.toml`.
-- **Incan project modules** (multi-file projects): imports like `from db.schema import Database` refer to modules in
-  the current crate and are emitted as `crate::db::schema::Database` in generated Rust so they compile reliably from
-  submodules.
+- **External crates**: Prefer `rust::...` imports (e.g. `import rust::serde_json`), which also enables automatic dependency management for generated `Cargo.toml`.
+- **Incan project modules** (multi-file projects): imports like `from db.schema import Database` refer to modules in the current crate and are emitted as `crate::db::schema::Database` in generated Rust so they compile reliably from submodules.
 
 ### Version and feature annotations (Rust crates only)
 
@@ -340,8 +415,7 @@ Rules:
 - If the crate is configured in `incan.toml`, inline annotations are **not allowed**.
 - When the same crate is imported in multiple files, versions must match and features are unioned.
 
-These annotations only apply to `rust::` imports. Incan module imports (`from models import User`) do not support version
-or feature annotations.
+These annotations only apply to `rust::` imports. Incan module imports (`from models import User`) do not support version or feature annotations.
 
 See: [Rust interop](../how-to/rust_interop.md) for practical guidance and examples.
 
@@ -355,9 +429,9 @@ Supported:
 - Parent navigation (`..` / `super`)
 - Root imports (`crate`)
 - Aliases (`as`)
+- Public re-exports in source modules: `pub from module import Item` (allowed in files under `src/`)
 
 Limitations (current):
 
 1. No wildcard imports (`from module import *`)
-2. No re-exports (cannot re-export imported items)
-3. No circular imports
+2. No circular imports

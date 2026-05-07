@@ -29,6 +29,41 @@ pub fn unknown_stdlib_module(module: &str, span: Span) -> CompileError {
         .with_hint("To import from the Rust standard library, use: `from rust::std::... import ...`")
 }
 
+/// Import path `std.<module>` is known, but the requested item is not part of that stdlib module's public surface.
+pub fn stdlib_import_not_exported(name: &str, module: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("Cannot import `{name}` from stdlib module `{module}`: it is not exported by that module"),
+        span,
+    )
+    .with_hint("Use a supported stdlib import name from this module")
+    .with_hint("To import from the Rust standard library, use: `from rust::std::... import ...`")
+}
+
+/// A crate-root `import rust::crate_name` binding was used in type position.
+///
+/// RFC 041: crate-root imports name the crate as a namespace, not a concrete Rust type. Authors should import a
+/// specific item with `from rust::crate_name import TypeName` (or a longer rooted `import rust::...` path).
+pub fn rust_crate_root_used_as_type(local_name: &str, crate_path: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("`{local_name}` is a crate-root `rust::` import (`{crate_path}`) and cannot be used as a type"),
+        span,
+    )
+    .with_hint(format!(
+        "Import a concrete item, e.g. `from rust::{crate_path} import YourType`"
+    ))
+    .with_note("Crate-root `import rust::...` binds the crate namespace, not a single Rust type")
+}
+
+/// Rust item exists but is not publicly visible from the importing module.
+pub fn rust_item_not_public(local_name: &str, canonical_path: &str, span: Span) -> CompileError {
+    CompileError::new(
+        format!("Rust item `{local_name}` (`{canonical_path}`) is not public"),
+        span,
+    )
+    .with_hint("Import a public item or expose it from the Rust crate with `pub`")
+    .with_note("RFC 041 requires visibility-aware rust-inspect metadata for `rust::` imports")
+}
+
 /// Rust `core`/`alloc` imports are reserved for future no_std/target work.
 pub fn unsupported_rust_core_alloc(crate_name: &str, span: Span) -> CompileError {
     CompileError::new(

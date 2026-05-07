@@ -11,8 +11,64 @@ use super::super::expr::{IrExprKind, Pattern};
 use super::super::types::IrType;
 use super::IrEmitter;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use incan_core::lang::types::collections::{self, CollectionTypeId};
+use incan_core::lang::types::numerics;
 
 impl<'a> IrEmitter<'a> {
+    /// Emit the generated Rust type path for an anonymous ordinary union.
+    pub(super) fn emit_union_type_path(&self, ty: &IrType) -> TokenStream {
+        self.emit_union_type_path_with_qualifier(ty, None)
+    }
+
+    /// Emit the generated Rust type path for an anonymous ordinary union with an optional explicit module qualifier.
+    pub(super) fn emit_union_type_path_with_qualifier(&self, ty: &IrType, qualifier: Option<&[String]>) -> TokenStream {
+        let union_name = ty
+            .union_type_name()
+            .unwrap_or_else(|| super::super::types::IR_UNION_TYPE_NAME.to_string());
+        let n = Self::rust_ident(&union_name);
+        if let Some(qualifier) = qualifier
+            && let Some((first, rest)) = qualifier.split_first()
+        {
+            let first = if first == "crate" {
+                quote! { crate }
+            } else {
+                let ident = Self::rust_ident(first);
+                quote! { #ident }
+            };
+            let path = rest.iter().fold(first, |acc, segment| {
+                let ident = Self::rust_ident(segment);
+                quote! { #acc :: #ident }
+            });
+            return quote! { #path :: #n };
+        }
+        if self.qualify_union_types_from_crate {
+            quote! { crate :: #n }
+        } else {
+            quote! { #n }
+        }
+    }
+
+    fn emit_path_ident(path: &str) -> TokenStream {
+        if path.contains("::") {
+            let segments: Vec<TokenStream> = path
+                .split("::")
+                .filter(|s| !s.is_empty())
+                .map(|seg| {
+                    let ident = Self::rust_ident(seg);
+                    quote! { #ident }
+                })
+                .collect();
+            let mut iter = segments.into_iter();
+            let Some(first) = iter.next() else {
+                return quote! { _ };
+            };
+            iter.fold(first, |acc, seg| quote! { #acc :: #seg })
+        } else {
+            let ident = Self::rust_ident(path);
+            quote! { #ident }
+        }
+    }
+
     /// Emit a type as Rust tokens.
     #[allow(clippy::only_used_in_recursion)]
     pub(super) fn emit_type(&self, ty: &IrType) -> TokenStream {
@@ -21,11 +77,17 @@ impl<'a> IrEmitter<'a> {
             IrType::Bool => quote! { bool },
             IrType::Int => quote! { i64 },
             IrType::Float => quote! { f64 },
+            IrType::Numeric(id) => {
+                let ident = format_ident!("{}", numerics::rust_name(*id));
+                quote! { #ident }
+            }
+            IrType::Decimal { .. } => quote! { incan_stdlib::num::Decimal128 },
             IrType::String => quote! { String },
+            IrType::Bytes => quote! { Vec<u8> },
             IrType::StaticStr => quote! { &'static str },
             IrType::StaticBytes => quote! { &'static [u8] },
-            IrType::FrozenStr => quote! { FrozenStr },
-            IrType::FrozenBytes => quote! { FrozenBytes },
+            IrType::FrozenStr => quote! { incan_stdlib::frozen::FrozenStr },
+            IrType::FrozenBytes => quote! { incan_stdlib::frozen::FrozenBytes },
             IrType::StrRef => quote! { &str },
             IrType::List(elem) => {
                 let e = self.emit_type(elem);
@@ -38,7 +100,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrType::Set(elem) => {
                 let e = self.emit_type(elem);
-                quote! { HashSet<#e> }
+                quote! { std::collections::HashSet<#e> }
             }
             IrType::Tuple(types) => {
                 let ts: Vec<_> = types.iter().map(|t| self.emit_type(t)).collect();
@@ -57,13 +119,29 @@ impl<'a> IrEmitter<'a> {
                 if name == surface_types::as_str(SurfaceTypeId::FieldInfo) {
                     return quote! { incan_stdlib::reflection::FieldInfo };
                 }
-                let n = Self::rust_ident(name);
-                quote! { #n }
+                if name == surface_types::as_str(SurfaceTypeId::ValidationError) {
+                    return quote! { incan_stdlib::validation::ValidationError };
+                }
+                Self::emit_path_ident(name)
+            }
+            IrType::NamedGeneric(name, _) if name == super::super::types::IR_UNION_TYPE_NAME => {
+                self.emit_union_type_path(ty)
             }
             IrType::NamedGeneric(name, args) => {
-                let n = Self::rust_ident(name);
+                let frozen_name = match collections::from_str(name) {
+                    Some(CollectionTypeId::FrozenList) => Some(quote! { incan_stdlib::frozen::FrozenList }),
+                    Some(CollectionTypeId::FrozenSet) => Some(quote! { incan_stdlib::frozen::FrozenSet }),
+                    Some(CollectionTypeId::FrozenDict) => Some(quote! { incan_stdlib::frozen::FrozenDict }),
+                    Some(CollectionTypeId::Generator) => Some(quote! { incan_stdlib::iter::Generator }),
+                    _ => None,
+                };
+                let n = Self::emit_path_ident(name);
                 let ts: Vec<_> = args.iter().map(|t| self.emit_type(t)).collect();
-                quote! { #n < #(#ts),* > }
+                if let Some(n) = frozen_name {
+                    quote! { #n < #(#ts),* > }
+                } else {
+                    quote! { #n < #(#ts),* > }
+                }
             }
             IrType::ImplTrait(bound) => {
                 let bound_tokens = self.emit_trait_bound(bound);
@@ -147,8 +225,18 @@ impl<'a> IrEmitter<'a> {
     ///
     /// Handles simple bounds like `PartialEq` and bounds with associated types like `std::ops::Add<Output = T>`.
     fn emit_trait_bound(&self, bound: &super::super::decl::IrTraitBound) -> TokenStream {
+        if matches!(bound.origin, super::super::decl::IrTraitBoundOrigin::RustCapability)
+            && bound.trait_path == "Static"
+        {
+            return quote! { 'static };
+        }
+
         // Parse the trait path into segments.
-        let segments: Vec<_> = bound.trait_path.split("::").collect();
+        let segments: Vec<_> = bound
+            .trait_path
+            .split("::")
+            .flat_map(|segment| segment.split('.'))
+            .collect();
         let path_tokens: Vec<TokenStream> = segments
             .iter()
             .map(|seg| {
@@ -258,7 +346,15 @@ impl<'a> IrEmitter<'a> {
                     // Parse as a path
                     let segments: Vec<_> = variant.split("::").collect();
                     let idents: Vec<_> = segments.iter().map(|s| format_ident!("{}", s)).collect();
-                    quote! { #(#idents)::* }
+                    if self.qualify_union_types_from_crate
+                        && segments
+                            .first()
+                            .is_some_and(|segment| segment.starts_with("__IncanUnion"))
+                    {
+                        quote! { crate :: #(#idents)::* }
+                    } else {
+                        quote! { #(#idents)::* }
+                    }
                 } else {
                     let v_ident = format_ident!("{}", variant);
                     quote! { #v_ident }
@@ -275,5 +371,26 @@ impl<'a> IrEmitter<'a> {
                 quote! { #(#ps)|* }
             }
         }
+    }
+
+    /// Emit a pattern plus an optional guard required by the scrutinee's Rust representation.
+    ///
+    /// Incan `str` lowers to Rust `String`. Rust cannot directly match `String` with a string-literal pattern, so
+    /// string literal arms become guarded reference patterns while fallback bindings still receive the original
+    /// `String` value.
+    pub(super) fn emit_pattern_for_scrutinee(
+        &self,
+        pattern: &Pattern,
+        scrutinee_ty: &IrType,
+    ) -> (TokenStream, Option<TokenStream>) {
+        if matches!(scrutinee_ty, IrType::String)
+            && let Pattern::Literal(lit) = pattern
+            && let IrExprKind::String(value) = &lit.kind
+        {
+            let binding = Self::rust_ident("__incan_match_string_literal");
+            return (quote! { ref #binding }, Some(quote! { #binding.as_str() == #value }));
+        }
+
+        (self.emit_pattern(pattern), None)
     }
 }

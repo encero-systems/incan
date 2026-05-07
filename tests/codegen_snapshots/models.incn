@@ -1,5 +1,7 @@
 """Test model definitions with various decorators"""
 
+from std.serde import json
+
 # Simple model with basic fields
 model User:
     name: str
@@ -23,8 +25,8 @@ model Config:
     timeout: int
 
 
-# Model with @derive(Serialize, Deserialize)
-@derive(Serialize, Deserialize)
+# Model with @derive(json)
+@derive(json)
 model ApiRequest:
     endpoint: str
     method: str

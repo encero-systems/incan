@@ -1,6 +1,7 @@
 //! IR declaration definitions
 
 use super::{IrSpan, IrStmt, IrType, Mutability};
+use incan_core::interop::is_rust_capability_bound;
 
 /// An IR declaration
 #[derive(Debug, Clone)]
@@ -25,6 +26,7 @@ impl IrDecl {
 
 /// Declaration kinds
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum IrDeclKind {
     /// Function definition
     Function(IrFunction),
@@ -44,6 +46,17 @@ pub enum IrDeclKind {
         name: String,
         type_params: Vec<IrTypeParam>,
         ty: IrType,
+        /// `true` when this alias came from `type X = rusttype Y`.
+        is_rusttype: bool,
+        /// Optional interop conversion edges declared in a `rusttype` block (`interop:`).
+        interop_edges: Vec<IrInteropEdge>,
+    },
+
+    /// Symbol alias (`pub use target as name`) for declaration-level callable/type aliases.
+    SymbolAlias {
+        visibility: Visibility,
+        name: String,
+        target_path: Vec<String>,
     },
 
     /// Constant
@@ -54,8 +67,17 @@ pub enum IrDeclKind {
         value: super::IrExpr,
     },
 
+    /// Runtime-initialized module storage cell.
+    Static {
+        visibility: Visibility,
+        name: String,
+        ty: IrType,
+        value: super::IrExpr,
+    },
+
     /// Import (preserved for codegen)
     Import {
+        visibility: Visibility,
         origin: IrImportOrigin,
         qualifier: IrImportQualifier,
         path: Vec<String>,
@@ -66,6 +88,33 @@ pub enum IrDeclKind {
 
     /// Impl block for methods on structs/enums
     Impl(IrImpl),
+}
+
+/// Direction of a lowered `interop:` edge (RFC 041).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrInteropDirection {
+    /// `from S ...` edge (source into the rusttype surface).
+    From,
+    /// `into T ...` edge (rusttype surface into target).
+    Into,
+}
+
+/// Adapter mode for a lowered `interop:` edge.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrInteropAdapterKind {
+    /// Infallible adapter (`via`).
+    Via,
+    /// Fallible adapter (`try`).
+    Try,
+}
+
+/// A lowered interop edge attached to a `rusttype` alias.
+#[derive(Debug, Clone)]
+pub struct IrInteropEdge {
+    pub direction: IrInteropDirection,
+    pub ty: IrType,
+    pub adapter_kind: IrInteropAdapterKind,
+    pub adapter: super::IrExpr,
 }
 
 /// Semantic origin of an import.
@@ -111,6 +160,11 @@ pub enum IrImportQualifier {
 pub struct IrImportItem {
     pub name: String,
     pub alias: Option<String>,
+    /// Method names provided when this item is a Rust trait import.
+    ///
+    /// Extension-trait imports can be used by Rust method lookup without appearing as identifiers in emitted tokens.
+    /// Codegen uses these method names to retain only trait imports that can satisfy observed method calls.
+    pub rust_trait_methods: Vec<String>,
 }
 
 /// IR trait definition
@@ -152,6 +206,7 @@ pub struct IrFunction {
     pub return_type: IrType,
     pub body: Vec<IrStmt>,
     pub is_async: bool,
+    pub is_generator: bool,
     pub visibility: Visibility,
     /// Type parameters for generics, with optional trait bounds (RFC 023).
     pub type_params: Vec<IrTypeParam>,
@@ -165,6 +220,8 @@ pub struct IrFunction {
     /// Example: `@route("/users/{id}")` imported from a `rust.module("incan_web_macros")` stub becomes
     /// `#[incan_web_macros::route("/users/{id}")]`.
     pub rust_attributes: Vec<IrRustAttribute>,
+    /// Targeted Rust lint suppressions from RFC 057 `@rust.allow(...)`.
+    pub lint_allows: Vec<IrRustLintAllow>,
 }
 
 /// Function parameter
@@ -174,6 +231,8 @@ pub struct FunctionParam {
     pub ty: IrType,
     pub mutability: Mutability,
     pub is_self: bool,
+    /// Surface call-binding kind preserved for RFC 038 rest parameters.
+    pub kind: crate::frontend::ast::ParamKind,
     /// Optional default argument expression (used for call-site default filling).
     pub default: Option<super::IrExpr>,
 }
@@ -191,6 +250,8 @@ pub struct IrStruct {
     ///
     /// Key is the derive name, value is the module path from `rust.module(...)`.
     pub derive_rust_modules: std::collections::HashMap<String, String>,
+    /// Targeted Rust lint suppressions from RFC 057 `@rust.allow(...)`.
+    pub lint_allows: Vec<IrRustLintAllow>,
 }
 
 /// Struct field
@@ -210,6 +271,8 @@ pub struct StructField {
 pub struct IrEnum {
     pub name: String,
     pub variants: Vec<EnumVariant>,
+    /// Value enum backing type, when this enum is an RFC 032 value enum.
+    pub value_type: Option<IrEnumValueType>,
     pub derives: Vec<String>,
     pub visibility: Visibility,
     /// Type parameters for generics, with optional trait bounds (RFC 023).
@@ -218,6 +281,8 @@ pub struct IrEnum {
     ///
     /// Key is the derive name, value is the module path from `rust.module(...)`.
     pub derive_rust_modules: std::collections::HashMap<String, String>,
+    /// Targeted Rust lint suppressions from RFC 057 `@rust.allow(...)`.
+    pub lint_allows: Vec<IrRustLintAllow>,
 }
 
 /// A passthrough Rust attribute generated from an Incan decorator.
@@ -226,6 +291,13 @@ pub struct IrRustAttribute {
     pub module_path: String,
     pub name: String,
     pub args: Vec<IrRustAttrArg>,
+}
+
+/// A targeted Rust lint suppression emitted as `#[allow(...)]` on one generated item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IrRustLintAllow {
+    /// Rust lint path preserved from the source string literal, e.g. `dead_code` or `clippy::too_many_arguments`.
+    pub lint: String,
 }
 
 /// Rust attribute argument kinds.
@@ -240,6 +312,22 @@ pub enum IrRustAttrArg {
 pub struct EnumVariant {
     pub name: String,
     pub fields: VariantFields,
+    /// Raw RFC 032 value for this variant when the parent enum is a value enum.
+    pub raw_value: Option<IrEnumValue>,
+}
+
+/// Primitive backing type for an RFC 032 value enum.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrEnumValueType {
+    String,
+    Int,
+}
+
+/// Raw per-variant value for an RFC 032 value enum.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum IrEnumValue {
+    String(String),
+    Int(i64),
 }
 
 /// Variant fields (unit, tuple, or struct)
@@ -266,6 +354,17 @@ pub struct IrTraitBound {
     pub type_args: Vec<IrType>,
     /// Optional associated type constraints (e.g., `Output = T` for `Add<Output = T>`).
     pub assoc_types: Vec<(String, IrType)>,
+    /// Distinguishes compiler-managed Rust capability markers (`Send`, `Sync`, `Static`) from regular trait paths.
+    pub origin: IrTraitBoundOrigin,
+}
+
+/// Origin classification for an IR trait bound.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrTraitBoundOrigin {
+    /// Standard trait bound (Incan-mapped or user-defined trait path).
+    Standard,
+    /// Rust-native capability marker from `std.rust`.
+    RustCapability,
 }
 
 impl IrTraitBound {
@@ -275,6 +374,7 @@ impl IrTraitBound {
             trait_path: trait_path.into(),
             type_args: Vec::new(),
             assoc_types: Vec::new(),
+            origin: IrTraitBoundOrigin::Standard,
         }
     }
 
@@ -284,6 +384,7 @@ impl IrTraitBound {
             trait_path: trait_path.into(),
             type_args,
             assoc_types: Vec::new(),
+            origin: IrTraitBoundOrigin::Standard,
         }
     }
 
@@ -293,6 +394,23 @@ impl IrTraitBound {
             trait_path: trait_path.into(),
             type_args: Vec::new(),
             assoc_types: vec![("Output".to_string(), output_type)],
+            origin: IrTraitBoundOrigin::Standard,
+        }
+    }
+
+    /// Create a bound and classify Rust capability markers.
+    pub fn with_type_args_classified(trait_path: impl Into<String>, type_args: Vec<IrType>) -> Self {
+        let trait_path = trait_path.into();
+        let origin = if is_rust_capability_bound(trait_path.as_str()) {
+            IrTraitBoundOrigin::RustCapability
+        } else {
+            IrTraitBoundOrigin::Standard
+        };
+        Self {
+            trait_path,
+            type_args,
+            assoc_types: Vec::new(),
+            origin,
         }
     }
 }

@@ -159,6 +159,7 @@ impl TypeChecker {
         result
     }
 
+    /// Evaluate a const expression into the limited compile-time value domain used by declarations and attributes.
     fn eval_const_expr(
         &mut self,
         expr: &Spanned<Expr>,
@@ -179,7 +180,7 @@ impl TypeChecker {
                 // Any actual type mismatch is caught by Rust's compiler.
                 if let Some(sym) = self.lookup_symbol(name)
                     && match &sym.kind {
-                        SymbolKind::RustModule { .. } => true,
+                        SymbolKind::RustItem(_) => true,
                         SymbolKind::Module(info) => info.path.first().is_some_and(|seg| seg == "rust"),
                         _ => false,
                     }
@@ -248,6 +249,23 @@ impl TypeChecker {
                                 &r.ty.to_string(),
                                 expr.span,
                             ));
+                            None
+                        }
+                    }
+                    UnaryOp::Invert => {
+                        if matches!(r.ty, ResolvedType::Int) {
+                            let value = match r.value.as_ref() {
+                                Some(ConstValue::Int(n)) => Some(ConstValue::Int(!n)),
+                                _ => None,
+                            };
+                            Some(ConstEvalResult {
+                                ty: ResolvedType::Int,
+                                kind: r.kind,
+                                value,
+                            })
+                        } else {
+                            self.errors
+                                .push(errors::const_unary_op_not_supported("~", &r.ty.to_string(), expr.span));
                             None
                         }
                     }
@@ -372,6 +390,42 @@ impl TypeChecker {
                             }
                         }
                     }
+                    BinaryOp::BitAnd | BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::Shl | BinaryOp::Shr => {
+                        if !matches!((&l.ty, &r.ty), (ResolvedType::Int, ResolvedType::Int)) {
+                            self.errors.push(errors::const_binary_op_not_supported(
+                                &op.to_string(),
+                                &l.ty.to_string(),
+                                &r.ty.to_string(),
+                                expr.span,
+                            ));
+                            return None;
+                        }
+                        let value = match (l.value.as_ref(), r.value.as_ref(), op) {
+                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::BitAnd) => {
+                                Some(ConstValue::Int(lhs & rhs))
+                            }
+                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::BitOr) => {
+                                Some(ConstValue::Int(lhs | rhs))
+                            }
+                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::BitXor) => {
+                                Some(ConstValue::Int(lhs ^ rhs))
+                            }
+                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::Shl) if *rhs >= 0 => {
+                                u32::try_from(*rhs)
+                                    .ok()
+                                    .and_then(|rhs| lhs.checked_shl(rhs))
+                                    .map(ConstValue::Int)
+                            }
+                            (Some(ConstValue::Int(lhs)), Some(ConstValue::Int(rhs)), BinaryOp::Shr) if *rhs >= 0 => {
+                                u32::try_from(*rhs)
+                                    .ok()
+                                    .and_then(|rhs| lhs.checked_shr(rhs))
+                                    .map(ConstValue::Int)
+                            }
+                            _ => None,
+                        };
+                        (ResolvedType::Int, ConstKind::RustNative, value)
+                    }
                     // Comparisons always yield bool (mixed numeric allowed)
                     BinaryOp::Eq | BinaryOp::NotEq | BinaryOp::Lt | BinaryOp::Gt | BinaryOp::LtEq | BinaryOp::GtEq => {
                         // Validate operands are comparable (same type or both numeric)
@@ -415,7 +469,13 @@ impl TypeChecker {
                             return None;
                         }
                     }
-                    BinaryOp::In | BinaryOp::NotIn | BinaryOp::Is => {
+                    BinaryOp::MatMul
+                    | BinaryOp::PipeForward
+                    | BinaryOp::PipeBackward
+                    | BinaryOp::In
+                    | BinaryOp::NotIn
+                    | BinaryOp::Is
+                    | BinaryOp::IsNot => {
                         self.errors
                             .push(errors::const_operator_not_allowed(&op.to_string(), expr.span));
                         return None;
@@ -429,6 +489,11 @@ impl TypeChecker {
                 })
             }
             Expr::List(items) => {
+                if items.iter().any(|item| matches!(item, ListEntry::Spread(_))) {
+                    self.errors.push(errors::const_expression_not_allowed(expr.span));
+                    return None;
+                }
+
                 let elem_expected = expected.and_then(|t| match t {
                     ResolvedType::FrozenList(elem) => Some(elem.as_ref()),
                     ResolvedType::Generic(name, args)
@@ -444,10 +509,16 @@ impl TypeChecker {
                 let elem_ty = if items.is_empty() {
                     elem_expected.cloned().unwrap_or(ResolvedType::Unknown)
                 } else {
-                    let first = self.eval_const_expr(&items[0], elem_expected, stack, decl_span)?;
+                    let ListEntry::Element(ast_first) = &items[0] else {
+                        unreachable!("list spreads were rejected before const list evaluation");
+                    };
+                    let first = self.eval_const_expr(ast_first, elem_expected, stack, decl_span)?;
                     // Evaluate the rest just for validation.
                     for it in items.iter().skip(1) {
-                        self.eval_const_expr(it, elem_expected, stack, decl_span)?;
+                        let ListEntry::Element(value) = it else {
+                            unreachable!("list spreads were rejected before const list evaluation");
+                        };
+                        self.eval_const_expr(value, elem_expected, stack, decl_span)?;
                     }
                     first.ty
                 };
@@ -514,10 +585,17 @@ impl TypeChecker {
                         v_expected.cloned().unwrap_or(ResolvedType::Unknown),
                     )
                 } else {
-                    let (k0, v0) = &pairs[0];
+                    let DictEntry::Pair(k0, v0) = &pairs[0] else {
+                        self.errors.push(errors::const_expression_not_allowed(expr.span));
+                        return None;
+                    };
                     let kk = self.eval_const_expr(k0, k_expected, stack, decl_span)?;
                     let vv = self.eval_const_expr(v0, v_expected, stack, decl_span)?;
-                    for (k, v) in pairs.iter().skip(1) {
+                    for entry in pairs.iter().skip(1) {
+                        let DictEntry::Pair(k, v) = entry else {
+                            self.errors.push(errors::const_expression_not_allowed(expr.span));
+                            return None;
+                        };
                         self.eval_const_expr(k, k_expected, stack, decl_span)?;
                         self.eval_const_expr(v, v_expected, stack, decl_span)?;
                     }
@@ -642,12 +720,15 @@ impl TypeChecker {
             }
 
             // Disallowed constructs for RFC 008 phase 1.
-            Expr::Call(_, _)
-            | Expr::MethodCall(_, _, _)
+            Expr::Call(_, _, _)
+            | Expr::MethodCall(_, _, _, _)
+            | Expr::Partial(_)
+            | Expr::Generator(_)
             | Expr::ListComp(_)
             | Expr::DictComp(_)
             | Expr::Match(_, _)
             | Expr::If(_)
+            | Expr::Loop(_)
             | Expr::Closure(_, _)
             | Expr::Yield(_)
             | Expr::Range { .. }
@@ -667,6 +748,7 @@ impl TypeChecker {
         }
     }
 
+    /// Evaluate a literal in a const context, optionally checking it against an expected type.
     fn eval_const_literal(
         &mut self,
         lit: &Literal,
@@ -675,15 +757,20 @@ impl TypeChecker {
         _decl_span: Span,
     ) -> ConstEvalResult {
         match lit {
-            Literal::Int(n) => ConstEvalResult {
+            Literal::Int(il) => ConstEvalResult {
                 ty: ResolvedType::Int,
                 kind: ConstKind::RustNative,
-                value: Some(ConstValue::Int(*n)),
+                value: Some(ConstValue::Int(il.value)),
             },
             Literal::Float(f) => ConstEvalResult {
                 ty: ResolvedType::Float,
                 kind: ConstKind::RustNative,
-                value: Some(ConstValue::Float(*f)),
+                value: Some(ConstValue::Float(f.value)),
+            },
+            Literal::Decimal(_) => ConstEvalResult {
+                ty: ResolvedType::Unknown,
+                kind: ConstKind::RustNative,
+                value: None,
             },
             Literal::Bool(b) => ConstEvalResult {
                 ty: ResolvedType::Bool,

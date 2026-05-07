@@ -3,9 +3,11 @@ Derives and JSON Example
 
 This example demonstrates:
 - All available @derive decorators
-- JSON serialization with Serialize/Deserialize
+- JSON serialization with @derive(json)
 - Using derived behaviors (equality, ordering)
 """
+
+from std.serde import json
 
 @derive(Debug, Clone, Eq, Hash, Default)
 model User:
@@ -14,7 +16,7 @@ model User:
     active: bool = true
 
 
-@derive(Debug, Clone, Serialize, Deserialize)
+@derive(Debug, Clone, json)
 model ApiResponse:
     status: int
     message: str
@@ -51,4 +53,3 @@ def main() -> None:
         println(f"{score2.player} scored higher than {score1.player}")
     if score1 < score2:
         println(f"{score1.player} scored lower than {score2.player}")
-

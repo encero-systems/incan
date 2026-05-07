@@ -16,7 +16,7 @@ mod newtypes;
 mod traits;
 
 use super::super::IrSpan;
-use super::super::decl::{IrDecl, IrDeclKind, Visibility};
+use super::super::decl::{IrDecl, IrDeclKind, IrInteropAdapterKind, IrInteropDirection, IrInteropEdge, Visibility};
 use super::super::types::IrType;
 use super::AstLowering;
 use super::errors::LoweringError;
@@ -52,6 +52,12 @@ impl AstLowering {
         let kind = match decl {
             ast::Declaration::Function(f) => IrDeclKind::Function(self.lower_function(f)?),
             ast::Declaration::Const(c) => {
+                if c.name == "__derives__" {
+                    return Err(LoweringError {
+                        message: "internal __derives__ metadata is not emitted".to_string(),
+                        span: IrSpan::default(),
+                    });
+                }
                 let value = self.lower_expr_spanned(&c.value)?;
                 // RFC 008: In const context, annotations imply frozen/static types.
                 // Prefer frozen annotation if present; otherwise use the initializer type.
@@ -70,6 +76,19 @@ impl AstLowering {
                     visibility,
                     name: c.name.clone(),
                     ty,
+                    value,
+                }
+            }
+            ast::Declaration::Static(s) => {
+                let value = self.lower_expr_spanned(&s.value)?;
+                let visibility = match s.visibility {
+                    ast::Visibility::Public => Visibility::Public,
+                    ast::Visibility::Private => Visibility::Private,
+                };
+                IrDeclKind::Static {
+                    visibility,
+                    name: s.name.clone(),
+                    ty: self.lower_type(&s.ty.node),
                     value,
                 }
             }
@@ -99,8 +118,32 @@ impl AstLowering {
                 name: a.name.clone(),
                 type_params: Self::lower_type_params(&a.type_params),
                 ty: self.lower_type(&a.target.node),
+                is_rusttype: false,
+                interop_edges: Vec::new(),
             },
+            ast::Declaration::Alias(a) => IrDeclKind::SymbolAlias {
+                visibility: Self::map_visibility(a.visibility),
+                name: a.name.clone(),
+                target_path: a.target.segments.clone(),
+            },
+            ast::Declaration::Partial(_) => {
+                return Err(LoweringError {
+                    message: "Partial callable presets are not lowered by this syntax-only slice".to_string(),
+                    span: IrSpan::default(),
+                });
+            }
             ast::Declaration::Newtype(n) => {
+                if n.is_rusttype {
+                    let interop_edges = self.lower_interop_edges(&n.interop_edges)?;
+                    return Ok(IrDecl::new(IrDeclKind::TypeAlias {
+                        visibility: Self::map_visibility(n.visibility),
+                        name: n.name.clone(),
+                        type_params: Self::lower_type_params(&n.type_params),
+                        ty: self.lower_type(&n.underlying.node),
+                        is_rusttype: true,
+                        interop_edges,
+                    }));
+                }
                 // Note: newtype checked construction hook selection is done in `lower_program` when we see the full
                 // newtype declaration.
                 let struct_ir = self.lower_newtype(n)?;
@@ -111,6 +154,12 @@ impl AstLowering {
             }
             ast::Declaration::Import(i) => self.lower_import(i),
             ast::Declaration::Trait(t) => IrDeclKind::Trait(self.lower_trait(t)?),
+            ast::Declaration::TestModule(_) => {
+                return Err(LoweringError {
+                    message: "Test modules are not lowered to production IR".to_string(),
+                    span: IrSpan::default(),
+                });
+            }
             ast::Declaration::Docstring(_) => {
                 // Skip docstrings in codegen
                 return Err(LoweringError {
@@ -120,6 +169,31 @@ impl AstLowering {
             }
         };
         Ok(IrDecl::new(kind))
+    }
+
+    fn lower_interop_edges(
+        &mut self,
+        edges: &[ast::Spanned<ast::InteropEdgeDecl>],
+    ) -> Result<Vec<IrInteropEdge>, LoweringError> {
+        edges
+            .iter()
+            .map(|edge| {
+                let direction = match edge.node.direction {
+                    ast::InteropDirection::From => IrInteropDirection::From,
+                    ast::InteropDirection::Into => IrInteropDirection::Into,
+                };
+                let adapter_kind = match edge.node.adapter_kind {
+                    ast::InteropAdapterKind::Via => IrInteropAdapterKind::Via,
+                    ast::InteropAdapterKind::Try => IrInteropAdapterKind::Try,
+                };
+                Ok(IrInteropEdge {
+                    direction,
+                    ty: self.lower_type(&edge.node.ty.node),
+                    adapter_kind,
+                    adapter: self.lower_expr_spanned(&edge.node.adapter)?,
+                })
+            })
+            .collect()
     }
 
     /// RFC 023: Check if a decorator list contains `@rust.extern`.

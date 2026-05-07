@@ -27,7 +27,7 @@ impl<'a> Parser<'a> {
                 let (version, features) = self.rust_import_spec()?;
                 self.expect_keyword(KeywordId::Import, "Expected 'import' after rust crate path")?;
 
-                let items = self.parse_import_items()?;
+                let items = self.parse_import_items(true)?;
 
                 return Ok(ImportDecl {
                     visibility,
@@ -51,7 +51,7 @@ impl<'a> Parser<'a> {
                 }
                 self.expect_keyword(KeywordId::Import, "Expected 'import' after pub library path")?;
 
-                let items = self.parse_import_items()?;
+                let items = self.parse_import_items(false)?;
 
                 return Ok(ImportDecl {
                     visibility,
@@ -65,7 +65,7 @@ impl<'a> Parser<'a> {
             self.expect_keyword(KeywordId::Import, "Expected 'import' after module path")?;
 
             // Parse import items: `ItemA, ItemB as alias` or `(ItemA, ItemB as alias,)`.
-            let items = self.parse_import_items()?;
+            let items = self.parse_import_items(false)?;
 
             return Ok(ImportDecl {
                 visibility,
@@ -131,15 +131,17 @@ impl<'a> Parser<'a> {
     /// - `serde_json` -> ("serde_json", [])
     /// - `serde_json::Value` -> ("serde_json", ["Value"])
     /// - `std::collections::HashMap` -> ("std", ["collections", "HashMap"])
+    /// - `substrait::proto::type` -> ("substrait", ["proto", "type"]) — Rust modules may match Incan
+    ///   keywords (e.g. Substrait's `proto::type`); use `identifier_or_any_keyword` for segments.
     ///
     /// Both `::` and `.` are accepted as separators here to support dot-notation recovery
     /// (`from rust.std.time import Instant` → same result as `from rust::std::time import Instant`).
     fn rust_crate_path(&mut self) -> Result<(String, Vec<Ident>), CompileError> {
-        let crate_name = self.identifier()?;
+        let crate_name = self.identifier_or_any_keyword()?;
         let mut path = Vec::new();
 
         while self.match_punct(PunctuationId::ColonColon) || self.match_punct(PunctuationId::Dot) {
-            let segment = self.identifier()?;
+            let segment = self.identifier_or_any_keyword()?;
             path.push(segment);
         }
 
@@ -260,7 +262,11 @@ impl<'a> Parser<'a> {
     /// The lexer's `bracket_depth` tracking suppresses `Newline`/`Indent`/`Dedent` tokens inside
     /// `(...)`, so no explicit newline handling is needed here — multi-line layouts parse
     /// identically to single-line layouts.
-    fn parse_import_items(&mut self) -> Result<Vec<ImportItem>, CompileError> {
+    ///
+    /// When `rust_item_names` is true (`from rust::... import ...`), imported symbols may be Incan keywords matching
+    /// Rust items (e.g. Substrait's `type` module): use [`Self::identifier_or_any_keyword`]. Incan
+    /// `from module import ...` keeps strict identifiers.
+    fn parse_import_items(&mut self, rust_item_names: bool) -> Result<Vec<ImportItem>, CompileError> {
         let parenthesized = self.match_punct(PunctuationId::LParen);
         let mut items = Vec::new();
 
@@ -271,7 +277,11 @@ impl<'a> Parser<'a> {
 
         // ---- Parse one item at a time ----
         loop {
-            let name = self.identifier()?;
+            let name = if rust_item_names {
+                self.identifier_or_any_keyword()?
+            } else {
+                self.identifier()?
+            };
             let alias = if self.match_keyword(KeywordId::As) {
                 Some(self.identifier()?)
             } else {

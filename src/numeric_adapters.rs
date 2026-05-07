@@ -3,6 +3,7 @@ use crate::backend::ir::expr::{BinOp as IrBinOp, IrExprKind, TypedExpr, UnaryOp 
 use crate::backend::ir::types::IrType;
 use crate::frontend::ast::{BinaryOp, Expr, Literal, Spanned, UnaryOp};
 use crate::frontend::symbols::ResolvedType;
+use incan_core::lang::types::numerics::{self, NumericFamily};
 use incan_core::{NumericOp, NumericTy, PowExponentKind};
 
 /// Map frontend AST BinaryOp to NumericOp.
@@ -30,6 +31,11 @@ pub fn numeric_ty_from_resolved(ty: &ResolvedType) -> Option<NumericTy> {
     match ty {
         ResolvedType::Int => Some(NumericTy::Int),
         ResolvedType::Float => Some(NumericTy::Float),
+        ResolvedType::Numeric(id) => match numerics::info_for(*id).family {
+            NumericFamily::SignedInteger | NumericFamily::UnsignedInteger => Some(NumericTy::Int),
+            NumericFamily::BinaryFloat => Some(NumericTy::Float),
+            NumericFamily::Bool => None,
+        },
         _ => None,
     }
 }
@@ -59,6 +65,11 @@ pub fn ir_type_to_numeric_ty(ty: &IrType) -> Option<NumericTy> {
     match ty {
         IrType::Int => Some(NumericTy::Int),
         IrType::Float => Some(NumericTy::Float),
+        IrType::Numeric(id) => match numerics::info_for(*id).family {
+            NumericFamily::SignedInteger | NumericFamily::UnsignedInteger => Some(NumericTy::Int),
+            NumericFamily::BinaryFloat => Some(NumericTy::Float),
+            NumericFamily::Bool => None,
+        },
         _ => None,
     }
 }
@@ -85,17 +96,17 @@ pub fn pow_exponent_kind_from_ir(expr: &TypedExpr) -> PowExponentKind {
 
 /// Determine PowExponentKind from an AST expression and its resolved type.
 pub fn pow_exponent_kind_from_ast(expr: &Spanned<Expr>, ty: &ResolvedType) -> PowExponentKind {
-    let rhs_is_float = matches!(ty, ResolvedType::Float);
+    let rhs_is_float = matches!(numeric_ty_from_resolved(ty), Some(NumericTy::Float));
     let rhs_int_literal = extract_int_literal(expr);
     PowExponentKind::from_literal_info(rhs_is_float, rhs_int_literal)
 }
 
 fn extract_int_literal(expr: &Spanned<Expr>) -> Option<i64> {
     match &expr.node {
-        Expr::Literal(Literal::Int(n)) => Some(*n),
+        Expr::Literal(Literal::Int(il)) => Some(il.value),
         Expr::Unary(UnaryOp::Neg, inner) => {
-            if let Expr::Literal(Literal::Int(n)) = &inner.node {
-                Some(-n)
+            if let Expr::Literal(Literal::Int(il)) = &inner.node {
+                Some(-il.value)
             } else {
                 None
             }

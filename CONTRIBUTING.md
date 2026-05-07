@@ -188,9 +188,11 @@ instead of calling `process::exit` directly. This makes commands testable.
 
 ### Prelude Status
 
-The stdlib prelude (`stdlib/`) contains trait definitions but is not yet integrated into
-compilation. Derives like `Debug`, `Clone` work through
-codegen heuristics rather than actual trait implementations.
+The stdlib surface now compiles through the normal pipeline under `crates/incan_stdlib/stdlib/`.
+Source declarations are the primary contract for `std.*` modules, including the prelude-facing
+trait definitions. Some behavior is still realized by backend lowering or runtime bridges
+(for example derive-backed Rust traits and host-backed stdlib leaves), but the compiler no longer
+treats the stdlib as documentation-only stubs.
 
 ### Property-Based Testing
 

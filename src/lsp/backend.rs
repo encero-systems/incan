@@ -1,26 +1,68 @@
 //! LSP (Language Server Protocol) backend implementation for Incan
+//!
+//! Call-site explicit generics (`callee[T](...)`, `recv.m[U](...)`) get type-oriented completions and hover
+//! (see `call_site_type_args.rs`, RFC 054).
 
+#[cfg(feature = "rust_inspect")]
+use std::collections::BTreeSet;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(feature = "rust_inspect")]
+use std::sync::{Mutex, OnceLock};
 use tokio::sync::RwLock;
 
+use serde::Deserialize;
+use serde_json::json;
 use tower_lsp::jsonrpc::Result;
 use tower_lsp::lsp_types::*;
 use tower_lsp::{Client, LanguageServer};
 
-use crate::frontend::ast::{Declaration, Program, Span, Type};
+use crate::cli::commands::common::CompilationSession;
+#[cfg(feature = "rust_inspect")]
+use crate::cli::commands::common::{
+    build_source_map, collect_inline_rust_imports, collect_project_requirements, collect_rust_inspect_query_paths,
+    ensure_rust_inspect_workspace, format_dependency_error, merge_project_requirement_dependencies,
+    prewarm_rust_inspect_workspace,
+};
+use crate::cli::prelude::ParsedModule;
+#[cfg(feature = "rust_inspect")]
+use crate::dependency_resolver::{ResolvedDependencies, resolve_dependencies};
+use crate::frontend::api_metadata::{
+    ApiClass, ApiConst, ApiDeclaration, ApiEnum, ApiFunction, ApiMethod, ApiModel, ApiNewtype, ApiPartial, ApiStatic,
+    ApiTrait, ApiTypeAlias, CheckedApiMetadata, SourceAnchor, collect_checked_api_metadata,
+    validate_checked_api_docstrings,
+};
+use crate::frontend::ast::{
+    CallArg, Condition, Declaration, DictEntry, Expr, ListEntry, MatchBody, MethodDecl, Param, ParamKind, Program,
+    Span, Spanned, Statement, SurfaceExprPayload, Type, TypeParam,
+};
+use crate::frontend::contract_metadata::{
+    CanonicalModelBundle, materialize_contract_models, read_model_bundles_from_json, read_project_model_bundles,
+};
+use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
-use crate::frontend::module::resolve_import_path;
-use crate::frontend::{lexer, parser, typechecker, vocab_desugar_pass};
+use crate::frontend::module::{SourceModuleImportResolution, resolve_program_source_imports};
+use crate::frontend::{lexer, parser, typechecker};
+use crate::library_manifest::{
+    EnumValueExport, EnumValueTypeExport, FieldExport, ParamExport, ParamKindExport, ReceiverExport, TypeBoundExport,
+    TypeParamExport, TypeRef,
+};
+#[cfg(feature = "rust_inspect")]
+use crate::lockfile::CargoFeatureSelection;
+use crate::lsp::call_site_type_args;
 use crate::lsp::diagnostics::{compile_error_to_diagnostic, position_to_offset, span_to_range};
 use crate::manifest::ProjectManifest;
+use incan_core::interop::{RustItemKind, RustModuleChildKind, RustTraitAssoc};
 use incan_core::lang::decorators;
 use incan_core::lang::keywords;
 use incan_core::lang::stdlib;
+use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::constructors;
 use incan_core::lang::types::collections;
+
+const EMIT_CONTRACT_MODEL_COMMAND: &str = "incan.metadata.model.emit";
 
 /// Document state stored by the LSP
 #[derive(Debug, Clone)]
@@ -33,6 +75,40 @@ pub struct DocumentState {
     /// This is used to make hover text reflect the actual type of a const binding, even if the user annotated
     /// `str`/`List[T]` and the compiler froze it to `FrozenStr`/`FrozenList[T]`.
     pub const_types: HashMap<String, String>,
+    /// Local symbols that originate from `rust::...` imports with canonical Rust path provenance.
+    rust_origin_symbols: Vec<RustOriginSymbol>,
+    /// For `rusttype` newtypes: maps the Incan type name to the canonical Rust path of the underlying type (e.g.
+    /// `"Name"` -> `"std::string::String"`).  Populated from the typechecker's resolved `NewtypeInfo.underlying`.
+    rusttype_info: HashMap<String, String>,
+    /// Checked public API metadata snippets that can be shown through hover after a successful typecheck.
+    api_metadata_previews: Vec<ApiMetadataPreview>,
+    /// Imported DSL surfaces from loaded `pub::` library manifests, used for scoped symbol LSP affordances.
+    library_imported_dsl_surfaces: parser::ImportedLibraryDslSurfaces,
+}
+
+#[derive(Debug, Clone)]
+struct RustOriginSymbol {
+    local_name: String,
+    span: Span,
+    info: crate::frontend::symbols::RustItemInfo,
+}
+
+#[derive(Debug, Clone)]
+struct ClassmethodContext {
+    owner_type: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ApiMetadataPreview {
+    span: Span,
+    markdown: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct LocalCallSignature {
+    label: String,
+    parameters: Vec<String>,
+    active_parameter: Option<u32>,
 }
 
 /// Incan Language Server
@@ -53,47 +129,48 @@ impl IncanLanguageServer {
     async fn analyze_document(&self, uri: &Url, source: &str, version: i32) {
         let mut diagnostics = Vec::new();
 
-        // Step 1: Lex
-        let tokens = match lexer::lex(source) {
-            Ok(tokens) => tokens,
-            Err(errors) => {
-                // Convert all lexer errors to diagnostics
-                for error in &errors {
-                    diagnostics.push(compile_error_to_diagnostic(error, source, uri));
-                }
-                self.client
-                    .publish_diagnostics(uri.clone(), diagnostics, Some(version))
-                    .await;
-                return;
-            }
-        };
-
-        // Step 1.5: Discover manifest and library soft keywords
+        // Step 1: Discover shared compilation context.
         let module_path = uri.to_file_path().ok();
-        let mut declared_crates = HashSet::new();
-        let mut library_imported_vocab = HashMap::new();
-        let mut library_manifest_index = LibraryManifestIndex::default();
-        if let Some(path) = &module_path
-            && let Some(start_dir) = path.parent()
-            && let Ok(Some(manifest)) = ProjectManifest::discover(start_dir)
-        {
-            declared_crates = manifest.declared_rust_crate_names();
-            library_manifest_index = LibraryManifestIndex::from_project_manifest(&manifest);
-            library_imported_vocab = library_manifest_index.library_imported_vocab();
-        }
+        let compilation_session = if let Some(path) = &module_path {
+            match CompilationSession::discover(path) {
+                Ok(session) => Some(session),
+                Err(error) => {
+                    diagnostics.push(lsp_root_error_diagnostic(error.to_string()));
+                    self.client
+                        .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+                        .await;
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let declared_crates = compilation_session
+            .as_ref()
+            .map(CompilationSession::declared_crate_names)
+            .unwrap_or_default();
+        let library_manifest_index = compilation_session
+            .as_ref()
+            .map(|session| session.library_manifest_index.clone())
+            .unwrap_or_default();
+        #[cfg(feature = "rust_inspect")]
+        let project_manifest = compilation_session
+            .as_ref()
+            .and_then(|session| session.manifest.clone());
+        #[cfg(feature = "rust_inspect")]
+        let mut rust_inspect_context: Option<(PathBuf, Vec<String>)> = None;
 
         // Step 2: Parse
         //
         // Pass the on-disk file path as `module_path` so context-sensitive syntax matches the CLI.
-        // In particular, `pub from ... import ...` is only accepted when this path resolves to a file
-        // named `lib.incn` whose parent directory is `src` (RFC 031 / `incan_syntax` parser).
-        // If `uri.to_file_path()` fails, `module_path` is omitted and those rules
-        // are skipped during parsing (prefer fixing the client URI scheme / workspace roots).
-        let mut ast = match parser::parse_with_context(
-            &tokens,
-            module_path.as_deref().and_then(|path| path.to_str()),
-            Some(&library_imported_vocab),
-        ) {
+        // In particular, `pub from ... import ...` is only accepted when this path resolves under `src/` (RFC 031 /
+        // `incan_syntax` parser). If `uri.to_file_path()` fails, `module_path` is omitted and those rules are
+        // skipped during parsing (prefer fixing the client URI scheme / workspace roots).
+        let ast = match if let (Some(session), Some(path)) = (compilation_session.as_ref(), module_path.as_ref()) {
+            session.parse_source(path, source, false)
+        } else {
+            lexer::lex(source).and_then(|tokens| parser::parse_with_context_and_surfaces(&tokens, None, None, None))
+        } {
             Ok(ast) => {
                 // Forward non-fatal parser warnings (e.g. RFC 005 dot-notation nudges) to the LSP.
                 for warn in &ast.warnings {
@@ -102,7 +179,6 @@ impl IncanLanguageServer {
                 ast
             }
             Err(errors) => {
-                // Convert all parse errors to diagnostics
                 for error in &errors {
                     diagnostics.push(compile_error_to_diagnostic(error, source, uri));
                 }
@@ -112,50 +188,103 @@ impl IncanLanguageServer {
                 return;
             }
         };
-        if let Err(errors) = vocab_desugar_pass::desugar_program_vocab_blocks(
-            &mut ast,
-            module_path.as_deref().and_then(|p| p.to_str()),
-            &library_manifest_index,
-        ) {
-            for error in &errors {
-                diagnostics.push(compile_error_to_diagnostic(error, source, uri));
-            }
+        let mut typecheck_ast = ast.clone();
+        if let Some(session) = &compilation_session
+            && let Err(error) = materialize_contract_models(&mut typecheck_ast, &session.contract_model_bundles)
+        {
+            diagnostics.push(lsp_root_error_diagnostic(format!(
+                "Invalid checked contract metadata: {error}"
+            )));
             self.client
                 .publish_diagnostics(uri.clone(), diagnostics, Some(version))
                 .await;
             return;
         }
 
+        let (deps, mut dep_summary_diags) = self
+            .collect_dependency_modules(uri, &ast, source, compilation_session.as_ref())
+            .await;
+        let mut typecheck_deps = deps.clone();
+        if let Some(session) = &compilation_session {
+            for dep in &mut typecheck_deps {
+                if let Err(error) = materialize_contract_models(&mut dep.ast, &session.contract_model_bundles) {
+                    diagnostics.push(lsp_root_error_diagnostic(format!(
+                        "Invalid checked contract metadata: {error}"
+                    )));
+                    self.client
+                        .publish_diagnostics(uri.clone(), diagnostics, Some(version))
+                        .await;
+                    return;
+                }
+            }
+        }
+        #[cfg(feature = "rust_inspect")]
+        if let (Some(manifest), Some(path)) = (project_manifest.as_ref(), module_path.as_ref()) {
+            let mut metadata_modules = Vec::with_capacity(deps.len() + 1);
+            metadata_modules.push(parsed_module_for_lsp_document(path, source, &ast));
+            metadata_modules.extend(deps.iter().cloned());
+            rust_inspect_context =
+                match prepare_lsp_rust_inspect_workspace(manifest, &metadata_modules, &library_manifest_index) {
+                    Ok(ctx) => Some(ctx),
+                    Err(err) => {
+                        tracing::warn!("failed to prepare rust-inspect workspace for lsp: {err}");
+                        None
+                    }
+                };
+        }
+
         // Step 3: Type check (with multi-file import resolution)
         let mut checker = typechecker::TypeChecker::new();
         checker.set_declared_crate_names(declared_crates);
         checker.set_library_manifest_index(library_manifest_index.clone());
+        #[cfg(feature = "rust_inspect")]
+        if let Some((dir, metadata_query_paths)) = rust_inspect_context {
+            spawn_rust_inspect_prewarm(dir.clone(), metadata_query_paths);
+            checker.set_rust_inspect_manifest_dir(dir);
+        }
 
-        let (deps, mut dep_summary_diags) = self
-            .collect_dependency_modules(
-                uri,
-                &ast,
-                source,
-                version,
-                Some(&library_imported_vocab),
-                Some(&library_manifest_index),
-            )
-            .await;
-        let dep_refs: Vec<(&str, &Program)> = deps.iter().map(|(name, program)| (name.as_str(), program)).collect();
+        let dep_refs: Vec<(&str, &Program)> = typecheck_deps
+            .iter()
+            .map(|module| (module.name.as_str(), &module.ast))
+            .collect();
 
-        if let Err(errors) = checker.check_with_imports(&ast, &dep_refs) {
+        let check_result = checker.check_with_imports(&typecheck_ast, &dep_refs);
+        let api_metadata_previews = if check_result.is_ok() {
+            let metadata =
+                collect_checked_api_metadata(&ast, &checker, lsp_metadata_module_path(module_path.as_deref()));
+            for diagnostic in validate_checked_api_docstrings(std::slice::from_ref(&metadata)) {
+                diagnostics.push(compile_error_to_diagnostic(&diagnostic.error, source, uri));
+            }
+            api_metadata_previews(&ast, &metadata)
+        } else {
+            Vec::new()
+        };
+        let rust_origin_symbols = collect_rust_origin_symbols(&checker);
+
+        if let Err(errors) = check_result {
             for error in &errors {
-                diagnostics.push(compile_error_to_diagnostic(error, source, uri));
+                diagnostics.push(compile_error_to_diagnostic_with_rust_context(
+                    error,
+                    source,
+                    uri,
+                    &rust_origin_symbols,
+                ));
             }
         }
         // Always include non-fatal diagnostics (warnings/lints) in LSP output.
         for warn in checker.warnings() {
-            diagnostics.push(compile_error_to_diagnostic(warn, source, uri));
+            diagnostics.push(compile_error_to_diagnostic_with_rust_context(
+                warn,
+                source,
+                uri,
+                &rust_origin_symbols,
+            ));
         }
         diagnostics.append(&mut dep_summary_diags);
 
         // Collect resolved const types for hover display (post-const-freezing).
         let mut const_types: HashMap<String, String> = HashMap::new();
+        let mut rusttype_info: HashMap<String, String> = HashMap::new();
         for decl in &ast.declarations {
             if let Declaration::Const(konst) = &decl.node
                 && let Some(id) = checker.symbols.lookup(&konst.name)
@@ -163,6 +292,23 @@ impl IncanLanguageServer {
                 && let crate::frontend::symbols::SymbolKind::Variable(var) = &sym.kind
             {
                 const_types.insert(konst.name.clone(), var.ty.to_string());
+            }
+            if let Declaration::Static(static_decl) = &decl.node
+                && let Some(id) = checker.symbols.lookup(&static_decl.name)
+                && let Some(sym) = checker.symbols.get(id)
+                && let crate::frontend::symbols::SymbolKind::Static(info) = &sym.kind
+            {
+                const_types.insert(static_decl.name.clone(), info.ty.to_string());
+            }
+            if let Declaration::Newtype(nt) = &decl.node
+                && nt.is_rusttype
+                && let Some(id) = checker.symbols.lookup(&nt.name)
+                && let Some(sym) = checker.symbols.get(id)
+                && let crate::frontend::symbols::SymbolKind::Type(crate::frontend::symbols::TypeInfo::Newtype(info)) =
+                    &sym.kind
+                && let crate::frontend::symbols::ResolvedType::RustPath(path) = &info.underlying
+            {
+                rusttype_info.insert(nt.name.clone(), path.clone());
             }
         }
 
@@ -176,6 +322,10 @@ impl IncanLanguageServer {
                     ast: Some(ast),
                     version,
                     const_types,
+                    rust_origin_symbols,
+                    rusttype_info,
+                    api_metadata_previews,
+                    library_imported_dsl_surfaces: library_manifest_index.library_imported_dsl_surfaces(),
                 },
             );
         }
@@ -195,10 +345,8 @@ impl IncanLanguageServer {
         uri: &Url,
         ast: &Program,
         entry_source: &str,
-        _entry_version: i32,
-        library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
-        library_manifest_index: Option<&LibraryManifestIndex>,
-    ) -> (Vec<(String, Program)>, Vec<Diagnostic>) {
+        compilation_session: Option<&CompilationSession>,
+    ) -> (Vec<ParsedModule>, Vec<Diagnostic>) {
         let Ok(entry_path) = uri.to_file_path() else {
             return (Vec::new(), Vec::new());
         };
@@ -206,23 +354,24 @@ impl IncanLanguageServer {
 
         let docs = self.documents.read().await;
 
-        let mut result: Vec<(String, Program)> = Vec::new();
+        let mut result: Vec<ParsedModule> = Vec::new();
         let mut entry_diags: Vec<Diagnostic> = Vec::new();
         let mut seen: HashSet<PathBuf> = HashSet::new();
-        let mut stack: Vec<(PathBuf, PathBuf, Span)> = Vec::new(); // (module_path, base_dir_for_that_module, import_span_in_entry)
+        let mut stack = Vec::new();
+        let source_root = compilation_session.map(|session| session.source_root.as_path());
 
         // Seed stack with direct imports from the entry AST
-        for decl in &ast.declarations {
-            if let Declaration::Import(import) = &decl.node
-                && let Some(dep_path) = resolve_import_path(&entry_base, import)
-            {
-                let base = dep_path.parent().unwrap_or(&entry_base).to_path_buf();
-                stack.push((dep_path, base, decl.span));
+        for resolved in resolve_program_source_imports(ast, &entry_base, source_root) {
+            if let SourceModuleImportResolution::Local(module_ref) = resolved.resolution {
+                stack.push((module_ref, resolved.span));
             }
         }
 
-        while let Some((path, base_dir, import_span)) = stack.pop() {
-            let canonical = path.canonicalize().unwrap_or(path.clone());
+        while let Some((module_ref, import_span)) = stack.pop() {
+            let canonical = module_ref
+                .file_path
+                .canonicalize()
+                .unwrap_or_else(|_| module_ref.file_path.clone());
             if !seen.insert(canonical.clone()) {
                 continue;
             }
@@ -239,44 +388,14 @@ impl IncanLanguageServer {
                 continue;
             };
 
-            let dep_tokens = match lexer::lex(&dep_source) {
-                Ok(t) => t,
-                Err(errors) => {
-                    // Guardrail: surface dependency lex errors.
-                    if let Some(u) = dep_uri.clone() {
-                        let mut diags = Vec::new();
-                        for e in &errors {
-                            diags.push(compile_error_to_diagnostic(e, &dep_source, &u));
-                        }
-                        let ver = dep_doc.map(|d| d.version);
-                        self.client.publish_diagnostics(u.clone(), diags, ver).await;
-                    }
-
-                    // Summarize in the entry file.
-                    let range = span_to_range(entry_source, import_span.start, import_span.end);
-                    entry_diags.push(Diagnostic {
-                        range,
-                        severity: Some(DiagnosticSeverity::ERROR),
-                        code: None,
-                        code_description: None,
-                        source: Some("incan".to_string()),
-                        message: format!(
-                            "Failed to lex dependency '{}'; open that file for details",
-                            canonical.display()
-                        ),
-                        related_information: None,
-                        tags: None,
-                        data: None,
-                    });
-                    continue;
-                }
-            };
-            let dep_path_display = canonical.to_string_lossy();
-            let mut dep_ast = match parser::parse_with_context(
-                &dep_tokens,
-                Some(dep_path_display.as_ref()),
-                library_imported_vocab,
-            ) {
+            let dep_ast = match if let Some(session) = compilation_session {
+                session.parse_source(&canonical, &dep_source, false)
+            } else {
+                let dep_path_display = canonical.to_string_lossy();
+                lexer::lex(&dep_source).and_then(|tokens| {
+                    parser::parse_with_context_and_surfaces(&tokens, Some(dep_path_display.as_ref()), None, None)
+                })
+            } {
                 Ok(a) => a,
                 Err(errors) => {
                     // Guardrail: surface dependency parse errors.
@@ -297,7 +416,7 @@ impl IncanLanguageServer {
                         code_description: None,
                         source: Some("incan".to_string()),
                         message: format!(
-                            "Failed to parse dependency '{}'; open that file for details",
+                            "Failed to analyze dependency '{}'; open that file for details",
                             canonical.display()
                         ),
                         related_information: None,
@@ -307,39 +426,6 @@ impl IncanLanguageServer {
                     continue;
                 }
             };
-            if let Some(index) = library_manifest_index
-                && let Err(errors) = vocab_desugar_pass::desugar_program_vocab_blocks(
-                    &mut dep_ast,
-                    Some(dep_path_display.as_ref()),
-                    index,
-                )
-            {
-                if let Some(u) = dep_uri.clone() {
-                    let mut diags = Vec::new();
-                    for error in &errors {
-                        diags.push(compile_error_to_diagnostic(error, &dep_source, &u));
-                    }
-                    let ver = dep_doc.map(|d| d.version);
-                    self.client.publish_diagnostics(u.clone(), diags, ver).await;
-                }
-
-                let range = span_to_range(entry_source, import_span.start, import_span.end);
-                entry_diags.push(Diagnostic {
-                    range,
-                    severity: Some(DiagnosticSeverity::ERROR),
-                    code: None,
-                    code_description: None,
-                    source: Some("incan".to_string()),
-                    message: format!(
-                        "Failed to desugar dependency '{}'; open that file for details",
-                        canonical.display()
-                    ),
-                    related_information: None,
-                    tags: None,
-                    data: None,
-                });
-                continue;
-            }
 
             // Dependency parsed successfully: clear old dependency diagnostics if any.
             if let Some(u) = dep_uri.clone() {
@@ -348,21 +434,20 @@ impl IncanLanguageServer {
             }
 
             // Queue nested dependencies
-            for decl in &dep_ast.declarations {
-                if let Declaration::Import(import) = &decl.node
-                    && let Some(nested_path) = resolve_import_path(&base_dir, import)
-                {
-                    let nested_base = nested_path.parent().unwrap_or(&base_dir).to_path_buf();
-                    stack.push((nested_path, nested_base, Span::default()));
+            let current_base = canonical.parent().unwrap_or(&entry_base);
+            for resolved in resolve_program_source_imports(&dep_ast, current_base, source_root) {
+                if let SourceModuleImportResolution::Local(nested_ref) = resolved.resolution {
+                    stack.push((nested_ref, Span::default()));
                 }
             }
 
-            let module_name = canonical
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .unwrap_or("module")
-                .to_string();
-            result.push((module_name, dep_ast));
+            result.push(ParsedModule {
+                name: module_ref.module_name,
+                path_segments: module_ref.path_segments,
+                file_path: canonical,
+                source: dep_source,
+                ast: dep_ast,
+            });
         }
 
         (result, entry_diags)
@@ -373,7 +458,7 @@ impl IncanLanguageServer {
         let offset = position_to_offset(source, position)?;
 
         for decl in &ast.declarations {
-            if let Some(info) = self.find_in_declaration(&decl.node, decl.span, offset) {
+            if let Some(info) = self.find_in_declaration(&decl.node, decl.span, offset, source) {
                 return Some(info);
             }
         }
@@ -381,8 +466,8 @@ impl IncanLanguageServer {
         None
     }
 
-    // ---- Cursor inside a top-level declaration: surface symbol info for outline/hover wiring ----
-    fn find_in_declaration(&self, decl: &Declaration, span: Span, offset: usize) -> Option<SymbolInfo> {
+    /// Return hover-oriented symbol information when the cursor falls inside one top-level declaration span.
+    fn find_in_declaration(&self, decl: &Declaration, span: Span, offset: usize, source: &str) -> Option<SymbolInfo> {
         match decl {
             Declaration::Const(konst) if span.start <= offset && offset < span.end => {
                 return Some(SymbolInfo {
@@ -396,15 +481,34 @@ impl IncanLanguageServer {
                     span,
                 });
             }
+            Declaration::Static(static_decl) if span.start <= offset && offset < span.end => {
+                return Some(SymbolInfo {
+                    name: static_decl.name.clone(),
+                    kind: "static".to_string(),
+                    detail: format!("static {}: {}", static_decl.name, format_type(&static_decl.ty.node)),
+                    span,
+                });
+            }
             Declaration::Function(func) if span.start <= offset && offset < span.end => {
                 return Some(SymbolInfo {
                     name: func.name.clone(),
                     kind: "function".to_string(),
-                    detail: format_function_signature(func),
+                    detail: format_function_signature(func, source),
+                    span,
+                });
+            }
+            Declaration::Partial(partial) if span.start <= offset && offset < span.end => {
+                return Some(SymbolInfo {
+                    name: partial.name.clone(),
+                    kind: "partial".to_string(),
+                    detail: format_partial_decl_signature(partial, source),
                     span,
                 });
             }
             Declaration::Model(model) if span.start <= offset && offset < span.end => {
+                if let Some(info) = find_property_symbol_info(&model.name, &model.properties, offset) {
+                    return Some(info);
+                }
                 return Some(SymbolInfo {
                     name: model.name.clone(),
                     kind: "model".to_string(),
@@ -413,6 +517,9 @@ impl IncanLanguageServer {
                 });
             }
             Declaration::Class(class) if span.start <= offset && offset < span.end => {
+                if let Some(info) = find_property_symbol_info(&class.name, &class.properties, offset) {
+                    return Some(info);
+                }
                 return Some(SymbolInfo {
                     name: class.name.clone(),
                     kind: "class".to_string(),
@@ -421,6 +528,9 @@ impl IncanLanguageServer {
                 });
             }
             Declaration::Trait(tr) if span.start <= offset && offset < span.end => {
+                if let Some(info) = find_property_symbol_info(&tr.name, &tr.properties, offset) {
+                    return Some(info);
+                }
                 return Some(SymbolInfo {
                     name: tr.name.clone(),
                     kind: "trait".to_string(),
@@ -432,7 +542,7 @@ impl IncanLanguageServer {
                 return Some(SymbolInfo {
                     name: en.name.clone(),
                     kind: "enum".to_string(),
-                    detail: format!("enum {}", en.name),
+                    detail: enum_completion_detail(en),
                     span,
                 });
             }
@@ -445,10 +555,11 @@ impl IncanLanguageServer {
                 });
             }
             Declaration::Newtype(nt) if span.start <= offset && offset < span.end => {
+                let kind = if nt.is_rusttype { "rusttype" } else { "newtype" };
                 return Some(SymbolInfo {
                     name: nt.name.clone(),
-                    kind: "newtype".to_string(),
-                    detail: format!("newtype {} = {}", nt.name, format_type(&nt.underlying.node)),
+                    kind: kind.to_string(),
+                    detail: format!("{} {} = {}", kind, nt.name, format_type(&nt.underlying.node)),
                     span,
                 });
             }
@@ -465,7 +576,13 @@ impl IncanLanguageServer {
                 Declaration::Const(konst) if konst.name == name => {
                     return Some(decl.span);
                 }
+                Declaration::Static(static_decl) if static_decl.name == name => {
+                    return Some(decl.span);
+                }
                 Declaration::Function(func) if func.name == name => {
+                    return Some(decl.span);
+                }
+                Declaration::Partial(partial) if partial.name == name => {
                     return Some(decl.span);
                 }
                 Declaration::Model(model) if model.name == name => {
@@ -493,6 +610,924 @@ impl IncanLanguageServer {
     }
 }
 
+#[cfg(feature = "rust_inspect")]
+#[derive(Default)]
+struct PrewarmQueueEntry {
+    /// Whether a worker task is currently draining this workspace queue.
+    in_flight: bool,
+    /// Canonical query paths accumulated while the worker is busy.
+    pending: BTreeSet<String>,
+}
+
+#[cfg(feature = "rust_inspect")]
+fn prewarm_queue() -> &'static Mutex<HashMap<PathBuf, PrewarmQueueEntry>> {
+    static PREWARM_QUEUE: OnceLock<Mutex<HashMap<PathBuf, PrewarmQueueEntry>>> = OnceLock::new();
+    PREWARM_QUEUE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+#[cfg(feature = "rust_inspect")]
+fn enqueue_prewarm_paths(
+    queue: &mut HashMap<PathBuf, PrewarmQueueEntry>,
+    manifest_dir: &Path,
+    query_paths: impl IntoIterator<Item = String>,
+) -> bool {
+    let entry = queue.entry(manifest_dir.to_path_buf()).or_default();
+    for path in query_paths {
+        if !path.is_empty() {
+            entry.pending.insert(path);
+        }
+    }
+    if entry.in_flight {
+        return false;
+    }
+    entry.in_flight = true;
+    true
+}
+
+#[cfg(feature = "rust_inspect")]
+fn take_next_prewarm_batch(
+    queue: &mut HashMap<PathBuf, PrewarmQueueEntry>,
+    manifest_dir: &Path,
+) -> Option<Vec<String>> {
+    let entry = queue.get_mut(manifest_dir)?;
+    if entry.pending.is_empty() {
+        entry.in_flight = false;
+        queue.remove(manifest_dir);
+        return None;
+    }
+    Some(std::mem::take(&mut entry.pending).into_iter().collect())
+}
+
+#[cfg(feature = "rust_inspect")]
+/// Queue prewarm work for one workspace.
+///
+/// Contract:
+/// - at most one worker runs per manifest directory
+/// - requests arriving during a run are coalesced into `pending`
+/// - the worker loops until `pending` is empty under lock, then exits
+fn spawn_rust_inspect_prewarm(manifest_dir: PathBuf, query_paths: Vec<String>) {
+    if query_paths.is_empty() {
+        return;
+    }
+    let mut queue = match prewarm_queue().lock() {
+        Ok(guard) => guard,
+        Err(err) => {
+            tracing::warn!("rust-inspect prewarm queue lock poisoned; recovering");
+            err.into_inner()
+        }
+    };
+    if !enqueue_prewarm_paths(&mut queue, &manifest_dir, query_paths) {
+        tracing::debug!(
+            "coalescing rust-inspect prewarm request while prior run is active (workspace={})",
+            manifest_dir.display()
+        );
+        return;
+    }
+    tokio::spawn(async move {
+        run_rust_inspect_prewarm_queue(manifest_dir).await;
+    });
+}
+
+#[cfg(feature = "rust_inspect")]
+async fn run_rust_inspect_prewarm_queue(manifest_dir: PathBuf) {
+    loop {
+        let batch: Vec<String> = {
+            let mut queue = match prewarm_queue().lock() {
+                Ok(guard) => guard,
+                Err(err) => {
+                    tracing::warn!("rust-inspect prewarm queue lock poisoned; recovering");
+                    err.into_inner()
+                }
+            };
+            let Some(batch) = take_next_prewarm_batch(&mut queue, &manifest_dir) else {
+                return;
+            };
+            batch
+        };
+
+        match tokio::task::spawn_blocking({
+            let manifest_dir = manifest_dir.clone();
+            move || prewarm_rust_inspect_workspace(&manifest_dir, &batch)
+        })
+        .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => {
+                tracing::warn!("rust-inspect prewarm failed in lsp: {err}");
+            }
+            Err(err) => {
+                tracing::warn!("rust-inspect prewarm join error in lsp: {err}");
+            }
+        }
+    }
+}
+
+#[cfg(feature = "rust_inspect")]
+fn parsed_module_for_lsp_document(path: &Path, source: &str, ast: &Program) -> ParsedModule {
+    let module_name = path
+        .file_stem()
+        .and_then(|name| name.to_str())
+        .unwrap_or("main")
+        .to_string();
+    ParsedModule {
+        name: module_name.clone(),
+        path_segments: vec![module_name],
+        file_path: path.to_path_buf(),
+        source: source.to_string(),
+        ast: ast.clone(),
+    }
+}
+
+#[cfg(feature = "rust_inspect")]
+fn resolved_rust_inspect_dependencies(
+    manifest: &ProjectManifest,
+    modules: &[ParsedModule],
+    library_manifest_index: &LibraryManifestIndex,
+) -> std::result::Result<ResolvedDependencies, String> {
+    let project_requirements =
+        collect_project_requirements(modules, library_manifest_index).map_err(|err| err.to_string())?;
+    let mut inline_imports = Vec::new();
+    for module in modules {
+        inline_imports.extend(collect_inline_rust_imports(module, false));
+    }
+
+    let cargo_features = CargoFeatureSelection::default();
+    let mut resolved =
+        resolve_dependencies(Some(manifest), &inline_imports, true, &cargo_features).map_err(|errors| {
+            let sources = build_source_map(modules);
+            let mut msg = String::new();
+            for err in errors {
+                msg.push_str(&format_dependency_error(&err, &sources));
+            }
+            msg.trim_end().to_string()
+        })?;
+    merge_project_requirement_dependencies(&mut resolved, &project_requirements).map_err(|err| err.to_string())?;
+    Ok(resolved)
+}
+
+#[cfg(feature = "rust_inspect")]
+/// Build the rust-inspect workspace for LSP analysis after collecting the document's effective Rust dependencies.
+///
+/// The shared CLI helper owns workspace generation; this wrapper only translates the LSP document set into the
+/// resolved dependency inputs that helper expects.
+fn prepare_lsp_rust_inspect_workspace(
+    manifest: &ProjectManifest,
+    modules: &[ParsedModule],
+    library_manifest_index: &LibraryManifestIndex,
+) -> std::result::Result<(PathBuf, Vec<String>), String> {
+    let project_name = manifest
+        .project
+        .as_ref()
+        .and_then(|project| project.name.clone())
+        .or_else(|| {
+            manifest
+                .project_root()
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "incan_lsp".to_string());
+
+    let resolved = resolved_rust_inspect_dependencies(manifest, modules, library_manifest_index)?;
+    let project_requirements =
+        collect_project_requirements(modules, library_manifest_index).map_err(|err| err.to_string())?;
+    let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
+        manifest.project_root(),
+        project_name.as_str(),
+        manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
+        &resolved,
+        &project_requirements,
+        None,
+    )
+    .map_err(|err| err.to_string())?;
+    let query_paths = collect_rust_inspect_query_paths(modules);
+    Ok((rust_inspect_manifest_dir, query_paths))
+}
+
+#[cfg(all(test, feature = "rust_inspect"))]
+mod tests {
+    use std::collections::HashMap;
+    use std::path::PathBuf;
+
+    use super::{
+        PrewarmQueueEntry, enqueue_prewarm_paths, prepare_lsp_rust_inspect_workspace, take_next_prewarm_batch,
+    };
+    use crate::cli::prelude::ParsedModule;
+    use crate::frontend::library_manifest_index::LibraryManifestIndex;
+    use crate::frontend::{lexer, parser};
+    use crate::manifest::ProjectManifest;
+
+    #[test]
+    fn prewarm_queue_coalesces_followup_requests_for_same_workspace() {
+        let mut queue = HashMap::<PathBuf, PrewarmQueueEntry>::new();
+        let root = PathBuf::from("/tmp/project");
+        assert!(enqueue_prewarm_paths(
+            &mut queue,
+            &root,
+            vec!["a::f".to_string(), "b::g".to_string()]
+        ));
+        assert!(!enqueue_prewarm_paths(
+            &mut queue,
+            &root,
+            vec!["b::g".to_string(), "c::h".to_string()]
+        ));
+
+        let first = take_next_prewarm_batch(&mut queue, &root);
+        assert_eq!(
+            first,
+            Some(vec!["a::f".to_string(), "b::g".to_string(), "c::h".to_string()])
+        );
+        assert!(take_next_prewarm_batch(&mut queue, &root).is_none());
+        assert!(!queue.contains_key(&root));
+    }
+
+    #[test]
+    fn prewarm_queue_keeps_new_paths_arriving_while_worker_active() {
+        let mut queue = HashMap::<PathBuf, PrewarmQueueEntry>::new();
+        let root = PathBuf::from("/tmp/project2");
+        assert!(enqueue_prewarm_paths(&mut queue, &root, vec!["a::f".to_string()]));
+        let first = take_next_prewarm_batch(&mut queue, &root);
+        assert_eq!(first, Some(vec!["a::f".to_string()]));
+
+        assert!(!enqueue_prewarm_paths(&mut queue, &root, vec!["z::k".to_string()]));
+        let second = take_next_prewarm_batch(&mut queue, &root);
+        assert_eq!(second, Some(vec!["z::k".to_string()]));
+        assert!(take_next_prewarm_batch(&mut queue, &root).is_none());
+        assert!(!queue.contains_key(&root));
+    }
+
+    #[test]
+    fn lsp_rust_inspect_workspace_includes_resolved_inline_and_stdlib_requirements()
+    -> std::result::Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let manifest_path = tmp.path().join("incan.toml");
+        std::fs::write(&manifest_path, "[project]\nname = \"demo\"\n")?;
+        let manifest = ProjectManifest::from_str("[project]\nname = \"demo\"\n", &manifest_path)?;
+
+        let source = r#"
+import std.serde.json
+from rust::serde import Serialize
+
+def use_it(x: Serialize) -> None:
+  pass
+"#;
+        let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+        let ast = parser::parse_with_context(&tokens, Some("src/main.incn"), Some(&std::collections::HashMap::new()))
+            .map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+        let module = ParsedModule {
+            name: "main".to_string(),
+            path_segments: vec!["main".to_string()],
+            file_path: tmp.path().join("src").join("main.incn"),
+            source: source.to_string(),
+            ast,
+        };
+
+        let (out_dir, _query_paths) =
+            prepare_lsp_rust_inspect_workspace(&manifest, &[module], &LibraryManifestIndex::default())
+                .map_err(std::io::Error::other)?;
+        let cargo_toml = std::fs::read_to_string(out_dir.join("Cargo.toml"))?;
+
+        assert!(
+            cargo_toml.contains("serde"),
+            "expected inline rust import dependency in generated Cargo.toml, got:\n{cargo_toml}"
+        );
+        assert!(
+            cargo_toml.contains("incan_stdlib") && cargo_toml.contains("json"),
+            "expected stdlib feature propagation in generated Cargo.toml, got:\n{cargo_toml}"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod lsp_parse_tests {
+    use crate::frontend::{lexer, parser};
+
+    #[test]
+    fn lsp_parse_context_accepts_for_tuple_unpack_binding() {
+        let source = r#"
+def bind(input_columns: list[str]) -> list[str]:
+    mut bindings: list[str] = []
+    for idx, name in enumerate(input_columns):
+        bindings.append(name)
+    return bindings
+"#;
+
+        let tokens = match lexer::lex(source) {
+            Ok(tokens) => tokens,
+            Err(errors) => panic!("lexer failed for LSP tuple-for regression: {errors:?}"),
+        };
+        let parsed = parser::parse_with_context(
+            &tokens,
+            Some("/workspace/src/substrait/plan.incn"),
+            Some(&std::collections::HashMap::new()),
+        );
+
+        assert!(
+            parsed.is_ok(),
+            "LSP parser context should accept tuple-unpack for bindings, got {parsed:?}"
+        );
+    }
+}
+
+#[cfg(test)]
+mod lsp_classmethod_tests {
+    use std::collections::HashMap;
+
+    use super::{classmethod_cls_detail, classmethod_context_at_offset, identifier_at_offset};
+    use crate::frontend::{lexer, parser};
+
+    fn parse_source(source: &str) -> Result<crate::frontend::ast::Program, String> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        parser::parse_with_context(&tokens, Some("src/main.incn"), Some(&HashMap::new()))
+            .map_err(|errors| format!("parser failed: {errors:?}"))
+    }
+
+    #[test]
+    fn classmethod_context_surfaces_cls_receiver_for_lsp() -> Result<(), String> {
+        let source = r#"
+class Box[T with Clone]:
+    value: T
+
+    @classmethod
+    def make(cls, value: T) -> Self:
+        return cls(value=value)
+"#;
+        let ast = parse_source(source)?;
+        let offset = source
+            .find("cls(value")
+            .ok_or_else(|| "expected cls call".to_string())?;
+        let aliases = HashMap::new();
+
+        let context = classmethod_context_at_offset(&ast, offset, &aliases)
+            .ok_or_else(|| "expected classmethod context".to_string())?;
+        assert_eq!(context.owner_type, "Box[T]");
+        assert_eq!(classmethod_cls_detail(&context), "cls: type[Box[T]]");
+
+        let (ident, span) =
+            identifier_at_offset(source, offset).ok_or_else(|| "expected identifier at cls call".to_string())?;
+        assert_eq!(ident, "cls");
+        assert_eq!(&source[span.start..span.end], "cls");
+        Ok(())
+    }
+
+    #[test]
+    fn staticmethod_body_does_not_surface_cls_receiver_for_lsp() -> Result<(), String> {
+        let source = r#"
+class Box[T with Clone]:
+    value: T
+
+    @staticmethod
+    def make(value: T) -> Self:
+        return Box(value=value)
+"#;
+        let ast = parse_source(source)?;
+        let offset = source
+            .find("return Box")
+            .ok_or_else(|| "expected static factory body".to_string())?;
+        let aliases = HashMap::new();
+
+        assert!(classmethod_context_at_offset(&ast, offset, &aliases).is_none());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod lsp_api_metadata_preview_tests {
+    use super::{
+        api_metadata_preview_at_offset, api_metadata_previews, enum_completion_detail, enum_variant_completion_detail,
+        enum_variant_completion_label, format_partial_decl_signature, lsp_document_symbol_name_and_detail,
+        lsp_symbol_kind_for_decl,
+    };
+    use crate::frontend::api_metadata::{CheckedApiMetadata, collect_checked_api_metadata};
+    use crate::frontend::ast::{Declaration, ParamKind, Span};
+    use crate::frontend::symbols::{CallableParam, ResolvedType, Symbol, SymbolKind, VariableInfo};
+    use crate::frontend::{lexer, parser, typechecker};
+
+    fn checked_metadata_for(source: &str) -> Result<(crate::frontend::ast::Program, CheckedApiMetadata), String> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+        let metadata = collect_checked_api_metadata(&ast, &checker, vec!["lib".to_string()]);
+        Ok((ast, metadata))
+    }
+
+    #[test]
+    fn checked_api_previews_use_callable_rebound_function_signature() -> Result<(), String> {
+        let source = r#"
+pub def endpoint() -> str:
+    return "raw"
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let mut checker = typechecker::TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+
+        checker.symbols.define(Symbol {
+            name: "endpoint".to_string(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty: ResolvedType::Function(
+                    vec![CallableParam::named("id", ResolvedType::Int, ParamKind::Normal)],
+                    Box::new(ResolvedType::Bool),
+                ),
+                is_mutable: false,
+                is_used: false,
+            }),
+            span: Span::default(),
+            scope: 0,
+        });
+
+        let metadata = collect_checked_api_metadata(&ast, &checker, vec!["lib".to_string()]);
+        let previews = api_metadata_previews(&ast, &metadata);
+        let function_offset = source
+            .find("endpoint")
+            .ok_or_else(|| "expected function name in fixture".to_string())?;
+        let preview = api_metadata_preview_at_offset(&previews, function_offset)
+            .ok_or_else(|| "expected checked function preview".to_string())?;
+
+        assert!(
+            preview.markdown.contains("pub def endpoint(id: int) -> bool"),
+            "expected rebound callable signature in LSP preview, got:\n{}",
+            preview.markdown
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_previews_include_public_partials() -> Result<(), String> {
+        let source = r#"
+pub def route(method: str, path: str = "/") -> str:
+    return path
+
+pub get = partial route(method="GET")
+"#;
+        let (ast, metadata) = checked_metadata_for(source)?;
+        let previews = api_metadata_previews(&ast, &metadata);
+        let partial_offset = source
+            .find("get = partial")
+            .ok_or_else(|| "expected partial declaration in fixture".to_string())?;
+        let preview = api_metadata_preview_at_offset(&previews, partial_offset)
+            .ok_or_else(|| "expected checked partial preview".to_string())?;
+
+        assert!(
+            preview.markdown.contains("*checked API metadata: public partial*"),
+            "expected public partial metadata preview, got:\n{}",
+            preview.markdown
+        );
+        assert!(
+            preview
+                .markdown
+                .contains("pub get = partial route(method: str = ..., path: str = ...)"),
+            "expected projected partial signature with defaulted param display, got:\n{}",
+            preview.markdown
+        );
+        assert!(
+            preview.markdown.contains("target: `route`") && preview.markdown.contains("presets: `method`"),
+            "expected target and preset provenance, got:\n{}",
+            preview.markdown
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn local_partial_lsp_surfaces_completion_and_document_symbol_detail() -> Result<(), String> {
+        let source = r#"
+def route(method: str, path: str) -> str:
+    return path
+
+get = partial route(method="GET")
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let partial = ast
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Partial(partial) => Some(partial),
+                _ => None,
+            })
+            .ok_or_else(|| "expected partial declaration".to_string())?;
+        let partial_decl = ast
+            .declarations
+            .iter()
+            .find(|decl| matches!(decl.node, Declaration::Partial(_)))
+            .ok_or_else(|| "expected partial declaration span".to_string())?;
+
+        assert_eq!(
+            format_partial_decl_signature(partial, source),
+            r#"get = partial route(method="GET")"#
+        );
+        assert_eq!(
+            lsp_symbol_kind_for_decl(&partial_decl.node),
+            Some(tower_lsp::lsp_types::SymbolKind::FUNCTION)
+        );
+        assert_eq!(
+            lsp_document_symbol_name_and_detail(&partial_decl.node, source),
+            Some(("get".to_string(), r#"get = partial route(method="GET")"#.to_string()))
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_previews_include_public_model_fields_and_methods() -> Result<(), String> {
+        let source = r#"
+pub const DEFAULT_LABEL = "none"
+
+@derive(Clone)
+pub model Order:
+    """
+    Order contract.
+    """
+    id [description="Stable id"] as "orderId": int
+    label: str = DEFAULT_LABEL
+
+    def label(self) -> str:
+        """
+        Return the display label.
+        """
+        return DEFAULT_LABEL
+"#;
+        let (ast, metadata) = checked_metadata_for(source)?;
+        let previews = api_metadata_previews(&ast, &metadata);
+
+        let field_offset = source
+            .find("orderId")
+            .ok_or_else(|| "expected field alias in fixture".to_string())?;
+        let field_preview = api_metadata_preview_at_offset(&previews, field_offset)
+            .ok_or_else(|| "expected checked field preview".to_string())?;
+        assert!(
+            field_preview.markdown.contains("*checked API metadata: public field*"),
+            "expected public field metadata preview, got:\n{}",
+            field_preview.markdown
+        );
+        assert!(
+            field_preview.markdown.contains("alias: `orderId`"),
+            "expected field alias in preview, got:\n{}",
+            field_preview.markdown
+        );
+        assert!(
+            field_preview.markdown.contains("description: `Stable id`"),
+            "expected field description in preview, got:\n{}",
+            field_preview.markdown
+        );
+
+        let method_offset = source
+            .find("def label")
+            .ok_or_else(|| "expected method in fixture".to_string())?;
+        let method_preview = api_metadata_preview_at_offset(&previews, method_offset)
+            .ok_or_else(|| "expected checked method preview".to_string())?;
+        assert!(
+            method_preview.markdown.contains("def Order.label(self) -> str"),
+            "expected checked method signature, got:\n{}",
+            method_preview.markdown
+        );
+        assert!(
+            method_preview
+                .markdown
+                .contains("docstring: `Return the display label.`"),
+            "expected method docstring in preview, got:\n{}",
+            method_preview.markdown
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_previews_skip_private_declarations() -> Result<(), String> {
+        let source = r#"
+model Secret:
+    value: int
+
+pub model Public:
+    value: int
+"#;
+        let (ast, metadata) = checked_metadata_for(source)?;
+        let previews = api_metadata_previews(&ast, &metadata);
+
+        let private_offset = source
+            .find("Secret")
+            .ok_or_else(|| "expected private model in fixture".to_string())?;
+        assert!(
+            api_metadata_preview_at_offset(&previews, private_offset).is_none(),
+            "private declarations must not expose checked API metadata previews"
+        );
+
+        let public_offset = source
+            .find("Public")
+            .ok_or_else(|| "expected public model in fixture".to_string())?;
+        assert!(
+            api_metadata_preview_at_offset(&previews, public_offset).is_some(),
+            "public declarations should expose checked API metadata previews"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_previews_include_value_enum_backing_and_variant_values() -> Result<(), String> {
+        let source = r#"
+pub enum Environment(str):
+    Dev = "development"
+    Prod = "production"
+"#;
+        let (ast, metadata) = checked_metadata_for(source)?;
+        let previews = api_metadata_previews(&ast, &metadata);
+
+        let enum_offset = source
+            .find("Environment")
+            .ok_or_else(|| "expected enum name in fixture".to_string())?;
+        let enum_preview = api_metadata_preview_at_offset(&previews, enum_offset)
+            .ok_or_else(|| "expected checked enum preview".to_string())?;
+        assert!(
+            enum_preview.markdown.contains("value type: `str`"),
+            "expected enum backing type in preview, got:\n{}",
+            enum_preview.markdown
+        );
+        assert!(
+            !enum_preview.markdown.contains("value type: `Str`"),
+            "enum backing type should use Incan spelling, got:\n{}",
+            enum_preview.markdown
+        );
+
+        let variant_offset = source
+            .find("Prod =")
+            .ok_or_else(|| "expected value enum variant in fixture".to_string())?;
+        let variant_preview = api_metadata_preview_at_offset(&previews, variant_offset)
+            .ok_or_else(|| "expected checked enum variant preview".to_string())?;
+        assert!(
+            variant_preview
+                .markdown
+                .contains("*checked API metadata: public enum variant*"),
+            "expected enum variant metadata preview, got:\n{}",
+            variant_preview.markdown
+        );
+        assert!(
+            variant_preview.markdown.contains("value type: `str`"),
+            "expected variant backing type in preview, got:\n{}",
+            variant_preview.markdown
+        );
+        assert!(
+            variant_preview.markdown.contains("raw value: `\"production\"`"),
+            "expected variant raw value in preview, got:\n{}",
+            variant_preview.markdown
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn local_value_enum_completion_details_include_raw_values() -> Result<(), String> {
+        let source = r#"
+enum HttpStatus(int):
+    Ok = 200
+"#;
+        let (ast, _metadata) = checked_metadata_for(source)?;
+        let enum_decl = ast
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Enum(en) => Some(en),
+                _ => None,
+            })
+            .ok_or_else(|| "expected enum declaration in fixture".to_string())?;
+        let variant = enum_decl
+            .variants
+            .first()
+            .ok_or_else(|| "expected enum variant in fixture".to_string())?;
+
+        assert_eq!(enum_completion_detail(enum_decl), "enum HttpStatus(int)");
+        assert_eq!(
+            enum_variant_completion_detail(enum_decl, &variant.node),
+            "variant HttpStatus.Ok: int = 200"
+        );
+        assert_eq!(enum_variant_completion_label(enum_decl, &variant.node), "HttpStatus.Ok");
+
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_previews_escape_backticks_in_inline_metadata() -> Result<(), String> {
+        let escaped = super::inline_code("Use `code` here.");
+        assert_eq!(escaped, "`` Use `code` here. ``");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod lsp_computed_property_tests {
+    use super::{find_property_symbol_info, format_property_signature};
+    use crate::frontend::ast::Declaration;
+    use crate::frontend::{lexer, parser};
+
+    #[test]
+    fn computed_property_hover_surfaces_owner_and_type() -> Result<(), String> {
+        let source = r#"
+model Account:
+    cents: int
+
+    property dollars -> int:
+        return self.cents
+"#;
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        let ast = parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))?;
+        let model = ast
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Model(model) => Some(model),
+                _ => None,
+            })
+            .ok_or_else(|| "expected model declaration".to_string())?;
+        let property = model
+            .properties
+            .first()
+            .ok_or_else(|| "expected computed property".to_string())?;
+
+        assert_eq!(
+            format_property_signature(&model.name, &property.node),
+            "property Account.dollars -> int"
+        );
+        let offset = source
+            .find("dollars")
+            .ok_or_else(|| "expected property name in source".to_string())?;
+        let info = find_property_symbol_info(&model.name, &model.properties, offset)
+            .ok_or_else(|| "expected property hover symbol".to_string())?;
+        assert_eq!(info.kind, "property");
+        assert_eq!(info.detail, "property Account.dollars -> int");
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod lsp_default_signature_tests {
+    use super::{format_function_signature, local_signature_help_at_offset};
+    use crate::frontend::ast::Declaration;
+    use crate::frontend::{lexer, parser};
+    use tower_lsp::lsp_types::ParameterLabel;
+
+    fn parse_source(source: &str) -> Result<crate::frontend::ast::Program, String> {
+        let tokens = lexer::lex(source).map_err(|errors| format!("lexer failed: {errors:?}"))?;
+        parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))
+    }
+
+    #[test]
+    fn local_function_signature_displays_source_defaults() -> Result<(), String> {
+        let source = r#"
+def greet(name: str = "Ada", count: int = 2 + 3) -> str:
+    return name
+"#;
+        let ast = parse_source(source)?;
+        let function = ast
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Function(function) => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected function declaration".to_string())?;
+
+        assert_eq!(
+            format_function_signature(function, source),
+            r#"def greet(name: str = "Ada", count: int = 2 + 3) -> str"#
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn local_signature_help_reuses_default_parameter_display() -> Result<(), String> {
+        let source = r#"
+def greet(name: str = "Ada", count: int = 2 + 3) -> str:
+    return name
+
+def main() -> str:
+    return greet("Grace", 4)
+"#;
+        let ast = parse_source(source)?;
+        let call_prefix = r#"greet("Grace", "#;
+        let call_offset = source
+            .rfind(call_prefix)
+            .map(|start| start + call_prefix.len())
+            .ok_or_else(|| "expected call expression in fixture".to_string())?;
+        let help = local_signature_help_at_offset(&ast, source, call_offset)
+            .ok_or_else(|| "expected local function signature help".to_string())?;
+        let signature = help
+            .signatures
+            .first()
+            .ok_or_else(|| "expected one signature".to_string())?;
+        let parameters = signature
+            .parameters
+            .as_ref()
+            .ok_or_else(|| "expected parameter labels".to_string())?;
+
+        assert_eq!(
+            signature.label,
+            r#"def greet(name: str = "Ada", count: int = 2 + 3) -> str"#
+        );
+        assert_eq!(help.active_parameter, Some(1));
+        assert_eq!(
+            parameters.first().map(|param| &param.label),
+            Some(&ParameterLabel::Simple(r#"name: str = "Ada""#.to_string()))
+        );
+        assert_eq!(
+            parameters.get(1).map(|param| &param.label),
+            Some(&ParameterLabel::Simple("count: int = 2 + 3".to_string()))
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod lsp_contract_model_command_tests {
+    use super::{
+        ContractModelCommandFormat, emit_contract_model_command_payload, parse_emit_contract_model_command_args,
+    };
+
+    fn write_project_bundle(root: &std::path::Path) -> std::io::Result<()> {
+        std::fs::create_dir_all(root.join("contracts"))?;
+        std::fs::write(
+            root.join("incan.toml"),
+            r#"[project]
+name = "lsp_contract_model"
+version = "0.1.0"
+
+[tool.incan.metadata]
+model-bundles = ["contracts/order_summary.json"]
+"#,
+        )?;
+        std::fs::write(
+            root.join("contracts").join("order_summary.json"),
+            r#"{
+  "schema_version": 1,
+  "stable_model_id": "orders.summary",
+  "logical_type_name": "OrderSummary",
+  "publishable": true,
+  "fields": [
+    {
+      "name": "order_id",
+      "type": "str",
+      "alias": "orderId"
+    }
+  ]
+}
+"#,
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn emit_contract_model_command_payload_returns_incan_source() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        write_project_bundle(tmp.path())?;
+
+        let payload =
+            emit_contract_model_command_payload(tmp.path(), "orders.summary", ContractModelCommandFormat::Incan)?;
+
+        assert_eq!(
+            payload.pointer("/format").and_then(serde_json::Value::as_str),
+            Some("incan")
+        );
+        assert_eq!(
+            payload.pointer("/model").and_then(serde_json::Value::as_str),
+            Some("OrderSummary")
+        );
+        let source = payload
+            .pointer("/source")
+            .and_then(serde_json::Value::as_str)
+            .ok_or("expected source payload")?;
+        assert!(
+            source.contains("pub model OrderSummary:"),
+            "expected model source payload, got:\n{source}"
+        );
+        assert!(
+            source.contains("order_id as \"orderId\": str") || source.contains("order_id [alias=\"orderId\"]: str"),
+            "expected alias-preserving field source, got:\n{source}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn parse_emit_contract_model_command_args_accepts_object_argument() -> Result<(), Box<dyn std::error::Error>> {
+        let args = parse_emit_contract_model_command_args(vec![serde_json::json!({
+            "uri": "file:///tmp/project/src/main.incn",
+            "model": "OrderSummary",
+            "format": "json"
+        })])?;
+
+        assert_eq!(args.uri.as_deref(), Some("file:///tmp/project/src/main.incn"));
+        assert_eq!(args.model, "OrderSummary");
+        assert_eq!(args.format.as_deref(), Some("json"));
+        Ok(())
+    }
+}
+
 /// Symbol information for hover/goto
 #[derive(Debug, Clone)]
 pub struct SymbolInfo {
@@ -502,8 +1537,8 @@ pub struct SymbolInfo {
     pub span: Span,
 }
 
-/// Format a function signature for display
-fn format_function_signature(func: &crate::frontend::ast::FunctionDecl) -> String {
+/// Format a function signature for display using source-backed default expressions.
+fn format_function_signature(func: &crate::frontend::ast::FunctionDecl, source: &str) -> String {
     let mut sig = String::new();
 
     if func.is_async() {
@@ -517,7 +1552,7 @@ fn format_function_signature(func: &crate::frontend::ast::FunctionDecl) -> Strin
     let params: Vec<String> = func
         .params
         .iter()
-        .map(|p| format!("{}: {}", p.node.name, format_type(&p.node.ty.node)))
+        .map(|param| format_local_param(param, source))
         .collect();
 
     sig.push_str(&params.join(", "));
@@ -529,14 +1564,498 @@ fn format_function_signature(func: &crate::frontend::ast::FunctionDecl) -> Strin
     sig
 }
 
+/// Format a module-level partial declaration for hover, completion detail, and document symbols.
+fn format_partial_decl_signature(partial: &crate::frontend::ast::PartialDecl, source: &str) -> String {
+    let args = partial
+        .args
+        .iter()
+        .map(|arg| {
+            format!(
+                "{}={}",
+                arg.name,
+                source_snippet(source, arg.value.span).unwrap_or("...")
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "{} = partial {}({})",
+        partial.name,
+        partial.target.segments.join("."),
+        args
+    )
+}
+
+/// Format one AST parameter with the same local default-expression display used by hover, completion, and signature
+/// help.
+fn format_local_param(param: &Spanned<Param>, source: &str) -> String {
+    let prefix = match param.node.kind {
+        ParamKind::Normal => "",
+        ParamKind::RestPositional => "*",
+        ParamKind::RestKeyword => "**",
+    };
+    let mutability = if param.node.is_mut { "mut " } else { "" };
+    let default = param
+        .node
+        .default
+        .as_ref()
+        .map(|default| format!(" = {}", source_snippet(source, default.span).unwrap_or("...")))
+        .unwrap_or_default();
+    format!(
+        "{prefix}{mutability}{}: {}{default}",
+        param.node.name,
+        format_type(&param.node.ty.node)
+    )
+}
+
+/// Return a trimmed source slice for a known parser span.
+fn source_snippet(source: &str, span: Span) -> Option<&str> {
+    source
+        .get(span.start..span.end)
+        .map(str::trim)
+        .filter(|snippet| !snippet.is_empty())
+}
+
+/// Build LSP signature help for a parsed local function call at the cursor offset.
+fn local_signature_help_at_offset(ast: &Program, source: &str, offset: usize) -> Option<SignatureHelp> {
+    let signature = local_call_signature_at_offset(ast, source, offset)?;
+    let parameters = signature
+        .parameters
+        .into_iter()
+        .map(|label| ParameterInformation {
+            label: ParameterLabel::Simple(label),
+            documentation: None,
+        })
+        .collect();
+    Some(SignatureHelp {
+        signatures: vec![SignatureInformation {
+            label: signature.label,
+            documentation: None,
+            parameters: Some(parameters),
+            active_parameter: signature.active_parameter,
+        }],
+        active_signature: Some(0),
+        active_parameter: signature.active_parameter,
+    })
+}
+
+/// Return the local function signature associated with the innermost call containing an offset.
+fn local_call_signature_at_offset(ast: &Program, source: &str, offset: usize) -> Option<LocalCallSignature> {
+    for declaration in &ast.declarations {
+        let hit = match &declaration.node {
+            Declaration::Function(function) => local_signature_in_statements(&function.body, ast, source, offset),
+            Declaration::Model(model) => local_signature_in_methods(&model.methods, ast, source, offset),
+            Declaration::Class(class) => local_signature_in_methods(&class.methods, ast, source, offset),
+            Declaration::Trait(trait_decl) => local_signature_in_methods(&trait_decl.methods, ast, source, offset),
+            _ => None,
+        };
+        if hit.is_some() {
+            return hit;
+        }
+    }
+    None
+}
+
+/// Search method bodies for local function calls that can provide signature help.
+fn local_signature_in_methods(
+    methods: &[Spanned<MethodDecl>],
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    methods
+        .iter()
+        .filter(|method| method.span.start <= offset && offset <= method.span.end)
+        .filter_map(|method| method.node.body.as_ref())
+        .find_map(|body| local_signature_in_statements(body, ast, source, offset))
+}
+
+/// Search a statement list for the innermost local function call containing an offset.
+fn local_signature_in_statements(
+    statements: &[Spanned<Statement>],
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    statements
+        .iter()
+        .filter(|statement| statement.span.start <= offset && offset <= statement.span.end)
+        .find_map(|statement| local_signature_in_statement(&statement.node, ast, source, offset))
+}
+
+/// Search one statement for local function calls that can provide signature help.
+fn local_signature_in_statement(
+    statement: &Statement,
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    match statement {
+        Statement::Assignment(assignment) => local_signature_in_expr(&assignment.value, ast, source, offset),
+        Statement::FieldAssignment(assignment) => local_signature_in_expr(&assignment.object, ast, source, offset)
+            .or_else(|| local_signature_in_expr(&assignment.value, ast, source, offset)),
+        Statement::IndexAssignment(assignment) => local_signature_in_expr(&assignment.object, ast, source, offset)
+            .or_else(|| local_signature_in_expr(&assignment.index, ast, source, offset))
+            .or_else(|| local_signature_in_expr(&assignment.value, ast, source, offset)),
+        Statement::Return(Some(value)) => local_signature_in_expr(value, ast, source, offset),
+        Statement::Return(None) | Statement::Pass | Statement::Break(None) | Statement::Continue => None,
+        Statement::If(if_stmt) => local_signature_in_condition(&if_stmt.condition, ast, source, offset)
+            .or_else(|| local_signature_in_statements(&if_stmt.then_body, ast, source, offset))
+            .or_else(|| {
+                if_stmt.elif_branches.iter().find_map(|(condition, body)| {
+                    local_signature_in_expr(condition, ast, source, offset)
+                        .or_else(|| local_signature_in_statements(body, ast, source, offset))
+                })
+            })
+            .or_else(|| {
+                if_stmt
+                    .else_body
+                    .as_ref()
+                    .and_then(|body| local_signature_in_statements(body, ast, source, offset))
+            }),
+        Statement::Loop(loop_stmt) => local_signature_in_statements(&loop_stmt.body, ast, source, offset),
+        Statement::While(while_stmt) => local_signature_in_condition(&while_stmt.condition, ast, source, offset)
+            .or_else(|| local_signature_in_statements(&while_stmt.body, ast, source, offset)),
+        Statement::For(for_stmt) => local_signature_in_expr(&for_stmt.iter, ast, source, offset)
+            .or_else(|| local_signature_in_statements(&for_stmt.body, ast, source, offset)),
+        Statement::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
+        Statement::Assert(assert_stmt) => local_signature_in_assert(assert_stmt, ast, source, offset),
+        Statement::Break(Some(value)) => local_signature_in_expr(value, ast, source, offset),
+        Statement::CompoundAssignment(assignment) => local_signature_in_expr(&assignment.value, ast, source, offset),
+        Statement::TupleUnpack(unpack) => local_signature_in_expr(&unpack.value, ast, source, offset),
+        Statement::TupleAssign(assign) => assign
+            .targets
+            .iter()
+            .find_map(|target| local_signature_in_expr(target, ast, source, offset))
+            .or_else(|| local_signature_in_expr(&assign.value, ast, source, offset)),
+        Statement::ChainedAssignment(assignment) => local_signature_in_expr(&assignment.value, ast, source, offset),
+        Statement::Surface(surface) => match &surface.payload {
+            crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(args) => args
+                .iter()
+                .find_map(|arg| local_signature_in_expr(arg, ast, source, offset)),
+        },
+        Statement::VocabBlock(block) => block
+            .header_args
+            .iter()
+            .find_map(|arg| local_signature_in_expr(arg, ast, source, offset))
+            .or_else(|| local_signature_in_statements(&block.body, ast, source, offset)),
+    }
+}
+
+/// Search a condition expression for local function calls that can provide signature help.
+fn local_signature_in_condition(
+    condition: &Condition,
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    match condition {
+        Condition::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
+        Condition::Let { value, .. } => local_signature_in_expr(value, ast, source, offset),
+    }
+}
+
+/// Search an assertion payload for local function calls that can provide signature help.
+fn local_signature_in_assert(
+    assert_stmt: &crate::frontend::ast::AssertStmt,
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    let payload = match &assert_stmt.kind {
+        crate::frontend::ast::AssertKind::Condition(condition) => {
+            local_signature_in_expr(condition, ast, source, offset)
+        }
+        crate::frontend::ast::AssertKind::IsPattern { value, .. } => {
+            local_signature_in_expr(value, ast, source, offset)
+        }
+        crate::frontend::ast::AssertKind::Raises { call, .. } => local_signature_in_expr(call, ast, source, offset),
+    };
+    payload.or_else(|| {
+        assert_stmt
+            .message
+            .as_ref()
+            .and_then(|message| local_signature_in_expr(message, ast, source, offset))
+    })
+}
+
+/// Search one expression for the innermost local function call containing an offset.
+fn local_signature_in_expr(
+    expr: &Spanned<Expr>,
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    if offset < expr.span.start || expr.span.end < offset {
+        return None;
+    }
+    match &expr.node {
+        Expr::Call(callee, _type_args, args) => local_signature_in_expr(callee, ast, source, offset)
+            .or_else(|| local_signature_in_call_args(args, ast, source, offset))
+            .or_else(|| local_function_call_signature(expr, callee, ast, source, offset)),
+        Expr::MethodCall(receiver, _method, _type_args, args) => local_signature_in_expr(receiver, ast, source, offset)
+            .or_else(|| local_signature_in_call_args(args, ast, source, offset)),
+        Expr::Binary(left, _, right) => local_signature_in_expr(left, ast, source, offset)
+            .or_else(|| local_signature_in_expr(right, ast, source, offset)),
+        Expr::Unary(_, inner) | Expr::Try(inner) | Expr::Paren(inner) => {
+            local_signature_in_expr(inner, ast, source, offset)
+        }
+        Expr::Index(base, index) => local_signature_in_expr(base, ast, source, offset)
+            .or_else(|| local_signature_in_expr(index, ast, source, offset)),
+        Expr::Slice(base, slice) => local_signature_in_expr(base, ast, source, offset)
+            .or_else(|| {
+                slice
+                    .start
+                    .as_ref()
+                    .and_then(|start| local_signature_in_expr(start, ast, source, offset))
+            })
+            .or_else(|| {
+                slice
+                    .end
+                    .as_ref()
+                    .and_then(|end| local_signature_in_expr(end, ast, source, offset))
+            })
+            .or_else(|| {
+                slice
+                    .step
+                    .as_ref()
+                    .and_then(|step| local_signature_in_expr(step, ast, source, offset))
+            }),
+        Expr::Field(base, _) => local_signature_in_expr(base, ast, source, offset),
+        Expr::Match(scrutinee, arms) => local_signature_in_expr(scrutinee, ast, source, offset).or_else(|| {
+            arms.iter().find_map(|arm| {
+                arm.node
+                    .guard
+                    .as_ref()
+                    .and_then(|guard| local_signature_in_expr(guard, ast, source, offset))
+                    .or_else(|| match &arm.node.body {
+                        crate::frontend::ast::MatchBody::Expr(expr) => {
+                            local_signature_in_expr(expr, ast, source, offset)
+                        }
+                        crate::frontend::ast::MatchBody::Block(statements) => {
+                            local_signature_in_statements(statements, ast, source, offset)
+                        }
+                    })
+            })
+        }),
+        Expr::If(if_expr) => local_signature_in_expr(&if_expr.condition, ast, source, offset)
+            .or_else(|| local_signature_in_statements(&if_expr.then_body, ast, source, offset))
+            .or_else(|| {
+                if_expr
+                    .else_body
+                    .as_ref()
+                    .and_then(|body| local_signature_in_statements(body, ast, source, offset))
+            }),
+        Expr::Loop(loop_expr) => local_signature_in_statements(&loop_expr.body, ast, source, offset),
+        Expr::ListComp(list_comp) => local_signature_in_expr(&list_comp.expr, ast, source, offset)
+            .or_else(|| local_signature_in_expr(&list_comp.iter, ast, source, offset))
+            .or_else(|| {
+                list_comp
+                    .filter
+                    .as_ref()
+                    .and_then(|filter| local_signature_in_expr(filter, ast, source, offset))
+            }),
+        Expr::DictComp(dict_comp) => local_signature_in_expr(&dict_comp.key, ast, source, offset)
+            .or_else(|| local_signature_in_expr(&dict_comp.value, ast, source, offset))
+            .or_else(|| local_signature_in_expr(&dict_comp.iter, ast, source, offset))
+            .or_else(|| {
+                dict_comp
+                    .filter
+                    .as_ref()
+                    .and_then(|filter| local_signature_in_expr(filter, ast, source, offset))
+            }),
+        Expr::Generator(generator) => local_signature_in_expr(&generator.expr, ast, source, offset).or_else(|| {
+            generator.clauses.iter().find_map(|clause| match clause {
+                crate::frontend::ast::ComprehensionClause::For { iter, .. } => {
+                    local_signature_in_expr(iter, ast, source, offset)
+                }
+                crate::frontend::ast::ComprehensionClause::If(condition) => {
+                    local_signature_in_expr(condition, ast, source, offset)
+                }
+            })
+        }),
+        Expr::Closure(params, body) => params
+            .iter()
+            .filter_map(|param| param.node.default.as_ref())
+            .find_map(|default| local_signature_in_expr(default, ast, source, offset))
+            .or_else(|| local_signature_in_expr(body, ast, source, offset)),
+        Expr::Tuple(items) | Expr::Set(items) => items
+            .iter()
+            .find_map(|item| local_signature_in_expr(item, ast, source, offset)),
+        Expr::List(items) => items.iter().find_map(|item| match item {
+            crate::frontend::ast::ListEntry::Element(value) | crate::frontend::ast::ListEntry::Spread(value) => {
+                local_signature_in_expr(value, ast, source, offset)
+            }
+        }),
+        Expr::Dict(items) => items.iter().find_map(|item| match item {
+            DictEntry::Pair(key, value) => local_signature_in_expr(key, ast, source, offset)
+                .or_else(|| local_signature_in_expr(value, ast, source, offset)),
+            DictEntry::Spread(value) => local_signature_in_expr(value, ast, source, offset),
+        }),
+        Expr::Partial(partial) => local_signature_in_expr(&partial.target, ast, source, offset).or_else(|| {
+            partial
+                .args
+                .iter()
+                .find_map(|arg| local_signature_in_expr(&arg.value, ast, source, offset))
+        }),
+        Expr::Constructor(_, args) => local_signature_in_call_args(args, ast, source, offset),
+        Expr::FString(parts) => parts.iter().find_map(|part| match part {
+            crate::frontend::ast::FStringPart::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
+            crate::frontend::ast::FStringPart::Literal(_) => None,
+        }),
+        Expr::Yield(Some(value)) => local_signature_in_expr(value, ast, source, offset),
+        Expr::Yield(None) => None,
+        Expr::Range { start, end, .. } => local_signature_in_expr(start, ast, source, offset)
+            .or_else(|| local_signature_in_expr(end, ast, source, offset)),
+        Expr::Surface(surface) => match &surface.payload {
+            crate::frontend::ast::SurfaceExprPayload::PrefixUnary(inner) => {
+                local_signature_in_expr(inner, ast, source, offset)
+            }
+            crate::frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
+            crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                local_signature_in_expr(left, ast, source, offset)
+                    .or_else(|| local_signature_in_expr(right, ast, source, offset))
+            }
+            crate::frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                local_signature_in_call_args(args, ast, source, offset)
+            }
+        },
+        Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr => None,
+    }
+}
+
+/// Search call arguments for nested local function calls.
+fn local_signature_in_call_args(
+    args: &[CallArg],
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    args.iter().find_map(|arg| match arg {
+        CallArg::Positional(expr)
+        | CallArg::Named(_, expr)
+        | CallArg::PositionalUnpack(expr)
+        | CallArg::KeywordUnpack(expr) => local_signature_in_expr(expr, ast, source, offset),
+    })
+}
+
+/// Build a local function signature for a direct `name(...)` call when the cursor is inside its argument list.
+fn local_function_call_signature(
+    call_expr: &Spanned<Expr>,
+    callee: &Spanned<Expr>,
+    ast: &Program,
+    source: &str,
+    offset: usize,
+) -> Option<LocalCallSignature> {
+    let Expr::Ident(name) = &callee.node else {
+        return None;
+    };
+    let (open_paren, close_paren) = call_argument_list_bounds(source, call_expr.span)?;
+    if offset <= open_paren || close_paren < offset {
+        return None;
+    }
+    let function = local_function_decl(ast, name)?;
+    let parameters = function
+        .params
+        .iter()
+        .map(|param| format_local_param(param, source))
+        .collect::<Vec<_>>();
+    let active_parameter = active_parameter_index(source, open_paren, offset, parameters.len());
+    Some(LocalCallSignature {
+        label: format_function_signature(function, source),
+        parameters,
+        active_parameter,
+    })
+}
+
+/// Return one top-level function declaration by source name.
+fn local_function_decl<'a>(ast: &'a Program, name: &str) -> Option<&'a crate::frontend::ast::FunctionDecl> {
+    ast.declarations.iter().find_map(|declaration| match &declaration.node {
+        Declaration::Function(function) if function.name == name => Some(function),
+        _ => None,
+    })
+}
+
+/// Return the byte offsets of a parsed call expression's argument-list parentheses.
+fn call_argument_list_bounds(source: &str, span: Span) -> Option<(usize, usize)> {
+    let text = source.get(span.start..span.end)?;
+    let open = text.find('(')?;
+    let close = text.rfind(')')?;
+    (open < close).then_some((span.start + open, span.start + close))
+}
+
+/// Compute the active parameter index from top-level commas before the cursor.
+fn active_parameter_index(source: &str, open_paren: usize, offset: usize, parameter_count: usize) -> Option<u32> {
+    if parameter_count == 0 {
+        return None;
+    }
+    let start = open_paren.checked_add(1)?;
+    let text = source.get(start..offset.min(source.len()))?;
+    let mut nested = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut commas = 0usize;
+    for ch in text.chars() {
+        if let Some(quote_ch) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == quote_ch {
+                quote = None;
+            }
+            continue;
+        }
+        match ch {
+            '"' | '\'' => quote = Some(ch),
+            '(' | '[' | '{' => nested = nested.saturating_add(1),
+            ')' | ']' | '}' => nested = nested.saturating_sub(1),
+            ',' if nested == 0 => commas = commas.saturating_add(1),
+            _ => {}
+        }
+    }
+    Some(commas.min(parameter_count.saturating_sub(1)) as u32)
+}
+
+/// Format a computed property declaration for hover and completion details.
+fn format_property_signature(owner: &str, property: &crate::frontend::ast::PropertyDecl) -> String {
+    format!(
+        "property {}.{} -> {}",
+        owner,
+        property.name,
+        format_type(&property.return_type.node)
+    )
+}
+
+/// Return symbol information when an offset falls inside a computed property declaration.
+fn find_property_symbol_info(
+    owner: &str,
+    properties: &[crate::frontend::ast::Spanned<crate::frontend::ast::PropertyDecl>],
+    offset: usize,
+) -> Option<SymbolInfo> {
+    for property in properties {
+        if property.span.start <= offset && offset < property.span.end {
+            return Some(SymbolInfo {
+                name: property.node.name.clone(),
+                kind: "property".to_string(),
+                detail: format_property_signature(owner, &property.node),
+                span: property.span,
+            });
+        }
+    }
+    None
+}
+
 /// Format a Type for display
 fn format_type(ty: &Type) -> String {
     match ty {
         Type::Simple(name) => name.clone(),
+        Type::Qualified(segments) => segments.join("::"),
         Type::Generic(name, params) => {
             let params_str: Vec<String> = params.iter().map(|p| format_type(&p.node)).collect();
             format!("{}[{}]", name, params_str.join(", "))
         }
+        Type::ConstrainedPrimitive(_, _) => ty.to_string(),
         Type::Tuple(types) => {
             let types_str: Vec<String> = types.iter().map(|t| format_type(&t.node)).collect();
             format!("({})", types_str.join(", "))
@@ -545,9 +2064,672 @@ fn format_type(ty: &Type) -> String {
             let params_str: Vec<String> = params.iter().map(|p| format_type(&p.node)).collect();
             format!("({}) -> {}", params_str.join(", "), format_type(&ret.node))
         }
+        Type::Ref(inner) => format!("&{}", format_type(&inner.node)),
+        Type::RefMut(inner) => format!("&mut {}", format_type(&inner.node)),
+        Type::IntLiteral(value) => value.repr.clone(),
         Type::Unit => "()".to_string(),
         Type::SelfType => "Self".to_string(),
+        Type::Infer => "_".to_string(),
     }
+}
+
+/// Return the logical metadata module path used for LSP previews of one open document.
+fn lsp_metadata_module_path(path: Option<&Path>) -> Vec<String> {
+    path.and_then(|path| path.file_stem())
+        .and_then(|stem| stem.to_str())
+        .map(|stem| vec![stem.to_string()])
+        .unwrap_or_else(|| vec!["main".to_string()])
+}
+
+/// Build a document-level LSP diagnostic for errors that do not have a source span in the open file.
+fn lsp_root_error_diagnostic(message: String) -> Diagnostic {
+    Diagnostic {
+        range: Range {
+            start: Position::new(0, 0),
+            end: Position::new(0, 0),
+        },
+        severity: Some(DiagnosticSeverity::ERROR),
+        code: None,
+        code_description: None,
+        source: Some("incan".to_string()),
+        message,
+        related_information: None,
+        tags: None,
+        data: None,
+    }
+}
+
+/// Build hover-ready checked API snippets for public metadata declarations in an analyzed document.
+fn api_metadata_previews(ast: &Program, metadata: &CheckedApiMetadata) -> Vec<ApiMetadataPreview> {
+    let mut previews = Vec::new();
+    for declaration in &metadata.declarations {
+        match declaration {
+            ApiDeclaration::Function(function) => {
+                previews.push(preview_for_anchor(&function.anchor, api_function_markdown(function)))
+            }
+            ApiDeclaration::Model(model) => {
+                previews.push(preview_for_anchor(&model.anchor, api_model_markdown(model)));
+                if let Some(Declaration::Model(ast_model)) = find_top_level_decl(ast, &model.name) {
+                    push_field_previews(&mut previews, &model.name, &model.fields, &ast_model.fields);
+                }
+                push_method_previews(&mut previews, &model.name, &model.methods);
+            }
+            ApiDeclaration::Class(class) => {
+                previews.push(preview_for_anchor(&class.anchor, api_class_markdown(class)));
+                if let Some(Declaration::Class(ast_class)) = find_top_level_decl(ast, &class.name) {
+                    push_field_previews(&mut previews, &class.name, &class.fields, &ast_class.fields);
+                }
+                push_method_previews(&mut previews, &class.name, &class.methods);
+            }
+            ApiDeclaration::Trait(trait_decl) => {
+                previews.push(preview_for_anchor(&trait_decl.anchor, api_trait_markdown(trait_decl)));
+                push_method_previews(&mut previews, &trait_decl.name, &trait_decl.methods);
+            }
+            ApiDeclaration::Enum(enum_decl) => {
+                previews.push(preview_for_anchor(&enum_decl.anchor, api_enum_markdown(enum_decl)));
+                if let Some(Declaration::Enum(ast_enum)) = find_top_level_decl(ast, &enum_decl.name) {
+                    push_enum_variant_previews(
+                        &mut previews,
+                        &enum_decl.name,
+                        enum_decl.value_type,
+                        &enum_decl.variants,
+                        &ast_enum.variants,
+                    );
+                }
+            }
+            ApiDeclaration::Newtype(newtype) => {
+                previews.push(preview_for_anchor(&newtype.anchor, api_newtype_markdown(newtype)));
+                push_method_previews(&mut previews, &newtype.name, &newtype.methods);
+            }
+            ApiDeclaration::TypeAlias(alias) => {
+                previews.push(preview_for_anchor(&alias.anchor, api_type_alias_markdown(alias)))
+            }
+            ApiDeclaration::Const(konst) => previews.push(preview_for_anchor(&konst.anchor, api_const_markdown(konst))),
+            ApiDeclaration::Static(static_decl) => previews.push(preview_for_anchor(
+                &static_decl.anchor,
+                api_static_markdown(static_decl),
+            )),
+            ApiDeclaration::Alias(alias) => previews.push(ApiMetadataPreview {
+                span: source_anchor_span(&alias.anchor),
+                markdown: checked_api_markdown(
+                    format!("pub alias {} = {}", alias.name, alias.target_path.join("::")),
+                    "public import alias",
+                    Vec::new(),
+                ),
+            }),
+            ApiDeclaration::Partial(partial) => {
+                previews.push(preview_for_anchor(&partial.anchor, api_partial_markdown(partial)))
+            }
+        }
+    }
+    previews
+}
+
+/// Return the most precise checked API preview containing `offset`.
+fn api_metadata_preview_at_offset(previews: &[ApiMetadataPreview], offset: usize) -> Option<&ApiMetadataPreview> {
+    previews
+        .iter()
+        .filter(|preview| preview.span.start <= offset && offset < preview.span.end)
+        .min_by_key(|preview| preview.span.end.saturating_sub(preview.span.start))
+}
+
+/// Convert a metadata anchor to an LSP preview entry.
+fn preview_for_anchor(anchor: &SourceAnchor, markdown: String) -> ApiMetadataPreview {
+    ApiMetadataPreview {
+        span: source_anchor_span(anchor),
+        markdown,
+    }
+}
+
+/// Convert a metadata anchor span to the frontend span type used by LSP ranges.
+fn source_anchor_span(anchor: &SourceAnchor) -> Span {
+    Span::new(anchor.span.start, anchor.span.end)
+}
+
+/// Find a top-level declaration by its exported source name.
+fn find_top_level_decl<'a>(ast: &'a Program, name: &str) -> Option<&'a Declaration> {
+    ast.declarations.iter().find_map(|decl| match &decl.node {
+        Declaration::Function(function) if function.name == name => Some(&decl.node),
+        Declaration::Model(model) if model.name == name => Some(&decl.node),
+        Declaration::Class(class) if class.name == name => Some(&decl.node),
+        Declaration::Trait(trait_decl) if trait_decl.name == name => Some(&decl.node),
+        Declaration::Enum(enum_decl) if enum_decl.name == name => Some(&decl.node),
+        Declaration::TypeAlias(alias) if alias.name == name => Some(&decl.node),
+        Declaration::Newtype(newtype) if newtype.name == name => Some(&decl.node),
+        Declaration::Const(konst) if konst.name == name => Some(&decl.node),
+        Declaration::Static(static_decl) if static_decl.name == name => Some(&decl.node),
+        Declaration::Partial(partial) if partial.name == name => Some(&decl.node),
+        _ => None,
+    })
+}
+
+/// Add variant-level previews for checked public enum variants using AST source spans.
+fn push_enum_variant_previews(
+    previews: &mut Vec<ApiMetadataPreview>,
+    owner: &str,
+    value_type: Option<EnumValueTypeExport>,
+    checked_variants: &[crate::frontend::api_metadata::ApiEnumVariant],
+    ast_variants: &[crate::frontend::ast::Spanned<crate::frontend::ast::VariantDecl>],
+) {
+    for variant in ast_variants {
+        let Some(checked) = checked_variants
+            .iter()
+            .find(|checked| checked.name == variant.node.name)
+        else {
+            continue;
+        };
+        previews.push(ApiMetadataPreview {
+            span: variant.span,
+            markdown: api_enum_variant_markdown(owner, value_type, checked),
+        });
+    }
+}
+
+/// Add field-level previews for checked public model/class fields using AST source spans.
+fn push_field_previews(
+    previews: &mut Vec<ApiMetadataPreview>,
+    owner: &str,
+    checked_fields: &[FieldExport],
+    ast_fields: &[crate::frontend::ast::Spanned<crate::frontend::ast::FieldDecl>],
+) {
+    for field in ast_fields {
+        let Some(checked) = checked_fields.iter().find(|checked| checked.name == field.node.name) else {
+            continue;
+        };
+        previews.push(ApiMetadataPreview {
+            span: field.span,
+            markdown: api_field_markdown(owner, checked),
+        });
+    }
+}
+
+/// Add method-level previews using checked API metadata method anchors.
+fn push_method_previews(previews: &mut Vec<ApiMetadataPreview>, owner: &str, methods: &[ApiMethod]) {
+    for method in methods {
+        previews.push(preview_for_anchor(&method.anchor, api_method_markdown(owner, method)));
+    }
+}
+
+/// Format a checked public function preview as hover markdown.
+fn api_function_markdown(function: &ApiFunction) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, function.docstring.as_deref());
+    if !function.decorators.is_empty() {
+        facts.push(format!("decorators: {}", function.decorators.len()));
+    }
+    checked_api_markdown(
+        format!("pub {}", format_api_function_signature(function)),
+        "public function",
+        facts,
+    )
+}
+
+/// Format a checked public partial callable preset preview as hover markdown.
+fn api_partial_markdown(partial: &ApiPartial) -> String {
+    let mut facts = Vec::new();
+    facts.push(format!("target: `{}`", partial.target_path.join("::")));
+    facts.push(format!("target kind: `{:?}`", partial.target_kind));
+    if !partial.presets.is_empty() {
+        facts.push(format!(
+            "presets: {}",
+            partial
+                .presets
+                .iter()
+                .map(|preset| inline_code(&preset.name))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    checked_api_markdown(
+        format!(
+            "pub {} = partial {}{}({})",
+            partial.name,
+            partial.target_path.join("::"),
+            format_type_params(&partial.type_params),
+            format_params(&partial.params)
+        ),
+        "public partial",
+        facts,
+    )
+}
+
+/// Format a checked public model preview as hover markdown.
+fn api_model_markdown(model: &ApiModel) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, model.docstring.as_deref());
+    push_list_fact(&mut facts, "derives", &model.derives);
+    push_list_fact(&mut facts, "traits", &model.traits);
+    facts.push(format!("fields: {}", model.fields.len()));
+    facts.push(format!("methods: {}", model.methods.len()));
+    checked_api_markdown(
+        format!("pub model {}{}", model.name, format_type_params(&model.type_params)),
+        "public model",
+        facts,
+    )
+}
+
+/// Format a checked public class preview as hover markdown.
+fn api_class_markdown(class: &ApiClass) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, class.docstring.as_deref());
+    if let Some(parent) = &class.extends {
+        facts.push(format!("extends: `{parent}`"));
+    }
+    push_list_fact(&mut facts, "derives", &class.derives);
+    push_list_fact(&mut facts, "traits", &class.traits);
+    facts.push(format!("fields: {}", class.fields.len()));
+    facts.push(format!("methods: {}", class.methods.len()));
+    checked_api_markdown(
+        format!("pub class {}{}", class.name, format_type_params(&class.type_params)),
+        "public class",
+        facts,
+    )
+}
+
+/// Format a checked public trait preview as hover markdown.
+fn api_trait_markdown(trait_decl: &ApiTrait) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, trait_decl.docstring.as_deref());
+    if !trait_decl.supertraits.is_empty() {
+        facts.push(format!(
+            "supertraits: {}",
+            trait_decl
+                .supertraits
+                .iter()
+                .map(format_type_bound)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    facts.push(format!("requirements: {}", trait_decl.requires.len()));
+    facts.push(format!("methods: {}", trait_decl.methods.len()));
+    checked_api_markdown(
+        format!(
+            "pub trait {}{}",
+            trait_decl.name,
+            format_type_params(&trait_decl.type_params)
+        ),
+        "public trait",
+        facts,
+    )
+}
+
+/// Format a checked public enum preview as hover markdown.
+fn api_enum_markdown(enum_decl: &ApiEnum) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, enum_decl.docstring.as_deref());
+    push_list_fact(&mut facts, "derives", &enum_decl.derives);
+    facts.push(format!("variants: {}", enum_decl.variants.len()));
+    if let Some(value_type) = enum_decl.value_type {
+        facts.push(format!("value type: `{}`", enum_value_type_display(value_type)));
+    }
+    checked_api_markdown(
+        format!(
+            "pub enum {}{}",
+            enum_decl.name,
+            format_type_params(&enum_decl.type_params)
+        ),
+        "public enum",
+        facts,
+    )
+}
+
+/// Format a checked public enum variant preview as hover markdown.
+fn api_enum_variant_markdown(
+    owner: &str,
+    value_type: Option<EnumValueTypeExport>,
+    variant: &crate::frontend::api_metadata::ApiEnumVariant,
+) -> String {
+    let mut facts = Vec::new();
+    if !variant.fields.is_empty() {
+        facts.push(format!(
+            "fields: {}",
+            variant
+                .fields
+                .iter()
+                .map(format_type_ref)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if let Some(value_type) = value_type {
+        facts.push(format!("value type: `{}`", enum_value_type_display(value_type)));
+    }
+    if let Some(value) = &variant.value {
+        facts.push(format!("raw value: `{}`", enum_value_display(value)));
+    }
+    checked_api_markdown(
+        format!("variant {owner}.{}", variant.name),
+        "public enum variant",
+        facts,
+    )
+}
+
+/// Format a checked public newtype or rusttype preview as hover markdown.
+fn api_newtype_markdown(newtype: &ApiNewtype) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, newtype.docstring.as_deref());
+    facts.push(format!("underlying: `{}`", format_type_ref(&newtype.underlying)));
+    facts.push(format!("methods: {}", newtype.methods.len()));
+    let kind = if newtype.is_rusttype { "rusttype" } else { "newtype" };
+    checked_api_markdown(
+        format!(
+            "pub {kind} {}{} = {}",
+            newtype.name,
+            format_type_params(&newtype.type_params),
+            format_type_ref(&newtype.underlying)
+        ),
+        &format!("public {kind}"),
+        facts,
+    )
+}
+
+/// Format a checked public type-alias preview as hover markdown.
+fn api_type_alias_markdown(alias: &ApiTypeAlias) -> String {
+    checked_api_markdown(
+        format!(
+            "pub type {}{} = {}",
+            alias.name,
+            format_type_params(&alias.type_alias.type_params),
+            format_type_ref(&alias.type_alias.target)
+        ),
+        "public type alias",
+        Vec::new(),
+    )
+}
+
+/// Format a checked public const preview as hover markdown.
+fn api_const_markdown(konst: &ApiConst) -> String {
+    let mut facts = Vec::new();
+    if let Some(value) = &konst.value {
+        facts.push(format!("safe value: `{value:?}`"));
+    }
+    checked_api_markdown(
+        format!("pub const {}: {}", konst.name, format_type_ref(&konst.ty)),
+        "public const",
+        facts,
+    )
+}
+
+/// Format a checked public static preview as hover markdown.
+fn api_static_markdown(static_decl: &ApiStatic) -> String {
+    checked_api_markdown(
+        format!("pub static {}: {}", static_decl.name, format_type_ref(&static_decl.ty)),
+        "public static",
+        Vec::new(),
+    )
+}
+
+/// Format a checked public model/class field preview as hover markdown.
+fn api_field_markdown(owner: &str, field: &FieldExport) -> String {
+    let mut facts = Vec::new();
+    if field.has_default {
+        facts.push("has default: `true`".to_string());
+    }
+    if let Some(alias) = &field.alias {
+        facts.push(format!("alias: `{alias}`"));
+    }
+    if let Some(description) = &field.description {
+        facts.push(format!("description: {}", inline_code(description)));
+    }
+    checked_api_markdown(
+        format!("field {}.{}: {}", owner, field.name, format_type_ref(&field.ty)),
+        "public field",
+        facts,
+    )
+}
+
+/// Format a checked public method preview as hover markdown.
+fn api_method_markdown(owner: &str, method: &ApiMethod) -> String {
+    let mut facts = Vec::new();
+    push_docstring_fact(&mut facts, method.docstring.as_deref());
+    if !method.decorators.is_empty() {
+        facts.push(format!("decorators: {}", method.decorators.len()));
+    }
+    if !method.has_body {
+        facts.push("body: abstract".to_string());
+    }
+    checked_api_markdown(format_api_method_signature(owner, method), "public method", facts)
+}
+
+/// Wrap a checked metadata signature and fact list in LSP markdown.
+fn checked_api_markdown(signature: String, kind: &str, facts: Vec<String>) -> String {
+    let mut markdown = format!("```incan\n{signature}\n```\n\n*checked API metadata: {kind}*");
+    for fact in facts {
+        markdown.push_str("\n\n");
+        markdown.push_str(&fact);
+    }
+    markdown
+}
+
+/// Add a trimmed raw docstring fact when metadata carries one.
+fn push_docstring_fact(facts: &mut Vec<String>, docstring: Option<&str>) {
+    if let Some(docstring) = docstring.map(str::trim).filter(|docstring| !docstring.is_empty()) {
+        facts.push(format!("docstring: {}", inline_code(docstring)));
+    }
+}
+
+/// Add a comma-separated list fact when the list is non-empty.
+fn push_list_fact(facts: &mut Vec<String>, label: &str, values: &[String]) {
+    if values.is_empty() {
+        return;
+    }
+    facts.push(format!(
+        "{label}: {}",
+        values
+            .iter()
+            .map(|value| inline_code(value))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+}
+
+/// Format a checked API function signature.
+fn format_api_function_signature(function: &ApiFunction) -> String {
+    let prefix = if function.is_async { "async def" } else { "def" };
+    format!(
+        "{prefix} {}{}({}) -> {}",
+        function.name,
+        format_type_params(&function.type_params),
+        format_params(&function.params),
+        format_type_ref(&function.return_type)
+    )
+}
+
+/// Format a checked API method signature with its owning type.
+fn format_api_method_signature(owner: &str, method: &ApiMethod) -> String {
+    let prefix = if method.is_async { "async def" } else { "def" };
+    let mut params = Vec::new();
+    if let Some(receiver) = &method.receiver {
+        params.push(match receiver {
+            ReceiverExport::Immutable => "self".to_string(),
+            ReceiverExport::Mutable => "mut self".to_string(),
+        });
+    }
+    params.extend(method.params.iter().map(format_param));
+    format!(
+        "{prefix} {owner}.{}{}({}) -> {}",
+        method.name,
+        format_type_params(&method.type_params),
+        params.join(", "),
+        format_type_ref(&method.return_type)
+    )
+}
+
+/// Format checked API type parameters in Incan source-like syntax.
+fn format_type_params(type_params: &[TypeParamExport]) -> String {
+    if type_params.is_empty() {
+        return String::new();
+    }
+    format!(
+        "[{}]",
+        type_params
+            .iter()
+            .map(|param| {
+                if param.bounds.is_empty() {
+                    param.name.clone()
+                } else {
+                    format!(
+                        "{} with {}",
+                        param.name,
+                        param
+                            .bounds
+                            .iter()
+                            .map(format_type_bound)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// Format a checked API type bound.
+fn format_type_bound(bound: &TypeBoundExport) -> String {
+    if bound.type_args.is_empty() {
+        return bound.name.clone();
+    }
+    format!(
+        "{}[{}]",
+        bound.name,
+        bound
+            .type_args
+            .iter()
+            .map(format_type_ref)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+/// Format a checked API parameter list.
+fn format_params(params: &[ParamExport]) -> String {
+    params.iter().map(format_param).collect::<Vec<_>>().join(", ")
+}
+
+/// Format one checked API parameter.
+fn format_param(param: &ParamExport) -> String {
+    let prefix = match param.kind {
+        ParamKindExport::Normal => "",
+        ParamKindExport::RestPositional => "*",
+        ParamKindExport::RestKeyword => "**",
+    };
+    let default = if param.has_default { " = ..." } else { "" };
+    format!("{prefix}{}: {}{default}", param.name, format_type_ref(&param.ty))
+}
+
+/// Format a manifest-level type reference for concise hover display.
+fn format_type_ref(ty: &TypeRef) -> String {
+    match ty {
+        TypeRef::Named { name } => name.clone(),
+        TypeRef::Applied { name, args } => {
+            format!(
+                "{name}[{}]",
+                args.iter().map(format_type_ref).collect::<Vec<_>>().join(", ")
+            )
+        }
+        TypeRef::Function { params, return_type } => {
+            format!(
+                "({}) -> {}",
+                params.iter().map(format_type_ref).collect::<Vec<_>>().join(", "),
+                format_type_ref(return_type)
+            )
+        }
+        TypeRef::Tuple { elements } => {
+            format!(
+                "({})",
+                elements.iter().map(format_type_ref).collect::<Vec<_>>().join(", ")
+            )
+        }
+        TypeRef::TypeParam { name } => name.clone(),
+        TypeRef::SelfType => "Self".to_string(),
+        TypeRef::Ref { inner } => format!("ref {}", format_type_ref(inner)),
+        TypeRef::RustPath { path } => format!("rust::{path}"),
+        TypeRef::Unknown => "_".to_string(),
+    }
+}
+
+/// Format checked value-enum backing metadata using Incan surface spellings.
+fn enum_value_type_display(value_type: EnumValueTypeExport) -> &'static str {
+    match value_type {
+        EnumValueTypeExport::Str => "str",
+        EnumValueTypeExport::Int => "int",
+    }
+}
+
+/// Format a checked value-enum raw value as it appears in source-like LSP metadata.
+fn enum_value_display(value: &EnumValueExport) -> String {
+    match value {
+        EnumValueExport::Str(value) => format!("{value:?}"),
+        EnumValueExport::Int(value) => value.to_string(),
+    }
+}
+
+/// Format parsed value-enum backing metadata using Incan surface spellings.
+fn ast_value_enum_type_display(value_type: crate::frontend::ast::ValueEnumType) -> &'static str {
+    match value_type {
+        crate::frontend::ast::ValueEnumType::Str => "str",
+        crate::frontend::ast::ValueEnumType::Int => "int",
+    }
+}
+
+/// Format a parsed value-enum literal as source-like LSP metadata.
+fn ast_value_enum_literal_display(value: &crate::frontend::ast::ValueEnumLiteral) -> String {
+    match value {
+        crate::frontend::ast::ValueEnumLiteral::Str(value) => format!("{value:?}"),
+        crate::frontend::ast::ValueEnumLiteral::Int(value) => value.value.to_string(),
+    }
+}
+
+/// Format local enum completion detail, including RFC 032 backing metadata when present.
+fn enum_completion_detail(en: &crate::frontend::ast::EnumDecl) -> String {
+    match en.value_type.as_ref() {
+        Some(value_type) => format!("enum {}({})", en.name, ast_value_enum_type_display(value_type.node)),
+        None => format!("enum {}", en.name),
+    }
+}
+
+/// Format local enum variant completion labels as qualified enum constructors.
+fn enum_variant_completion_label(
+    en: &crate::frontend::ast::EnumDecl,
+    variant: &crate::frontend::ast::VariantDecl,
+) -> String {
+    format!("{}.{}", en.name, variant.name)
+}
+
+/// Format local enum variant completion detail, including RFC 032 raw value metadata when present.
+fn enum_variant_completion_detail(
+    en: &crate::frontend::ast::EnumDecl,
+    variant: &crate::frontend::ast::VariantDecl,
+) -> String {
+    let mut detail = format!("variant {}.{}", en.name, variant.name);
+    if let Some(value_type) = &en.value_type {
+        detail.push_str(&format!(": {}", ast_value_enum_type_display(value_type.node)));
+    }
+    if let Some(value) = &variant.value {
+        detail.push_str(&format!(" = {}", ast_value_enum_literal_display(&value.node)));
+    }
+    detail
+}
+
+/// Escape a short metadata value as inline markdown code.
+fn inline_code(value: &str) -> String {
+    if !value.contains('`') {
+        return format!("`{value}`");
+    }
+    let mut max_run = 0;
+    let mut current_run = 0;
+    for ch in value.chars() {
+        if ch == '`' {
+            current_run += 1;
+            max_run = max_run.max(current_run);
+        } else {
+            current_run = 0;
+        }
+    }
+    let fence = "`".repeat(max_run + 1);
+    format!("{fence} {value} {fence}")
 }
 
 fn collect_import_aliases(ast: &Program) -> HashMap<String, Vec<String>> {
@@ -559,6 +2741,153 @@ fn resolve_decorator_path(
     aliases: &HashMap<String, Vec<String>>,
 ) -> Vec<String> {
     crate::frontend::decorator_resolution::resolve_decorator_path(dec, aliases)
+}
+
+/// Return whether a method has the requested decorator after resolving import aliases.
+fn method_has_decorator(
+    method: &MethodDecl,
+    id: decorators::DecoratorId,
+    aliases: &HashMap<String, Vec<String>>,
+) -> bool {
+    method
+        .decorators
+        .iter()
+        .any(|decorator| decorators::from_segments(&resolve_decorator_path(&decorator.node, aliases)) == Some(id))
+}
+
+/// Format the owner type as it should appear in LSP details.
+fn owner_type_display(owner_name: &str, type_params: &[TypeParam]) -> String {
+    if type_params.is_empty() {
+        owner_name.to_string()
+    } else {
+        let params: Vec<&str> = type_params.iter().map(|param| param.name.as_str()).collect();
+        format!("{owner_name}[{}]", params.join(", "))
+    }
+}
+
+/// Return whether an offset falls inside a method body rather than its signature.
+fn method_body_contains_offset(method: &MethodDecl, method_span: Span, offset: usize) -> bool {
+    let Some(body) = &method.body else {
+        return false;
+    };
+    let Some(first) = body.first() else {
+        return false;
+    };
+    first.span.start <= offset && offset < method_span.end
+}
+
+/// Build contextual classmethod receiver metadata when the offset is inside a classmethod body.
+fn classmethod_context_for_method(
+    owner_name: &str,
+    owner_type_params: &[TypeParam],
+    method: &crate::frontend::ast::Spanned<MethodDecl>,
+    offset: usize,
+    aliases: &HashMap<String, Vec<String>>,
+) -> Option<ClassmethodContext> {
+    if !method_body_contains_offset(&method.node, method.span, offset) {
+        return None;
+    }
+    if !method_has_decorator(&method.node, decorators::DecoratorId::ClassMethod, aliases) {
+        return None;
+    }
+    Some(ClassmethodContext {
+        owner_type: owner_type_display(owner_name, owner_type_params),
+    })
+}
+
+/// Find the active classmethod receiver context for an offset in a parsed program.
+fn classmethod_context_at_offset(
+    ast: &Program,
+    offset: usize,
+    aliases: &HashMap<String, Vec<String>>,
+) -> Option<ClassmethodContext> {
+    for decl in &ast.declarations {
+        match &decl.node {
+            Declaration::Model(model) => {
+                for method in &model.methods {
+                    if let Some(context) =
+                        classmethod_context_for_method(&model.name, &model.type_params, method, offset, aliases)
+                    {
+                        return Some(context);
+                    }
+                }
+            }
+            Declaration::Class(class) => {
+                for method in &class.methods {
+                    if let Some(context) =
+                        classmethod_context_for_method(&class.name, &class.type_params, method, offset, aliases)
+                    {
+                        return Some(context);
+                    }
+                }
+            }
+            Declaration::Newtype(newtype) => {
+                for method in &newtype.methods {
+                    if let Some(context) =
+                        classmethod_context_for_method(&newtype.name, &newtype.type_params, method, offset, aliases)
+                    {
+                        return Some(context);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Return the identifier containing or immediately preceding an offset.
+fn identifier_at_offset(source: &str, offset: usize) -> Option<(String, Span)> {
+    if source.is_empty() {
+        return None;
+    }
+    let mut cursor = offset.min(source.len().saturating_sub(1));
+    if !source
+        .as_bytes()
+        .get(cursor)
+        .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+    {
+        if cursor == 0 {
+            return None;
+        }
+        cursor -= 1;
+        if !source
+            .as_bytes()
+            .get(cursor)
+            .is_some_and(|b| b.is_ascii_alphanumeric() || *b == b'_')
+        {
+            return None;
+        }
+    }
+
+    let mut start = cursor;
+    while start > 0 {
+        let prev = source.as_bytes()[start - 1];
+        if !(prev.is_ascii_alphanumeric() || prev == b'_') {
+            break;
+        }
+        start -= 1;
+    }
+
+    let mut end = cursor + 1;
+    while end < source.len() {
+        let next = source.as_bytes()[end];
+        if !(next.is_ascii_alphanumeric() || next == b'_') {
+            break;
+        }
+        end += 1;
+    }
+
+    Some((source[start..end].to_string(), Span::new(start, end)))
+}
+
+/// Format the LSP detail string for the contextual `cls` receiver binding.
+fn classmethod_cls_detail(context: &ClassmethodContext) -> String {
+    format!(
+        "{}: type[{}]",
+        keywords::as_str(keywords::KeywordId::Cls),
+        context.owner_type
+    )
 }
 
 fn stdlib_location_for_path(path: &[String]) -> Option<Location> {
@@ -594,6 +2923,957 @@ fn find_stdlib_import_path(ast: &Program, offset: usize) -> Option<Vec<String>> 
         return Some(segments.clone());
     }
     None
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ScopedSymbolLspContext {
+    vocab_stack: Vec<String>,
+    call_target: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ScopedSymbolLspDescriptor<'a> {
+    dependency_key: &'a str,
+    descriptor: &'a incan_vocab::ScopedSymbolDescriptor,
+    depth: usize,
+}
+
+#[derive(Debug, Clone)]
+struct ScopedSymbolOccurrence<'a> {
+    dependency_key: &'a str,
+    descriptor: &'a incan_vocab::ScopedSymbolDescriptor,
+    symbol_span: Span,
+}
+
+/// Build hover markdown for a DSL-scoped symbol descriptor.
+fn scoped_symbol_hover_markdown(dependency_key: &str, descriptor: &incan_vocab::ScopedSymbolDescriptor) -> String {
+    let mut markdown = format!(
+        "```incan\n{}(...)\n```\n\n*scoped DSL symbol* from `pub::{dependency_key}`",
+        descriptor.symbol
+    );
+    markdown.push_str(&format!("\n\nDescriptor: `{}`", descriptor.key));
+    markdown.push_str(&format!(
+        "\n\nFamily: `{}`",
+        scoped_symbol_family_label(descriptor.family)
+    ));
+    if let Some(role) = &descriptor.role {
+        if let Some(label) = role.label.as_deref().filter(|label| !label.is_empty()) {
+            markdown.push_str(&format!("\n\nRole: `{}` ({label})", role.key));
+        } else {
+            markdown.push_str(&format!("\n\nRole: `{}`", role.key));
+        }
+    }
+    markdown
+}
+
+/// Return a stable, human-readable label for a scoped symbol family.
+fn scoped_symbol_family_label(family: incan_vocab::ScopedSymbolFamily) -> &'static str {
+    match family {
+        incan_vocab::ScopedSymbolFamily::FunctionLike => "function-like",
+        incan_vocab::ScopedSymbolFamily::AggregateLike => "aggregate-like",
+        incan_vocab::ScopedSymbolFamily::PredicateLike => "predicate-like",
+        incan_vocab::ScopedSymbolFamily::ProjectionLike => "projection-like",
+        incan_vocab::ScopedSymbolFamily::GroupingLike => "grouping-like",
+        incan_vocab::ScopedSymbolFamily::OrderingLike => "ordering-like",
+        incan_vocab::ScopedSymbolFamily::WindowLike => "window-like",
+        _ => "unknown",
+    }
+}
+
+/// Build completion detail text for a DSL-scoped symbol descriptor.
+fn scoped_symbol_completion_detail(dependency_key: &str, descriptor: &incan_vocab::ScopedSymbolDescriptor) -> String {
+    let family = scoped_symbol_family_label(descriptor.family);
+    if let Some(role) = &descriptor.role {
+        if let Some(label) = role.label.as_deref().filter(|label| !label.is_empty()) {
+            return format!("scoped DSL {family} from pub::{dependency_key} ({label})");
+        }
+        return format!("scoped DSL {family} from pub::{dependency_key} ({})", role.key);
+    }
+    format!("scoped DSL {family} from pub::{dependency_key}")
+}
+
+/// Find the scoped symbol occurrence under `offset`, if the parsed AST accepted it as a DSL symbol call.
+fn scoped_symbol_at_offset<'a>(
+    ast: &'a Program,
+    source: &str,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    offset: usize,
+) -> Option<ScopedSymbolOccurrence<'a>> {
+    let (ident, symbol_span) = identifier_at_offset(source, offset)?;
+    let mut found = None;
+    for decl in &ast.declarations {
+        scoped_symbol_in_declaration(decl, &ident, symbol_span, surfaces, &mut found);
+        if found.is_some() {
+            break;
+        }
+    }
+    found
+}
+
+/// Search one declaration for a parsed scoped symbol occurrence.
+fn scoped_symbol_in_declaration<'a>(
+    decl: &'a Spanned<Declaration>,
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    if found.is_some() || !(decl.span.start <= symbol_span.start && symbol_span.end <= decl.span.end) {
+        return;
+    }
+    match &decl.node {
+        Declaration::Const(konst) => scoped_symbol_in_expr(&konst.value, ident, symbol_span, surfaces, found),
+        Declaration::Static(static_decl) => {
+            scoped_symbol_in_expr(&static_decl.value, ident, symbol_span, surfaces, found);
+        }
+        Declaration::Function(func) => scoped_symbol_in_statements(&func.body, ident, symbol_span, surfaces, found),
+        Declaration::Model(model) => {
+            for method in &model.methods {
+                if let Some(body) = &method.node.body {
+                    scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+                }
+            }
+            for property in &model.properties {
+                if let Some(body) = &property.node.body {
+                    scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+                }
+            }
+        }
+        Declaration::Class(class) => {
+            for method in &class.methods {
+                if let Some(body) = &method.node.body {
+                    scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+                }
+            }
+            for property in &class.properties {
+                if let Some(body) = &property.node.body {
+                    scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+                }
+            }
+        }
+        Declaration::Trait(trait_decl) => {
+            for method in &trait_decl.methods {
+                if let Some(body) = &method.node.body {
+                    scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+                }
+            }
+            for property in &trait_decl.properties {
+                if let Some(body) = &property.node.body {
+                    scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Search a statement list for a parsed scoped symbol occurrence.
+fn scoped_symbol_in_statements<'a>(
+    statements: &'a [Spanned<Statement>],
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    for stmt in statements {
+        if found.is_some() {
+            break;
+        }
+        scoped_symbol_in_statement(stmt, ident, symbol_span, surfaces, found);
+    }
+}
+
+/// Search one statement for a parsed scoped symbol occurrence.
+fn scoped_symbol_in_statement<'a>(
+    stmt: &'a Spanned<Statement>,
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    if found.is_some() || !(stmt.span.start <= symbol_span.start && symbol_span.end <= stmt.span.end) {
+        return;
+    }
+    match &stmt.node {
+        Statement::Assignment(assign) => scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found),
+        Statement::FieldAssignment(assign) => {
+            scoped_symbol_in_expr(&assign.object, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found);
+        }
+        Statement::IndexAssignment(assign) => {
+            scoped_symbol_in_expr(&assign.object, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(&assign.index, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found);
+        }
+        Statement::Return(expr) | Statement::Break(expr) => {
+            if let Some(expr) = expr {
+                scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
+            }
+        }
+        Statement::If(if_stmt) => {
+            scoped_symbol_in_condition(&if_stmt.condition, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_statements(&if_stmt.then_body, ident, symbol_span, surfaces, found);
+            for (condition, body) in &if_stmt.elif_branches {
+                scoped_symbol_in_expr(condition, ident, symbol_span, surfaces, found);
+                scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+            }
+            if let Some(body) = &if_stmt.else_body {
+                scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+            }
+        }
+        Statement::Loop(loop_stmt) => scoped_symbol_in_statements(&loop_stmt.body, ident, symbol_span, surfaces, found),
+        Statement::While(while_stmt) => {
+            scoped_symbol_in_condition(&while_stmt.condition, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_statements(&while_stmt.body, ident, symbol_span, surfaces, found);
+        }
+        Statement::For(for_stmt) => {
+            scoped_symbol_in_expr(&for_stmt.iter, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_statements(&for_stmt.body, ident, symbol_span, surfaces, found);
+        }
+        Statement::Expr(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
+        Statement::Assert(assert_stmt) => {
+            match &assert_stmt.kind {
+                crate::frontend::ast::AssertKind::Condition(expr) => {
+                    scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
+                }
+                crate::frontend::ast::AssertKind::IsPattern { value, .. } => {
+                    scoped_symbol_in_expr(value, ident, symbol_span, surfaces, found);
+                }
+                crate::frontend::ast::AssertKind::Raises { call, .. } => {
+                    scoped_symbol_in_expr(call, ident, symbol_span, surfaces, found);
+                }
+            }
+            if let Some(message) = &assert_stmt.message {
+                scoped_symbol_in_expr(message, ident, symbol_span, surfaces, found);
+            }
+        }
+        Statement::CompoundAssignment(assign) => {
+            scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found);
+        }
+        Statement::TupleUnpack(assign) => scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found),
+        Statement::ChainedAssignment(assign) => {
+            scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found);
+        }
+        Statement::TupleAssign(assign) => {
+            for target in &assign.targets {
+                scoped_symbol_in_expr(target, ident, symbol_span, surfaces, found);
+            }
+            scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found);
+        }
+        Statement::VocabBlock(block) => {
+            scoped_symbol_in_statements(&block.body, ident, symbol_span, surfaces, found);
+        }
+        Statement::Pass | Statement::Continue | Statement::Surface(_) => {}
+    }
+}
+
+/// Search a control-flow condition for a parsed scoped symbol occurrence.
+fn scoped_symbol_in_condition<'a>(
+    condition: &'a Condition,
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    match condition {
+        Condition::Expr(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
+        Condition::Let { value, .. } => scoped_symbol_in_expr(value, ident, symbol_span, surfaces, found),
+    }
+}
+
+/// Search one expression tree for a parsed scoped symbol occurrence.
+fn scoped_symbol_in_expr<'a>(
+    expr: &'a Spanned<Expr>,
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    if found.is_some() || !(expr.span.start <= symbol_span.start && symbol_span.end <= expr.span.end) {
+        return;
+    }
+    if let Expr::Surface(surface) = &expr.node
+        && let incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+            dependency_key,
+            descriptor_key,
+        } = &surface.key
+        && let SurfaceExprPayload::ScopedSymbolCall { symbol, .. } = &surface.payload
+        && symbol == ident
+        && symbol_span.start == expr.span.start
+        && let Some(descriptor) = scoped_symbol_descriptor(surfaces, dependency_key, descriptor_key)
+    {
+        *found = Some(ScopedSymbolOccurrence {
+            dependency_key,
+            descriptor,
+            symbol_span,
+        });
+        return;
+    }
+
+    match &expr.node {
+        Expr::Binary(left, _, right) => {
+            scoped_symbol_in_expr(left, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(right, ident, symbol_span, surfaces, found);
+        }
+        Expr::Unary(_, inner)
+        | Expr::Index(inner, _)
+        | Expr::Slice(inner, _)
+        | Expr::Try(inner)
+        | Expr::Paren(inner)
+        | Expr::Yield(Some(inner)) => scoped_symbol_in_expr(inner, ident, symbol_span, surfaces, found),
+        Expr::Call(callee, _, args) => {
+            scoped_symbol_in_expr(callee, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found);
+        }
+        Expr::MethodCall(receiver, _, _, args) => {
+            scoped_symbol_in_expr(receiver, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found);
+        }
+        Expr::Match(scrutinee, arms) => {
+            scoped_symbol_in_expr(scrutinee, ident, symbol_span, surfaces, found);
+            for arm in arms {
+                if let Some(guard) = &arm.node.guard {
+                    scoped_symbol_in_expr(guard, ident, symbol_span, surfaces, found);
+                }
+                match &arm.node.body {
+                    MatchBody::Expr(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
+                    MatchBody::Block(body) => scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found),
+                }
+            }
+        }
+        Expr::If(if_expr) => {
+            scoped_symbol_in_expr(&if_expr.condition, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_statements(&if_expr.then_body, ident, symbol_span, surfaces, found);
+            if let Some(body) = &if_expr.else_body {
+                scoped_symbol_in_statements(body, ident, symbol_span, surfaces, found);
+            }
+        }
+        Expr::Loop(loop_expr) => scoped_symbol_in_statements(&loop_expr.body, ident, symbol_span, surfaces, found),
+        Expr::ListComp(comp) => {
+            scoped_symbol_in_expr(&comp.expr, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(&comp.iter, ident, symbol_span, surfaces, found);
+            if let Some(filter) = &comp.filter {
+                scoped_symbol_in_expr(filter, ident, symbol_span, surfaces, found);
+            }
+            scoped_symbol_in_comprehension_clauses(&comp.clauses, ident, symbol_span, surfaces, found);
+        }
+        Expr::DictComp(comp) => {
+            scoped_symbol_in_expr(&comp.key, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(&comp.value, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(&comp.iter, ident, symbol_span, surfaces, found);
+            if let Some(filter) = &comp.filter {
+                scoped_symbol_in_expr(filter, ident, symbol_span, surfaces, found);
+            }
+            scoped_symbol_in_comprehension_clauses(&comp.clauses, ident, symbol_span, surfaces, found);
+        }
+        Expr::Generator(generator) => {
+            scoped_symbol_in_expr(&generator.expr, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_comprehension_clauses(&generator.clauses, ident, symbol_span, surfaces, found);
+        }
+        Expr::Closure(_, body) => scoped_symbol_in_expr(body, ident, symbol_span, surfaces, found),
+        Expr::Tuple(items) | Expr::Set(items) => {
+            for item in items {
+                scoped_symbol_in_expr(item, ident, symbol_span, surfaces, found);
+            }
+        }
+        Expr::List(entries) => {
+            for entry in entries {
+                match entry {
+                    ListEntry::Element(expr) | ListEntry::Spread(expr) => {
+                        scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
+                    }
+                }
+            }
+        }
+        Expr::Dict(entries) => {
+            for entry in entries {
+                match entry {
+                    crate::frontend::ast::DictEntry::Pair(key, value) => {
+                        scoped_symbol_in_expr(key, ident, symbol_span, surfaces, found);
+                        scoped_symbol_in_expr(value, ident, symbol_span, surfaces, found);
+                    }
+                    crate::frontend::ast::DictEntry::Spread(expr) => {
+                        scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
+                    }
+                }
+            }
+        }
+        Expr::Partial(partial) => {
+            scoped_symbol_in_expr(&partial.target, ident, symbol_span, surfaces, found);
+            for arg in &partial.args {
+                scoped_symbol_in_expr(&arg.value, ident, symbol_span, surfaces, found);
+            }
+        }
+        Expr::Constructor(_, args) => scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found),
+        Expr::FString(parts) => {
+            for part in parts {
+                if let crate::frontend::ast::FStringPart::Expr(expr) = part {
+                    scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
+                }
+            }
+        }
+        Expr::Range { start, end, .. } => {
+            scoped_symbol_in_expr(start, ident, symbol_span, surfaces, found);
+            scoped_symbol_in_expr(end, ident, symbol_span, surfaces, found);
+        }
+        Expr::Surface(surface) => match &surface.payload {
+            SurfaceExprPayload::PrefixUnary(inner) => scoped_symbol_in_expr(inner, ident, symbol_span, surfaces, found),
+            SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                scoped_symbol_in_expr(left, ident, symbol_span, surfaces, found);
+                scoped_symbol_in_expr(right, ident, symbol_span, surfaces, found);
+            }
+            SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found);
+            }
+            SurfaceExprPayload::LeadingDotPath { .. } => {}
+        },
+        Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
+        Expr::Field(inner, _) => scoped_symbol_in_expr(inner, ident, symbol_span, surfaces, found),
+    }
+}
+
+/// Search comprehension clauses for parsed scoped symbol occurrences.
+fn scoped_symbol_in_comprehension_clauses<'a>(
+    clauses: &'a [crate::frontend::ast::ComprehensionClause],
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    for clause in clauses {
+        match clause {
+            crate::frontend::ast::ComprehensionClause::For { iter, .. } => {
+                scoped_symbol_in_expr(iter, ident, symbol_span, surfaces, found);
+            }
+            crate::frontend::ast::ComprehensionClause::If(condition) => {
+                scoped_symbol_in_expr(condition, ident, symbol_span, surfaces, found);
+            }
+        }
+    }
+}
+
+/// Search call arguments for parsed scoped symbol occurrences.
+fn scoped_symbol_in_call_args<'a>(
+    args: &'a [CallArg],
+    ident: &str,
+    symbol_span: Span,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    found: &mut Option<ScopedSymbolOccurrence<'a>>,
+) {
+    for arg in args {
+        match arg {
+            CallArg::Positional(expr)
+            | CallArg::Named(_, expr)
+            | CallArg::PositionalUnpack(expr)
+            | CallArg::KeywordUnpack(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
+        }
+    }
+}
+
+/// Resolve a scoped symbol descriptor by dependency key and descriptor key.
+fn scoped_symbol_descriptor<'a>(
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    dependency_key: &str,
+    descriptor_key: &str,
+) -> Option<&'a incan_vocab::ScopedSymbolDescriptor> {
+    surfaces
+        .get(dependency_key)?
+        .iter()
+        .flat_map(|surface| surface.scoped_symbols.iter())
+        .find(|descriptor| descriptor.key == descriptor_key)
+}
+
+/// Find the nearest activating `pub::` import span before a scoped symbol use.
+fn find_pub_library_import_span(ast: &Program, dependency_key: &str, before_offset: usize) -> Option<Span> {
+    ast.declarations.iter().rev().find_map(|decl| {
+        if decl.span.start >= before_offset {
+            return None;
+        }
+        let Declaration::Import(import) = &decl.node else {
+            return None;
+        };
+        match &import.kind {
+            crate::frontend::ast::ImportKind::PubLibrary { library }
+            | crate::frontend::ast::ImportKind::PubFrom { library, .. }
+                if library == dependency_key =>
+            {
+                Some(decl.span)
+            }
+            _ => None,
+        }
+    })
+}
+
+/// Return scoped symbol descriptors eligible for completion at the given document offset.
+fn active_scoped_symbol_completions<'a>(
+    ast: &'a Program,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    offset: usize,
+) -> Vec<ScopedSymbolLspDescriptor<'a>> {
+    let Some(context) = scoped_symbol_context_at_offset(ast, offset) else {
+        return Vec::new();
+    };
+    let mut candidates = Vec::new();
+    for (dependency_key, surface) in active_imported_dsl_surfaces(ast, surfaces, offset) {
+        for descriptor in &surface.scoped_symbols {
+            let Some(depth) = scoped_symbol_depth_in_context(descriptor, &context) else {
+                continue;
+            };
+            candidates.push(ScopedSymbolLspDescriptor {
+                dependency_key,
+                descriptor,
+                depth,
+            });
+        }
+    }
+
+    let mut max_depth_by_symbol: HashMap<&str, usize> = HashMap::new();
+    for candidate in &candidates {
+        max_depth_by_symbol
+            .entry(candidate.descriptor.symbol.as_str())
+            .and_modify(|depth| *depth = (*depth).max(candidate.depth))
+            .or_insert(candidate.depth);
+    }
+    candidates
+        .into_iter()
+        .filter(|candidate| {
+            max_depth_by_symbol
+                .get(candidate.descriptor.symbol.as_str())
+                .is_some_and(|depth| *depth == candidate.depth)
+        })
+        .collect()
+}
+
+/// Return DSL surfaces activated by `pub::` imports before the given document offset.
+fn active_imported_dsl_surfaces<'a>(
+    ast: &'a Program,
+    surfaces: &'a parser::ImportedLibraryDslSurfaces,
+    offset: usize,
+) -> Vec<(&'a str, &'a incan_vocab::DslSurface)> {
+    let mut active = Vec::new();
+    for decl in &ast.declarations {
+        if decl.span.end > offset {
+            break;
+        }
+        let Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        let library = match &import.kind {
+            crate::frontend::ast::ImportKind::PubLibrary { library }
+            | crate::frontend::ast::ImportKind::PubFrom { library, .. } => library.as_str(),
+            _ => continue,
+        };
+        let Some(library_surfaces) = surfaces.get(library) else {
+            continue;
+        };
+        active.extend(
+            library_surfaces
+                .iter()
+                .filter(move |surface| dsl_surface_applies_to_pub_import_lsp(surface, library))
+                .map(move |surface| (library, surface)),
+        );
+    }
+    active
+}
+
+/// Return whether an imported DSL surface activates for a `pub::library` import in LSP helpers.
+fn dsl_surface_applies_to_pub_import_lsp(surface: &incan_vocab::DslSurface, library: &str) -> bool {
+    match &surface.activation {
+        incan_vocab::KeywordActivation::Always => true,
+        incan_vocab::KeywordActivation::OnImport { namespace } => namespace_matches_pub_library_lsp(namespace, library),
+        _ => false,
+    }
+}
+
+/// Return whether an activation namespace matches a `pub::library` import in LSP helpers.
+fn namespace_matches_pub_library_lsp(namespace: &str, library: &str) -> bool {
+    let trimmed = namespace.trim();
+    !trimmed.is_empty() && (trimmed == library || trimmed.starts_with(&format!("{library}.")))
+}
+
+/// Return the innermost lexical DSL depth where a descriptor is eligible in the current LSP context.
+fn scoped_symbol_depth_in_context(
+    descriptor: &incan_vocab::ScopedSymbolDescriptor,
+    context: &ScopedSymbolLspContext,
+) -> Option<usize> {
+    descriptor
+        .eligible_in
+        .iter()
+        .filter_map(|eligibility| scoped_symbol_eligibility_depth(eligibility, context))
+        .max()
+}
+
+/// Return the lexical DSL depth where one eligibility rule matches the current LSP context.
+fn scoped_symbol_eligibility_depth(
+    eligibility: &incan_vocab::ScopedSymbolEligibility,
+    context: &ScopedSymbolLspContext,
+) -> Option<usize> {
+    match eligibility.position {
+        incan_vocab::ScopedSymbolPosition::DeclarationBody => context
+            .vocab_stack
+            .iter()
+            .rposition(|declaration| declaration == &eligibility.declaration),
+        incan_vocab::ScopedSymbolPosition::ClauseBody => {
+            let clause = eligibility.clause.as_deref()?;
+            let clause_depth = context.vocab_stack.iter().rposition(|active| active == clause)?;
+            context
+                .vocab_stack
+                .iter()
+                .take(clause_depth)
+                .rposition(|active| active == &eligibility.declaration)
+                .map(|declaration_depth| declaration_depth.max(clause_depth))
+        }
+        incan_vocab::ScopedSymbolPosition::CallArgument => {
+            if eligibility.call.as_deref() != context.call_target.as_deref() {
+                return None;
+            }
+            context
+                .vocab_stack
+                .iter()
+                .rposition(|declaration| declaration == &eligibility.declaration)
+        }
+        _ => None,
+    }
+}
+
+/// Derive the DSL block stack and call-argument target active at a document offset.
+fn scoped_symbol_context_at_offset(ast: &Program, offset: usize) -> Option<ScopedSymbolLspContext> {
+    let mut context = ScopedSymbolLspContext {
+        vocab_stack: Vec::new(),
+        call_target: None,
+    };
+    for decl in &ast.declarations {
+        if decl.span.start <= offset && offset <= decl.span.end {
+            scoped_symbol_context_in_declaration(decl, offset, &mut context);
+        }
+    }
+    if context.vocab_stack.is_empty() {
+        None
+    } else {
+        Some(context)
+    }
+}
+
+/// Update scoped symbol completion context from one declaration containing the offset.
+fn scoped_symbol_context_in_declaration(
+    decl: &Spanned<Declaration>,
+    offset: usize,
+    context: &mut ScopedSymbolLspContext,
+) {
+    match &decl.node {
+        Declaration::Const(konst) => scoped_symbol_context_in_expr(&konst.value, offset, context),
+        Declaration::Static(static_decl) => scoped_symbol_context_in_expr(&static_decl.value, offset, context),
+        Declaration::Function(func) => scoped_symbol_context_in_statements(&func.body, offset, context),
+        Declaration::Model(model) => {
+            for method in &model.methods {
+                if let Some(body) = &method.node.body {
+                    scoped_symbol_context_in_statements(body, offset, context);
+                }
+            }
+            for property in &model.properties {
+                if let Some(body) = &property.node.body {
+                    scoped_symbol_context_in_statements(body, offset, context);
+                }
+            }
+        }
+        Declaration::Class(class) => {
+            for method in &class.methods {
+                if let Some(body) = &method.node.body {
+                    scoped_symbol_context_in_statements(body, offset, context);
+                }
+            }
+            for property in &class.properties {
+                if let Some(body) = &property.node.body {
+                    scoped_symbol_context_in_statements(body, offset, context);
+                }
+            }
+        }
+        Declaration::Trait(trait_decl) => {
+            for method in &trait_decl.methods {
+                if let Some(body) = &method.node.body {
+                    scoped_symbol_context_in_statements(body, offset, context);
+                }
+            }
+            for property in &trait_decl.properties {
+                if let Some(body) = &property.node.body {
+                    scoped_symbol_context_in_statements(body, offset, context);
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Update scoped symbol completion context from a statement list containing the offset.
+fn scoped_symbol_context_in_statements(
+    statements: &[Spanned<Statement>],
+    offset: usize,
+    context: &mut ScopedSymbolLspContext,
+) {
+    for stmt in statements {
+        if stmt.span.start <= offset && offset <= stmt.span.end {
+            scoped_symbol_context_in_statement(stmt, offset, context);
+        }
+    }
+}
+
+/// Update scoped symbol completion context from one statement containing the offset.
+fn scoped_symbol_context_in_statement(stmt: &Spanned<Statement>, offset: usize, context: &mut ScopedSymbolLspContext) {
+    match &stmt.node {
+        Statement::Assignment(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
+        Statement::FieldAssignment(assign) => {
+            scoped_symbol_context_in_expr(&assign.object, offset, context);
+            scoped_symbol_context_in_expr(&assign.value, offset, context);
+        }
+        Statement::IndexAssignment(assign) => {
+            scoped_symbol_context_in_expr(&assign.object, offset, context);
+            scoped_symbol_context_in_expr(&assign.index, offset, context);
+            scoped_symbol_context_in_expr(&assign.value, offset, context);
+        }
+        Statement::Return(expr) | Statement::Break(expr) => {
+            if let Some(expr) = expr {
+                scoped_symbol_context_in_expr(expr, offset, context);
+            }
+        }
+        Statement::If(if_stmt) => {
+            scoped_symbol_context_in_condition(&if_stmt.condition, offset, context);
+            scoped_symbol_context_in_statements(&if_stmt.then_body, offset, context);
+            for (condition, body) in &if_stmt.elif_branches {
+                scoped_symbol_context_in_expr(condition, offset, context);
+                scoped_symbol_context_in_statements(body, offset, context);
+            }
+            if let Some(body) = &if_stmt.else_body {
+                scoped_symbol_context_in_statements(body, offset, context);
+            }
+        }
+        Statement::Loop(loop_stmt) => scoped_symbol_context_in_statements(&loop_stmt.body, offset, context),
+        Statement::While(while_stmt) => {
+            scoped_symbol_context_in_condition(&while_stmt.condition, offset, context);
+            scoped_symbol_context_in_statements(&while_stmt.body, offset, context);
+        }
+        Statement::For(for_stmt) => {
+            scoped_symbol_context_in_expr(&for_stmt.iter, offset, context);
+            scoped_symbol_context_in_statements(&for_stmt.body, offset, context);
+        }
+        Statement::Expr(expr) => scoped_symbol_context_in_expr(expr, offset, context),
+        Statement::Assert(assert_stmt) => {
+            match &assert_stmt.kind {
+                crate::frontend::ast::AssertKind::Condition(expr) => {
+                    scoped_symbol_context_in_expr(expr, offset, context);
+                }
+                crate::frontend::ast::AssertKind::IsPattern { value, .. } => {
+                    scoped_symbol_context_in_expr(value, offset, context);
+                }
+                crate::frontend::ast::AssertKind::Raises { call, .. } => {
+                    scoped_symbol_context_in_expr(call, offset, context);
+                }
+            }
+            if let Some(message) = &assert_stmt.message {
+                scoped_symbol_context_in_expr(message, offset, context);
+            }
+        }
+        Statement::CompoundAssignment(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
+        Statement::TupleUnpack(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
+        Statement::ChainedAssignment(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
+        Statement::TupleAssign(assign) => {
+            for target in &assign.targets {
+                scoped_symbol_context_in_expr(target, offset, context);
+            }
+            scoped_symbol_context_in_expr(&assign.value, offset, context);
+        }
+        Statement::VocabBlock(block) => {
+            let previous_len = context.vocab_stack.len();
+            context.vocab_stack.push(block.keyword.clone());
+            scoped_symbol_context_in_statements(&block.body, offset, context);
+            let matched_body = block
+                .body
+                .iter()
+                .any(|stmt| stmt.span.start <= offset && offset <= stmt.span.end);
+            if !matched_body {
+                context.vocab_stack.truncate(previous_len);
+            }
+        }
+        Statement::Pass | Statement::Continue | Statement::Surface(_) => {}
+    }
+}
+
+/// Update scoped symbol completion context from a control-flow condition containing the offset.
+fn scoped_symbol_context_in_condition(condition: &Condition, offset: usize, context: &mut ScopedSymbolLspContext) {
+    match condition {
+        Condition::Expr(expr) => scoped_symbol_context_in_expr(expr, offset, context),
+        Condition::Let { value, .. } => scoped_symbol_context_in_expr(value, offset, context),
+    }
+}
+
+/// Update scoped symbol completion context from one expression containing the offset.
+fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &mut ScopedSymbolLspContext) {
+    if !(expr.span.start <= offset && offset <= expr.span.end) {
+        return;
+    }
+    match &expr.node {
+        Expr::Call(callee, _, args) => {
+            scoped_symbol_context_in_expr(callee, offset, context);
+            if offset >= callee.span.end && offset <= expr.span.end {
+                context.call_target = call_argument_target_lsp(callee);
+                scoped_symbol_context_in_call_args(args, offset, context);
+            }
+        }
+        Expr::MethodCall(receiver, method, _, args) => {
+            scoped_symbol_context_in_expr(receiver, offset, context);
+            if offset >= receiver.span.end && offset <= expr.span.end {
+                context.call_target = Some(method.clone());
+                scoped_symbol_context_in_call_args(args, offset, context);
+            }
+        }
+        Expr::Binary(left, _, right) => {
+            scoped_symbol_context_in_expr(left, offset, context);
+            scoped_symbol_context_in_expr(right, offset, context);
+        }
+        Expr::Unary(_, inner)
+        | Expr::Index(inner, _)
+        | Expr::Slice(inner, _)
+        | Expr::Try(inner)
+        | Expr::Paren(inner)
+        | Expr::Yield(Some(inner)) => scoped_symbol_context_in_expr(inner, offset, context),
+        Expr::Match(scrutinee, arms) => {
+            scoped_symbol_context_in_expr(scrutinee, offset, context);
+            for arm in arms {
+                if let Some(guard) = &arm.node.guard {
+                    scoped_symbol_context_in_expr(guard, offset, context);
+                }
+                match &arm.node.body {
+                    MatchBody::Expr(expr) => scoped_symbol_context_in_expr(expr, offset, context),
+                    MatchBody::Block(body) => scoped_symbol_context_in_statements(body, offset, context),
+                }
+            }
+        }
+        Expr::If(if_expr) => {
+            scoped_symbol_context_in_expr(&if_expr.condition, offset, context);
+            scoped_symbol_context_in_statements(&if_expr.then_body, offset, context);
+            if let Some(body) = &if_expr.else_body {
+                scoped_symbol_context_in_statements(body, offset, context);
+            }
+        }
+        Expr::Loop(loop_expr) => scoped_symbol_context_in_statements(&loop_expr.body, offset, context),
+        Expr::ListComp(comp) => {
+            scoped_symbol_context_in_expr(&comp.expr, offset, context);
+            scoped_symbol_context_in_expr(&comp.iter, offset, context);
+            if let Some(filter) = &comp.filter {
+                scoped_symbol_context_in_expr(filter, offset, context);
+            }
+            scoped_symbol_context_in_comprehension_clauses(&comp.clauses, offset, context);
+        }
+        Expr::DictComp(comp) => {
+            scoped_symbol_context_in_expr(&comp.key, offset, context);
+            scoped_symbol_context_in_expr(&comp.value, offset, context);
+            scoped_symbol_context_in_expr(&comp.iter, offset, context);
+            if let Some(filter) = &comp.filter {
+                scoped_symbol_context_in_expr(filter, offset, context);
+            }
+            scoped_symbol_context_in_comprehension_clauses(&comp.clauses, offset, context);
+        }
+        Expr::Generator(generator) => {
+            scoped_symbol_context_in_expr(&generator.expr, offset, context);
+            scoped_symbol_context_in_comprehension_clauses(&generator.clauses, offset, context);
+        }
+        Expr::Closure(_, body) => scoped_symbol_context_in_expr(body, offset, context),
+        Expr::Tuple(items) | Expr::Set(items) => {
+            for item in items {
+                scoped_symbol_context_in_expr(item, offset, context);
+            }
+        }
+        Expr::List(entries) => {
+            for entry in entries {
+                match entry {
+                    ListEntry::Element(expr) | ListEntry::Spread(expr) => {
+                        scoped_symbol_context_in_expr(expr, offset, context);
+                    }
+                }
+            }
+        }
+        Expr::Dict(entries) => {
+            for entry in entries {
+                match entry {
+                    crate::frontend::ast::DictEntry::Pair(key, value) => {
+                        scoped_symbol_context_in_expr(key, offset, context);
+                        scoped_symbol_context_in_expr(value, offset, context);
+                    }
+                    crate::frontend::ast::DictEntry::Spread(expr) => {
+                        scoped_symbol_context_in_expr(expr, offset, context);
+                    }
+                }
+            }
+        }
+        Expr::Partial(partial) => {
+            scoped_symbol_context_in_expr(&partial.target, offset, context);
+            for arg in &partial.args {
+                scoped_symbol_context_in_expr(&arg.value, offset, context);
+            }
+        }
+        Expr::Constructor(_, args) => scoped_symbol_context_in_call_args(args, offset, context),
+        Expr::FString(parts) => {
+            for part in parts {
+                if let crate::frontend::ast::FStringPart::Expr(expr) = part {
+                    scoped_symbol_context_in_expr(expr, offset, context);
+                }
+            }
+        }
+        Expr::Range { start, end, .. } => {
+            scoped_symbol_context_in_expr(start, offset, context);
+            scoped_symbol_context_in_expr(end, offset, context);
+        }
+        Expr::Surface(surface) => match &surface.payload {
+            SurfaceExprPayload::PrefixUnary(inner) => scoped_symbol_context_in_expr(inner, offset, context),
+            SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                scoped_symbol_context_in_expr(left, offset, context);
+                scoped_symbol_context_in_expr(right, offset, context);
+            }
+            SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                scoped_symbol_context_in_call_args(args, offset, context);
+            }
+            SurfaceExprPayload::LeadingDotPath { .. } => {}
+        },
+        Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
+        Expr::Field(inner, _) => scoped_symbol_context_in_expr(inner, offset, context),
+    }
+}
+
+/// Update scoped symbol completion context from comprehension clauses containing the offset.
+fn scoped_symbol_context_in_comprehension_clauses(
+    clauses: &[crate::frontend::ast::ComprehensionClause],
+    offset: usize,
+    context: &mut ScopedSymbolLspContext,
+) {
+    for clause in clauses {
+        match clause {
+            crate::frontend::ast::ComprehensionClause::For { iter, .. } => {
+                scoped_symbol_context_in_expr(iter, offset, context);
+            }
+            crate::frontend::ast::ComprehensionClause::If(condition) => {
+                scoped_symbol_context_in_expr(condition, offset, context);
+            }
+        }
+    }
+}
+
+/// Update scoped symbol completion context from call arguments containing the offset.
+fn scoped_symbol_context_in_call_args(args: &[CallArg], offset: usize, context: &mut ScopedSymbolLspContext) {
+    for arg in args {
+        match arg {
+            CallArg::Positional(expr)
+            | CallArg::Named(_, expr)
+            | CallArg::PositionalUnpack(expr)
+            | CallArg::KeywordUnpack(expr) => scoped_symbol_context_in_expr(expr, offset, context),
+        }
+    }
+}
+
+/// Return the identifier-like callee name used by call-argument scoped symbol eligibility.
+fn call_argument_target_lsp(expr: &Spanned<Expr>) -> Option<String> {
+    match &expr.node {
+        Expr::Ident(name) | Expr::Field(_, name) => Some(name.clone()),
+        _ => None,
+    }
 }
 
 /// Find a decorator at `offset` and resolve it to its registry info.
@@ -683,8 +3963,464 @@ fn push_completion(
     }
 }
 
+fn collect_rust_origin_symbols(checker: &typechecker::TypeChecker) -> Vec<RustOriginSymbol> {
+    checker
+        .symbols
+        .all_symbols()
+        .iter()
+        .filter_map(|sym| match &sym.kind {
+            crate::frontend::symbols::SymbolKind::RustItem(info) => Some(RustOriginSymbol {
+                local_name: sym.name.clone(),
+                span: sym.span,
+                info: info.clone(),
+            }),
+            _ => None,
+        })
+        .collect()
+}
+
+fn rust_symbol_at_offset(symbols: &[RustOriginSymbol], offset: usize) -> Option<&RustOriginSymbol> {
+    symbols
+        .iter()
+        .find(|sym| sym.span.start <= offset && offset < sym.span.end)
+}
+
+fn rust_symbol_for_span(symbols: &[RustOriginSymbol], span: Span) -> Option<&RustOriginSymbol> {
+    symbols.iter().find(|sym| {
+        let overlaps_start = sym.span.start <= span.start && span.start < sym.span.end;
+        let overlaps_reverse = span.start <= sym.span.start && sym.span.start < span.end;
+        overlaps_start || overlaps_reverse
+    })
+}
+
+fn compile_error_to_diagnostic_with_rust_context(
+    error: &CompileError,
+    source: &str,
+    uri: &Url,
+    rust_symbols: &[RustOriginSymbol],
+) -> Diagnostic {
+    let mut enriched = error.clone();
+    if let Some(sym) = rust_symbol_for_span(rust_symbols, error.span) {
+        let note = format!(
+            "Rust origin: `{}` resolves to `rust::{}`",
+            sym.local_name, sym.info.path
+        );
+        if !enriched.notes.iter().any(|n| n == &note) {
+            enriched.notes.push(note);
+        }
+    }
+    compile_error_to_diagnostic(&enriched, source, uri)
+}
+
+fn rust_item_kind_label(kind: &RustItemKind) -> &'static str {
+    match kind {
+        RustItemKind::Module(_) => "module",
+        RustItemKind::Type(_) => "type",
+        RustItemKind::Function(_) => "function",
+        RustItemKind::Constant { .. } => "constant",
+        RustItemKind::Trait(_) => "trait",
+        RustItemKind::Unsupported { .. } => "unsupported item",
+    }
+}
+
+fn rust_binding_kind_label(binding: crate::frontend::symbols::RustImportBindingKind) -> &'static str {
+    match binding {
+        crate::frontend::symbols::RustImportBindingKind::CrateRoot => "crate root import",
+        crate::frontend::symbols::RustImportBindingKind::RootedPath => "path import",
+        crate::frontend::symbols::RustImportBindingKind::FromImport => "from-import binding",
+    }
+}
+
+fn completion_kind_for_module_child(kind: RustModuleChildKind) -> CompletionItemKind {
+    match kind {
+        RustModuleChildKind::Module => CompletionItemKind::MODULE,
+        RustModuleChildKind::Type => CompletionItemKind::CLASS,
+        RustModuleChildKind::Function => CompletionItemKind::FUNCTION,
+        RustModuleChildKind::Constant => CompletionItemKind::CONSTANT,
+        RustModuleChildKind::Trait => CompletionItemKind::INTERFACE,
+        RustModuleChildKind::Other => CompletionItemKind::REFERENCE,
+    }
+}
+
+fn rust_member_completion_context(line_prefix: &str) -> Option<(&str, &str)> {
+    let trimmed = line_prefix.trim_end();
+    let dot_idx = trimmed.rfind('.')?;
+    let (base_part, partial_part) = trimmed.split_at(dot_idx);
+    let partial = &partial_part[1..];
+    if !partial.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return None;
+    }
+    let base = base_part
+        .split(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .next_back()?;
+    if base.is_empty() {
+        return None;
+    }
+    Some((base, partial))
+}
+
+/// Return the LSP detail string for the built-in `list.repeat` helper.
+fn builtin_list_repeat_detail() -> String {
+    collection_helpers::signature(BuiltinCollectionHelperId::ListRepeat).to_string()
+}
+
+/// Return hover markdown for the built-in `list.repeat` helper.
+fn builtin_list_repeat_markdown() -> String {
+    format!(
+        "```incan\n{}\n```\n\n*list helper*\n\nCreates a list with `count` clone-derived copies of `value`. Negative counts raise `ValueError`.",
+        builtin_list_repeat_detail()
+    )
+}
+
+/// Return hover markdown when `ident` is the `repeat` member in `list.repeat`.
+fn builtin_list_repeat_hover(source: &str, ident: &str, span: Span) -> Option<String> {
+    let helper = BuiltinCollectionHelperId::ListRepeat;
+    if ident != collection_helpers::member(helper) {
+        return None;
+    }
+    let prefix = &source[..span.start.min(source.len())];
+    let receiver_prefix = format!("{}.", collection_helpers::receiver(helper));
+    prefix
+        .trim_end()
+        .ends_with(&receiver_prefix)
+        .then(builtin_list_repeat_markdown)
+}
+
+/// Return completions for built-in members on the import-free `list` surface.
+fn builtin_list_member_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
+    let (base, partial) = rust_member_completion_context(line_prefix)?;
+    if base != collection_helpers::receiver(BuiltinCollectionHelperId::ListRepeat) {
+        return None;
+    }
+
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+    for helper in collection_helpers::BUILTIN_COLLECTION_HELPERS
+        .iter()
+        .filter(|helper| helper.receiver == base && helper.member.starts_with(partial))
+    {
+        push_completion(
+            &mut items,
+            &mut seen,
+            helper.member,
+            CompletionItemKind::METHOD,
+            Some(helper.signature.to_string()),
+            Some(format!("0_{}", helper.member)),
+        );
+    }
+    if items.is_empty() { None } else { Some(items) }
+}
+
+fn rust_member_completions(line_prefix: &str, symbols: &[RustOriginSymbol]) -> Option<Vec<CompletionItem>> {
+    let (base, partial) = rust_member_completion_context(line_prefix)?;
+    let rust_symbol = symbols.iter().find(|sym| sym.local_name == base)?;
+    let metadata = rust_symbol.info.metadata.as_ref()?;
+    let mut items = Vec::new();
+    let mut seen = HashSet::new();
+
+    match &metadata.kind {
+        RustItemKind::Module(module) => {
+            for child in &module.children {
+                if !child.name.starts_with(partial) {
+                    continue;
+                }
+                push_completion(
+                    &mut items,
+                    &mut seen,
+                    &child.name,
+                    completion_kind_for_module_child(child.kind_hint),
+                    Some(format!(
+                        "rust::{}::{} ({})",
+                        rust_symbol.info.path, child.name, rust_symbol.local_name
+                    )),
+                    Some(format!("0_{}", child.name)),
+                );
+            }
+        }
+        RustItemKind::Type(type_info) => {
+            for method in &type_info.methods {
+                if !method.name.starts_with(partial) {
+                    continue;
+                }
+                if typechecker::TypeChecker::rust_signature_has_receiver(&method.signature) {
+                    continue;
+                }
+                push_completion(
+                    &mut items,
+                    &mut seen,
+                    &method.name,
+                    CompletionItemKind::FUNCTION,
+                    Some(format!(
+                        "rust::{}::{} (associated function)",
+                        rust_symbol.info.path, method.name
+                    )),
+                    Some(format!("0_{}", method.name)),
+                );
+            }
+        }
+        RustItemKind::Trait(trait_info) => {
+            for item in &trait_info.items {
+                let (name, kind, detail) = match item {
+                    RustTraitAssoc::Function { name, .. } => (
+                        name.as_str(),
+                        CompletionItemKind::FUNCTION,
+                        format!("rust::{}::{} (trait function)", rust_symbol.info.path, name),
+                    ),
+                    RustTraitAssoc::TypeAlias { name } => (
+                        name.as_str(),
+                        CompletionItemKind::TYPE_PARAMETER,
+                        format!("rust::{}::{} (trait type alias)", rust_symbol.info.path, name),
+                    ),
+                    RustTraitAssoc::Constant { name, .. } => (
+                        name.as_str(),
+                        CompletionItemKind::CONSTANT,
+                        format!("rust::{}::{} (trait constant)", rust_symbol.info.path, name),
+                    ),
+                };
+                if !name.starts_with(partial) {
+                    continue;
+                }
+                push_completion(
+                    &mut items,
+                    &mut seen,
+                    name,
+                    kind,
+                    Some(detail),
+                    Some(format!("0_{}", name)),
+                );
+            }
+        }
+        _ => {}
+    }
+
+    if items.is_empty() { None } else { Some(items) }
+}
+
+/// Return the LSP document-symbol kind for a top-level declaration.
+fn lsp_symbol_kind_for_decl(decl: &Declaration) -> Option<SymbolKind> {
+    match decl {
+        Declaration::Const(_) | Declaration::Static(_) => Some(SymbolKind::CONSTANT),
+        Declaration::Function(_) | Declaration::Partial(_) => Some(SymbolKind::FUNCTION),
+        Declaration::Model(_) => Some(SymbolKind::STRUCT),
+        Declaration::Class(_) => Some(SymbolKind::CLASS),
+        Declaration::Trait(_) => Some(SymbolKind::INTERFACE),
+        Declaration::Enum(_) => Some(SymbolKind::ENUM),
+        Declaration::TypeAlias(_) => Some(SymbolKind::TYPE_PARAMETER),
+        Declaration::Newtype(_) => Some(SymbolKind::STRUCT),
+        _ => None,
+    }
+}
+
+/// Build the display name and detail string used for one LSP document symbol entry.
+fn lsp_document_symbol_name_and_detail(decl: &Declaration, source: &str) -> Option<(String, String)> {
+    match decl {
+        Declaration::Const(konst) => Some((
+            konst.name.clone(),
+            if let Some(ty) = &konst.ty {
+                format!("const {}: {}", konst.name, format_type(&ty.node))
+            } else {
+                format!("const {}", konst.name)
+            },
+        )),
+        Declaration::Static(static_decl) => Some((
+            static_decl.name.clone(),
+            format!("static {}: {}", static_decl.name, format_type(&static_decl.ty.node)),
+        )),
+        Declaration::Function(func) => Some((func.name.clone(), format_function_signature(func, source))),
+        Declaration::Partial(partial) => Some((partial.name.clone(), format_partial_decl_signature(partial, source))),
+        Declaration::Model(model) => Some((model.name.clone(), format!("model {}", model.name))),
+        Declaration::Class(class) => Some((class.name.clone(), format!("class {}", class.name))),
+        Declaration::Trait(tr) => Some((tr.name.clone(), format!("trait {}", tr.name))),
+        Declaration::Enum(en) => Some((en.name.clone(), enum_completion_detail(en))),
+        Declaration::TypeAlias(alias) => Some((
+            alias.name.clone(),
+            format!("type {} = {}", alias.name, format_type(&alias.target.node)),
+        )),
+        Declaration::Newtype(nt) => {
+            let kind = if nt.is_rusttype { "rusttype" } else { "newtype" };
+            Some((
+                nt.name.clone(),
+                format!("{} {} = {}", kind, nt.name, format_type(&nt.underlying.node)),
+            ))
+        }
+        _ => None,
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ContractModelCommandFormat {
+    Incan,
+    Json,
+}
+
+impl ContractModelCommandFormat {
+    /// Parse a client-provided format string, defaulting omitted values to Incan source output.
+    fn parse(value: Option<&str>) -> std::result::Result<Self, String> {
+        match value.unwrap_or("incan") {
+            "incan" => Ok(Self::Incan),
+            "json" => Ok(Self::Json),
+            other => Err(format!("unsupported format `{other}`; expected `incan` or `json`")),
+        }
+    }
+
+    /// Return the wire spelling used in command responses.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Incan => "incan",
+            Self::Json => "json",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct EmitContractModelCommandArgs {
+    /// Source URI, bundle JSON path, project directory path, or `.incnlib` artifact path.
+    uri: Option<String>,
+    /// Alternative path field for clients that do not have a document URI.
+    path: Option<String>,
+    /// Logical model name or stable model id.
+    model: String,
+    /// Output format: `incan` or `json`.
+    format: Option<String>,
+}
+
+/// Parse model-emit command arguments from either one object argument or positional `[uriOrPath, model, format?]`.
+fn parse_emit_contract_model_command_args(
+    mut args: Vec<serde_json::Value>,
+) -> std::result::Result<EmitContractModelCommandArgs, String> {
+    if args.len() == 1 && args[0].is_object() {
+        return serde_json::from_value(args.remove(0)).map_err(|error| error.to_string());
+    }
+    if args.len() < 2 {
+        return Err(format!(
+            "{EMIT_CONTRACT_MODEL_COMMAND} expects either an object argument or positional [uriOrPath, model, format?]"
+        ));
+    }
+    let uri = args[0]
+        .as_str()
+        .ok_or_else(|| "first positional argument must be a URI or path string".to_string())?
+        .to_string();
+    let model = args[1]
+        .as_str()
+        .ok_or_else(|| "second positional argument must be a model name or stable model id".to_string())?
+        .to_string();
+    let format = args.get(2).and_then(|value| value.as_str()).map(str::to_string);
+    Ok(EmitContractModelCommandArgs {
+        uri: Some(uri),
+        path: None,
+        model,
+        format,
+    })
+}
+
+/// Convert a file URI or raw client path into a local filesystem path.
+fn path_from_lsp_uri_or_path(value: &str) -> std::result::Result<PathBuf, String> {
+    if let Ok(uri) = Url::parse(value)
+        && uri.scheme() == "file"
+    {
+        return uri
+            .to_file_path()
+            .map_err(|_| format!("file URI `{value}` could not be converted to a local path"));
+    }
+    Ok(PathBuf::from(value))
+}
+
+/// Load model bundles for the LSP command from a project, source path, bundle JSON file, or library artifact.
+fn collect_lsp_contract_model_bundles(path: &Path) -> std::result::Result<Vec<CanonicalModelBundle>, String> {
+    let absolute = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        std::env::current_dir()
+            .map_err(|error| format!("failed to determine current directory: {error}"))?
+            .join(path)
+    };
+    if absolute.is_file()
+        && absolute
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension == "json")
+    {
+        return read_model_bundles_from_json(&absolute).map_err(|error| error.to_string());
+    }
+    if absolute.is_file()
+        && absolute
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .is_some_and(|extension| extension == "incnlib")
+    {
+        let manifest =
+            crate::library_manifest::LibraryManifest::read_from_path(&absolute).map_err(|error| error.to_string())?;
+        let bundles = manifest.contract_metadata.models.model_bundles;
+        if bundles.is_empty() {
+            return Err(format!(
+                "artifact {} does not carry checked model metadata",
+                absolute.display()
+            ));
+        }
+        return Ok(bundles);
+    }
+
+    let start_dir = if absolute.is_dir() {
+        absolute.as_path()
+    } else {
+        absolute.parent().unwrap_or(Path::new("."))
+    };
+    let manifest = ProjectManifest::discover(start_dir)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| {
+            format!(
+                "model emit requires a project manifest, bundle JSON, or `.incnlib` artifact: {}",
+                path.display()
+            )
+        })?;
+    read_project_model_bundles(manifest.project_root(), &manifest.contract_model_bundle_paths())
+        .map_err(|error| error.to_string())
+}
+
+/// Resolve a single LSP model-emit bundle by logical type name or stable model id.
+fn find_lsp_contract_model_bundle(path: &Path, model: &str) -> std::result::Result<CanonicalModelBundle, String> {
+    let bundles = collect_lsp_contract_model_bundles(path)?;
+    bundles
+        .into_iter()
+        .find(|bundle| bundle.logical_type_name == model || bundle.stable_model_id.as_deref() == Some(model))
+        .ok_or_else(|| {
+            format!(
+                "model `{model}` was not found in checked model metadata for {}",
+                path.display()
+            )
+        })
+}
+
+/// Build the JSON-RPC response payload for model source or bundle JSON emission.
+fn emit_contract_model_command_payload(
+    path: &Path,
+    model: &str,
+    format: ContractModelCommandFormat,
+) -> std::result::Result<serde_json::Value, String> {
+    let bundle = find_lsp_contract_model_bundle(path, model)?;
+    match format {
+        ContractModelCommandFormat::Incan => {
+            let source = bundle.emit_incan_model_source().map_err(|error| error.to_string())?;
+            Ok(json!({
+                "format": format.as_str(),
+                "model": bundle.logical_type_name,
+                "stableModelId": bundle.stable_model_id,
+                "source": source
+            }))
+        }
+        ContractModelCommandFormat::Json => Ok(json!({
+            "format": format.as_str(),
+            "model": bundle.logical_type_name,
+            "stableModelId": bundle.stable_model_id,
+            "bundle": bundle
+        })),
+    }
+}
+
 #[tower_lsp::async_trait]
 impl LanguageServer for IncanLanguageServer {
+    /// Advertise the LSP capabilities implemented by the Incan language server.
     async fn initialize(&self, _: InitializeParams) -> Result<InitializeResult> {
         Ok(InitializeResult {
             capabilities: ServerCapabilities {
@@ -692,11 +4428,23 @@ impl LanguageServer for IncanLanguageServer {
                 text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
                 // Hover support
                 hover_provider: Some(HoverProviderCapability::Simple(true)),
+                // Signature help for parsed local function calls
+                signature_help_provider: Some(SignatureHelpOptions {
+                    trigger_characters: Some(vec!["(".to_string(), ",".to_string()]),
+                    retrigger_characters: Some(vec![",".to_string()]),
+                    ..Default::default()
+                }),
                 // Go-to-definition
                 definition_provider: Some(OneOf::Left(true)),
+                // Document symbols (outline)
+                document_symbol_provider: Some(OneOf::Left(true)),
                 // Completions (basic)
                 completion_provider: Some(CompletionOptions {
-                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                    trigger_characters: Some(vec![".".to_string(), ":".to_string(), "[".to_string()]),
+                    ..Default::default()
+                }),
+                execute_command_provider: Some(ExecuteCommandOptions {
+                    commands: vec![EMIT_CONTRACT_MODEL_COMMAND.to_string()],
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -716,6 +4464,45 @@ impl LanguageServer for IncanLanguageServer {
 
     async fn shutdown(&self) -> Result<()> {
         Ok(())
+    }
+
+    /// Handle editor commands that need checked metadata not otherwise exposed by standard LSP requests.
+    async fn execute_command(&self, params: ExecuteCommandParams) -> Result<Option<serde_json::Value>> {
+        if params.command != EMIT_CONTRACT_MODEL_COMMAND {
+            self.client
+                .log_message(
+                    MessageType::WARNING,
+                    format!("unsupported Incan LSP command `{}`", params.command),
+                )
+                .await;
+            return Ok(Some(json!({
+                "error": format!("unsupported command `{}`", params.command)
+            })));
+        }
+
+        let parsed = match parse_emit_contract_model_command_args(params.arguments) {
+            Ok(parsed) => parsed,
+            Err(error) => {
+                return Ok(Some(json!({ "error": error })));
+            }
+        };
+        let Some(uri_or_path) = parsed.uri.as_deref().or(parsed.path.as_deref()) else {
+            return Ok(Some(json!({
+                "error": format!("{EMIT_CONTRACT_MODEL_COMMAND} requires `uri` or `path`")
+            })));
+        };
+        let path = match path_from_lsp_uri_or_path(uri_or_path) {
+            Ok(path) => path,
+            Err(error) => return Ok(Some(json!({ "error": error }))),
+        };
+        let format = match ContractModelCommandFormat::parse(parsed.format.as_deref()) {
+            Ok(format) => format,
+            Err(error) => return Ok(Some(json!({ "error": error }))),
+        };
+        match emit_contract_model_command_payload(&path, &parsed.model, format) {
+            Ok(payload) => Ok(Some(payload)),
+            Err(error) => Ok(Some(json!({ "error": error }))),
+        }
     }
 
     async fn did_open(&self, params: DidOpenTextDocumentParams) {
@@ -747,6 +4534,7 @@ impl LanguageServer for IncanLanguageServer {
         self.client.publish_diagnostics(uri, vec![], None).await;
     }
 
+    /// Provide hover text for symbols, call-site type arguments, Rust imports, and contextual receiver bindings.
     async fn hover(&self, params: HoverParams) -> Result<Option<Hover>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
@@ -802,12 +4590,115 @@ impl LanguageServer for IncanLanguageServer {
                     range: None,
                 }));
             }
+
+            if let Some(rust_symbol) = rust_symbol_at_offset(&doc.rust_origin_symbols, offset) {
+                let mut markdown = format!(
+                    "```incan\n{}\n```\n\n*rust import* (`{}`)\n\n`rust::{}`",
+                    rust_symbol.local_name,
+                    rust_binding_kind_label(rust_symbol.info.binding),
+                    rust_symbol.info.path
+                );
+                if let Some(metadata) = &rust_symbol.info.metadata {
+                    markdown.push_str(&format!(
+                        "\n\nresolved kind: `{}`",
+                        rust_item_kind_label(&metadata.kind)
+                    ));
+                }
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }),
+                    range: Some(span_to_range(&doc.source, rust_symbol.span.start, rust_symbol.span.end)),
+                }));
+            }
+
+            if let Some((ident, span)) = identifier_at_offset(&doc.source, offset)
+                && keywords::from_str(ident.as_str()) == Some(keywords::KeywordId::Cls)
+                && let Some(context) = classmethod_context_at_offset(ast, offset, &aliases)
+            {
+                let detail = classmethod_cls_detail(&context);
+                let markdown = format!(
+                    "```incan\n{detail}\n```\n\n*classmethod receiver* — callable constructor for `{}`.",
+                    context.owner_type
+                );
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }),
+                    range: Some(span_to_range(&doc.source, span.start, span.end)),
+                }));
+            }
+
+            if let Some((ident, span)) = identifier_at_offset(&doc.source, offset)
+                && let Some(markdown) = builtin_list_repeat_hover(&doc.source, &ident, span)
+            {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }),
+                    range: Some(span_to_range(&doc.source, span.start, span.end)),
+                }));
+            }
+
+            // Call-site explicit type arguments: `f[T](...)`, `_.method[U](...)`
+            if let Some(ty_spanned) = call_site_type_args::call_site_innermost_type_at_offset(ast, offset) {
+                let display = format_type(&ty_spanned.node);
+                let markdown = match &ty_spanned.node {
+                    Type::Infer => "```incan\n_\n```\n\n*Call-site inference placeholder* — this type parameter is filled from the value arguments (RFC 054)."
+                        .to_string(),
+                    Type::Simple(name) => {
+                        let mut md = format!("```incan\n{display}\n```");
+                        if self.find_definition(ast, name).is_some() {
+                            md.push_str("\n\n*Type argument* — local declaration; use go-to-definition for its source.");
+                        } else {
+                            md.push_str("\n\n*Type argument* — builtin or unqualified type name.");
+                        }
+                        md
+                    }
+                    _ => format!("```incan\n{display}\n```\n\n*Type argument* at call site (RFC 054)."),
+                };
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }),
+                    range: Some(span_to_range(&doc.source, ty_spanned.span.start, ty_spanned.span.end)),
+                }));
+            }
+
+            if let Some(preview) = api_metadata_preview_at_offset(&doc.api_metadata_previews, offset) {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: preview.markdown.clone(),
+                    }),
+                    range: Some(span_to_range(&doc.source, preview.span.start, preview.span.end)),
+                }));
+            }
+
+            if let Some(scoped_symbol) =
+                scoped_symbol_at_offset(ast, &doc.source, &doc.library_imported_dsl_surfaces, offset)
+            {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: scoped_symbol_hover_markdown(scoped_symbol.dependency_key, scoped_symbol.descriptor),
+                    }),
+                    range: Some(span_to_range(
+                        &doc.source,
+                        scoped_symbol.symbol_span.start,
+                        scoped_symbol.symbol_span.end,
+                    )),
+                }));
+            }
         }
 
         if let Some(info) = self.find_symbol_at_position(ast, &doc.source, position) {
             let detail = if info.kind == "const" {
                 if let Some(resolved) = doc.const_types.get(&info.name) {
-                    // Prefer resolved typechecker type, since `const` may freeze annotations.
                     format!("const {}: {}", info.name, resolved)
                 } else {
                     info.detail.clone()
@@ -816,7 +4707,13 @@ impl LanguageServer for IncanLanguageServer {
                 info.detail.clone()
             };
 
-            let markdown = format!("```incan\n{}\n```\n\n*{}*", detail, info.kind);
+            let mut markdown = format!("```incan\n{}\n```\n\n*{}*", detail, info.kind);
+
+            if info.kind == "rusttype"
+                && let Some(rust_path) = doc.rusttype_info.get(&info.name)
+            {
+                markdown.push_str(&format!("\n\nunderlying Rust type: `rust::{}`", rust_path));
+            }
 
             return Ok(Some(Hover {
                 contents: HoverContents::Markup(MarkupContent {
@@ -830,6 +4727,66 @@ impl LanguageServer for IncanLanguageServer {
         Ok(None)
     }
 
+    /// Provide signature help for parsed local function calls.
+    async fn signature_help(&self, params: SignatureHelpParams) -> Result<Option<SignatureHelp>> {
+        let uri = &params.text_document_position_params.text_document.uri;
+        let position = params.text_document_position_params.position;
+
+        let docs = self.documents.read().await;
+        let doc = match docs.get(uri) {
+            Some(doc) => doc,
+            None => return Ok(None),
+        };
+        let ast = match &doc.ast {
+            Some(ast) => ast,
+            None => return Ok(None),
+        };
+        let Some(offset) = position_to_offset(&doc.source, position) else {
+            return Ok(None);
+        };
+        Ok(local_signature_help_at_offset(ast, &doc.source, offset))
+    }
+
+    /// Return document symbols for the current parsed document, if available.
+    async fn document_symbol(&self, params: DocumentSymbolParams) -> Result<Option<DocumentSymbolResponse>> {
+        let uri = &params.text_document.uri;
+        let docs = self.documents.read().await;
+        let doc = match docs.get(uri) {
+            Some(doc) => doc,
+            None => return Ok(None),
+        };
+        let ast = match &doc.ast {
+            Some(ast) => ast,
+            None => return Ok(None),
+        };
+
+        let mut symbols = Vec::new();
+        for decl in &ast.declarations {
+            let Some(kind) = lsp_symbol_kind_for_decl(&decl.node) else {
+                continue;
+            };
+            let Some((name, detail)) = lsp_document_symbol_name_and_detail(&decl.node, &doc.source) else {
+                continue;
+            };
+            let range = span_to_range(&doc.source, decl.span.start, decl.span.end);
+            #[allow(deprecated)]
+            let symbol = DocumentSymbol {
+                name,
+                detail: Some(detail),
+                kind,
+                tags: None,
+                deprecated: None,
+                range,
+                selection_range: range,
+                children: None,
+            };
+            symbols.push(symbol);
+        }
+
+        Ok(Some(DocumentSymbolResponse::Nested(symbols)))
+    }
+
+    /// Resolve go-to-definition for local symbols, stdlib imports, decorators, and DSL-scoped symbols.
     async fn goto_definition(&self, params: GotoDefinitionParams) -> Result<Option<GotoDefinitionResponse>> {
         let uri = &params.text_document_position_params.text_document.uri;
         let position = params.text_document_position_params.position;
@@ -862,6 +4819,27 @@ impl LanguageServer for IncanLanguageServer {
             }
         }
 
+        if let Some(scoped_symbol) =
+            scoped_symbol_at_offset(ast, &doc.source, &doc.library_imported_dsl_surfaces, offset)
+            && let Some(import_span) =
+                find_pub_library_import_span(ast, scoped_symbol.dependency_key, scoped_symbol.symbol_span.start)
+        {
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range: span_to_range(&doc.source, import_span.start, import_span.end),
+            })));
+        }
+
+        if let Some((ident, _)) = identifier_at_offset(&doc.source, offset)
+            && let Some(def_span) = self.find_definition(ast, &ident)
+        {
+            let range = span_to_range(&doc.source, def_span.start, def_span.end);
+            return Ok(Some(GotoDefinitionResponse::Scalar(Location {
+                uri: uri.clone(),
+                range,
+            })));
+        }
+
         // Find what symbol the cursor is on
         if let Some(info) = self.find_symbol_at_position(ast, &doc.source, position) {
             // Find definition of that symbol
@@ -877,6 +4855,7 @@ impl LanguageServer for IncanLanguageServer {
         Ok(None)
     }
 
+    /// Provide context-aware completions for decorators, imports, type arguments, symbols, and receiver bindings.
     async fn completion(&self, params: CompletionParams) -> Result<Option<CompletionResponse>> {
         let uri = &params.text_document_position.text_document.uri;
         let position = params.text_document_position.position;
@@ -903,7 +4882,59 @@ impl LanguageServer for IncanLanguageServer {
             return Ok(Some(CompletionResponse::Array(decorator_items)));
         }
 
+        // ---- Context: built-in collection member completions (`list.<member>`) ----
+        if let Some(list_member_items) = builtin_list_member_completions(&line_prefix) {
+            return Ok(Some(CompletionResponse::Array(list_member_items)));
+        }
+
+        // ---- Context: Rust-origin member completions (`Alias.<member>`) ----
+        if let Some(rust_member_items) = rust_member_completions(&line_prefix, &doc.rust_origin_symbols) {
+            return Ok(Some(CompletionResponse::Array(rust_member_items)));
+        }
+
+        // ---- Context: call-site type arguments (`callee[T](...)`, `recv.m[U](...)`, including `_`) ----
+        if let Some(off) = position_to_offset(&doc.source, position)
+            && call_site_type_args::offset_in_call_site_type_argument_list(&doc.source, off)
+        {
+            let items = call_site_type_args::call_site_type_argument_completion_items(doc.ast.as_ref());
+            return Ok(Some(CompletionResponse::Array(items)));
+        }
+
         // ---- General completions (not in a specific context) ----
+
+        if let Some(ast) = &doc.ast {
+            let aliases = collect_import_aliases(ast);
+            if let Some(off) = position_to_offset(&doc.source, position)
+                && let Some(context) = classmethod_context_at_offset(ast, off, &aliases)
+            {
+                push_completion(
+                    &mut items,
+                    &mut seen,
+                    keywords::as_str(keywords::KeywordId::Cls),
+                    CompletionItemKind::VARIABLE,
+                    Some(format!(
+                        "{} — classmethod receiver constructor",
+                        classmethod_cls_detail(&context)
+                    )),
+                    Some("0_cls".to_string()),
+                );
+            }
+            if let Some(off) = position_to_offset(&doc.source, position) {
+                for scoped_symbol in active_scoped_symbol_completions(ast, &doc.library_imported_dsl_surfaces, off) {
+                    push_completion(
+                        &mut items,
+                        &mut seen,
+                        &scoped_symbol.descriptor.symbol,
+                        CompletionItemKind::FUNCTION,
+                        Some(scoped_symbol_completion_detail(
+                            scoped_symbol.dependency_key,
+                            scoped_symbol.descriptor,
+                        )),
+                        Some(format!("0_scoped_{}", scoped_symbol.descriptor.symbol)),
+                    );
+                }
+            }
+        }
 
         // Add keywords from the registry (canonical + aliases).
         for info in keywords::KEYWORDS {
@@ -975,13 +5006,37 @@ impl LanguageServer for IncanLanguageServer {
                             None,
                         );
                     }
+                    Declaration::Static(static_decl) => {
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &static_decl.name,
+                            CompletionItemKind::CONSTANT,
+                            Some(format!(
+                                "static {}: {}",
+                                static_decl.name,
+                                format_type(&static_decl.ty.node)
+                            )),
+                            None,
+                        );
+                    }
                     Declaration::Function(func) => {
                         push_completion(
                             &mut items,
                             &mut seen,
                             &func.name,
                             CompletionItemKind::FUNCTION,
-                            Some(format_function_signature(func)),
+                            Some(format_function_signature(func, &doc.source)),
+                            None,
+                        );
+                    }
+                    Declaration::Partial(partial) => {
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &partial.name,
+                            CompletionItemKind::FUNCTION,
+                            Some(format_partial_decl_signature(partial, &doc.source)),
                             None,
                         );
                     }
@@ -1018,6 +5073,16 @@ impl LanguageServer for IncanLanguageServer {
                                 );
                             }
                         }
+                        for property in &model.properties {
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                &property.node.name,
+                                CompletionItemKind::FIELD,
+                                Some(format_property_signature(&model.name, &property.node)),
+                                Some(format!("1_{}", property.node.name)),
+                            );
+                        }
                     }
                     Declaration::Class(class) => {
                         push_completion(
@@ -1052,6 +5117,16 @@ impl LanguageServer for IncanLanguageServer {
                                 );
                             }
                         }
+                        for property in &class.properties {
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                &property.node.name,
+                                CompletionItemKind::FIELD,
+                                Some(format_property_signature(&class.name, &property.node)),
+                                Some(format!("1_{}", property.node.name)),
+                            );
+                        }
                     }
                     Declaration::Trait(tr) => {
                         push_completion(
@@ -1062,6 +5137,16 @@ impl LanguageServer for IncanLanguageServer {
                             Some(format!("trait {}", tr.name)),
                             None,
                         );
+                        for property in &tr.properties {
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                &property.node.name,
+                                CompletionItemKind::FIELD,
+                                Some(format_property_signature(&tr.name, &property.node)),
+                                Some(format!("1_{}", property.node.name)),
+                            );
+                        }
                     }
                     Declaration::Enum(en) => {
                         push_completion(
@@ -1069,13 +5154,76 @@ impl LanguageServer for IncanLanguageServer {
                             &mut seen,
                             &en.name,
                             CompletionItemKind::ENUM,
-                            Some(format!("enum {}", en.name)),
+                            Some(enum_completion_detail(en)),
+                            None,
+                        );
+                        for variant in &en.variants {
+                            let label = enum_variant_completion_label(en, &variant.node);
+                            push_completion(
+                                &mut items,
+                                &mut seen,
+                                &label,
+                                CompletionItemKind::CONSTRUCTOR,
+                                Some(enum_variant_completion_detail(en, &variant.node)),
+                                Some(format!("1_{}", label)),
+                            );
+                        }
+                    }
+                    Declaration::TypeAlias(alias) => {
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &alias.name,
+                            CompletionItemKind::TYPE_PARAMETER,
+                            Some(format!("type {} = {}", alias.name, format_type(&alias.target.node))),
+                            None,
+                        );
+                    }
+                    Declaration::Newtype(nt) => {
+                        let kind = if nt.is_rusttype { "rusttype" } else { "newtype" };
+                        push_completion(
+                            &mut items,
+                            &mut seen,
+                            &nt.name,
+                            CompletionItemKind::STRUCT,
+                            Some(format!("{} {} = {}", kind, nt.name, format_type(&nt.underlying.node))),
                             None,
                         );
                     }
                     _ => {}
                 }
             }
+        }
+
+        // Add local rust-import bindings with canonical-path details.
+        for rust_symbol in &doc.rust_origin_symbols {
+            let (kind, detail) = if let Some(metadata) = &rust_symbol.info.metadata {
+                let item_kind = rust_item_kind_label(&metadata.kind);
+                (
+                    match &metadata.kind {
+                        RustItemKind::Module(_) => CompletionItemKind::MODULE,
+                        RustItemKind::Type(_) => CompletionItemKind::CLASS,
+                        RustItemKind::Function(_) => CompletionItemKind::FUNCTION,
+                        RustItemKind::Constant { .. } => CompletionItemKind::CONSTANT,
+                        RustItemKind::Trait(_) => CompletionItemKind::INTERFACE,
+                        RustItemKind::Unsupported { .. } => CompletionItemKind::REFERENCE,
+                    },
+                    format!("rust::{} ({item_kind})", rust_symbol.info.path),
+                )
+            } else {
+                (
+                    CompletionItemKind::REFERENCE,
+                    format!("rust::{} (metadata unavailable)", rust_symbol.info.path),
+                )
+            };
+            push_completion(
+                &mut items,
+                &mut seen,
+                &rust_symbol.local_name,
+                kind,
+                Some(detail),
+                Some(format!("0_{}", rust_symbol.local_name)),
+            );
         }
 
         // Add `std` as a module name so import completions can start from it.
@@ -1219,4 +5367,168 @@ fn decorator_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
     }
 
     Some(items)
+}
+
+#[cfg(test)]
+mod completion_tests {
+    use super::{builtin_list_member_completions, builtin_list_repeat_hover, stdlib_module_completions};
+    use crate::frontend::ast::Span;
+
+    #[test]
+    fn stdlib_module_completions_include_std_fs() -> Result<(), String> {
+        let items = stdlib_module_completions("from std.")
+            .ok_or_else(|| "expected stdlib completions for `from std.`".to_string())?;
+        assert!(
+            items
+                .iter()
+                .any(|item| item.label == "fs" && item.detail.as_deref() == Some("std.fs module")),
+            "expected std.fs to be exposed through stdlib registry completions: {items:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn builtin_list_member_completions_include_repeat() -> Result<(), String> {
+        let items = builtin_list_member_completions("let xs = list.re")
+            .ok_or_else(|| "expected built-in list member completions".to_string())?;
+        assert!(
+            items.iter().any(|item| {
+                item.label == "repeat"
+                    && item.detail.as_deref() == Some("list.repeat[T](value: T, count: int) -> list[T]")
+            }),
+            "expected list.repeat completion: {items:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn builtin_list_repeat_hover_documents_helper() -> Result<(), String> {
+        let source = "let xs = list.repeat(0, 3)";
+        let start = source
+            .find("repeat")
+            .ok_or_else(|| "expected repeat in fixture".to_string())?;
+        let markdown = builtin_list_repeat_hover(source, "repeat", Span::new(start, start + "repeat".len()))
+            .ok_or_else(|| "expected list.repeat hover".to_string())?;
+        assert!(
+            markdown.contains("list.repeat[T](value: T, count: int) -> list[T]"),
+            "expected signature in hover markdown: {markdown}"
+        );
+        assert!(
+            markdown.contains("Negative counts raise `ValueError`."),
+            "expected negative-count detail in hover markdown: {markdown}"
+        );
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod lsp_scoped_symbol_tests {
+    use std::collections::HashMap;
+
+    use super::{
+        active_scoped_symbol_completions, find_pub_library_import_span, scoped_symbol_at_offset,
+        scoped_symbol_hover_markdown,
+    };
+    use crate::frontend::ast::Program;
+    use crate::frontend::{lexer, parser};
+
+    fn scoped_symbol_fixture() -> (
+        String,
+        Program,
+        parser::ImportedLibraryDslSurfaces,
+        parser::ImportedLibraryVocab,
+    ) {
+        let source =
+            "import pub::analytics\n\ndef configure() -> None:\n  query:\n    sum(amount)\n\nconst outside = 1\n";
+        let mut keyword_map = HashMap::new();
+        keyword_map.insert(
+            "analytics".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "analytics.query".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "query".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                            .with_role(
+                                incan_vocab::ScopedSymbolRoleMetadata::new("aggregate.total").with_label("Total"),
+                            )
+                            .with_misuse_scope(incan_vocab::ScopedSymbolMisuseScope::ActiveDsl)
+                            .in_declaration_body("query"),
+                    ),
+            ],
+        );
+        let tokens = lexer::lex(source).expect("fixture should lex");
+        let ast = parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+            .expect("fixture should parse");
+        (source.to_string(), ast, surface_map, keyword_map)
+    }
+
+    #[test]
+    fn scoped_symbol_completion_is_limited_to_active_dsl_scope() {
+        let (source, ast, surface_map, _keyword_map) = scoped_symbol_fixture();
+        let scoped_offset = source.find("sum(amount)").expect("sum call should exist");
+        let items = active_scoped_symbol_completions(&ast, &surface_map, scoped_offset);
+        assert!(
+            items.iter().any(|item| {
+                item.dependency_key == "analytics"
+                    && item.descriptor.key == "query.sum"
+                    && item.descriptor.symbol == "sum"
+            }),
+            "expected sum completion inside query block, got {items:?}"
+        );
+
+        let outside_offset = source.find("const outside").expect("outside binding should exist");
+        let outside_items = active_scoped_symbol_completions(&ast, &surface_map, outside_offset);
+        assert!(
+            outside_items.is_empty(),
+            "scoped symbol completions must not leak outside the owning DSL scope: {outside_items:?}"
+        );
+    }
+
+    #[test]
+    fn scoped_symbol_hover_resolves_imported_descriptor_metadata() {
+        let (source, ast, surface_map, _keyword_map) = scoped_symbol_fixture();
+        let offset = source.find("sum(amount)").expect("sum call should exist") + 1;
+        let occurrence =
+            scoped_symbol_at_offset(&ast, &source, &surface_map, offset).expect("sum should resolve as scoped symbol");
+        let markdown = scoped_symbol_hover_markdown(occurrence.dependency_key, occurrence.descriptor);
+
+        assert_eq!(occurrence.dependency_key, "analytics");
+        assert_eq!(occurrence.descriptor.key, "query.sum");
+        assert_eq!(&source[occurrence.symbol_span.start..occurrence.symbol_span.end], "sum");
+        assert!(
+            markdown.contains("scoped DSL symbol")
+                && markdown.contains("`pub::analytics`")
+                && markdown.contains("Descriptor: `query.sum`")
+                && markdown.contains("Family: `aggregate-like`"),
+            "hover markdown should expose descriptor metadata, got:\n{markdown}"
+        );
+    }
+
+    #[test]
+    fn scoped_symbol_definition_points_to_activating_pub_import() {
+        let (source, ast, surface_map, _keyword_map) = scoped_symbol_fixture();
+        let offset = source.find("sum(amount)").expect("sum call should exist") + 1;
+        let occurrence =
+            scoped_symbol_at_offset(&ast, &source, &surface_map, offset).expect("sum should resolve as scoped symbol");
+        let import_span = find_pub_library_import_span(&ast, occurrence.dependency_key, occurrence.symbol_span.start)
+            .expect("activating import span should be available");
+
+        assert_eq!(&source[import_span.start..import_span.end], "import pub::analytics");
+    }
 }

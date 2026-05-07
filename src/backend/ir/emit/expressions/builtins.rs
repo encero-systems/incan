@@ -8,6 +8,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use super::super::super::expr::{BuiltinFn, IrExprKind, TypedExpr};
+use super::super::super::ownership::ValueUseSite;
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use incan_core::lang::builtins::{self, BuiltinFnId};
@@ -17,10 +18,12 @@ use incan_core::lang::types::collections::{self, CollectionTypeId};
 fn list_elem_type(ty: &IrType) -> &IrType {
     match ty {
         IrType::List(elem) => elem.as_ref(),
-        IrType::Ref(inner) | IrType::RefMut(inner) => match inner.as_ref() {
-            IrType::List(elem) => elem.as_ref(),
-            other => other,
-        },
+        IrType::NamedGeneric(name, args)
+            if collections::from_str(name.as_str()) == Some(CollectionTypeId::FrozenList) =>
+        {
+            args.first().unwrap_or(ty)
+        }
+        IrType::Ref(inner) | IrType::RefMut(inner) => list_elem_type(inner),
         other => other,
     }
 }
@@ -72,7 +75,7 @@ impl<'a> IrEmitter<'a> {
             BuiltinFn::Len => {
                 if let Some(arg) = args.first() {
                     let a = self.emit_expr(arg)?;
-                    Ok(quote! { #a.len() as i64 })
+                    Ok(quote! { ::std::convert::identity(#a.len() as i64) })
                 } else {
                     Ok(quote! { 0i64 })
                 }
@@ -95,18 +98,12 @@ impl<'a> IrEmitter<'a> {
                 if let Some(arg) = args.first() {
                     let a = self.emit_expr(arg)?;
                     let elem_type = list_elem_type(&arg.ty);
-                    let empty_err =
-                        quote! { incan_stdlib::errors::raise_value_error("min() arg is an empty sequence") };
                     let tokens = match elem_type {
-                        IrType::Float => quote! {
-                            #a.iter().copied().reduce(f64::min).unwrap_or_else(|| #empty_err)
-                        },
-                        IrType::String | IrType::FrozenStr => quote! {
-                            #a.iter().min().cloned().unwrap_or_else(|| #empty_err)
-                        },
-                        _ => quote! {
-                            #a.iter().min().copied().unwrap_or_else(|| #empty_err)
-                        },
+                        IrType::Float => quote! { incan_stdlib::collections::__private::list_min_f64(&#a) },
+                        IrType::String | IrType::FrozenStr => {
+                            quote! { incan_stdlib::collections::__private::list_min_clone(&#a) }
+                        }
+                        _ => quote! { incan_stdlib::collections::__private::list_min_copy(&#a) },
                     };
                     Ok(tokens)
                 } else {
@@ -117,18 +114,12 @@ impl<'a> IrEmitter<'a> {
                 if let Some(arg) = args.first() {
                     let a = self.emit_expr(arg)?;
                     let elem_type = list_elem_type(&arg.ty);
-                    let empty_err =
-                        quote! { incan_stdlib::errors::raise_value_error("max() arg is an empty sequence") };
                     let tokens = match elem_type {
-                        IrType::Float => quote! {
-                            #a.iter().copied().reduce(f64::max).unwrap_or_else(|| #empty_err)
-                        },
-                        IrType::String | IrType::FrozenStr => quote! {
-                            #a.iter().max().cloned().unwrap_or_else(|| #empty_err)
-                        },
-                        _ => quote! {
-                            #a.iter().max().copied().unwrap_or_else(|| #empty_err)
-                        },
+                        IrType::Float => quote! { incan_stdlib::collections::__private::list_max_f64(&#a) },
+                        IrType::String | IrType::FrozenStr => {
+                            quote! { incan_stdlib::collections::__private::list_max_clone(&#a) }
+                        }
+                        _ => quote! { incan_stdlib::collections::__private::list_max_copy(&#a) },
                     };
                     Ok(tokens)
                 } else {
@@ -185,8 +176,6 @@ impl<'a> IrEmitter<'a> {
                         IrType::List(_) => Ok(quote! { !(#a).is_empty() }),
                         IrType::Dict(_, _) => Ok(quote! { !(#a).is_empty() }),
                         IrType::Set(_) => Ok(quote! { !(#a).is_empty() }),
-                        IrType::Option(_) => Ok(quote! { (#a).is_some() }),
-                        IrType::Result(_, _) => Ok(quote! { (#a).is_ok() }),
                         _ if is_frozen_collection_named_generic(&arg.ty) => Ok(quote! { !(#a).is_empty() }),
                         _ => Ok(quote! { true }),
                     }
@@ -208,9 +197,9 @@ impl<'a> IrEmitter<'a> {
             BuiltinFn::Enumerate => {
                 if let Some(arg) = args.first() {
                     let a = self.emit_expr(arg)?;
-                    Ok(quote! { #a.iter().enumerate() })
+                    Ok(quote! { #a.iter().enumerate().map(|(idx, value)| (idx as i64, value)) })
                 } else {
-                    Ok(quote! { std::iter::empty::<(usize, ())>() })
+                    Ok(quote! { std::iter::empty::<(i64, ())>() })
                 }
             }
             BuiltinFn::Zip => {
@@ -280,28 +269,24 @@ impl<'a> IrEmitter<'a> {
                 if let Some(arg) = args.first() {
                     let value = self.emit_expr(arg)?;
                     Ok(quote! {
-                        serde_json::to_string(&#value).unwrap_or_else(|_| {
-                            incan_stdlib::errors::raise_json_serialization_error(std::any::type_name_of_val(&#value))
-                        })
+                        incan_stdlib::json::__private::stringify_or_raise(&#value, std::any::type_name_of_val(&#value))
                     })
                 } else {
                     Ok(quote! { String::from("null") })
                 }
             }
-            BuiltinFn::Sleep => {
-                if let Some(arg) = args.first() {
-                    let duration_arg = self.emit_expr(arg)?;
-                    Ok(quote! {
-                        incan_stdlib::__private::tokio::time::sleep(
-                            incan_stdlib::__private::tokio::time::Duration::from_secs_f64(#duration_arg)
-                        )
-                    })
+            BuiltinFn::ListRepeat => {
+                if args.len() >= 2 {
+                    let value = self.emit_expr_for_use(
+                        &args[0],
+                        ValueUseSite::CollectionElement {
+                            target_ty: Some(&args[0].ty),
+                        },
+                    )?;
+                    let count = self.emit_expr(&args[1])?;
+                    Ok(quote! { incan_stdlib::collections::list_repeat(#value, (#count) as i64) })
                 } else {
-                    Ok(quote! {
-                        incan_stdlib::__private::tokio::time::sleep(
-                            incan_stdlib::__private::tokio::time::Duration::from_secs(0)
-                        )
-                    })
+                    Ok(quote! { incan_stdlib::collections::list_repeat((), 0i64) })
                 }
             }
         }
@@ -321,6 +306,7 @@ impl<'a> IrEmitter<'a> {
         };
 
         match id {
+            BuiltinFnId::IsInstance => Ok(None),
             BuiltinFnId::Print => {
                 if let Some(arg) = args.first() {
                     let a = self.emit_expr(arg)?;
@@ -332,7 +318,7 @@ impl<'a> IrEmitter<'a> {
             BuiltinFnId::Len => {
                 if let Some(arg) = args.first() {
                     let a = self.emit_expr(arg)?;
-                    Ok(Some(quote! { #a.len() as i64 }))
+                    Ok(Some(quote! { ::std::convert::identity(#a.len() as i64) }))
                 } else {
                     Ok(None)
                 }
@@ -356,18 +342,12 @@ impl<'a> IrEmitter<'a> {
                 if let Some(arg) = args.first() {
                     let a = self.emit_expr(arg)?;
                     let elem_type = list_elem_type(&arg.ty);
-                    let empty_err =
-                        quote! { incan_stdlib::errors::raise_value_error("min() arg is an empty sequence") };
                     let tokens = match elem_type {
-                        IrType::Float => quote! {
-                            #a.iter().copied().reduce(f64::min).unwrap_or_else(|| #empty_err)
-                        },
-                        IrType::String | IrType::FrozenStr => quote! {
-                            #a.iter().min().cloned().unwrap_or_else(|| #empty_err)
-                        },
-                        _ => quote! {
-                            #a.iter().min().copied().unwrap_or_else(|| #empty_err)
-                        },
+                        IrType::Float => quote! { incan_stdlib::collections::__private::list_min_f64(&#a) },
+                        IrType::String | IrType::FrozenStr => {
+                            quote! { incan_stdlib::collections::__private::list_min_clone(&#a) }
+                        }
+                        _ => quote! { incan_stdlib::collections::__private::list_min_copy(&#a) },
                     };
                     Ok(Some(tokens))
                 } else {
@@ -378,18 +358,12 @@ impl<'a> IrEmitter<'a> {
                 if let Some(arg) = args.first() {
                     let a = self.emit_expr(arg)?;
                     let elem_type = list_elem_type(&arg.ty);
-                    let empty_err =
-                        quote! { incan_stdlib::errors::raise_value_error("max() arg is an empty sequence") };
                     let tokens = match elem_type {
-                        IrType::Float => quote! {
-                            #a.iter().copied().reduce(f64::max).unwrap_or_else(|| #empty_err)
-                        },
-                        IrType::String | IrType::FrozenStr => quote! {
-                            #a.iter().max().cloned().unwrap_or_else(|| #empty_err)
-                        },
-                        _ => quote! {
-                            #a.iter().max().copied().unwrap_or_else(|| #empty_err)
-                        },
+                        IrType::Float => quote! { incan_stdlib::collections::__private::list_max_f64(&#a) },
+                        IrType::String | IrType::FrozenStr => {
+                            quote! { incan_stdlib::collections::__private::list_max_clone(&#a) }
+                        }
+                        _ => quote! { incan_stdlib::collections::__private::list_max_copy(&#a) },
                     };
                     Ok(Some(tokens))
                 } else {
@@ -465,7 +439,9 @@ impl<'a> IrEmitter<'a> {
             BuiltinFnId::Enumerate => {
                 if let Some(arg) = args.first() {
                     let a = self.emit_expr(arg)?;
-                    Ok(Some(quote! { #a.iter().enumerate() }))
+                    Ok(Some(
+                        quote! { #a.iter().enumerate().map(|(idx, value)| (idx as i64, value)) },
+                    ))
                 } else {
                     Ok(None)
                 }
@@ -537,21 +513,7 @@ impl<'a> IrEmitter<'a> {
                 if let Some(arg) = args.first() {
                     let value = self.emit_expr(arg)?;
                     Ok(Some(quote! {
-                        serde_json::to_string(&#value).unwrap_or_else(|_| {
-                            incan_stdlib::errors::raise_json_serialization_error(std::any::type_name_of_val(&#value))
-                        })
-                    }))
-                } else {
-                    Ok(None)
-                }
-            }
-            BuiltinFnId::Sleep => {
-                if let Some(arg) = args.first() {
-                    let duration_arg = self.emit_expr(arg)?;
-                    Ok(Some(quote! {
-                        incan_stdlib::__private::tokio::time::sleep(
-                            incan_stdlib::__private::tokio::time::Duration::from_secs_f64(#duration_arg)
-                        )
+                        incan_stdlib::json::__private::stringify_or_raise(&#value, std::any::type_name_of_val(&#value))
                     }))
                 } else {
                     Ok(None)
@@ -568,35 +530,40 @@ impl<'a> IrEmitter<'a> {
                     (Some(s), Some(e), false) => {
                         let ss = self.emit_expr(s)?;
                         let ee = self.emit_expr(e)?;
-                        return Ok(Some(quote! { incan_stdlib::iter::range(#ss, #ee, 1) }));
+                        return Ok(Some(quote! { (#ss as i64)..(#ee as i64) }));
                     }
                     (Some(s), Some(e), true) => {
                         let ss = self.emit_expr(s)?;
                         let ee = self.emit_expr(e)?;
-                        // Inclusive ranges are not a Python `range` feature; interpret as Rust-like convenience:
-                        // `start..=end` becomes `range(start, end+1, 1)`.
-                        return Ok(Some(quote! { incan_stdlib::iter::range(#ss, (#ee) + 1, 1) }));
+                        // Inclusive ranges are not a Python `range` feature; interpret as Rust-like convenience.
+                        return Ok(Some(quote! { (#ss as i64)..=(#ee as i64) }));
                     }
                     (None, Some(e), _) => {
                         let ee = self.emit_expr(e)?;
-                        return Ok(Some(quote! { incan_stdlib::iter::range(0, #ee, 1) }));
+                        if *inclusive {
+                            return Ok(Some(quote! { 0_i64..=(#ee as i64) }));
+                        }
+                        return Ok(Some(quote! { 0_i64..(#ee as i64) }));
                     }
                     _ => {}
                 }
             } else {
                 let end = self.emit_expr(&args[0])?;
-                return Ok(Some(quote! { incan_stdlib::iter::range(0, #end, 1) }));
+                return Ok(Some(quote! { 0_i64..(#end as i64) }));
             }
         }
         match args.len() {
             2 => {
                 let start = self.emit_expr(&args[0])?;
                 let end = self.emit_expr(&args[1])?;
-                Ok(Some(quote! { incan_stdlib::iter::range(#start, #end, 1) }))
+                Ok(Some(quote! { (#start as i64)..(#end as i64) }))
             }
             3 => {
                 let start = self.emit_expr(&args[0])?;
                 let end = self.emit_expr(&args[1])?;
+                if matches!(&args[2].kind, IrExprKind::Int(1)) {
+                    return Ok(Some(quote! { (#start as i64)..(#end as i64) }));
+                }
                 let step = self.emit_expr(&args[2])?;
                 Ok(Some(quote! { incan_stdlib::iter::range(#start, #end, (#step) as i64) }))
             }

@@ -1,0 +1,119 @@
+"""RFC 030: Runtime checks for compiler-generated field overlay views."""
+
+model UniformSettings:
+    region: str
+    profile: str
+
+model MixedSettings:
+    region: str
+    retries: int
+    enabled: bool
+
+class RuntimeSettings:
+    pub region: str
+    retries: int
+
+class RuntimeSettingsChild extends RuntimeSettings:
+    pub label: str
+
+
+def describe_mixed(value: str | int | bool) -> str:
+    match value:
+        bool(flag) =>
+            if flag:
+                return "bool:true"
+            return "bool:false"
+        int(number) =>
+            return f"int:{number}"
+        str(text) =>
+            return f"str:{text}"
+
+
+def describe_mixed_option(value: Option[str | int | bool]) -> str:
+    match value:
+        bool(flag) =>
+            if flag:
+                return "bool:true"
+            return "bool:false"
+        int(number) =>
+            return f"int:{number}"
+        str(text) =>
+            return f"str:{text}"
+        None =>
+            return "missing"
+
+
+def describe_class_value(value: str | int) -> str:
+    match value:
+        int(number) =>
+            return f"int:{number}"
+        str(text) =>
+            return f"str:{text}"
+
+
+def describe_class_option(value: Option[str | int]) -> str:
+    match value:
+        int(number) =>
+            return f"int:{number}"
+        str(text) =>
+            return f"str:{text}"
+        None =>
+            return "missing"
+
+
+def assert_uniform_model(settings: UniformSettings) -> None:
+    region: Option[str] = settings.__field_value__("region")
+    profile: Option[str] = settings.__field_value__("profile")
+    missing: Option[str] = settings.__field_value__("missing")
+    items: list[tuple[str, str]] = settings.__field_items__()
+
+    assert region == Some("eu-west-1")
+    assert profile == Some("prod")
+    assert missing == None
+    assert items == [("region", "eu-west-1"), ("profile", "prod")]
+
+
+def assert_mixed_model(settings: MixedSettings) -> None:
+    region: Option[str | int | bool] = settings.__field_value__("region")
+    retries: Option[str | int | bool] = settings.__field_value__("retries")
+    enabled: Option[str | int | bool] = settings.__field_value__("enabled")
+    missing: Option[str | int | bool] = settings.__field_value__("missing")
+    items: list[tuple[str, str | int | bool]] = settings.__field_items__()
+
+    assert describe_mixed_option(region) == "str:eu-west-1"
+    assert describe_mixed_option(retries) == "int:3"
+    assert describe_mixed_option(enabled) == "bool:true"
+    assert describe_mixed_option(missing) == "missing"
+    mut names: list[str] = []
+    mut values: list[str] = []
+    for name, value in items:
+        names.append(name)
+        values.append(describe_mixed(value))
+    assert names == ["region", "retries", "enabled"]
+    assert values == ["str:eu-west-1", "int:3", "bool:true"]
+
+
+def assert_class_overlay(settings: RuntimeSettingsChild) -> None:
+    region: Option[str | int] = settings.__field_value__("region")
+    retries: Option[str | int] = settings.__field_value__("retries")
+    label: Option[str | int] = settings.__field_value__("label")
+    missing: Option[str | int] = settings.__field_value__("missing")
+    items: list[tuple[str, str | int]] = settings.__field_items__()
+
+    assert describe_class_option(region) == "str:eu-west-1"
+    assert describe_class_option(retries) == "int:3"
+    assert describe_class_option(label) == "str:prod"
+    assert describe_class_option(missing) == "missing"
+    mut names: list[str] = []
+    mut values: list[str] = []
+    for name, value in items:
+        names.append(name)
+        values.append(describe_class_value(value))
+    assert names == ["region", "retries", "label"]
+    assert values == ["str:eu-west-1", "int:3", "str:prod"]
+
+
+def main() -> None:
+    assert_uniform_model(UniformSettings(region="eu-west-1", profile="prod"))
+    assert_mixed_model(MixedSettings(region="eu-west-1", retries=3, enabled=true))
+    assert_class_overlay(RuntimeSettingsChild(region="eu-west-1", retries=3, label="prod"))

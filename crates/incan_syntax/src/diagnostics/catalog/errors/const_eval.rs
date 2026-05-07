@@ -151,6 +151,29 @@ pub fn builtin_arity(name: &str, expected: usize, found: usize, span: Span) -> C
     CompileError::type_error(format!("{name}() expects {expected} argument(s), got {found}"), span)
 }
 
+pub fn explicit_type_arg_arity(name: &str, expected: usize, found: usize, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("{name} expects {expected} explicit type argument(s), got {found}"),
+        span,
+    )
+}
+
+pub fn call_site_type_inference_unresolved(callee: &str, type_param: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Could not infer type parameter '{type_param}' for '{callee}' from value arguments; replace `_` with an explicit type or adjust the call"
+        ),
+        span,
+    )
+}
+
+pub fn explicit_call_site_type_args_not_supported(span: Span) -> CompileError {
+    CompileError::type_error(
+        "Explicit call-site type arguments are not supported for this call form".to_string(),
+        span,
+    )
+}
+
 pub fn builtin_expects_list(name: &str, found: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("{name}() expects a list, got {}", found), span)
 }

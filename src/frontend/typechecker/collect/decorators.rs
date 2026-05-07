@@ -14,6 +14,12 @@ use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives;
 use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
+#[derive(Clone, Copy)]
+enum DecoratorValidationTarget {
+    AllowsUserDefined,
+    RejectsUserDefined(&'static str),
+}
+
 /// Resolve a decorator path to a module path.
 pub(in crate::frontend::typechecker) fn resolve_decorator_path(dec: &Decorator, symbols: &SymbolTable) -> Vec<String> {
     decorator_resolution::resolve_decorator_path(dec, symbols)
@@ -54,13 +60,29 @@ pub(super) fn positional_idents(args: &[DecoratorArg]) -> impl Iterator<Item = (
 }
 
 impl TypeChecker {
-    /// Validate decorator paths.
+    /// Validate decorator paths for declarations that allow user-defined decorator candidates.
+    pub(crate) fn validate_decorators_allowing_user_defined(&mut self, decorators: &[Spanned<Decorator>]) {
+        self.validate_decorators_for_target(decorators, DecoratorValidationTarget::AllowsUserDefined);
+    }
+
+    /// Validate decorator paths for declarations that do not allow user-defined decorators.
+    pub(crate) fn validate_decorators_rejecting_user_defined(
+        &mut self,
+        decorators: &[Spanned<Decorator>],
+        kind: &'static str,
+    ) {
+        self.validate_decorators_for_target(decorators, DecoratorValidationTarget::RejectsUserDefined(kind));
+    }
+
+    /// Validate decorator paths, preserving compiler-owned decorator diagnostics while deciding whether unknown
+    /// non-compiler decorators are accepted as user-defined candidates or rejected for this target.
     ///
     /// When a decorator doesn't resolve to a known `DecoratorId`, the error message is contextual:
     /// - If the leading segment is a known namespace (e.g. `rust`, `std`), the error mentions the namespace and lists
     ///   available decorators within it.
-    /// - Otherwise, a generic "unknown decorator" error is emitted.
-    pub(crate) fn validate_decorators(&mut self, decorators: &[Spanned<Decorator>]) {
+    /// - Otherwise, supported function-like targets keep it for RFC 036 typechecking, while unsupported targets emit a
+    ///   user-defined decorator target diagnostic.
+    fn validate_decorators_for_target(&mut self, decorators: &[Spanned<Decorator>], target: DecoratorValidationTarget) {
         for dec in decorators {
             let mut resolved = resolve_decorator_path(&dec.node, &self.symbols);
             let mut feature = self.surface_context.decorator_feature_for_path(&resolved);
@@ -78,7 +100,7 @@ impl TypeChecker {
                 }
             }
 
-            let Some(_id) = decorators::from_segments(&resolved) else {
+            let Some(id) = decorators::from_segments(&resolved) else {
                 let is_stdlib_decorator_function = feature
                     == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
                     && resolved.len() >= 3
@@ -109,12 +131,146 @@ impl TypeChecker {
                     };
                     self.errors
                         .push(errors::unknown_decorator(&path, dec.span).with_hint(&hint));
+                } else if let DecoratorValidationTarget::RejectsUserDefined(kind) = target {
+                    self.errors
+                        .push(errors::user_defined_decorator_unsupported_target(&path, kind, dec.span));
                 } else {
-                    self.errors.push(errors::unknown_decorator(&path, dec.span));
+                    continue;
                 }
                 continue;
             };
+
+            if id == DecoratorId::RustAllow {
+                self.validate_rust_allow_args(dec);
+            }
         }
+    }
+
+    /// Validate RFC 057 `@rust.allow(...)` arguments.
+    ///
+    /// The decorator is intentionally item-scoped and accepts only explicit lint paths so generated code can emit
+    /// targeted `#[allow(...)]` attributes without introducing broad crate- or module-level suppression.
+    pub(crate) fn validate_rust_allow_args(&mut self, dec: &Spanned<Decorator>) {
+        let mut seen = HashSet::new();
+        let mut positional_count = 0usize;
+
+        for arg in &dec.node.args {
+            match arg {
+                DecoratorArg::Positional(expr) => {
+                    positional_count += 1;
+                    let Expr::Literal(Literal::String(name)) = &expr.node else {
+                        self.errors
+                            .push(errors::rust_allow_requires_positional_string(expr.span));
+                        continue;
+                    };
+                    self.validate_single_rust_allow_lint(name, expr.span, &mut seen);
+                }
+                DecoratorArg::Named(name, _) => {
+                    self.errors.push(errors::rust_allow_rejects_named_args(name, dec.span));
+                }
+            }
+        }
+
+        if positional_count == 0 {
+            self.errors
+                .push(errors::rust_allow_requires_positional_string(dec.span));
+        }
+    }
+
+    /// Reject RFC 057 `@rust.allow(...)` on declarations that do not own a supported Rust item boundary.
+    ///
+    /// Parser syntax allows decorators on several declaration forms. This helper keeps the semantic support matrix
+    /// explicit so adding a new declaration kind does not silently inherit Rust lint suppression behavior.
+    pub(crate) fn reject_rust_allow_on_unsupported_declaration(
+        &mut self,
+        decorators: &[Spanned<Decorator>],
+        kind: &'static str,
+    ) {
+        for dec in decorators {
+            if self.decorator_id_with_import_aliases(&dec.node) == Some(DecoratorId::RustAllow) {
+                self.errors
+                    .push(errors::rust_allow_unsupported_attachment(kind, dec.span));
+            }
+        }
+    }
+
+    /// Return whether this decorator should be handled as an RFC 036 user-defined decorator candidate.
+    ///
+    /// Compiler-owned decorators and stdlib marker decorators keep their existing compiler semantics. Unknown paths in
+    /// known compiler namespaces stay diagnostic-only rather than becoming user-defined decorators.
+    pub(crate) fn is_user_defined_decorator_candidate(&mut self, dec: &Decorator) -> bool {
+        if self.decorator_id_with_import_aliases(dec).is_some() {
+            return false;
+        }
+
+        let resolved = decorator_resolution::resolve_decorator_path(dec, &self.import_aliases);
+        if resolved
+            .first()
+            .is_some_and(|first| decorators::is_known_decorator_namespace(first))
+        {
+            return false;
+        }
+
+        let feature = self.surface_context.decorator_feature_for_path(&resolved);
+        let is_stdlib_decorator_function = feature
+            == Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
+            && resolved.len() >= 3
+            && self
+                .stdlib_cache
+                .lookup_function_meta(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
+                .is_some_and(|f| f.is_rust_extern && f.rust_module_path.is_some());
+        !is_stdlib_decorator_function
+    }
+
+    fn decorator_id_with_import_aliases(&self, dec: &Decorator) -> Option<DecoratorId> {
+        let resolved = resolve_decorator_path(dec, &self.symbols);
+        if let Some(id) = decorators::from_segments(&resolved) {
+            return Some(id);
+        }
+
+        let alias_resolved = decorator_resolution::resolve_decorator_path(dec, &self.import_aliases);
+        decorators::from_segments(&alias_resolved)
+    }
+
+    fn validate_single_rust_allow_lint(&mut self, name: &str, span: Span, seen: &mut HashSet<String>) {
+        if name.is_empty() || name.trim() != name || !Self::is_valid_rust_lint_path(name) {
+            self.errors.push(errors::rust_allow_invalid_lint_name(name, span));
+            return;
+        }
+
+        if Self::is_broad_rust_lint_group(name) {
+            self.errors.push(errors::rust_allow_broad_lint_group(name, span));
+            return;
+        }
+
+        if !seen.insert(name.to_string()) {
+            self.errors.push(errors::rust_allow_duplicate_lint(name, span));
+        }
+    }
+
+    fn is_valid_rust_lint_path(name: &str) -> bool {
+        name.split("::").all(Self::is_valid_rust_lint_segment)
+    }
+
+    fn is_valid_rust_lint_segment(segment: &str) -> bool {
+        let mut chars = segment.chars();
+        let Some(first) = chars.next() else {
+            return false;
+        };
+        (first == '_' || first.is_ascii_alphabetic()) && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+    }
+
+    fn is_broad_rust_lint_group(name: &str) -> bool {
+        matches!(
+            name,
+            "warnings"
+                | "unused"
+                | "clippy::all"
+                | "clippy::pedantic"
+                | "clippy::nursery"
+                | "clippy::restriction"
+                | "clippy::cargo"
+        )
     }
 
     /// Validate @derive decorator arguments and report errors for unknown derives.
@@ -178,6 +334,30 @@ impl TypeChecker {
             return;
         }
 
+        if self
+            .lookup_symbol(name)
+            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::RustItem(_)))
+        {
+            return;
+        }
+
+        if self
+            .lookup_symbol(name)
+            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Module(_)))
+            && let Some(module_path) = self.module_path_for_imported_name(name)
+        {
+            if self.lookup_derivable_traits(&module_path).is_some() {
+                return;
+            }
+            self.errors.push(errors::derive_module_missing_derives(name, span));
+            return;
+        }
+
+        if let Some((canonical, info)) = self.resolve_qualified_trait(name) {
+            self.define_hidden_trait_symbol(&canonical, info, span);
+            return;
+        }
+
         // Allow custom derives imported from stdlib modules backed by rust.module(...).
         let resolved = self
             .import_aliases
@@ -185,10 +365,7 @@ impl TypeChecker {
             .cloned()
             .unwrap_or_else(|| vec![name.to_string()]);
         if resolved.len() >= 2
-            && self
-                .stdlib_cache
-                .lookup_trait_meta(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
-                .is_some_and(|t| t.rust_module_path.is_some())
+            && self.imported_trait_is_derivable(&resolved[..resolved.len() - 1], &resolved[resolved.len() - 1])
         {
             return;
         }

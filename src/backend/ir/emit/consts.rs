@@ -20,7 +20,7 @@
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::super::expr::{BinOp, IrExprKind, Literal as IrLiteral, TypedExpr};
+use super::super::expr::{BinOp, IrDictEntry, IrExprKind, IrListEntry, Literal as IrLiteral, TypedExpr};
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
@@ -97,16 +97,38 @@ impl<'a> IrEmitter<'a> {
             }
 
             // Collections: validate elements (and key/value pairs)
-            K::Tuple(items) | K::List(items) | K::Set(items) => {
+            K::Tuple(items) | K::Set(items) => {
                 for item in items {
                     Self::validate_const_expr_kind(&item.kind)?;
                 }
                 Ok(())
             }
+            K::List(items) => {
+                for item in items {
+                    match item {
+                        IrListEntry::Element(value) => Self::validate_const_expr_kind(&value.kind)?,
+                        IrListEntry::Spread(_) => {
+                            return Err(EmitError::Unsupported(
+                                "List spread is not supported in const initializers".to_string(),
+                            ));
+                        }
+                    }
+                }
+                Ok(())
+            }
             K::Dict(pairs) => {
-                for (k, v) in pairs {
-                    Self::validate_const_expr_kind(&k.kind)?;
-                    Self::validate_const_expr_kind(&v.kind)?;
+                for entry in pairs {
+                    match entry {
+                        IrDictEntry::Pair(k, v) => {
+                            Self::validate_const_expr_kind(&k.kind)?;
+                            Self::validate_const_expr_kind(&v.kind)?;
+                        }
+                        IrDictEntry::Spread(_) => {
+                            return Err(EmitError::Unsupported(
+                                "Dict spread is not supported in const initializers".to_string(),
+                            ));
+                        }
+                    }
                 }
                 Ok(())
             }
@@ -121,7 +143,7 @@ impl<'a> IrEmitter<'a> {
             K::MethodCall { .. } | K::KnownMethodCall { .. } => Err(EmitError::Unsupported(
                 "Method calls are not allowed in const initializers".to_string(),
             )),
-            K::ListComp { .. } | K::DictComp { .. } => Err(EmitError::Unsupported(
+            K::ListComp { .. } | K::DictComp { .. } | K::Generator { .. } => Err(EmitError::Unsupported(
                 "Comprehensions are not allowed in const initializers".to_string(),
             )),
             K::Closure { .. } => Err(EmitError::Unsupported(

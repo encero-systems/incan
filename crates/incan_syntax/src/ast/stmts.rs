@@ -2,7 +2,7 @@
 
 use incan_semantics_core::SurfaceFeatureKey;
 
-use super::{Decorator, Expr, Ident, Span, Spanned, Type};
+use super::{Decorator, Expr, Ident, Pattern, Span, Spanned, Type};
 
 // ============================================================================
 // Statements
@@ -20,16 +20,20 @@ pub enum Statement {
     Return(Option<Spanned<Expr>>),
     /// `if expr: ... [else: ...]`
     If(IfStmt),
+    /// `loop: ...`
+    Loop(LoopStmt),
     /// `while expr: ...`
     While(WhileStmt),
     /// `for x in expr: ...`
     For(ForStmt),
     /// Expression statement
     Expr(Spanned<Expr>),
+    /// `assert expr`, `assert expr, msg`, `assert call() raises Error`, or `assert value is Pattern`.
+    Assert(AssertStmt),
     /// `pass` or `...`
     Pass,
-    /// `break` - exit the innermost loop
-    Break,
+    /// `break` / `break expr` - exit the innermost loop, optionally producing a loop-expression value
+    Break(Option<Spanned<Expr>>),
     /// `continue` - skip to next iteration
     Continue,
     /// Compound assignment: `x += value`, `x -= value`, etc.
@@ -121,11 +125,43 @@ pub enum CompoundOp {
     Div,      // /=
     FloorDiv, // //=
     Mod,      // %=
+    MatMul,   // @=
+    BitAnd,   // &=
+    BitOr,    // |=
+    BitXor,   // ^=
+    Shl,      // <<=
+    Shr,      // >>=
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Condition {
+    /// Ordinary boolean condition: `if expr:` / `while expr:`
+    Expr(Spanned<Expr>),
+    /// Pattern condition: `if let PATTERN = VALUE:` / `while let PATTERN = VALUE:`
+    Let {
+        pattern: Spanned<Pattern>,
+        value: Spanned<Expr>,
+    },
+}
+
+impl Condition {
+    /// Return the source span that covers the full control-flow condition.
+    ///
+    /// For `if let` / `while let`, this spans from the pattern start through the
+    /// scrutinee expression so downstream diagnostics and tooling can treat the
+    /// let-pattern condition as one surface unit.
+    #[must_use]
+    pub fn span(&self) -> Span {
+        match self {
+            Self::Expr(expr) => expr.span,
+            Self::Let { pattern, value } => Span::new(pattern.span.start, value.span.end),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct IfStmt {
-    pub condition: Spanned<Expr>,
+    pub condition: Condition,
     pub then_body: Vec<Spanned<Statement>>,
     pub elif_branches: Vec<(Spanned<Expr>, Vec<Spanned<Statement>>)>,
     pub else_body: Option<Vec<Spanned<Statement>>>,
@@ -133,21 +169,49 @@ pub struct IfStmt {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct WhileStmt {
-    pub condition: Spanned<Expr>,
+    pub condition: Condition,
+    pub body: Vec<Spanned<Statement>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct LoopStmt {
     pub body: Vec<Spanned<Statement>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForStmt {
-    pub var: Ident,
+    pub pattern: Spanned<Pattern>,
     pub iter: Spanned<Expr>,
     pub body: Vec<Spanned<Statement>>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct AssertStmt {
-    pub condition: Spanned<Expr>,
+    /// Structured assertion form selected by the parser.
+    pub kind: AssertKind,
+    /// Optional failure message after the assertion payload.
     pub message: Option<Spanned<Expr>>,
+}
+
+/// Parser-owned shape of RFC 018 assertion syntax.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AssertKind {
+    /// Ordinary boolean assertion: `assert expr`.
+    Condition(Spanned<Expr>),
+    /// Pattern assertion: `assert value is Some(name)`.
+    IsPattern {
+        /// Value being matched by the assertion pattern.
+        value: Spanned<Expr>,
+        /// Limited Option/Result pattern accepted by RFC 018.
+        pattern: Spanned<Pattern>,
+    },
+    /// Runtime-error assertion: `assert call() raises ErrorType`.
+    Raises {
+        /// Call expected to raise the requested runtime error type.
+        call: Spanned<Expr>,
+        /// Runtime error type named after `raises`.
+        error_type: Spanned<Type>,
+    },
 }
 
 /// Generic surface statement node emitted by parser handoff.

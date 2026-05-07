@@ -1,10 +1,12 @@
-# RFC 023: Verify `from std.serde.json import` resolves and compiles.
-# Uses the stdlib trait definitions (IncanSource mode) alongside `@derive(Serialize, Deserialize)` for emission.
+# RFC 024: Verify module-level JSON derive metadata resolves and compiles.
 
-from std.serde.json import Serialize, Deserialize
+from std.serde import json
 
-@derive(Serialize, Deserialize)
+@derive(json)
 model Config:
     host: str
     port: int
     debug: bool
+
+def main() -> None:
+    print(Config(host="localhost", port=8080, debug=true).to_json())

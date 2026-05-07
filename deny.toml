@@ -19,6 +19,7 @@ allow = [
     "Apache-2.0 WITH LLVM-exception",
     "BSD-2-Clause",
     "BSD-3-Clause",
+    "CC0-1.0",
     "ISC",
     "Unicode-3.0",
     "Zlib",
@@ -39,8 +40,18 @@ workspace-default-features = "allow"
 external-default-features = "allow"
 allow = []
 deny = []
-skip = []
-skip-tree = []
+skip = [
+    # Upstream currently pins two unicode-width lines through miette/textwrap and wat/wast.
+    # Keep bans output clean while we track upstream convergence separately.
+    { name = "unicode-width", version = "0.1.14" },
+]
+skip-tree = [
+    # Upstream-locked duplicate trees:
+    # - rust-analyzer crates (ra_ap_*) pull older hashbrown/foldhash/winnow lines
+    # - wasmtime/wasi stack pulls a separate native/runtime dependency graph
+    { name = "ra_ap_load-cargo", version = "0.0.325" },
+    { name = "wasmtime-wasi", version = "44.0.1" },
+]
 
 [sources]
 # Source repository checks

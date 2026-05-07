@@ -3,13 +3,13 @@ type UserId = newtype int
 type Ratio = newtype float
 
 type Attempts = newtype int:
-    def from_underlying(n: int) -> Result[Attempts, str]:
+    def from_underlying(n: int) -> Result[Attempts, ValidationError]:
         if n <= 0:
-            return Err("attempts must be >= 1")
+            return Err(ValidationError("attempts must be >= 1"))
         return Ok(Attempts(n))
 
 type Email = newtype str:
-    # RFC 017 should make from_underlying the canonical validation hook.
+    # RFC 017 keeps from_underlying as the only canonical validation hook.
     def from_str(v: str) -> Result[Email, str]:
         if "@" not in v:
             return Err("missing @")
@@ -20,7 +20,8 @@ def main() -> None:
     uid = UserId(42)
     ratio = Ratio(0.5)
 
-    # With validation hook: should be lowered as checked construction in v0.1.
+    # With canonical validation hook: should be lowered as checked construction.
     attempts = Attempts(5)
+    # Non-canonical from_* helpers do not drive checked construction.
     email = Email("alice@example.com")
     println(f"{uid.0} {ratio.0} {attempts.0} {email.0}")

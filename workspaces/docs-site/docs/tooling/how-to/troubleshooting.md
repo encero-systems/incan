@@ -15,6 +15,45 @@ echo "$PATH"
 which incan || true
 ```
 
+## Shell or editor is using an old `incan` / `incan-lsp`
+
+This usually means your shell and editor are resolving different binaries. For local development from a clone, prefer:
+
+```bash
+cd /path/to/incan
+make build
+```
+
+On local machines, `make build` builds the compiler and LSP with `cargo build --features lsp`, then links `~/.cargo/bin/incan` to `target/debug/incan` and `~/.cargo/bin/incan-lsp` to `target/debug/incan-lsp`. Keep `~/.cargo/bin` early enough in your `PATH` that both tools resolve there:
+
+```bash
+command -v incan
+command -v incan-lsp
+ls -l ~/.cargo/bin/incan ~/.cargo/bin/incan-lsp
+incan --version
+incan tools doctor
+```
+
+If `command -v incan` or `command -v incan-lsp` points somewhere unexpected, fix your `PATH` or remove the stale binary from the earlier location. If the `ls -l` target points at a different checkout, rerun `make build` from the checkout you want to use.
+
+For VS Code/Cursor, also check the Incan settings:
+
+```json
+{
+  "incan.lsp.path": "",
+  "incan.compiler.path": ""
+}
+```
+
+Leaving these empty makes the extension use workspace binary discovery or `PATH`. If you set `incan.lsp.path`, use a literal executable path such as `/path/to/incan/target/debug/incan-lsp`; the setting does not expand `$HOME`, `~`, or shell commands. The extension warns when either path setting contains shell syntax, points at a missing file, or points at a non-executable file.
+
+After changing paths or rebuilding, reload the editor window so it starts a new language-server process:
+
+1. Run **Incan: Doctor** from the command palette and check the **Incan** output channel.
+2. Run **Developer: Reload Window** from the command palette.
+3. Reopen a `.incn` file.
+4. Re-run **Incan: Doctor** if diagnostics still look stale.
+
 ## I didn’t run `make install` (no-install fallback)
 
 If you’re using the no-install fallback, run commands from the repository root and invoke:
@@ -38,6 +77,23 @@ The first `make release` (or first `incan build`) will compile Rust dependencies
 Some builds may download Rust crates via Cargo on first run. Ensure your environment can reach crates.io (or your configured
 proxy/mirror).
 
+For restricted or offline environments, run the supported preflight before the build:
+
+```bash
+incan tools doctor
+```
+
+The doctor report includes offline-readiness diagnostics for local dependency inputs. Treat it as advisory: it can flag likely problems before Cargo runs, but it cannot guarantee that a later `incan build --frozen` or `incan test --frozen` will succeed.
+
+Run once while online to populate Cargo's cache and generate `incan.lock`, then use:
+
+```bash
+incan build src/main.incn --frozen
+incan test tests/ --frozen
+```
+
+Offline policy prevents fetching; it does not remove crate dependencies, so crates that are not already available to Cargo locally can still make an offline build fail. Use `--offline` when you want Cargo to fail instead of using the network without also requiring a lockfile. Use `--locked` when the lockfile must exist and match current dependency inputs.
+
 ## macOS: toolchain/linker issues
 
 If you see errors about a missing C toolchain or linker, install Xcode Command Line Tools:
@@ -53,3 +109,6 @@ If you’re still stuck, please [open an issue](https://github.com/dannys-code-c
 - your OS and architecture
 - the exact commands you ran
 - the full error output
+- `command -v incan`, `command -v incan-lsp`, and `ls -l ~/.cargo/bin/incan ~/.cargo/bin/incan-lsp`
+- `incan tools doctor --format json`
+- whether `incan.lsp.path` or `incan.compiler.path` is set in VS Code/Cursor

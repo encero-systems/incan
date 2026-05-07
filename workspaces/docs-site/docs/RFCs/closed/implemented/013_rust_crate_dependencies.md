@@ -2,6 +2,7 @@
 
 **Status:** Implemented  
 **Created:** 2025-12-16  
+**Issue:** [#72](https://github.com/dannys-code-corner/incan/issues/72)
 **Author(s):** Danny Meijer (@danny-meijer)  
 **Supersedes:** Parts of RFC 005 (Cargo integration section)  
 **Related:** RFC 015 (project lifecycle + `incan.toml`), RFC 020 (Cargo offline/locked policy)

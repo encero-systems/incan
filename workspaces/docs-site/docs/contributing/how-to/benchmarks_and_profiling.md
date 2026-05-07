@@ -44,7 +44,7 @@ cd benchmarks/compute/fib
 
 # Build Incan version
 ../../../target/release/incan build fib.incn
-cp ../../../target/incan/fib/target/release/fib ./fib_incan
+cp ../../../target/incan/.cargo-target/release/fib ./fib_incan
 
 # Build Rust baseline
 rustc -O fib.rs -o fib_rust
@@ -70,10 +70,10 @@ incan build myprogram.incn
 
 # Profile with Instruments (macOS)
 xcrun xctrace record --template "Time Profiler" \
-  --launch ./target/incan/myprogram/target/release/myprogram
+  --launch ./target/incan/.cargo-target/release/myprogram
 
 # Profile with perf (Linux)
-perf record ./target/incan/myprogram/target/release/myprogram
+perf record ./target/incan/.cargo-target/release/myprogram
 perf report
 ```
 

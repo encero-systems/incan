@@ -9,9 +9,10 @@ giving you Flask/FastAPI-like syntax with native Rust performance.
 
 ```incan
 from std.web import App, route, Response, Json
+from std.serde import json
 import std.async
 
-@derive(Serialize)
+@derive(json)
 model Greeting:
     message: str
 
@@ -32,7 +33,7 @@ Build and run:
 
 ```bash
 incan build examples/web/hello_web.incn
-./target/incan/hello_web/target/release/hello_web
+./target/incan/.cargo-target/release/hello_web
 ```
 
 Note: the first build may download Rust crates via Cargo (can take minutes) and requires internet access.
@@ -112,13 +113,14 @@ async def delete_item(id: int) -> Response:
 
 ### JSON Responses
 
-Use `Json[T]` for JSON responses. The inner type must have `@derive(Serialize)`:
+Use `Json[T]` for JSON responses. The inner type must have `@derive(json)`:
 
 ```incan
 from std.web import route, Json
+from std.serde import json
 import std.async
 
-@derive(Serialize)
+@derive(json)
 model User:
     id: int
     name: str
@@ -197,9 +199,10 @@ Use `Query[T]` for query string parameters:
 
 ```incan
 from std.web import route, Json, Query
+from std.serde import json
 import std.async
 
-@derive(Deserialize)
+@derive(json)
 model SearchParams:
     q: str
     limit: int = 10
@@ -216,9 +219,10 @@ Use `Json[T]` as a parameter for JSON request bodies:
 
 ```incan
 from std.web import route, Json, POST
+from std.serde import json
 import std.async
 
-@derive(Deserialize)
+@derive(json)
 model CreateUser:
     name: str
     email: str
@@ -254,7 +258,7 @@ When you compile an Incan web application:
 
 1. **Routes are collected** from `@route` decorators
 2. **Handlers become async Rust functions** with Axum extractors
-3. **Models with `@derive(Serialize/Deserialize)`** get serde derives
+3. **Models with `@derive(json)`** get serde derives
 4. **`app.run()`** becomes Axum router setup + tokio server
 
 The generated Rust code uses:
@@ -273,10 +277,11 @@ A simple REST API for managing items.
 """
 
 from std.web import App, route, Response, Json, GET, POST, DELETE
+from std.serde import json
 import std.async
 
 
-@derive(Serialize, Deserialize)
+@derive(json)
 model Item:
     id: int
     name: str

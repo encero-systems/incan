@@ -1,0 +1,17 @@
+# RFC 036: user-defined decorators
+
+def parse(value: int) -> int:
+    return value
+
+def as_int(func: (int) -> str) -> (int) -> int:
+    return parse
+
+@as_int
+def label(value: int) -> str:
+    return "value"
+
+def run() -> int:
+    return label(1)
+
+def main() -> None:
+    result = run()

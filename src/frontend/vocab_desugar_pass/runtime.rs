@@ -25,11 +25,10 @@ const MEMORY_EXPORT: &str = incan_vocab::WASM_DESUGAR_MEMORY_EXPORT;
 const SUCCESS_STATUS: i32 = incan_vocab::WASM_DESUGAR_SUCCESS_STATUS;
 /// Default fuel budget for one desugarer invocation.
 ///
-/// 250 000 units is intentionally conservative: desugarers should be lightweight compile-time transforms, not
-/// long-running compute workloads. The value was chosen to give a typical identifier-rewriting desugarer several
-/// orders of magnitude of headroom while still rejecting infinite loops or accidental heavy computation.
-/// If a legitimate companion desugarer hits this limit, raise it with a code comment explaining the measured cost.
-const DEFAULT_WASM_FUEL: u64 = 250_000;
+/// The clean #455 nested companion repro traps at 250 000 units while the guest drops or serializes nested public AST
+/// output. 5 000 000 admits that production-shaped path while still bounding accidental long-running desugarers.
+/// If another legitimate companion desugarer hits this limit, raise it with a comment explaining the measured repro.
+const DEFAULT_WASM_FUEL: u64 = 5_000_000;
 
 /// Concrete Wasmtime store type used for one desugarer instantiation.
 ///
@@ -789,8 +788,10 @@ mod tests {
     #[test]
     fn rejects_parent_directory_artifact_escape() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let err = resolve_desugarer_artifact_path(root.path(), "../escape.wasm", "route")
-            .expect_err("expected path traversal rejection");
+        let err = match resolve_desugarer_artifact_path(root.path(), "../escape.wasm", "route") {
+            Err(err) => err,
+            Ok(_) => panic!("expected path traversal rejection"),
+        };
         assert!(
             matches!(err, VocabDesugarPassError::Resolution { .. }),
             "unexpected error: {err}"
@@ -801,8 +802,10 @@ mod tests {
     #[test]
     fn rejects_current_directory_artifact_prefix() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
-        let err = resolve_desugarer_artifact_path(root.path(), "./escape.wasm", "route")
-            .expect_err("expected non-normalized relative path rejection");
+        let err = match resolve_desugarer_artifact_path(root.path(), "./escape.wasm", "route") {
+            Err(err) => err,
+            Ok(_) => panic!("expected non-normalized relative path rejection"),
+        };
         assert!(
             matches!(err, VocabDesugarPassError::Resolution { .. }),
             "unexpected error: {err}"
@@ -821,8 +824,10 @@ mod tests {
             error_ptr: 64,
             error_len: 0,
         };
-        let err =
-            validate_runtime_layout_values(Path::new("mock.wasm"), 128, layout).expect_err("expected invalid layout");
+        let err = match validate_runtime_layout_values(Path::new("mock.wasm"), 128, layout) {
+            Err(err) => err,
+            Ok(_) => panic!("expected invalid layout"),
+        };
         assert!(
             matches!(err, VocabDesugarPassError::InvalidRuntimeLayout { .. }),
             "unexpected error: {err}"
@@ -841,8 +846,10 @@ mod tests {
             error_ptr: 64,
             error_len: 0,
         };
-        let err = validate_runtime_layout_values(Path::new("mock.wasm"), 128, layout)
-            .expect_err("expected out-of-bounds layout");
+        let err = match validate_runtime_layout_values(Path::new("mock.wasm"), 128, layout) {
+            Err(err) => err,
+            Ok(_) => panic!("expected out-of-bounds layout"),
+        };
         assert!(
             matches!(err, VocabDesugarPassError::InvalidRuntimeLayout { .. }),
             "unexpected error: {err}"

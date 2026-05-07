@@ -22,7 +22,7 @@ fn lowering_tuple_assign_in_if_block_returns_error() {
     }));
 
     let mut lowering = AstLowering::new();
-    let res = lowering.lower_expr(&if_expr);
+    let res = lowering.lower_expr(&if_expr, span());
     match res {
         Ok(_) => panic!("expected LoweringError, got Ok"),
         Err(LoweringError { message, .. }) => {

@@ -20,6 +20,7 @@ const TESTING_MARKER_RUNNER_ONLY_KEY: &str = "runner_only";
 const TESTING_FIXTURE_SCOPE_ARG_KEY: &str = "scope_arg";
 const TESTING_FIXTURE_AUTOUSE_ARG_KEY: &str = "autouse_arg";
 const TESTING_FIXTURE_SCOPES_KEY: &str = "scopes";
+const TESTING_FIXTURE_TIMEOUT_ARG_KEY: &str = "timeout";
 
 /// Error type for strict `std.testing` marker metadata loading.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -46,20 +47,35 @@ impl std::error::Error for TestingMarkerLoadError {}
 /// Supported `std.testing` marker kinds.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TestingMarkerKind {
+    Test,
     Fixture,
     Skip,
+    SkipIf,
     XFail,
+    XFailIf,
     Slow,
+    Mark,
+    Resource,
+    Serial,
+    Timeout,
     Parametrize,
 }
 
 impl TestingMarkerKind {
+    /// Convert the `kind` value from std.testing marker metadata into the runner enum.
     fn from_str(value: &str) -> Option<Self> {
         match value {
+            "test" => Some(Self::Test),
             "fixture" => Some(Self::Fixture),
             "skip" => Some(Self::Skip),
+            "skipif" => Some(Self::SkipIf),
             "xfail" => Some(Self::XFail),
+            "xfailif" => Some(Self::XFailIf),
             "slow" => Some(Self::Slow),
+            "mark" => Some(Self::Mark),
+            "resource" => Some(Self::Resource),
+            "serial" => Some(Self::Serial),
+            "timeout" => Some(Self::Timeout),
             "parametrize" => Some(Self::Parametrize),
             _ => None,
         }
@@ -77,13 +93,62 @@ pub struct TestingMarkerSemantics {
     pub fixture_scope_session: String,
 }
 
+/// Scope accepted by `std.testing.fixture` declarations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum TestingFixtureScope {
+    /// Recreate the fixture for each expanded test case.
+    Function,
+    /// Reuse the fixture across tests in one source module.
+    Module,
+    /// Reuse the fixture across the whole test session.
+    Session,
+}
+
+impl TestingFixtureScope {
+    /// Resolve a source-level scope value using the data-driven spellings loaded from `std.testing`.
+    pub fn from_marker_value(value: &str, semantics: &TestingMarkerSemantics) -> Option<Self> {
+        match value {
+            value if value == semantics.fixture_scope_function.as_str() => Some(Self::Function),
+            value if value == semantics.fixture_scope_module.as_str() => Some(Self::Module),
+            value if value == semantics.fixture_scope_session.as_str() => Some(Self::Session),
+            _ => None,
+        }
+    }
+}
+
+impl Default for TestingFixtureScope {
+    /// Return the default fixture scope used when `@fixture` omits `scope=...`.
+    fn default() -> Self {
+        Self::Function
+    }
+}
+
+/// Parsed declaration-time arguments from one `@fixture(...)` marker.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestingFixtureMarkerArgs {
+    /// Declared fixture scope after applying the `std.testing` metadata spelling table.
+    pub scope: TestingFixtureScope,
+    /// Whether `@fixture(autouse=true)` was set.
+    pub autouse: bool,
+    /// Span of an unsupported `timeout=` fixture argument, when present.
+    pub unsupported_timeout_span: Option<ast::Span>,
+}
+
 impl Default for TestingMarkerSemantics {
+    /// Return the built-in marker semantics used as the extraction baseline for stdlib metadata.
     fn default() -> Self {
         let mut marker_kinds = HashMap::new();
+        marker_kinds.insert("test".to_string(), TestingMarkerKind::Test);
         marker_kinds.insert("fixture".to_string(), TestingMarkerKind::Fixture);
         marker_kinds.insert("skip".to_string(), TestingMarkerKind::Skip);
+        marker_kinds.insert("skipif".to_string(), TestingMarkerKind::SkipIf);
         marker_kinds.insert("xfail".to_string(), TestingMarkerKind::XFail);
+        marker_kinds.insert("xfailif".to_string(), TestingMarkerKind::XFailIf);
         marker_kinds.insert("slow".to_string(), TestingMarkerKind::Slow);
+        marker_kinds.insert("mark".to_string(), TestingMarkerKind::Mark);
+        marker_kinds.insert("resource".to_string(), TestingMarkerKind::Resource);
+        marker_kinds.insert("serial".to_string(), TestingMarkerKind::Serial);
+        marker_kinds.insert("timeout".to_string(), TestingMarkerKind::Timeout);
         marker_kinds.insert("parametrize".to_string(), TestingMarkerKind::Parametrize);
 
         Self {
@@ -98,6 +163,7 @@ impl Default for TestingMarkerSemantics {
 }
 
 impl TestingMarkerSemantics {
+    /// Return the marker kind associated with a `std.testing` function name.
     pub fn marker_kind(&self, function_name: &str) -> Option<TestingMarkerKind> {
         self.marker_kinds.get(function_name).copied()
     }
@@ -122,6 +188,59 @@ pub fn resolve_testing_marker_kind(
         return None;
     }
     semantics.marker_kind(resolved[2].as_str())
+}
+
+/// Resolve and parse the first `@fixture(...)` marker on a declaration.
+///
+/// The returned metadata is intentionally declaration-only: it captures static fixture configuration and flags
+/// unsupported per-fixture timeout spelling, but it does not evaluate fixture bodies or runner lifecycle behavior.
+pub fn resolve_testing_fixture_marker_args(
+    decorators: &[ast::Spanned<ast::Decorator>],
+    aliases: &HashMap<String, Vec<String>>,
+    semantics: &TestingMarkerSemantics,
+) -> Option<TestingFixtureMarkerArgs> {
+    for dec in decorators {
+        if resolve_testing_marker_kind(&dec.node, aliases, semantics) != Some(TestingMarkerKind::Fixture) {
+            continue;
+        }
+
+        let mut scope = TestingFixtureScope::default();
+        let mut autouse = false;
+        let mut unsupported_timeout_span = None;
+
+        for arg in &dec.node.args {
+            let ast::DecoratorArg::Named(name, value) = arg else {
+                continue;
+            };
+            if name == &semantics.fixture_scope_arg {
+                if let ast::DecoratorArgValue::Expr(expr) = value
+                    && let ast::Expr::Literal(ast::Literal::String(value)) = &expr.node
+                    && let Some(parsed_scope) = TestingFixtureScope::from_marker_value(value, semantics)
+                {
+                    scope = parsed_scope;
+                }
+            } else if name == &semantics.fixture_autouse_arg {
+                if let ast::DecoratorArgValue::Expr(expr) = value
+                    && let ast::Expr::Literal(ast::Literal::Bool(value)) = &expr.node
+                {
+                    autouse = *value;
+                }
+            } else if name == TESTING_FIXTURE_TIMEOUT_ARG_KEY {
+                unsupported_timeout_span = Some(match value {
+                    ast::DecoratorArgValue::Expr(expr) => expr.span,
+                    ast::DecoratorArgValue::Type(ty) => ty.span,
+                });
+            }
+        }
+
+        return Some(TestingFixtureMarkerArgs {
+            scope,
+            autouse,
+            unsupported_timeout_span,
+        });
+    }
+
+    None
 }
 
 /// Load testing marker semantics from `stdlib/testing.incn`.
@@ -284,7 +403,12 @@ fn parse_testing_metadata_dict(
     let mut fixture_autouse_arg: Option<String> = None;
     let mut fixture_scopes: Option<[String; 3]> = None;
 
-    for (key_expr, value_expr) in entries {
+    for entry in entries {
+        let ast::DictEntry::Pair(key_expr, value_expr) = entry else {
+            return Err(TestingMarkerLoadError::new(
+                "malformed @rust.extern metadata for std.testing marker: spread entries are not supported",
+            ));
+        };
         let Some(key) = expr_as_string_literal(key_expr) else {
             return Err(TestingMarkerLoadError::new(
                 "malformed @rust.extern metadata for std.testing marker: non-string key",
@@ -384,9 +508,18 @@ fn expr_as_string_triplet(expr: &ast::Spanned<ast::Expr>) -> Option<[String; 3]>
         return None;
     }
 
-    let first = expr_as_string_literal(&items[0])?;
-    let second = expr_as_string_literal(&items[1])?;
-    let third = expr_as_string_literal(&items[2])?;
+    let ast::ListEntry::Element(first_expr) = &items[0] else {
+        return None;
+    };
+    let ast::ListEntry::Element(second_expr) = &items[1] else {
+        return None;
+    };
+    let ast::ListEntry::Element(third_expr) = &items[2] else {
+        return None;
+    };
+    let first = expr_as_string_literal(first_expr)?;
+    let second = expr_as_string_literal(second_expr)?;
+    let third = expr_as_string_literal(third_expr)?;
     Some([first, second, third])
 }
 

@@ -81,8 +81,7 @@ Only the items usable in `@derive(...)` are derives:
 | [Clone][derive-clone]             | `.clone()`                | —          | Auto-added              |
 | [Copy][derive-copy]               | Implicit copy             | —          | Marker trait            |
 | [Default][derive-default]         | `Type.default()`          | —          | Baseline constructor    |
-| [Serialize][derive-serialize]     | JSON stringify            | —          | `json_stringify(value)` |
-| [Deserialize][derive-deserialize] | JSON parse                | —          | `T.from_json(str)`      |
+| [json][derive-serialize]          | JSON stringify/parse      | —          | `std.serde` module      |
 | [Validate][derive-validate]       | Validated construction    | —          | Models only             |
 
 Detailed pages:
@@ -152,12 +151,14 @@ Expected: “cannot derive a model/class” with a hint to use `with TraitName` 
 
 ---
 
-## Decorators (`@staticmethod`, `@requires`)
+## Decorators (`@staticmethod`, `@classmethod`, `@requires`) {#decorators-staticmethod-requires}
 
-Incan has four built-in decorators. `@derive(...)` is covered [above](#derive-catalog-quick-index); `@rust.extern` is a
-Rust interop decorator (see [RFC 023]). This section covers the two method/trait decorators.
+Incan has several built-in decorators with different roles.
 
---8<-- "_snippets/rfcs_refs.md"
+- `@derive(...)` is covered [above](#derive-catalog-quick-index).
+- `@rust.extern` and `@rust.allow(...)` belong to Rust interop and are documented in the Rust interop reference.
+- This section covers the method and trait decorators you will use when authoring ordinary Incan types and traits.
+- User-defined function and method decorators are covered in the [language reference](language.md#decorators).
 
 ### `@staticmethod`
 
@@ -165,17 +166,162 @@ Rust interop decorator (see [RFC 023]). This section covers the two method/trait
 
 See also: [Classes: Static methods](../explanation/models_and_classes/classes.md#static-methods-staticmethod)
 
+### `@classmethod`
+
+Use `@classmethod` for methods that are called on the type rather than on an instance, but still conceptually belong to that type.
+
+This is commonly used for constructor-style APIs:
+
+```incan
+model UserId:
+    value: int
+
+    @classmethod
+    def from(cls, value: str) -> Self:
+        return cls(value=int(value))
+```
+
+Unlike an instance method, a class method does not take `self`. Its first parameter is conventionally named `cls` and can be called like a constructor for the declaring type. Unlike a static method, it is written as a type-associated constructor-style hook and returns `Self` naturally.
+
+For generic types, `Self` keeps the active type arguments at the call site:
+
+```incan
+class Box[T with Clone]:
+    value: T
+
+    @classmethod
+    def make(cls, value: T) -> Self:
+        return cls(value=value)
+
+def main() -> None:
+    boxed = Box[int].make(1)
+    println(str(boxed.value))
+```
+
 ### `@requires(...)`
 
 Covered below in [Traits (authoring)](#requires-adopter-contract).
 
 ---
 
+## Generic instance methods
+
+Instance methods on `class`, `model`, `trait`, `enum`, and `newtype` may declare method-level type parameters using the same syntax as top-level generic functions:
+
+```incan
+class Box:
+    def get[T with Clone](self, value: T) -> T:
+        return value
+```
+
+This is method-level polymorphism: method type parameters belong to the method, not to the enclosing type.
+
+This does **not** replace normal method signatures. Non-generic methods still use the standard form:
+
+```incan
+def describe(self, verbose: bool) -> str:
+    ...
+```
+
+Rules to keep in mind:
+
+- Method type parameters appear after the method name: `def name[T, U with Trait](...)`.
+- Method type parameters are scoped to that method only.
+- Enclosing type parameters and method type parameters may both be used in the same signature.
+- Trait methods may also be generic, whether they are required (`...`) or provide a default body.
+
+Examples:
+
+```incan
+model Shelf[U]:
+    item: U
+
+    def swap[T with Clone](self, value: T) -> T:
+        return value
+```
+
+```incan
+trait Echo:
+    def echo[T with Clone](self, value: T) -> T:
+        return value
+```
+
+```incan
+enum Slot[U]:
+    Filled(U)
+    Empty
+
+    def echo[T](self, value: T) -> T:
+        return value
+```
+
+```incan
+type Wrapper[U] = newtype U:
+    def echo[T with Clone](self, value: T) -> T:
+        return value
+```
+
+Method generic syntax is additive and aligned with function generics: `def method[T](...)` extends, but does not replace, `def method(...)`.
+
+### Call-site type arguments
+
+Generic calls normally infer type parameters from value arguments. You may also provide explicit type arguments at the call site.
+
+Why this feature exists (design rationale):
+
+- [Why call-site type arguments exist](../explanation/call_site_type_arguments.md)
+
+Call-site type arguments go in square brackets immediately after the function or method name and before value arguments.
+
+**Syntax**:
+
+- Function: `callee[type_args](value_args...)`
+- Method: `receiver.method[type_args](value_args...)`
+
+`type_args` is comma-separated. Each entry is either a type expression or `_`. If brackets are present, arity must match the callee's type parameter count, including `_` slots.
+
+**Single type parameter**:
+
+You may call with no brackets (fully inferred) or one explicit type argument:
+
+```incan
+rows_inferred = session.read_csv(str("orders.csv"))         # inferred when context/value args are enough
+rows_typed = session.read_csv[Order](str("orders.csv"))     # explicit row type at the API boundary
+```
+
+**Multiple type parameters**:
+
+For multi-parameter generics, either infer all slots or provide one bracket entry per slot:
+
+```incan
+parsed = decode_rows(str("orders.csv"))                                 # T and E inferred
+parsed_typed = decode_rows[Order, CsvDecodeError](str("orders.csv"))    # both explicit
+parsed_partial = decode_rows[Order, _](str("orders.csv"))               # T explicit, E inferred via `_`
+```
+
+**The `_` placeholder**:
+
+`_` means "infer this slot". It still counts toward arity: `decode_rows[Order](...)` is invalid for a two-parameter generic, while `decode_rows[Order, _](...)` is valid.
+
+**Type checking order**:
+
+Explicit slots are applied first. `_` slots are inferred from value arguments and normal compatibility checks. If a slot remains unresolved, the compiler reports a call-site type error.
+
+**What is not supported**:
+
+Explicit brackets are supported only for direct calls resolved as Incan functions/methods. Using brackets on other call shapes is an error (not ignored), for example:
+
+- Built-in calls like `len[int](...)`
+- Calls to functions imported from Rust (`from rust::...`)
+- Calling a generic function **through a variable** (e.g. `read = session.read_csv; read[Order](...)`), where the callee is not a direct name or method
+
+---
+
 ## Traits (authoring)
 
-Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with `with TraitName`, and you may also use the trait name itself directly in annotations. Methods can be required (`...`) or have defaults.
+Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with `with TraitName`, and you may also use the trait name itself directly in annotations. Required methods may be written as a signature with no body; the older `: ...` spelling remains valid for compatibility. Methods with defaults still use a colon and an indented body.
 
-Traits may adopt other traits with the same `with` syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.
+Models, classes, enums, and other concrete type declarations can adopt traits. Traits may adopt other traits with the same `with` syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.
 
 ```incan
 trait Describable:
@@ -191,11 +337,25 @@ def main() -> None:
 ```
 
 ```incan
+trait Renderable:
+    def render(self) -> str
+
+enum Token with Renderable:
+    Text(str)
+    Break
+
+    def render(self) -> str:
+        match self:
+            Token.Text(value) => return value
+            Token.Break => return "\n"
+```
+
+```incan
 trait Collection[T]:
-    def first(self) -> T: ...
+    def first(self) -> T
 
 trait OrderedCollection[T] with Collection[T]:
-    def sorted(self) -> Self: ...
+    def sorted(self) -> Self
 
 def first_item(values: Collection[int]) -> int:
     return values.first()
@@ -205,7 +365,175 @@ Rules to keep in mind:
 
 - Traits are abstract and must not be constructed directly with `TraitName(...)`.
 - A value annotated as `Collection[int]` may be any concrete adopter of that trait instantiation.
+- Enum trait adoption uses the same `with TraitName` clause as model and class adoption.
+- For enum adopters, required trait methods must be declared in the enum body.
+- Enum adopters should satisfy behavior through methods; `@requires(...)` field contracts are usually for models/classes because enum payloads are variant data, not shared fields on the enum.
 - Supertrait relationships are transitive: if `OrderedCollection[T]` adopts `Collection[T]`, adopters of `OrderedCollection[T]` also satisfy `Collection[T]`.
+
+When an operation should only be available for values with specific capabilities, express that constraint in the type system with generic bounds instead of selectively hiding inherited trait methods:
+
+```incan
+def require_ordering[T with OrderedCollection[int]](values: T) -> T:
+    return values
+```
+
+The compiler enforces these bounds at call sites using nominal trait conformance, including transitive supertrait relationships.
+
+### Multiple instantiations of one generic trait
+
+Models, classes, and enums may adopt the same generic trait more than once when each adoption uses different type arguments. This is useful when one type naturally supports the same capability for more than one static shape: indexing by `str` and by `int`, converting into multiple result types, or serializing through a generic format trait.
+
+The repeated adoptions must be distinct:
+
+```incan
+trait Convert[T]:
+    def convert(self) -> T: ...
+
+model Reading with Convert[int], Convert[float]:  # OK
+    value: int
+
+    def convert(self) -> int:
+        return self.value
+
+    def convert(self) -> float:
+        return 1.0
+```
+
+This is trait dispatch, not general-purpose method overloading. The same method name is allowed here because each `convert` method satisfies a different `Convert[T]` adoption on the same type. Two ordinary methods with the same name are still rejected when they are not backed by distinct trait instantiations.
+
+#### Dispatch from argument types
+
+When the same trait method takes different value parameter types, the compiler selects the matching instantiation from the call arguments:
+
+```incan
+trait Reader[T]:
+    def read(self, key: T) -> str: ...
+
+model Source with Reader[str], Reader[int]:
+    name: str
+
+    def read(self, key: str) -> str:
+        return key
+
+    def read(self, key: int) -> str:
+        return str(key)
+
+source = Source(name="events")
+by_name = source.read("latest")  # Reader[str]
+by_index = source.read(0)        # Reader[int]
+```
+
+Named arguments participate in the same selection. `source.read(key=0)` selects the `Reader[int]` method because the named `key` argument has type `int`.
+
+#### Dispatch from an expected return type
+
+When the value arguments do not distinguish the candidates, the compiler may use an explicit expected return type. A typed binding is the most direct way to provide that context:
+
+```incan
+trait Convert[T]:
+    def convert(self) -> T: ...
+
+model Reading with Convert[int], Convert[float]:
+    value: int
+
+    def convert(self) -> int:
+        return self.value
+
+    def convert(self) -> float:
+        return 1.0
+
+reading = Reading(value=1)
+as_float: float = reading.convert()
+as_int: int = reading.convert()
+```
+
+Expected return type context can also come from a function argument, an annotated return position, or equivalent explicit type context. If no rule selects exactly one candidate, the call is ambiguous:
+
+```incan
+reading = Reading(value=1)
+value = reading.convert()  # error: the expected result type is not known
+```
+
+#### Generic bounds with trait type arguments
+
+Generic bounds may carry trait type arguments. This lets a generic function say that a receiver type `T` must support a trait instantiation chosen by another type parameter:
+
+```incan
+trait Serializable[F]:
+    def serialize(self, format: F) -> bytes: ...
+
+model JsonFormat:
+    name: str
+
+model Event with Serializable[JsonFormat]:
+    message: str
+
+    def serialize(self, format: JsonFormat) -> bytes:
+        return b"{}"
+
+def encode[F, T with Serializable[F]](value: T, format: F) -> bytes:
+    return value.serialize(format)
+
+bytes = encode[JsonFormat, Event](Event(message="created"), JsonFormat(name="json"))
+```
+
+The bound `T with Serializable[F]` is not just a trait-name check. If `F` is `JsonFormat`, then `T` must adopt `Serializable[JsonFormat]`; adopting `Serializable[YamlFormat]` alone would not satisfy the bound.
+
+#### Enum adopters
+
+Enum declarations use the same rules as models and classes. Each repeated generic-trait adoption must use distinct type arguments, and each same-name method must satisfy a distinct adopted trait instantiation:
+
+```incan
+trait Label[T]:
+    def label(self) -> T: ...
+
+enum Token with Label[str], Label[int]:
+    Identifier(str)
+    Number(int)
+
+    def label(self) -> str:
+        return "token"
+
+    def label(self) -> int:
+        return 1
+
+token: Token = Token.Number(1)
+text: str = token.label()
+code: int = token.label()
+```
+
+#### Rejected cases
+
+The compiler rejects repeated identical trait instantiations:
+
+```incan
+model BadReading with Convert[int], Convert[int]:  # error
+    value: int
+```
+
+The compiler also rejects same-name methods that are not backed by distinct trait instantiations:
+
+```incan
+model Parser:
+    def parse(self, value: str) -> str: ...
+    def parse(self, value: int) -> str: ...  # error
+```
+
+Same-name methods from unrelated trait families are rejected even if their value parameter types differ. Return-type and argument-type disambiguation only applies within one generic trait family:
+
+```incan
+trait ReadsInt:
+    def read(self, value: int) -> int: ...
+
+trait ReadsStr:
+    def read(self, value: str) -> str: ...
+
+model Source with ReadsInt, ReadsStr:
+    def read(self, value: int) -> int: ...
+    def read(self, value: str) -> str: ...  # error: unrelated trait families use the same method name
+```
+
+Use distinct method names or distinct trait families with non-conflicting method names when you need two unrelated capabilities today. Explicit qualification and aliasing are future language design work.
 
 ### `@requires(...)` (adopter contract)
 
@@ -402,8 +730,11 @@ def main() -> None:
 **API**:
 
 - `json_stringify(value)` → `str`
+- `value.to_json()` → `str` when the type imports and adopts `std.serde.json.Serialize`
 
 ```incan
+from std.serde.json import Serialize
+
 @derive(Serialize)
 model User:
     name: str
@@ -412,6 +743,31 @@ model User:
 def main() -> None:
     u = User(name="Alice", age=30)
     println(json_stringify(u))
+```
+
+```incan
+from std.serde.json import Serialize
+
+model User with Serialize:
+    name: str
+    age: int
+
+def main() -> None:
+    println(User(name="Alice", age=30).to_json())
+```
+
+Use the RFC 024 module derive when a model should adopt both JSON traits and expose module-qualified bounds:
+
+```incan
+from std.serde import json
+
+@derive(json)
+model User:
+    name: str
+    age: int
+
+def encode[T with json.Serialize](value: T) -> str:
+    return value.to_json()
 ```
 
 ---
@@ -424,7 +780,11 @@ def main() -> None:
 
 - `T.from_json(input: str)` → `Result[T, str]`
 
+Note: explicit `with Deserialize` adoption still needs either an imported `@derive(Deserialize)` or a user-defined `from_json(input)` implementation.
+
 ```incan
+from std.serde.json import Deserialize
+
 @derive(Deserialize)
 model User:
     name: str
@@ -509,6 +869,7 @@ Note:
 
 - Field metadata like `[alias="..."]` and `[description="..."]` is **model-only**. For `class`, `FieldInfo.alias`
   and `FieldInfo.description` are always `None` and `FieldInfo.wire_name == FieldInfo.name`.
+- `u.__fields__()` is typed as `FrozenList[FieldInfo]` directly by the compiler. Import `FieldInfo` only when you need to spell that type in an annotation.
 
 See [Reflection (Reference)](reflection.md) for `FieldInfo` structure details.
 
@@ -521,3 +882,13 @@ def main() -> None:
     println(u.__class_name__())
     println([f.name for f in u.__fields__()])
 ```
+
+## Stdlib derive boundaries
+
+Traits under `std.derives.*` are source-defined capability contracts.
+
+- `Clone`, `Default`, `Debug`, `Eq`, `Ord`, and `Hash` are declared in `.incn` source.
+- Implementations for adopting types come from ordinary Rust `#[derive(...)]` expansion during codegen.
+- These traits are not modeled as runtime helper calls through `incan_stdlib::derives::*`.
+
+For the curated stdlib-family view, see [Standard library reference: `std.derives.*`](stdlib/derives.md).

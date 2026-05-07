@@ -1,0 +1,290 @@
+model _GlobRange:
+    """
+    Inclusive character range inside a bracket class.
+
+    Example:
+        `[a-z]` parses into `_GlobRange(start="a", end="z")`.
+    """
+
+    start: str
+    end: str
+
+
+model _GlobClass:
+    """
+    Parsed bracket class.
+
+    `chars` stores literal members such as `a` and `b`; `ranges` stores inclusive spans such as `a-z`. When `negated`
+    is true, membership is inverted after checking literals and ranges.
+    """
+
+    negated: bool
+    chars: list[str]
+    ranges: list[_GlobRange]
+
+
+model _ClassParse:
+    """
+    Result of parsing a bracket class.
+
+    Args:
+        spec: Parsed class contents when `valid=true`.
+        next_index: Pattern index immediately after the closing `]`.
+        valid: Whether the class had a closing bracket and can be used as a class token.
+    """
+
+    spec: _GlobClass
+    next_index: int
+    valid: bool
+
+
+enum _GlobPart:
+    """
+    Tokenized glob pattern item.
+
+    Matching operates over this DSL instead of re-reading raw pattern text in every recursive step. That keeps star
+    backtracking separate from class parsing.
+    """
+
+    Star
+    AnyChar
+    Literal(str)
+    CharClass(_GlobClass)
+
+
+pub def matches(value: str, pattern: str) -> bool:
+    """
+    Return whether a string matches a glob pattern.
+
+    This is the reusable string-matching API behind `Path.glob()` and `Path.rglob()`. It does not read the filesystem;
+    callers can use it for non-file domains such as route names, dataset identifiers, object keys, or UI selectors that
+    want the same simple glob rules as `std.fs`.
+
+    The supported pattern syntax is intentionally small and portable:
+    - `*` matches zero or more characters.
+    - `?` matches exactly one character.
+    - `[abc]` matches one listed character.
+    - `[!abc]` and `[^abc]` match one character not in the class.
+    - `[a-z]` matches one character in an inclusive range.
+
+    Args:
+        value: String to test.
+        pattern: Glob pattern to match against `value`.
+
+    Returns:
+        `true` when `value` matches `pattern`; otherwise `false`.
+
+    Example:
+        `matches("routes/users.incn", "routes/*.incn")`
+    """
+    return _glob_match_parts(value, _parse_glob(pattern), 0, 0)
+
+
+pub def filter_matches(values: list[str], pattern: str) -> list[str]:
+    """
+    Return strings from a list that match a glob pattern.
+
+    Args:
+        values: Candidate strings, kept in their original order.
+        pattern: Glob pattern used for filtering.
+
+    Returns:
+        A new list containing every matching string.
+
+    Example:
+        `filter_matches(["api/users", "docs/readme"], "api/*")`
+    """
+    return [value for value in values if matches(value, pattern)]
+
+
+def _char_at(value: str, index: int) -> str:
+    """
+    Return a single-character slice.
+
+    Incan strings slice by byte offsets today; glob matching currently treats patterns and values as byte-indexed text.
+    """
+    return value[index:index + 1]
+
+
+def _empty_class() -> _GlobClass:
+    """
+    Create an empty, non-negated class accumulator.
+
+    Returns:
+        A class with no literal characters or ranges.
+    """
+    return _GlobClass(negated=false, chars=[], ranges=[])
+
+
+def _parse_glob(pattern: str) -> list[_GlobPart]:
+    """
+    Tokenize a glob pattern into matcher parts.
+
+    Invalid bracket classes are kept as literal `[` tokens so matching remains total and predictable.
+    """
+    mut parts: list[_GlobPart] = []
+    mut index = 0
+    while index < len(pattern):
+        token = _char_at(pattern, index)
+        match token:
+            case "*":
+                parts.append(_GlobPart.Star)
+                index = _collapsed_star_position(pattern, index) + 1
+            case "?":
+                parts.append(_GlobPart.AnyChar)
+                index += 1
+            case "[":
+                parsed = _parse_class(pattern, index)
+                if parsed.valid:
+                    parts.append(_GlobPart.CharClass(parsed.spec))
+                    index = parsed.next_index
+                else:
+                    parts.append(_GlobPart.Literal(token))
+                    index += 1
+            case literal:
+                parts.append(_GlobPart.Literal(literal))
+                index += 1
+    return parts
+
+
+def _collapsed_star_position(pattern: str, start: int) -> int:
+    """
+    Return the final index in a run of adjacent `*` tokens.
+
+    Collapsing `***` to one star avoids redundant backtracking without changing match semantics.
+    """
+    mut position = start
+    while position + 1 < len(pattern) and _char_at(pattern, position + 1) == "*":
+        position += 1
+    return position
+
+
+def _parse_class(pattern: str, start: int) -> _ClassParse:
+    """
+    Parse a bracket class beginning at `start`.
+
+    Returns:
+        A valid parse with `next_index` after `]`, or `valid=false` when the class is unterminated.
+    """
+    mut index = start + 1
+    mut spec = _empty_class()
+    if _starts_negated_class(pattern, index):
+        spec.negated = true
+        index += 1
+
+    while index < len(pattern):
+        current = _char_at(pattern, index)
+        if current == "]":
+            return _ClassParse(spec=spec, next_index=index + 1, valid=true)
+        if _starts_class_range(pattern, index):
+            spec.ranges.append(_GlobRange(start=_char_at(pattern, index), end=_char_at(pattern, index + 2)))
+            index += 3
+        else:
+            spec.chars.append(current)
+            index += 1
+    return _ClassParse(spec=_empty_class(), next_index=start, valid=false)
+
+
+def _starts_negated_class(pattern: str, index: int) -> bool:
+    """
+    Return whether a class body starts with a negation marker.
+
+    Both `!` and `^` are accepted for compatibility with common glob dialects.
+    """
+    if index >= len(pattern):
+        return false
+    marker = _char_at(pattern, index)
+    return marker == "!" or marker == "^"
+
+
+def _starts_class_range(pattern: str, index: int) -> bool:
+    """
+    Return whether the next three characters form a range like `a-z`.
+    """
+    if index + 2 >= len(pattern):
+        return false
+    return _char_at(pattern, index + 1) == "-" and _char_at(pattern, index + 2) != "]"
+
+
+def _glob_match_parts(name: str, parts: list[_GlobPart], name_index: int, part_index: int) -> bool:
+    """
+    Match parsed parts from a given input and pattern position.
+
+    `Star` delegates to `_glob_star_match()` because it may need to try multiple input suffixes. All other parts consume
+    at most one input character and advance linearly.
+    """
+    mut name_pos = name_index
+    mut part_pos = part_index
+    while part_pos < len(parts):
+        part = parts[part_pos]
+        match part:
+            case _GlobPart.Star:
+                return _glob_star_match(name, parts, name_pos, part_pos)
+            case _GlobPart.AnyChar:
+                if name_pos >= len(name):
+                    return false
+                name_pos += 1
+                part_pos += 1
+            case _GlobPart.Literal(expected):
+                if name_pos >= len(name) or _char_at(name, name_pos) != expected:
+                    return false
+                name_pos += 1
+                part_pos += 1
+            case _GlobPart.CharClass(spec):
+                if name_pos >= len(name) or not _class_contains(spec, _char_at(name, name_pos)):
+                    return false
+                name_pos += 1
+                part_pos += 1
+    return name_pos == len(name)
+
+
+def _glob_star_match(name: str, parts: list[_GlobPart], name_pos: int, part_pos: int) -> bool:
+    """
+    Match a `*` part by trying every remaining input suffix.
+
+    A trailing star succeeds immediately; otherwise the matcher recurses at each possible split point until the rest of
+    the pattern matches.
+    """
+    if part_pos + 1 == len(parts):
+        return true
+    for scan in range(name_pos..len(name) + 1):
+        if _glob_match_parts(name, parts, scan, part_pos + 1):
+            return true
+    return false
+
+
+def _class_contains(spec: _GlobClass, ch: str) -> bool:
+    """
+    Return whether a parsed class accepts one character.
+    """
+    matched = _class_literals_contain(spec, ch) or _class_ranges_contain(spec, ch)
+    if spec.negated:
+        return not matched
+    return matched
+
+
+def _class_literals_contain(spec: _GlobClass, ch: str) -> bool:
+    """
+    Check literal class members.
+    """
+    for literal in spec.chars:
+        if literal == ch:
+            return true
+    return false
+
+
+def _class_ranges_contain(spec: _GlobClass, ch: str) -> bool:
+    """
+    Check range class members.
+    """
+    for span in spec.ranges:
+        if _range_contains(span, ch):
+            return true
+    return false
+
+
+def _range_contains(span: _GlobRange, ch: str) -> bool:
+    """
+    Return whether `ch` falls inside an inclusive range.
+    """
+    return span.start <= ch and ch <= span.end

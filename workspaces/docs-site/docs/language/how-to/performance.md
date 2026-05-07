@@ -27,13 +27,13 @@ incan build myprogram.incn
 
 ```bash
 xcrun xctrace record --template "Time Profiler" \
-  --launch ./target/incan/myprogram/target/release/myprogram
+  --launch ./target/incan/.cargo-target/release/myprogram
 ```
 
 ### Profile on Linux (perf)
 
 ```bash
-perf record ./target/incan/myprogram/target/release/myprogram
+perf record ./target/incan/.cargo-target/release/myprogram
 perf report
 ```
 

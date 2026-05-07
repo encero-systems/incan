@@ -42,7 +42,8 @@ pub mod version;
 pub mod wasm_abi;
 
 pub use ast::{
-    Decorator, DecoratorArg, DecoratorArgValue, IncanBinaryOp, IncanExpr, IncanStatement, IncanUnaryOp, Span,
+    Decorator, DecoratorArg, DecoratorArgValue, IncanBinaryOp, IncanExpr, IncanScopedSurfaceExpr,
+    IncanScopedSurfaceOwner, IncanScopedSurfacePayload, IncanScopedSymbolCall, IncanStatement, IncanUnaryOp, Span,
     VocabBodyItem, VocabClause, VocabClauseBody, VocabDeclaration, VocabDeclarationHead, VocabFieldSpec,
     VocabKeywordMetadata, VocabParameter, VocabSyntaxNode, VocabTypeExpr,
 };
@@ -55,7 +56,11 @@ pub use desugar::{
 pub use keywords::{
     ClauseBodyKind, ClauseCardinality, ClausePlacement, ClauseSurface, DeclarationBodyKind, DeclarationHeadKind,
     DeclarationSurface, DesugarTarget, DslSurface, KeywordActivation, KeywordPlacement, KeywordRegistration,
-    KeywordSpec, KeywordSurfaceKind,
+    KeywordSpec, KeywordSurfaceKind, ScopedSurfaceChainMode, ScopedSurfaceDescriptor, ScopedSurfaceDiagnosticKind,
+    ScopedSurfaceDiagnosticTemplate, ScopedSurfaceEligibility, ScopedSurfaceFamily, ScopedSurfaceFormatHint,
+    ScopedSurfaceMisuseScope, ScopedSurfacePosition, ScopedSurfaceReceiver, ScopedSurfaceSyntax,
+    ScopedSymbolDescriptor, ScopedSymbolDiagnosticKind, ScopedSymbolDiagnosticTemplate, ScopedSymbolEligibility,
+    ScopedSymbolFamily, ScopedSymbolMisuseScope, ScopedSymbolPosition, ScopedSymbolRoleMetadata,
 };
 pub use manifest::{
     CargoDependency, CargoDependencySource, FieldExport, FunctionExport, HelperBinding, LibraryManifest,
@@ -411,5 +416,85 @@ mod tests {
         assert_eq!(step.body_kind, DeclarationBodyKind::Mixed);
         assert_eq!(workflow.keyword, "workflow");
         assert_eq!(workflow.body_kind, DeclarationBodyKind::Statements);
+    }
+
+    #[test]
+    fn scoped_surface_descriptors_are_part_of_author_facing_metadata() {
+        let registration = VocabRegistration::new().with_surface(
+            DslSurface::on_import("demo.analysis")
+                .with_declaration(
+                    DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .with_clause(ClauseSurface::expr("SELECT").required()),
+                )
+                .with_scoped_surfaces([
+                    ScopedSurfaceDescriptor::operator("query.pipe", "|>")
+                        .in_clause_body("query", "SELECT")
+                        .with_misuse_scope(ScopedSurfaceMisuseScope::ActivatingFile)
+                        .with_diagnostic(ScopedSurfaceDiagnosticTemplate::new(
+                            "query-pipe-outside-scope",
+                            ScopedSurfaceDiagnosticKind::OutsideScope,
+                            "`|>` is only valid inside query SELECT clauses",
+                        ))
+                        .pairwise_chain(),
+                    ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                        .in_clause_body("query", "SELECT")
+                        .with_receiver(ScopedSurfaceReceiver::clause("FROM")),
+                ]),
+        );
+
+        let metadata = registration.metadata();
+        let surface = &metadata.dsl_surfaces[0];
+
+        assert_eq!(surface.scoped_surfaces.len(), 2);
+        assert!(surface.scoped_symbols.is_empty());
+        assert_eq!(surface.scoped_surfaces[0].family, ScopedSurfaceFamily::OperatorLike);
+        assert_eq!(
+            surface.scoped_surfaces[0].format_hint.chain_mode,
+            ScopedSurfaceChainMode::Pairwise
+        );
+        assert_eq!(surface.scoped_surfaces[1].family, ScopedSurfaceFamily::ExpressionForm);
+        assert_eq!(
+            surface.scoped_surfaces[1].receiver,
+            Some(ScopedSurfaceReceiver::clause("FROM"))
+        );
+    }
+
+    #[test]
+    fn scoped_symbol_descriptors_are_part_of_author_facing_metadata() {
+        let registration = VocabRegistration::new().with_surface(
+            DslSurface::on_import("demo.analysis")
+                .with_declaration(
+                    DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .with_clause(ClauseSurface::expr_list("SELECT").required()),
+                )
+                .with_scoped_symbols([
+                    ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                        .in_clause_body("query", "SELECT")
+                        .with_role(ScopedSymbolRoleMetadata::new("aggregate.sum").with_label("Sum"))
+                        .with_misuse_scope(ScopedSymbolMisuseScope::ActiveDsl)
+                        .with_diagnostic(ScopedSymbolDiagnosticTemplate::new(
+                            "query-sum-outside-select",
+                            ScopedSymbolDiagnosticKind::OutsideEligiblePosition,
+                            "`sum` is only a query aggregate inside SELECT clauses",
+                        )),
+                    ScopedSymbolDescriptor::function("query.rank", "rank")
+                        .in_call_argument("query", "window")
+                        .with_role(ScopedSymbolRoleMetadata::new("window.rank")),
+                ]),
+        );
+
+        let metadata = registration.metadata();
+        let surface = &metadata.dsl_surfaces[0];
+
+        assert_eq!(surface.scoped_symbols.len(), 2);
+        assert_eq!(surface.scoped_symbols[0].symbol, "sum");
+        assert_eq!(surface.scoped_symbols[0].family, ScopedSymbolFamily::AggregateLike);
+        assert_eq!(
+            surface.scoped_symbols[0].role.as_ref().map(|role| role.key.as_str()),
+            Some("aggregate.sum")
+        );
+        assert_eq!(surface.scoped_symbols[1].eligible_in[0].call.as_deref(), Some("window"));
     }
 }

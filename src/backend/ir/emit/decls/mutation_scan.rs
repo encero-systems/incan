@@ -9,9 +9,12 @@ use std::sync::LazyLock;
 
 use incan_core::lang::surface::methods::{dict_methods, list_methods};
 
-use super::super::super::expr::{IrExpr, IrExprKind, MethodKind, VarAccess};
+use super::super::super::expr::{
+    IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause, IrListEntry, MethodKind, VarAccess,
+};
 use super::super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::IrEmitter;
+use crate::backend::ir::emit::expressions::method_kind_uses_mutable_receiver;
 
 /// Method names that mutate their receiver, built from `incan_core` registries.
 ///
@@ -20,6 +23,7 @@ use super::super::IrEmitter;
 static MUTATING_METHOD_NAMES: LazyLock<Vec<&'static str>> = LazyLock::new(|| {
     vec![
         list_methods::as_str(list_methods::ListMethodId::Append),
+        list_methods::as_str(list_methods::ListMethodId::Extend),
         list_methods::as_str(list_methods::ListMethodId::Pop),
         list_methods::as_str(list_methods::ListMethodId::Swap),
         list_methods::as_str(list_methods::ListMethodId::Reserve),
@@ -67,9 +71,15 @@ impl<'a> IrEmitter<'a> {
                 }
                 self.scan_expr_for_param_writes(value, param_names, mutated);
             }
-            IrStmtKind::Expr(e) => self.scan_expr_for_param_writes(e, param_names, mutated),
-            IrStmtKind::Return(Some(e)) => self.scan_expr_for_param_writes(e, param_names, mutated),
-            IrStmtKind::Return(None) | IrStmtKind::Break(_) | IrStmtKind::Continue(_) => {}
+            IrStmtKind::Expr(e) | IrStmtKind::Return(Some(e)) | IrStmtKind::Yield(e) => {
+                self.scan_expr_for_param_writes(e, param_names, mutated);
+            }
+            IrStmtKind::Break { label: _, value } => {
+                if let Some(value) = value {
+                    self.scan_expr_for_param_writes(value, param_names, mutated);
+                }
+            }
+            IrStmtKind::Return(None) | IrStmtKind::Continue(_) => {}
             IrStmtKind::While { condition, body, .. } => {
                 self.scan_expr_for_param_writes(condition, param_names, mutated);
                 for s in body {
@@ -143,7 +153,9 @@ impl<'a> IrEmitter<'a> {
                     self.scan_expr_for_param_writes(arg, param_names, mutated);
                 }
             }
-            IrExprKind::MethodCall { receiver, method, args } => {
+            IrExprKind::MethodCall {
+                receiver, method, args, ..
+            } => {
                 if let Some(name) = self.expr_is_param_var(receiver, param_names)
                     && Self::is_mutating_method_name(method)
                 {
@@ -217,15 +229,42 @@ impl<'a> IrEmitter<'a> {
                     self.scan_expr_for_param_writes(f, param_names, mutated);
                 }
             }
-            IrExprKind::List(items) | IrExprKind::Tuple(items) | IrExprKind::Set(items) => {
+            IrExprKind::Generator { element, clauses } => {
+                self.scan_expr_for_param_writes(element, param_names, mutated);
+                for clause in clauses {
+                    match clause {
+                        IrGeneratorClause::For { iterable, .. } => {
+                            self.scan_expr_for_param_writes(iterable, param_names, mutated);
+                        }
+                        IrGeneratorClause::If(condition) => {
+                            self.scan_expr_for_param_writes(condition, param_names, mutated);
+                        }
+                    }
+                }
+            }
+            IrExprKind::Tuple(items) | IrExprKind::Set(items) => {
                 for i in items {
                     self.scan_expr_for_param_writes(i, param_names, mutated);
                 }
             }
+            IrExprKind::List(items) => {
+                for item in items {
+                    match item {
+                        IrListEntry::Element(value) | IrListEntry::Spread(value) => {
+                            self.scan_expr_for_param_writes(value, param_names, mutated);
+                        }
+                    }
+                }
+            }
             IrExprKind::Dict(pairs) => {
-                for (k, v) in pairs {
-                    self.scan_expr_for_param_writes(k, param_names, mutated);
-                    self.scan_expr_for_param_writes(v, param_names, mutated);
+                for entry in pairs {
+                    match entry {
+                        IrDictEntry::Pair(k, v) => {
+                            self.scan_expr_for_param_writes(k, param_names, mutated);
+                            self.scan_expr_for_param_writes(v, param_names, mutated);
+                        }
+                        IrDictEntry::Spread(value) => self.scan_expr_for_param_writes(value, param_names, mutated),
+                    }
                 }
             }
             IrExprKind::Struct { fields, .. } => {
@@ -315,15 +354,6 @@ impl<'a> IrEmitter<'a> {
 
     /// Check if a method kind is mutating.
     fn is_mutating_method_kind(kind: &MethodKind) -> bool {
-        matches!(
-            kind,
-            MethodKind::Append
-                | MethodKind::Pop
-                | MethodKind::Insert
-                | MethodKind::Remove
-                | MethodKind::Swap
-                | MethodKind::Reserve
-                | MethodKind::ReserveExact
-        )
+        method_kind_uses_mutable_receiver(kind)
     }
 }

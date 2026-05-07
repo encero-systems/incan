@@ -2,6 +2,7 @@
 
 - **Status:** Implemented
 - **Created:** 2026-02-08
+- **Issue:** [#125](https://github.com/dannys-code-corner/incan/issues/125)
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 005 (Rust interop), RFC 013 (Rust crate dependencies), RFC 022 (stdlib namespacing & compiler→stdlib handoff)
 - **Target version:** 0.1.0
@@ -20,7 +21,8 @@ Together, these changes push the Incan stdlib toward being written in **mostly p
 
 ## Implemented Closeout Notes
 
-- `.incn` source is now the source of truth for migrated stdlib surfaces, including `std.async`, `std.math`, `std.reflection`, and `std.traits`.
+- `.incn` source is now the source of truth for the stdlib surfaces closed out under RFC 023, including `std.async`, `std.math`, `std.reflection`, and `std.traits.{convert,ops,error,indexing,callable,prelude}`.
+- `std.traits.convert` now compiles through the normal stdlib pipeline via `@classmethod` conversion hooks for `from` / `try_from`. Broader Rust trait-impl authoring on wrappers remains follow-up work under RFC 043.
 - Build, test, and lock flows derive stdlib-driven feature/extra-dependency activation from shared namespace metadata (for example `std.async` enabling Tokio and `std.math` pulling `libm`).
 - Explicit generic `with` bounds are enforced in the frontend against concrete argument types; backend trait-bound inference remains additive rather than the first place bound violations show up.
 - `@rust.extern` declaration-shape errors are caught in the frontend, and downstream Cargo/`rustc` failures are wrapped back onto the `.incn` declaration site in the CLI build surface.
@@ -824,7 +826,7 @@ Re-baselining note: this closure definition intentionally avoids smuggling unrel
 - [x] `std.web` response builders: pure Incan where possible, `@rust.extern` for framework I/O.
 - [x] All stdlib `.incn` files with `@rust.extern` carry `rust.module()` directives.
 - [x] `std.async.*` behavior is runtime-backed via narrow `@rust.extern` leaves (no broad `fail_t` placeholder surface).
-    > Note: remaining closeout is concentrated in `std.async.select`; follow-up language/library work is now tracked by RFC 038 and RFC 039 rather than being hand-waved inside RFC 023.
+    > Note: remaining closeout is concentrated in the wrapper-style async modules (`std.async.task`, `std.async.sync`, `std.async.channel`, and `std.async.prelude`); `std.async.time` and `std.async.select` are already direct-interoperability modules.
 - [x] `StdlibModuleInfo` fallback mapping removed (or marked deprecated).
 
 ### Diagnostics checklist
@@ -841,7 +843,7 @@ Re-baselining note: this closure definition intentionally avoids smuggling unrel
 - [x] Typechecker tests: stdlib signatures resolved from `.incn` source.
 - [x] Codegen snapshot tests: compiled Incan stdlib functions in generated output.
 - [x] Codegen snapshot tests: generic functions emit correct Rust trait bounds (inferred and explicit).
-- [ ] Integration tests: behavioral equivalence with pre-migration stdlib.
+- [x] Integration tests: behavioral equivalence with pre-migration stdlib.
 - [x] Negative tests: calling a bounded generic function with a non-conforming type → Incan-level error.
 - [x] Negative tests: `@rust.extern` with non-trivial body, invalid `rust.module()` path, unused `rust.module()` warning.
 - [x] Transitive inference test: `foo[T]` calling `assert_eq[T]` acquires `PartialEq + Display` bounds from callee.

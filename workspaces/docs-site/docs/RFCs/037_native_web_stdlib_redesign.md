@@ -1,4 +1,4 @@
-# RFC 037: Native Web and HTTP Stdlib Redesign
+# RFC 037: native web and HTTP stdlib redesign
 
 - **Status:** Draft
 - **Created:** 2026-03-07
@@ -9,20 +9,21 @@
     - RFC 031 (Library system)
     - RFC 035 (First-class named function references)
     - RFC 036 (User-defined decorators)
-- **Issue:** —
+- **Issue:** [#171](https://github.com/dannys-code-corner/incan/issues/171)
 - **RFC PR:** —
-- **Target version:** v0.2
+- **Written against:** v0.2
+- **Shipped in:** —
 
 ## Summary
 
-Redesign Incan's API platform so the stdlib can both **provide** APIs cleanly and **consume** APIs cleanly.
+Redesign Incan's API platform so the stdlib can both provide APIs cleanly and consume APIs cleanly.
 
 This RFC defines the intended end-state for two closely related surfaces:
 
 - `std.web` for serving HTTP applications and APIs
 - `std.http` for calling external HTTP and REST APIs
 
-The developer experience should be native to Incan rather than shaped by current Rust interop constraints. The primary server-side experience is FastAPI-like: `app = App()`, `@app.get(...)`, typed parameters, plain return values, framework-owned serialization, and first-class platform features such as auth, middleware, validation, lifecycle, and docs. The platform should also support a Django-style organization layer and a declarative DSL when those provide real ergonomic value.
+The developer experience should be native to Incan rather than shaped by backend interop constraints. The primary server-side experience is FastAPI-like: `app = App()`, `@app.get(...)`, typed parameters, plain return values, framework-owned serialization, and first-class platform features such as auth, middleware, validation, lifecycle, and docs. The platform should also support a Django-style organization layer and a declarative DSL when those provide real ergonomic value.
 
 This RFC is intentionally an umbrella design RFC. It defines the product shape, semantics direction, capability boundaries, and migration goals for the web/http platform. If a sub-area later proves deep enough to require its own precise RFC, that follow-up RFC should refine this design rather than replace it.
 
@@ -30,11 +31,13 @@ This RFC is intentionally an umbrella design RFC. It defines the product shape, 
 
 The current `std.web` proves that Incan can compile web programs, but it does not yet provide a native, coherent API platform experience.
 
-Problems today:
+Current problems:
 
-- Users still encounter backend leakage such as explicit wrapper types and Rust-oriented handoff details.
-- Routing behavior is split across compiler logic, proc macros, and runtime helpers.
-- The current model does not yet present one complete framework story for auth, middleware, validation, docs, and lifecycle.
+- Users still encounter backend leakage such as explicit wrapper types and
+backend-oriented handoff details.
+- Routing behavior is split across compiler logic, macros, and runtime helpers.
+- The platform does not yet present one complete framework story for auth,
+middleware, validation, docs, and lifecycle.
 - There is no equally clean standard-library story for consuming REST APIs from Incan code.
 
 The goal is not just "web works." The goal is that Incan developers can build networked applications and APIs end to end, with one coherent mental model.
@@ -82,7 +85,7 @@ From a user's point of view:
 
 ### Consuming an API with `std.http`
 
-The outgoing side should feel equally native. `std.http` is a general-purpose HTTP client — fluent, composable, suitable for any Incan code that needs to make HTTP calls:
+The outgoing side should feel equally native. `std.http` is a general-purpose HTTP client: fluent, composable, and suitable for any Incan code that needs to make HTTP calls:
 
 ```incan
 from std.http import Client, ExponentialBackoff
@@ -104,7 +107,7 @@ users = client.get("/users").paginate(limit=100).json[List[User]]()
 created = client.post("/users", body=CreateUser(name="Alice")).json[User]()
 ```
 
-Error handling distinguishes transport failures, protocol failures (non-2xx), and decode/validation failures — each is a distinct error type so callers can handle them precisely.
+Error handling distinguishes transport failures, protocol failures (non-2xx), and decode/validation failures. Each is a distinct error type so callers can handle them precisely.
 
 The key point is symmetry: Incan should be good at both sides of API work. A language that can expose an API but cannot cleanly consume one is still missing half the story.
 
@@ -153,7 +156,8 @@ Those may be refined later if needed, but the end-state described here is the ta
 
 1. **FastAPI-first server UX:** the primary serving experience is `App`-owned, decorator-driven, and typed.
 2. **Complete platform scope:** serving, consuming, auth, validation, middleware, lifecycle, and docs are all part of the intended platform, not optional afterthoughts.
-3. **No Rust interop leakage in public APIs:** users should not have to think in Rust terms for ordinary API work.
+3. **No backend leakage in public APIs:** users should not have to think in
+backend-runtime terms for ordinary API work.
 4. **One platform, multiple surfaces:** FastAPI-style APIs, Django-style organization, and DSLs must reduce to one coherent underlying model.
 5. **Library ownership over compiler ownership:** framework behavior belongs in stdlib/libraries; compiler support should remain primitive and general where possible.
 6. **Symmetry matters:** the platform must be good at both exposing and calling APIs.
@@ -209,7 +213,7 @@ The primary user-facing default should be ergonomic API development, not low-lev
 
 ### Client model (`std.http`)
 
-The consuming side is centered on `Client`. `std.http` is intentionally general-purpose — the right primitive for any Incan code that needs to make HTTP calls, not a framework-specific abstraction.
+The consuming side is centered on `Client`. `std.http` is intentionally general-purpose: the right primitive for any Incan code that needs to make HTTP calls, not a framework-specific abstraction.
 
 Expected semantics:
 
@@ -218,12 +222,16 @@ Expected semantics:
 - pagination is a first-class operation on the request chain: `.paginate(limit=n)`
 - retry with configurable backoff is a client-level option, not middleware
 - typed response decoding is first-class; the caller names the expected type
-- error handling distinguishes transport failure, protocol failure, and decode/validation failure — each as a distinct error type
+- error handling distinguishes transport failure, protocol failure, and
+decode/validation failure, each as a distinct error type
 - auth and interceptor concepts compose cleanly with request execution
 
 The goal is not merely "HTTP requests are possible." The goal is that calling a REST API feels like standard language work rather than framework escape hatches.
 
-**Boundary with higher-level libraries:** Step-oriented HTTP abstractions (`HttpGetStep`, `PaginatedHttpGetStep`, etc.) belong in purpose-built libraries, not `std.http`. Those exist for the data pipeline mental model — "I need a step that fetches data from an API" — and should be implemented as thin wrappers over `std.http` primitives in whichever library needs them. `std.http` stays lean and general; pipeline ergonomics live in the library that owns that concern.
+**Boundary with higher-level libraries:** step-oriented HTTP abstractions such
+as `HttpGetStep` and `PaginatedHttpGetStep` belong in purpose-built libraries, not `std.http`. Those exist for the data-pipeline mental model, "I need a step that fetches data from an API," and should be implemented as thin wrappers over
+`std.http` primitives in whichever library needs them. `std.http` stays lean
+and general; pipeline ergonomics live in the library that owns that concern.
 
 ### Shared semantics
 
@@ -425,6 +433,13 @@ This includes:
 - future gRPC integrations built on compatible concepts
 - future Arrow-oriented data and RPC integrations built on compatible concepts
 
+## Layers affected
+
+- **Stdlib / runtime**: must provide the HTTP-serving and HTTP-consuming surfaces that this redesign standardizes, without leaking backend crate APIs as the primary contract.
+- **Language surface**: the web-platform surface must be recognized and validated coherently across serving, routing, request/response types, and client usage.
+- **Execution handoff**: implementations must preserve the language-level web semantics while mapping onto the chosen runtime substrate underneath.
+- **Docs / tooling**: the relationship between platform primitives, decorators, routing, validation, and future transport extensions must be explained clearly.
+
 ## Unresolved questions
 
 1. What should the first-class `std.http` client ergonomics look like?
@@ -433,3 +448,5 @@ This includes:
 4. Which parts of docs/schema generation should be implicit, and which should require explicit metadata?
 5. Which Django-style organizational ideas belong in the stdlib, and which belong in higher-level libraries?
 6. What is the right boundary between the HTTP platform and future gRPC or Arrow-oriented follow-up RFCs?
+
+<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

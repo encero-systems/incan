@@ -1,0 +1,12 @@
+@derive(Clone)
+model Node:
+  id: int
+
+def clone_nodes(nodes: List[Node]) -> List[Node]:
+  copy = nodes.clone()
+  return copy
+
+def main() -> None:
+  nodes = [Node(id=1), Node(id=2)]
+  copy = clone_nodes(nodes)
+  print(len(copy))

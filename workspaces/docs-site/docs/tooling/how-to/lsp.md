@@ -13,38 +13,60 @@ The Incan Language Server provides IDE integration for real-time feedback while 
 
 ## Installation
 
-### 1. Build the LSP Server
+### Recommended: build from a clone (CLI + LSP stay in sync)
+
+From the Incan repository, a normal debug build updates both the compiler and the language server and, on local machines (not CI), symlinks them into `~/.cargo/bin` so your shell and editor see the same binaries:
+
+```bash
+cd /path/to/incan-programming-language
+make build
+```
+
+This runs `cargo build --features lsp` and then links `~/.cargo/bin/incan` → `target/debug/incan` and `~/.cargo/bin/incan-lsp` → `target/debug/incan-lsp` when that binary exists. Set `INCAN_SKIP_CARGO_BIN_LINK=1` to skip linking, or rely on CI defaults (linking is off when `CI` is set).
+
+Use this path when you are developing the compiler itself or testing behavior from a checkout. It avoids the common split-brain state where your terminal runs one `incan` binary while VS Code or Cursor keeps launching an older `incan-lsp`.
+
+Verify the shell side first:
+
+```bash
+command -v incan
+command -v incan-lsp
+ls -l ~/.cargo/bin/incan ~/.cargo/bin/incan-lsp
+incan --version
+```
+
+The `command -v` output should resolve to `~/.cargo/bin/incan` and `~/.cargo/bin/incan-lsp` unless you deliberately configured absolute paths. The `ls -l` targets should point into the checkout you just built, usually `target/debug/incan` and `target/debug/incan-lsp`.
+
+Then verify the editor side:
+
+1. Open the Incan checkout or an Incan project in VS Code/Cursor.
+2. Run **Incan: Doctor** from the command palette.
+3. Open **View → Output** and select **Incan**.
+4. Confirm the report shows the intended `incan` and `incan-lsp` paths, plus the source of each path (`setting`, `workspace`, or `path`).
+5. Confirm the language server starts after opening a `.incn` file.
+6. If diagnostics still look stale, run **Developer: Reload Window** from the command palette, or disable and re-enable the Incan extension so the editor starts a fresh `incan-lsp` process.
+
+From a terminal, `incan tools doctor` prints the same local toolchain checks. Use `incan tools doctor --format json` when you need machine-readable output for an issue report or editor integration.
+
+After upgrading the compiler or changing either binary path, reload the editor window or restart the Incan language server. Existing editor processes keep the executable they already launched; rebuilding on disk does not automatically replace a running language server.
+
+### Alternative: release binary on `PATH`
 
 ```bash
 cd /path/to/incan-programming-language
 make lsp
 ```
 
-### 2. Add to PATH
-
-Add the binary to your PATH:
-
-```bash
-# Add to .bashrc, .zshrc, or your shell profile
-export PATH="$PATH:/path/to/incan-programming-language/target/release"
-```
-
-If you prefer installing the binary into a user-writable location, you can run:
+Then add `target/release` to your `PATH`, or install into `~/.cargo/bin`:
 
 ```bash
 cd /path/to/incan-programming-language
-cargo install --path . --bin incan-lsp --force
+cargo install --path . --features lsp --bin incan-lsp --force
 ```
 
-This installs to `~/.cargo/bin` by default, which is typically already on PATH.
+You can also use `make install-lsp` as a Makefile shortcut for the `cargo install` path.
 
-If you're in the Incan repo, you can also use the Makefile shortcut:
-
-```bash
-make install-lsp
-```
-
-### 3. Install VS Code Extension
+### Install VS Code Extension
 
 See [Editor Setup](editor_setup.md) for VS Code/Cursor extension installation.
 
@@ -71,6 +93,29 @@ Hover over any symbol to see its type:
 ```incan
 def process(data: List[str]) -> Result[int, Error]
 ```
+
+When the file type-checks successfully, hover also previews checked public API metadata for public declarations, public partial callable presets, public model/class fields, checked public methods, and public enum variants. These previews use the same checked metadata extractor as `incan tools metadata api`, so they can include raw docstrings, checked signatures, partial target/preset provenance, field aliases/descriptions, enum backing values, derives, trait adoption, and safe const values. For value enums, enum and variant hover details show the backing type and variant raw value where available.
+
+If the file has parse or type errors, diagnostics remain the source of truth and the LSP falls back to syntax-oriented hover details. The current LSP does not expose a workspace command for fetching the full checked API metadata JSON package from the editor; use `incan tools metadata api` for that.
+
+### Contract model emit command
+
+Editor integrations can call `workspace/executeCommand` command `incan.metadata.model.emit` to emit a contract-backed model from the same checked metadata used by the CLI:
+
+```json
+{
+  "command": "incan.metadata.model.emit",
+  "arguments": [
+    {
+      "uri": "file:///path/to/project/src/main.incn",
+      "model": "OrderSummary",
+      "format": "incan"
+    }
+  ]
+}
+```
+
+The command accepts a source URI inside a project, a project path, a bundle JSON file, or a `.incnlib` artifact path. `model` may be the logical type name or stable model id. `format` is `incan` or `json`.
 
 ### Go-to-Definition
 
@@ -110,10 +155,30 @@ Suggestions include:
 }
 ```
 
-| Setting             | Default | Description                                   |
-| ------------------- | ------- | --------------------------------------------- |
-| `incan.lsp.enabled` | `true`  | Enable/disable the language server            |
-| `incan.lsp.path`    | `""`    | Custom path to incan-lsp (uses PATH if empty) |
+| Setting             | Default | Description                                                                                      |
+| ------------------- | ------- | ------------------------------------------------------------------------------------------------ |
+| `incan.lsp.enabled` | `true`  | Enable/disable the language server                                                               |
+| `incan.lsp.path`    | `""`    | Literal path to `incan-lsp`; when empty, the extension uses workspace binary discovery or `PATH` |
+
+`incan.lsp.path` is not a shell command. It is passed directly to the editor's language-client process launcher, so it does not expand `$HOME`, `~`, command substitutions, or other shell syntax. Use a concrete executable path:
+
+```json
+{
+  "incan.lsp.path": "/path/to/incan/target/debug/incan-lsp"
+}
+```
+
+Avoid shell-style values:
+
+```json
+{
+  "incan.lsp.path": "$HOME/dev/incan/target/debug/incan-lsp"
+}
+```
+
+For most local development, leave `incan.lsp.path` empty and let `make build` keep `~/.cargo/bin/incan-lsp` pointed at the checkout. Set an explicit absolute path only when you intentionally want that workspace to use a specific binary.
+
+The extension validates configured paths before starting the language server. If `incan.lsp.path` or `incan.compiler.path` contains shell syntax, points at a missing file, or points at a non-executable file, the extension writes the problem to the **Incan** output channel and shows a warning.
 
 ## Troubleshooting
 
@@ -123,14 +188,21 @@ Suggestions include:
 
       ```bash
       which incan-lsp
-      # or
-      incan-lsp --version
+      ls -l "$(which incan-lsp)"
       ```
 
-2. **Check VS Code output:**
-      - View → Output → Select "Incan Language Server"
+2. **Check configured path:**
+      - If `incan.lsp.path` is set, make sure it is a literal executable path, not `$HOME/...`, `~/...`, or another shell expression.
+      - If it is empty, the extension first tries a workspace-built `target/debug/incan-lsp` or `target/release/incan-lsp`, then falls back to `incan-lsp` from `PATH`.
 
-3. **Verify extension is active:**
+3. **Run the doctor command:**
+      - Command palette → "Incan: Doctor"
+      - Or from a terminal: `incan tools doctor`
+
+4. **Check VS Code output:**
+      - View → Output → Select "Incan"
+
+5. **Verify extension is active:**
       - Extensions panel → Search "Incan" → Check it's enabled
 
 ### No Diagnostics
@@ -144,6 +216,7 @@ Suggestions include:
 - LSP must successfully parse the file first
 - Check for diagnostics/errors in the file
 - Ensure cursor is on a symbol (function name, type name, etc.)
+- Checked API metadata hover requires a successful typecheck and only applies to public API declarations or selected public model/class members
 
 ## See also
 

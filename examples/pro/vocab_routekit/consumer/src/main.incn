@@ -4,5 +4,6 @@ def main() -> None:
     let name = routekit_name()
 
     route "/health":
+        get + post -> handler.index
         middleware:
             pass

@@ -112,28 +112,53 @@ incan lock
 `incan.lock` embeds the resolved `Cargo.lock` and a fingerprint of your dependency inputs. **Commit it to version control**
 for reproducible builds.
 
-### Automatic lock generation
+### Default build/test behavior
 
 If `incan.lock` doesn't exist and you run `incan build` or `incan test` without strict flags, the lock file is created
 automatically on first build.
 
+If `incan.lock` already exists but is stale, default `incan build` and `incan test` warn and reuse the existing embedded `Cargo.lock` payload without rewriting `incan.lock`. Run `incan lock` when you intentionally want to refresh the committed lock file.
+
+For `incan test`, a generated or changed lock can make the generated Rust harness stale. The runner preheats stale harnesses before executing tests so later test commands can reuse the compiled Cargo state. When lock generation sees Rust dependency inputs or stdlib feature requirements, it also preheats those dependencies with `cargo test --no-run` into the generated test target domain before writing `incan.lock`; unchanged relocks reuse a dependency preheat fingerprint.
+
 ### Strict mode for CI
 
-Use `--locked` or `--frozen` to enforce that the lock file exists and is up to date:
+Use `--locked` or `--frozen` to enforce that the lock file exists and is up to date. Use `--offline` when Cargo must fail instead of touching the network:
 
 ```bash
 # Requires incan.lock to exist and match current deps
 incan build src/main.incn --locked
 
-# Same as --locked, plus Cargo runs in offline/frozen mode
+# Disallow network access during Cargo subprocesses
+incan build src/main.incn --offline
+
+# Same as --offline plus --locked
 incan build src/main.incn --frozen
 ```
+
+Before relying on `--frozen` in a restricted or offline environment, run:
+
+```bash
+incan tools doctor
+```
+
+`incan tools doctor` is the supported preflight path for local offline-readiness diagnostics. Its report is advisory, not a guarantee: `--frozen` still asks Cargo to use offline/locked policy, so any crate source that is missing from Cargo's local inputs can still make the build fail.
 
 If the lock file is missing or stale, the command fails with a clear message:
 
 ```text
 error: incan.lock is out of date; run `incan lock`
 ```
+
+CI can set the same policy with environment variables:
+
+```bash
+INCAN_LOCKED=1 incan build src/main.incn
+INCAN_FROZEN=1 incan test tests/
+```
+
+`INCAN_FROZEN=1` implies both offline and locked policy.
+Use `--no-offline`, `--no-locked`, or `--no-frozen` to disable matching environment defaults for a single command.
 
 ## Resolution rules
 
@@ -168,6 +193,15 @@ incan build src/main.incn --cargo-all-features
 ```
 
 These flags affect dependency resolution and are included in the lock file fingerprint.
+
+For advanced Cargo-only flags, use `--cargo-args` or put Cargo arguments after `--`:
+
+```bash
+incan build src/main.incn --cargo-args "--timings"
+incan test tests/ -- --timings
+```
+
+`INCAN_CARGO_ARGS` is also supported for simple whitespace-separated CI defaults. Quoting is not parsed inside the environment variable; use the CLI form for arguments containing spaces.
 
 ## Common errors and fixes
 

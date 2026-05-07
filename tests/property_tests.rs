@@ -108,6 +108,7 @@ mod proptest_strategies {
                     | "and"
                     | "or"
                     | "for"
+                    | "loop"
                     | "while"
                     | "match"
                     | "case"

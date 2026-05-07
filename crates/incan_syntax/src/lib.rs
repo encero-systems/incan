@@ -10,10 +10,13 @@
 //! ## Examples
 //! ```rust,no_run
 //! use incan_syntax::{lexer, parser};
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!
-//! let tokens = lexer::lex("pass\n").unwrap();
-//! let program = parser::parse(&tokens).unwrap();
+//! let tokens = lexer::lex("pass\n")?;
+//! let program = parser::parse(&tokens)?;
 //! assert_eq!(program.declarations.len(), 1);
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## See also

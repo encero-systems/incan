@@ -1,0 +1,8 @@
+pub def columns(input_columns: list[str]) -> list[str]:
+    mut columns: list[str] = []
+    columns.append(input_columns[0])
+    columns.append("count")
+    return columns
+
+def main() -> None:
+    columns(["orders_total"])

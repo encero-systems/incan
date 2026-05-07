@@ -46,6 +46,19 @@ pub enum OperatorId {
     Slash,
     SlashSlash,
     Percent,
+    MatMul,
+
+    // Pipe/application
+    PipeForward,
+    PipeBackward,
+
+    // Bitwise
+    Amp,
+    Pipe,
+    Caret,
+    Shl,
+    Shr,
+    Tilde,
 
     // Comparison
     EqEq,
@@ -63,6 +76,12 @@ pub enum OperatorId {
     SlashEq,
     SlashSlashEq,
     PercentEq,
+    MatMulEq,
+    AmpEq,
+    PipeEq,
+    CaretEq,
+    ShlEq,
+    ShrEq,
 
     // Ranges
     DotDot,
@@ -168,6 +187,98 @@ pub const OPERATORS: &[OperatorInfo] = &[
         false,
         RFC::_000,
         Since(0, 1),
+    ),
+    op(
+        OperatorId::MatMul,
+        &["@"],
+        60,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    // Pipe/application
+    op(
+        OperatorId::PipeForward,
+        &["|>"],
+        40,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    op(
+        OperatorId::PipeBackward,
+        &["<|"],
+        40,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    // Bitwise
+    op(
+        OperatorId::Amp,
+        &["&"],
+        45,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    op(
+        OperatorId::Pipe,
+        &["|"],
+        43,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    op(
+        OperatorId::Caret,
+        &["^"],
+        44,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    op(
+        OperatorId::Shl,
+        &["<<"],
+        48,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    op(
+        OperatorId::Shr,
+        &[">>"],
+        48,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    op(
+        OperatorId::Tilde,
+        &["~"],
+        65,
+        Associativity::Right,
+        Fixity::Prefix,
+        false,
+        RFC::_028,
+        Since(0, 3),
     ),
     // Comparison
     op(
@@ -301,6 +412,66 @@ pub const OPERATORS: &[OperatorInfo] = &[
         RFC::_000,
         Since(0, 1),
     ),
+    op(
+        OperatorId::MatMulEq,
+        &["@="],
+        10,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    op(
+        OperatorId::AmpEq,
+        &["&="],
+        10,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    op(
+        OperatorId::PipeEq,
+        &["|="],
+        10,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    op(
+        OperatorId::CaretEq,
+        &["^="],
+        10,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    op(
+        OperatorId::ShlEq,
+        &["<<="],
+        10,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
+    op(
+        OperatorId::ShrEq,
+        &[">>="],
+        10,
+        Associativity::Left,
+        Fixity::Infix,
+        false,
+        RFC::_028,
+        Since(0, 3),
+    ),
     // Ranges
     op(
         OperatorId::DotDot,
@@ -381,15 +552,54 @@ pub const OPERATORS: &[OperatorInfo] = &[
 /// - `id`: Operator identifier.
 ///
 /// ## Returns
-/// - The associated [`OperatorInfo`] from [`OPERATORS`].
+/// - The associated [`OperatorInfo`] copied from [`OPERATORS`].
 ///
-/// ## Panics
-/// - If the registry is missing an entry for `id` (this indicates a programming error).
-pub fn info_for(id: OperatorId) -> &'static OperatorInfo {
-    OPERATORS
-        .iter()
-        .find(|o| o.id == id)
-        .expect("INVARIANT: operator info missing")
+/// The lookup is exhaustive over the closed enum, so adding an operator requires updating this match at compile time.
+pub fn info_for(id: OperatorId) -> OperatorInfo {
+    match id {
+        OperatorId::Plus => OPERATORS[0],
+        OperatorId::Minus => OPERATORS[1],
+        OperatorId::Star => OPERATORS[2],
+        OperatorId::StarStar => OPERATORS[3],
+        OperatorId::Slash => OPERATORS[4],
+        OperatorId::SlashSlash => OPERATORS[5],
+        OperatorId::Percent => OPERATORS[6],
+        OperatorId::MatMul => OPERATORS[7],
+        OperatorId::PipeForward => OPERATORS[8],
+        OperatorId::PipeBackward => OPERATORS[9],
+        OperatorId::Amp => OPERATORS[10],
+        OperatorId::Pipe => OPERATORS[11],
+        OperatorId::Caret => OPERATORS[12],
+        OperatorId::Shl => OPERATORS[13],
+        OperatorId::Shr => OPERATORS[14],
+        OperatorId::Tilde => OPERATORS[15],
+        OperatorId::EqEq => OPERATORS[16],
+        OperatorId::NotEq => OPERATORS[17],
+        OperatorId::Lt => OPERATORS[18],
+        OperatorId::LtEq => OPERATORS[19],
+        OperatorId::Gt => OPERATORS[20],
+        OperatorId::GtEq => OPERATORS[21],
+        OperatorId::Eq => OPERATORS[22],
+        OperatorId::PlusEq => OPERATORS[23],
+        OperatorId::MinusEq => OPERATORS[24],
+        OperatorId::StarEq => OPERATORS[25],
+        OperatorId::SlashEq => OPERATORS[26],
+        OperatorId::SlashSlashEq => OPERATORS[27],
+        OperatorId::PercentEq => OPERATORS[28],
+        OperatorId::MatMulEq => OPERATORS[29],
+        OperatorId::AmpEq => OPERATORS[30],
+        OperatorId::PipeEq => OPERATORS[31],
+        OperatorId::CaretEq => OPERATORS[32],
+        OperatorId::ShlEq => OPERATORS[33],
+        OperatorId::ShrEq => OPERATORS[34],
+        OperatorId::DotDot => OPERATORS[35],
+        OperatorId::DotDotEq => OPERATORS[36],
+        OperatorId::And => OPERATORS[37],
+        OperatorId::Or => OPERATORS[38],
+        OperatorId::Not => OPERATORS[39],
+        OperatorId::In => OPERATORS[40],
+        OperatorId::Is => OPERATORS[41],
+    }
 }
 
 /// Resolve an operator spelling to its identifier.

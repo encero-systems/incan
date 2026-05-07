@@ -1,0 +1,61 @@
+"""RFC 042: trait-typed values assignable to supertrait (return positions)."""
+
+trait Root:
+    def root_id(self) -> int: ...
+
+
+trait Mid with Root:
+    def mid_id(self) -> int: ...
+
+
+def upcast_mid_to_root(v: Mid) -> Root:
+    return v
+
+
+trait DataSet[T]:
+    def tag(self) -> T: ...
+
+
+trait BoundedDataSet[T] with DataSet[T]:
+    def bound(self) -> T: ...
+
+
+def upcast_bounded_to_dataset[T](v: BoundedDataSet[T]) -> DataSet[T]:
+    return v
+
+
+model Thing with Mid:
+    x: int
+
+    def root_id(self) -> int:
+        return self.x
+
+    def mid_id(self) -> int:
+        return self.x + 1
+
+
+model Row:
+    id: int
+
+
+model Wrapper[T] with BoundedDataSet:
+    value: T
+
+    def tag(self) -> T:
+        return self.value
+
+    def bound(self) -> T:
+        return self.value
+
+
+def upcast_bounded_row(v: BoundedDataSet[Row]) -> DataSet[Row]:
+    return v
+
+
+def main() -> None:
+    t = Thing(x=1)
+    r = upcast_mid_to_root(t)
+    println(r.root_id())
+    w = Wrapper(value=Row(id=1))
+    d = upcast_bounded_row(w)
+    println(d.tag().id)

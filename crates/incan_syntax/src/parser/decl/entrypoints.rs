@@ -4,6 +4,7 @@ impl<'a> Parser<'a> {
     // Declarations
     // ========================================================================
 
+    /// Parse one top-level declaration, including declaration-shaped aliases.
     fn declaration(&mut self) -> Result<Spanned<Declaration>, CompileError> {
         let start = self.current_span().start;
 
@@ -27,11 +28,8 @@ impl<'a> Parser<'a> {
         }
 
         let decl = if self.check_keyword(KeywordId::From) {
-            if visibility == Visibility::Public
-                && self.module_path.is_some()
-                && !self.is_library_entrypoint_module()
-            {
-                return Err(errors::pub_reexport_only_allowed_in_library_entrypoint(
+            if visibility == Visibility::Public && self.module_path.is_some() && !self.is_src_module() {
+                return Err(errors::pub_reexport_only_allowed_in_src_modules(
                     self.current_span(),
                 ));
             }
@@ -43,6 +41,8 @@ impl<'a> Parser<'a> {
             Declaration::Import(self.import_decl(Visibility::Private)?)
         } else if self.check_keyword(KeywordId::Const) {
             Declaration::Const(self.const_decl_with_visibility(visibility)?)
+        } else if self.check_keyword(KeywordId::Static) {
+            Declaration::Static(self.static_decl_with_visibility(visibility)?)
         } else if self.check_keyword(KeywordId::Model) {
             Declaration::Model(self.model_decl(decorators, visibility)?)
         } else if self.check_keyword(KeywordId::Class) {
@@ -58,6 +58,50 @@ impl<'a> Parser<'a> {
             Declaration::Enum(self.enum_decl(decorators, visibility)?)
         } else if self.starts_surface_function_decl() {
             Declaration::Function(self.function_decl(decorators, visibility)?)
+        } else if self.starts_implicit_derives_decl() {
+            if visibility == Visibility::Public {
+                return Err(CompileError::syntax(
+                    "`__derives__` cannot be public".to_string(),
+                    self.current_span(),
+                ));
+            }
+            if !decorators.is_empty() {
+                return Err(CompileError::syntax(
+                    "`__derives__` cannot have decorators".to_string(),
+                    decorators[0].span,
+                ));
+            }
+            Declaration::Const(self.implicit_derives_decl()?)
+        } else if self.starts_partial_decl() {
+            if !decorators.is_empty() {
+                return Err(CompileError::syntax(
+                    "Partial declarations cannot have decorators".to_string(),
+                    decorators[0].span,
+                ));
+            }
+            Declaration::Partial(self.partial_decl(visibility)?)
+        } else if self.starts_alias_decl() {
+            if !decorators.is_empty() {
+                return Err(CompileError::syntax(
+                    "Alias declarations cannot have decorators".to_string(),
+                    decorators[0].span,
+                ));
+            }
+            Declaration::Alias(self.alias_decl(visibility)?)
+        } else if self.is_module_tests_header() {
+            if visibility == Visibility::Public {
+                return Err(CompileError::syntax(
+                    "`module tests:` cannot be public".to_string(),
+                    self.current_span(),
+                ));
+            }
+            if !decorators.is_empty() {
+                return Err(CompileError::syntax(
+                    "`module tests:` cannot have decorators".to_string(),
+                    decorators[0].span,
+                ));
+            }
+            Declaration::TestModule(self.test_module_decl()?)
         } else {
             if let Some(err) = self.inactive_soft_keyword_error() {
                 return Err(err);
@@ -72,6 +116,25 @@ impl<'a> Parser<'a> {
         Ok(Spanned::new(decl, Span::new(start, end)))
     }
 
+    /// Return whether the cursor is at an RFC 024 module-level `__derives__ = ...` declaration.
+    fn starts_implicit_derives_decl(&self) -> bool {
+        matches!(&self.peek().kind, TokenKind::Ident(name) if name == "__derives__")
+            && self.peek_next().kind.is_operator(OperatorId::Eq)
+    }
+
+    /// Parse an RFC 024 module-level `__derives__` declaration as compiler-recognized const metadata.
+    fn implicit_derives_decl(&mut self) -> Result<ConstDecl, CompileError> {
+        let name = self.identifier()?;
+        self.expect_op(OperatorId::Eq, "Expected '=' after __derives__")?;
+        let value = self.expression()?;
+        Ok(ConstDecl {
+            visibility: Visibility::Private,
+            name,
+            ty: None,
+            value,
+        })
+    }
+
     fn const_decl_with_visibility(&mut self, visibility: Visibility) -> Result<ConstDecl, CompileError> {
         self.expect_keyword(KeywordId::Const, "Expected 'const'")?;
         let name = self.identifier()?;
@@ -83,6 +146,150 @@ impl<'a> Parser<'a> {
         self.expect_op(OperatorId::Eq, "Expected '=' after const name")?;
         let value = self.expression()?;
         Ok(ConstDecl {
+            visibility,
+            name,
+            ty,
+            value,
+        })
+    }
+
+    /// Return whether the current token pair starts a module-level alias declaration.
+    fn starts_alias_decl(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident(_)) && self.peek_next().kind.is_operator(OperatorId::Eq)
+    }
+
+    /// Return whether the current tokens start a module-level partial callable preset declaration.
+    fn starts_partial_decl(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident(_))
+            && self.peek_next().kind.is_operator(OperatorId::Eq)
+            && matches!(
+                self.tokens.get(self.pos + 2).map(|token| &token.kind),
+                Some(TokenKind::Ident(name)) if name == "partial"
+            )
+    }
+
+    /// Parse a module-level alias declaration.
+    fn alias_decl(&mut self, visibility: Visibility) -> Result<AliasDecl, CompileError> {
+        let name = self.identifier()?;
+        self.expect_op(OperatorId::Eq, "Expected '=' in alias declaration")?;
+        let explicit_marker = self.match_ident_text("alias");
+        let target = self.import_path()?;
+        if target.segments.is_empty() || target.parent_levels > 0 || target.is_absolute {
+            return Err(errors::expected_token_message(
+                "Expected alias target to be a symbol path",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        Ok(AliasDecl {
+            visibility,
+            name,
+            target,
+            explicit_marker,
+        })
+    }
+
+    /// Parse a module-level partial callable preset declaration.
+    fn partial_decl(&mut self, visibility: Visibility) -> Result<PartialDecl, CompileError> {
+        let name = self.identifier()?;
+        self.expect_op(OperatorId::Eq, "Expected '=' in partial declaration")?;
+        if !self.match_ident_text("partial") {
+            return Err(errors::expected_token_message(
+                "Expected 'partial' in partial declaration",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        let target = self.import_path()?;
+        if target.segments.is_empty() || target.parent_levels > 0 || target.is_absolute {
+            return Err(errors::expected_token_message(
+                "Expected partial target to be a qualified name",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        self.expect_punct(PunctuationId::LParen, "Expected '(' after partial target")?;
+        let args = self.partial_args()?;
+        self.expect_punct(PunctuationId::RParen, "Expected ')' after partial preset arguments")?;
+        Ok(PartialDecl {
+            visibility,
+            name,
+            target,
+            args,
+        })
+    }
+
+    /// Return `true` when the current declaration starts the reserved RFC 018 inline test module.
+    fn is_module_tests_header(&self) -> bool {
+        matches!(&self.peek().kind, TokenKind::Ident(name) if name == "module")
+            && matches!(&self.peek_next().kind, TokenKind::Ident(name) if name == "tests")
+            && matches!(
+                self.tokens.get(self.pos + 2).map(|token| &token.kind),
+                Some(TokenKind::Punctuation(PunctuationId::Colon))
+            )
+    }
+
+    /// Parse `module tests:` as a parser-owned inline test-only scope.
+    ///
+    /// The parser keeps declarations inside the block structurally scoped and restores soft-keyword state afterward so
+    /// imports that appear only in the inline test module do not affect production declarations that follow it.
+    fn test_module_decl(&mut self) -> Result<TestModuleDecl, CompileError> {
+        self.expect(&TokenKind::Ident(String::new()), "Expected 'module'")?;
+        let name = self.identifier()?;
+        if name != "tests" {
+            return Err(CompileError::syntax(
+                "Only `module tests:` is supported".to_string(),
+                self.current_span(),
+            ));
+        }
+        self.expect_punct(PunctuationId::Colon, "Expected ':' after `module tests`")?;
+        self.expect(&TokenKind::Newline, "Expected newline after `module tests:`")?;
+        self.expect_suite_indent("Expected indented block after `module tests:`")?;
+
+        let outer_soft_keywords = self.active_soft_keywords.clone();
+        let outer_imported_specs = self.active_imported_keyword_specs.clone();
+        let body_result = self.test_module_body();
+        self.active_soft_keywords = outer_soft_keywords;
+        self.active_imported_keyword_specs = outer_imported_specs;
+
+        let body = body_result?;
+        self.expect(&TokenKind::Dedent, "Expected dedent after `module tests:` body")?;
+        Ok(TestModuleDecl { name, body })
+    }
+
+    /// Parse declarations within a `module tests:` block.
+    ///
+    /// `pass` and `...` are accepted as empty placeholders so authors can stub an inline test module before adding test
+    /// declarations.
+    fn test_module_body(&mut self) -> Result<Vec<Spanned<Declaration>>, CompileError> {
+        let mut body = Vec::new();
+        self.skip_newlines();
+        while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
+            if self.match_keyword(KeywordId::Pass) || self.match_punct(PunctuationId::Ellipsis) {
+                self.skip_newlines();
+                continue;
+            }
+
+            let decl = self.declaration()?;
+            self.activate_soft_keywords_for_declaration(&decl.node);
+            body.push(decl);
+            self.skip_newlines();
+        }
+        Ok(body)
+    }
+
+    fn static_decl_with_visibility(&mut self, visibility: Visibility) -> Result<StaticDecl, CompileError> {
+        self.expect_keyword(KeywordId::Static, "Expected 'static'")?;
+        let name = self.identifier()?;
+        if !self.match_punct(PunctuationId::Colon) {
+            return Err(errors::static_missing_type_annotation(&name, self.current_span()));
+        }
+        let ty = self.type_expr()?;
+        if !self.match_op(OperatorId::Eq) {
+            return Err(errors::static_missing_initializer(&name, self.current_span()));
+        }
+        let value = self.expression()?;
+        Ok(StaticDecl {
             visibility,
             name,
             ty,

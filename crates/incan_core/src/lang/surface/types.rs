@@ -18,6 +18,7 @@ pub enum SurfaceTypeId {
 
     // Task handles
     JoinHandle,
+    TaskJoinError,
 
     // Channels
     Sender,
@@ -41,6 +42,9 @@ pub enum SurfaceTypeId {
 
     // Reflection
     FieldInfo,
+
+    // Validation
+    ValidationError,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -100,6 +104,15 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         &[],
         SurfaceTypeKind::Generic,
         "Handle to a spawned task.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info(
+        SurfaceTypeId::TaskJoinError,
+        "TaskJoinError",
+        &[],
+        SurfaceTypeKind::Named,
+        "Error returned when a spawned task fails to join.",
         RFC::_000,
         Since(0, 1),
     ),
@@ -241,6 +254,15 @@ pub const SURFACE_TYPES: &[SurfaceTypeInfo] = &[
         RFC::_021,
         Since(0, 1),
     ),
+    info(
+        SurfaceTypeId::ValidationError,
+        "ValidationError",
+        &[],
+        SurfaceTypeKind::Named,
+        "Structured validation error used by validated newtypes.",
+        RFC::_017,
+        Since(0, 3),
+    ),
 ];
 
 /// Canonical Incan name of the task join error type (`"TaskJoinError"`).
@@ -268,7 +290,7 @@ pub fn stdlib_module_path(id: SurfaceTypeId) -> Option<&'static str> {
         }
 
         // Task handles
-        SurfaceTypeId::JoinHandle => Some("std.async.task"),
+        SurfaceTypeId::JoinHandle | SurfaceTypeId::TaskJoinError => Some("std.async.task"),
 
         // Channels
         SurfaceTypeId::Sender
@@ -289,8 +311,8 @@ pub fn stdlib_module_path(id: SurfaceTypeId) -> Option<&'static str> {
         // Reflection
         SurfaceTypeId::FieldInfo => Some("std.reflection"),
 
-        // Interop types are globally available.
-        SurfaceTypeId::Vec | SurfaceTypeId::HashMap => None,
+        // Interop and validation types are globally available.
+        SurfaceTypeId::ValidationError | SurfaceTypeId::Vec | SurfaceTypeId::HashMap => None,
     }
 }
 
@@ -316,11 +338,35 @@ pub fn as_str(id: SurfaceTypeId) -> &'static str {
     info_for(id).item.canonical
 }
 
-pub fn info_for(id: SurfaceTypeId) -> &'static SurfaceTypeInfo {
-    SURFACE_TYPES
-        .iter()
-        .find(|t| t.item.id == id)
-        .expect("INVARIANT: surface type info missing")
+/// Return the metadata entry for a surface type.
+///
+/// The lookup is exhaustive over the closed enum, so adding a surface type requires updating this match at compile
+/// time.
+pub fn info_for(id: SurfaceTypeId) -> SurfaceTypeInfo {
+    match id {
+        SurfaceTypeId::Mutex => SURFACE_TYPES[0],
+        SurfaceTypeId::RwLock => SURFACE_TYPES[1],
+        SurfaceTypeId::Semaphore => SURFACE_TYPES[2],
+        SurfaceTypeId::Barrier => SURFACE_TYPES[3],
+        SurfaceTypeId::JoinHandle => SURFACE_TYPES[4],
+        SurfaceTypeId::TaskJoinError => SURFACE_TYPES[5],
+        SurfaceTypeId::Sender => SURFACE_TYPES[6],
+        SurfaceTypeId::Receiver => SURFACE_TYPES[7],
+        SurfaceTypeId::OneshotSender => SURFACE_TYPES[8],
+        SurfaceTypeId::OneshotReceiver => SURFACE_TYPES[9],
+        SurfaceTypeId::Vec => SURFACE_TYPES[10],
+        SurfaceTypeId::HashMap => SURFACE_TYPES[11],
+        SurfaceTypeId::App => SURFACE_TYPES[12],
+        SurfaceTypeId::Response => SURFACE_TYPES[13],
+        SurfaceTypeId::Html => SURFACE_TYPES[14],
+        SurfaceTypeId::Json => SURFACE_TYPES[15],
+        SurfaceTypeId::Query => SURFACE_TYPES[16],
+        SurfaceTypeId::Path => SURFACE_TYPES[17],
+        SurfaceTypeId::Body => SURFACE_TYPES[18],
+        SurfaceTypeId::Request => SURFACE_TYPES[19],
+        SurfaceTypeId::FieldInfo => SURFACE_TYPES[20],
+        SurfaceTypeId::ValidationError => SURFACE_TYPES[21],
+    }
 }
 
 const fn info(

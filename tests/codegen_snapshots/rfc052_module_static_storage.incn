@@ -1,0 +1,12 @@
+static counter: int = 0
+static items: list[int] = []
+
+def main() -> None:
+  counter = counter + 1
+  counter += 2
+  items.append(counter)
+  let live = items
+  live.append(4)
+  println(counter)
+  println(len(items))
+  println(len(live))

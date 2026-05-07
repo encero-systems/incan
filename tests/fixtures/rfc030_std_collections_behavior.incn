@@ -1,0 +1,91 @@
+"""RFC 030: Runtime behavior checks for pure Incan std.collections."""
+
+from std.collections import ChainMap, Counter, DefaultDict, Deque, OrderedDict, OrderedSet, PriorityOrder, PriorityQueue, SortedDict, SortedSet
+
+
+model RuntimeDefaults:
+    host: int
+    port: int
+
+
+def zero() -> int:
+    return 0
+
+
+def main() -> None:
+    mut deque = Deque[int]()
+    deque.append(2)
+    deque.appendleft(1)
+    deque.push_back(3)
+    assert deque.to_list() == [1, 2, 3]
+    assert deque.popleft() == 1
+    assert deque.pop_back() == 3
+    assert len(deque) == 1
+
+    mut counter = Counter[str]()
+    counter.update(["red", "blue", "red"])
+    assert counter.get("red") == 2
+    counter.decrement("red", 5)
+    assert counter.get("red") == 0
+    assert "red" not in counter
+    assert counter.total() == 1
+
+    mut defaults: DefaultDict[str, int] = DefaultDict.with_default(7)
+    assert defaults.__getitem__("missing") == 7
+    defaults.set("missing", 9)
+    assert defaults.get("missing") == Some(9)
+
+    mut factories: DefaultDict[str, int] = DefaultDict.with_factory(zero)
+    assert factories.__getitem__("count") == 0
+
+    mut ordered: OrderedDict[str, int] = OrderedDict()
+    ordered.set("b", 2)
+    ordered.set("a", 1)
+    ordered.set("b", 3)
+    assert ordered.keys() == ["b", "a"]
+    assert ordered.items() == [("b", 3), ("a", 1)]
+
+    mut ordered_set = OrderedSet[str]()
+    ordered_set.add("b")
+    ordered_set.add("a")
+    ordered_set.add("b")
+    assert ordered_set.to_list() == ["b", "a"]
+
+    mut sorted: SortedDict[str, int] = SortedDict()
+    sorted.set("b", 2)
+    sorted.set("a", 1)
+    assert sorted.keys() == ["a", "b"]
+
+    mut sorted_set = SortedSet[int]()
+    sorted_set.add(3)
+    sorted_set.add(1)
+    sorted_set.add(2)
+    sorted_set.add(1)
+    assert sorted_set.to_list() == [1, 2, 3]
+
+    first: OrderedDict[str, int] = OrderedDict.from_items([("host", 1)])
+    second: OrderedDict[str, int] = OrderedDict.from_items([("host", 2), ("port", 3)])
+    chain: ChainMap[str, int] = ChainMap.from_layers([first, second])
+    assert chain.__getitem__("host") == 1
+    assert chain.__getitem__("port") == 3
+    assert chain.keys() == ["host", "port"]
+
+    runtime_defaults = RuntimeDefaults(host=2, port=3)
+    mut overlay_chain: ChainMap[str, int] = ChainMap.from_field_layers([runtime_defaults.__field_items__()])
+    overlay_chain.push_layer(first)
+    assert overlay_chain.__getitem__("host") == 1
+    assert overlay_chain.__getitem__("port") == 3
+    assert overlay_chain.keys() == ["host", "port"]
+
+    mut min_queue = PriorityQueue[int]()
+    min_queue.push(3)
+    min_queue.push(1)
+    min_queue.push(2)
+    assert min_queue.pop() == 1
+    assert min_queue.peek() == Some(2)
+
+    mut max_queue = PriorityQueue[int].with_order(PriorityOrder.MaxFirst)
+    max_queue.push(3)
+    max_queue.push(1)
+    max_queue.push(2)
+    assert max_queue.pop() == 3

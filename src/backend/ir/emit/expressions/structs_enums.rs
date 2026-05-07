@@ -3,10 +3,10 @@
 //! This module handles struct instantiation with both named and positional fields.
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 
-use super::super::super::conversions::{ConversionContext, determine_conversion};
 use super::super::super::expr::TypedExpr;
+use super::super::super::ownership::ValueUseSite;
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
@@ -52,9 +52,14 @@ impl<'a> IrEmitter<'a> {
             let value_tokens: Vec<TokenStream> = fields
                 .iter()
                 .map(|(_, fval)| {
-                    let emitted = self.emit_expr(fval)?;
-                    let conversion = determine_conversion(fval, None, ConversionContext::IncanFunctionArg);
-                    Ok(conversion.apply(emitted))
+                    self.emit_expr_for_use(
+                        fval,
+                        ValueUseSite::IncanCallArg {
+                            target_ty: None,
+                            callee_param: None,
+                            in_return: false,
+                        },
+                    )
                 })
                 .collect::<Result<_, EmitError>>()?;
             Ok(quote! { #n(#(#value_tokens),*) })
@@ -80,11 +85,9 @@ impl<'a> IrEmitter<'a> {
                 let field_tokens: Vec<TokenStream> = fields
                     .iter()
                     .map(|(fname, fval)| {
-                        let fn_ident = format_ident!("{}", fname);
-                        let emitted = self.emit_expr(fval)?;
+                        let fn_ident = Self::rust_ident(fname);
                         let target_type = self.struct_field_types.get(&(name.to_string(), fname.clone()));
-                        let conversion = determine_conversion(fval, target_type, ConversionContext::StructField);
-                        let fv = conversion.apply(emitted);
+                        let fv = self.emit_expr_for_use(fval, ValueUseSite::StructField { target_ty: target_type })?;
                         Ok(quote! { #fn_ident: #fv })
                     })
                     .collect::<Result<_, EmitError>>()?;
@@ -97,18 +100,14 @@ impl<'a> IrEmitter<'a> {
 
             let mut out_fields: Vec<TokenStream> = Vec::new();
             for fname in field_names {
-                let fn_ident = format_ident!("{}", fname);
+                let fn_ident = Self::rust_ident(fname);
+                let target_type = self.struct_field_types.get(&(name.to_string(), fname.clone()));
                 if let Some(fval) = provided.get(fname.as_str()) {
-                    let emitted = self.emit_expr(fval)?;
-                    let target_type = self.struct_field_types.get(&(name.to_string(), fname.clone()));
-                    let conversion = determine_conversion(fval, target_type, ConversionContext::StructField);
-                    let fv = conversion.apply(emitted);
+                    let fv = self.emit_expr_for_use(fval, ValueUseSite::StructField { target_ty: target_type })?;
                     out_fields.push(quote! { #fn_ident: #fv });
                 } else if let Some(default_expr) = self.struct_field_defaults.get(&(name.to_string(), fname.clone())) {
-                    let emitted = self.emit_expr(default_expr)?;
-                    let target_type = self.struct_field_types.get(&(name.to_string(), fname.clone()));
-                    let conversion = determine_conversion(default_expr, target_type, ConversionContext::StructField);
-                    let fv = conversion.apply(emitted);
+                    let fv =
+                        self.emit_expr_for_use(default_expr, ValueUseSite::StructField { target_ty: target_type })?;
                     out_fields.push(quote! { #fn_ident: #fv });
                 } else {
                     return Err(EmitError::Unsupported(format!(

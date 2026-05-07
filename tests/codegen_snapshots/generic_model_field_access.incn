@@ -1,0 +1,8 @@
+pub model Boxed[T]:
+  pub value: T
+
+pub def get_value[T](boxed: Boxed[T]) -> T:
+  return boxed.value
+
+def main() -> int:
+  return get_value(Boxed(value=41))

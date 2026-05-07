@@ -1,5 +1,5 @@
 """
-Async task primitives backed by explicit runtime adapters.
+Async task primitives backed by direct Rust interop.
 
 This module exposes the core task helpers used to run async or blocking work concurrently:
 
@@ -7,9 +7,15 @@ This module exposes the core task helpers used to run async or blocking work con
 - `spawn_blocking(task)` starts blocking work and returns a `JoinHandle[T]`
 - `yield_now()` voluntarily yields back to the scheduler
 
-The public surface is declared here even when some leaves are still imported directly from the runtime bridge. For now,
-`spawn()` and `spawn_blocking()` remain direct imports because their Rust-side `Future` / `Send` bounds are not yet
-expressible cleanly in local Incan wrappers without reintroducing hidden handwritten compiler knowledge.
+Cancellation contracts:
+
+- Spawned tasks are durable once spawned: dropping a `JoinHandle[T]` detaches the task and loses its result, but does
+  not cancel the task.
+- `JoinHandle.abort()` requests cancellation for async tasks. Awaiting the handle after abort returns a join error unless
+  the task had already completed.
+- `spawn_blocking()` work cannot be cancelled after it starts running. `abort()` can only prevent a blocking task from
+  starting if it is still queued.
+- `yield_now()` is cancel-safe.
 
 Examples:
     handle = spawn(fetch_user())
@@ -28,10 +34,36 @@ Examples:
 """
 
 import std.async
-from rust::incan_stdlib::async::task import JoinHandle, TaskJoinError
-from rust::incan_stdlib::async::task import spawn
-from rust::incan_stdlib::async::task import spawn_blocking
-from rust::incan_stdlib::async::task import yield_now as runtime_yield_now
+from rust::incan_stdlib::async::task import JoinHandle, TaskJoinError, RuntimeFuture, RuntimeFnOnce
+from rust::incan_stdlib::async::task import spawn as rust_spawn
+from rust::incan_stdlib::async::task import spawn_blocking as rust_spawn_blocking
+from rust::incan_stdlib::async::task import yield_now as rust_yield_now
+
+pub def spawn[T with (Send, Static), TaskFuture with RuntimeFuture[T]](task: TaskFuture) -> JoinHandle[T]:
+    """
+    Spawn async work onto the runtime.
+
+    The generic output type `T` is constrained to `Send + Static` so this wrapper stays aligned with the host runtime's
+    task-safety requirements.
+
+    The returned task is durable once spawned. Dropping the `JoinHandle[T]` detaches the task and loses the result; call
+    `abort()` on the handle when cancellation is required.
+    """
+    return rust_spawn(task)
+
+
+pub def spawn_blocking[T with (Send, Static), TaskFn with RuntimeFnOnce[T]](task: TaskFn) -> JoinHandle[T]:
+    """
+    Spawn blocking work onto the runtime's blocking pool.
+
+    Like `spawn()`, this wrapper carries explicit `Send + Static` bounds so stdlib authors can express the host runtime
+    capability requirements directly in Incan source.
+
+    Blocking work is durable once it starts running. Dropping the handle detaches it and loses the result; `abort()` only
+    has a chance to stop the work if the blocking task is still queued and has not started.
+    """
+    return rust_spawn_blocking(task)
+
 
 pub async def yield_now() -> None:
     """
@@ -44,4 +76,4 @@ pub async def yield_now() -> None:
             step()
             await yield_now()
     """
-    await runtime_yield_now()
+    await rust_yield_now()

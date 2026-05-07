@@ -1,1058 +1,124 @@
 //! Check calls, constructors, and builtins.
 //!
-//! This module handles the main call-expression logic (`foo(...)`), including special-cased
-//! builtins like `Ok(...)`/`Err(...)` and runtime helpers like `sleep(...)`. It also provides
-//! small utilities to type-check call argument lists consistently.
+//! This module keeps the call-expression coordinator (`foo(...)`) thin and delegates argument binding, constructor
+//! handling, generic inference, builtin dispatch, and Rust boundary validation to focused child modules.
 
-use crate::frontend::ast::*;
+use crate::frontend::ast::{CallArg, Expr, Span, Spanned, Type};
 use crate::frontend::diagnostics::errors;
-use crate::frontend::symbols::*;
-use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
-use incan_core::lang::builtins::{self, BuiltinFnId};
+use crate::frontend::resolved_type_subst::substitute_resolved_type;
+use crate::frontend::symbols::{FieldInfo, ResolvedType, SymbolKind, TypeInfo};
+use crate::frontend::typechecker::IdentKind;
 use incan_core::lang::derives::{self, DeriveId};
-use incan_core::lang::surface::constructors::{self, ConstructorId};
-use incan_core::lang::surface::functions::{self as surface_functions, SurfaceFnId};
-use incan_core::lang::surface::math;
+use incan_core::lang::keywords::{self, KeywordId};
+use incan_core::lang::stdlib;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
-use incan_core::lang::traits::{self as builtin_traits, TraitId};
-use incan_core::lang::types::collections::CollectionTypeId;
 
 use super::TypeChecker;
 
+mod args;
+mod builtins;
+mod constructors;
+mod generic_bounds;
+mod rust_boundary;
+
 impl TypeChecker {
-    fn check_model_or_class_constructor_call(
-        &mut self,
-        type_name: &str,
-        fields: &std::collections::HashMap<String, FieldInfo>,
-        args: &[CallArg],
-        call_span: Span,
-    ) {
-        // v0.1: only named args for model/class constructors (stable field ordering not guaranteed).
-        if args.iter().any(|a| matches!(a, CallArg::Positional(_))) {
-            // Typecheck argument expressions regardless, so type errors in expressions still show up.
-            self.check_call_args(args);
-            self.errors
-                .push(errors::positional_constructor_args_not_supported(type_name, call_span));
-            return;
-        }
-
-        // Track provided fields and validate existence/duplicates/type compatibility.
-        let mut provided: std::collections::HashMap<String, Span> = std::collections::HashMap::new();
-        for arg in args {
-            let CallArg::Named(field_name, expr) = arg else {
-                continue;
-            };
-
-            // Always typecheck the expression exactly once, even if the key is invalid/duplicate.
-            // This avoids double-reporting while still surfacing expression errors.
-            let value_ty = self.check_expr(expr);
-
-            let Some((canonical_name, field_info)) = self.resolve_field_info(fields, field_name, true, true) else {
-                self.errors
-                    .push(errors::missing_field(type_name, field_name, expr.span));
-                continue;
-            };
-
-            if provided.contains_key(&canonical_name) {
-                self.errors.push(errors::duplicate_field_in_call(
-                    type_name,
-                    canonical_name.as_str(),
-                    expr.span,
-                ));
-                continue;
-            }
-            provided.insert(canonical_name.clone(), expr.span);
-
-            if !self.types_compatible(&value_ty, &field_info.ty) {
-                self.errors.push(errors::field_type_mismatch(
-                    field_name,
-                    &field_info.ty.to_string(),
-                    &value_ty.to_string(),
-                    expr.span,
-                ));
-            }
-        }
-
-        // Enforce required fields (those without defaults) are present.
-        for (field_name, info) in fields {
-            if !info.has_default && !provided.contains_key(field_name) {
-                self.errors.push(errors::missing_required_constructor_field(
-                    type_name, field_name, call_span,
-                ));
-            }
-        }
-    }
-
-    /// Extract the expression from a call argument (positional or named).
-    fn call_arg_expr(arg: &CallArg) -> &Spanned<Expr> {
-        match arg {
-            CallArg::Positional(e) | CallArg::Named(_, e) => e,
-        }
-    }
-
-    /// Type-check all call arguments (positional and named).
-    pub(in crate::frontend::typechecker::check_expr) fn check_call_args(&mut self, args: &[CallArg]) {
-        for arg in args {
-            self.check_expr(Self::call_arg_expr(arg));
-        }
-    }
-
-    /// Type-check a JSON/Query constructor call (`Json(...)` / `Query(...)`).
+    /// Type-check a call expression after parsing has identified the callee, explicit type arguments, and value
+    /// arguments.
     ///
-    /// NOTE: This method is called from multiple dispatch points in the typechecker because
-    /// calls can be classified differently by the parser (bare identifier call, constructor call,
-    /// builtin call, or model/class constructor). Each dispatch point returns early after handling,
-    /// preventing double-checking. See: `check_builtin_call` (surface type dispatch),
-    /// `check_call` (fallback paths), and `check_constructor`.
-    fn check_json_query_constructor_call(
-        &mut self,
-        tid: SurfaceTypeId,
-        args: &[CallArg],
-        call_span: Span,
-    ) -> ResolvedType {
-        let mut inner = ResolvedType::Unknown;
-        let mut has_inner = false;
-        let mut positional_count = 0;
-        let mut named_value_count = 0;
-        let mut has_invalid_named = false;
-
-        for arg in args {
-            match arg {
-                CallArg::Positional(e) => {
-                    positional_count += 1;
-                    if !has_inner {
-                        inner = self.check_expr(e);
-                        has_inner = true;
-                    } else {
-                        self.check_expr(e);
-                    }
-                }
-                CallArg::Named(name, e) if name == "value" => {
-                    named_value_count += 1;
-                    if !has_inner {
-                        inner = self.check_expr(e);
-                        has_inner = true;
-                    } else {
-                        self.check_expr(e);
-                    }
-                }
-                CallArg::Named(_, e) => {
-                    has_invalid_named = true;
-                    self.check_expr(e);
-                }
-            }
-        }
-
-        let total_allowed = positional_count + named_value_count;
-        if has_invalid_named || total_allowed != 1 || (positional_count > 0 && named_value_count > 0) {
-            let name = surface_types::as_str(tid);
-            self.errors
-                .push(errors::constructor_single_arg_required(name, args.len(), call_span));
-        }
-
-        ResolvedType::Generic(surface_types::as_str(tid).to_string(), vec![inner])
-    }
-
-    /// Type-check all call arguments and collect their resolved types.
-    fn check_call_arg_types(&mut self, args: &[CallArg]) -> Vec<ResolvedType> {
-        args.iter()
-            .map(|arg| self.check_expr(Self::call_arg_expr(arg)))
-            .collect()
-    }
-
-    fn constructor_result_type(&self, name: &str) -> ResolvedType {
-        match self.lookup_type_info(name) {
-            Some(TypeInfo::Model(model)) if !model.type_params.is_empty() => {
-                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; model.type_params.len()])
-            }
-            Some(TypeInfo::Class(class)) if !class.type_params.is_empty() => {
-                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; class.type_params.len()])
-            }
-            Some(TypeInfo::Newtype(newtype)) if !newtype.type_params.is_empty() => {
-                ResolvedType::Generic(name.to_string(), vec![ResolvedType::Unknown; newtype.type_params.len()])
-            }
-            Some(TypeInfo::Enum(enum_info)) if !enum_info.type_params.is_empty() => ResolvedType::Generic(
-                name.to_string(),
-                vec![ResolvedType::Unknown; enum_info.type_params.len()],
-            ),
-            _ => ResolvedType::Named(name.to_string()),
-        }
-    }
-
-    /// Validate a function call against a known function signature and enforce explicit generic bounds.
-    fn validate_function_call(
-        &mut self,
-        func_name: &str,
-        info: &FunctionInfo,
-        args: &[CallArg],
-        call_span: Span,
-    ) -> ResolvedType {
-        let arg_types = self.check_call_arg_types(args);
-        let mut positional: Vec<(ResolvedType, Span)> = Vec::new();
-        let mut named: std::collections::HashMap<&str, (ResolvedType, Span)> = std::collections::HashMap::new();
-
-        for (arg, ty) in args.iter().zip(arg_types.iter()) {
-            let expr = Self::call_arg_expr(arg);
-            match arg {
-                CallArg::Positional(_) => positional.push((ty.clone(), expr.span)),
-                CallArg::Named(name, _) => {
-                    named.insert(name.as_str(), (ty.clone(), expr.span));
-                }
-            }
-        }
-
-        let mut pos_idx = 0usize;
-        let mut type_bindings: std::collections::HashMap<String, ResolvedType> = std::collections::HashMap::new();
-        for (param_name, param_ty) in &info.params {
-            let arg = if let Some(v) = named.get(param_name.as_str()) {
-                Some(v)
-            } else if pos_idx < positional.len() {
-                let v = positional.get(pos_idx);
-                pos_idx += 1;
-                v
-            } else {
-                None
-            };
-
-            if let Some((arg_ty, arg_span)) = arg {
-                self.infer_type_param_bindings(param_ty, arg_ty, &mut type_bindings);
-                if !self.types_compatible(arg_ty, param_ty) {
-                    self.errors.push(errors::type_mismatch(
-                        &param_ty.to_string(),
-                        &arg_ty.to_string(),
-                        *arg_span,
-                    ));
-                }
-            }
-        }
-        self.emit_explicit_bound_errors(func_name, &info.type_param_bounds, &type_bindings, call_span);
-
-        info.return_type.clone()
-    }
-
-    /// Infer concrete type bindings for generic type parameters from a parameter/argument type pair.
-    fn infer_type_param_bindings(
-        &self,
-        expected: &ResolvedType,
-        actual: &ResolvedType,
-        bindings: &mut std::collections::HashMap<String, ResolvedType>,
-    ) {
-        match expected {
-            ResolvedType::TypeVar(name) => {
-                bindings
-                    .entry(name.clone())
-                    .and_modify(|existing| {
-                        if !self.types_compatible(actual, existing) {
-                            *existing = ResolvedType::Unknown;
-                        }
-                    })
-                    .or_insert_with(|| actual.clone());
-            }
-            ResolvedType::Generic(name, expected_args) => {
-                if let ResolvedType::Generic(actual_name, actual_args) = actual
-                    && name == actual_name
-                {
-                    for (e, a) in expected_args.iter().zip(actual_args.iter()) {
-                        self.infer_type_param_bindings(e, a, bindings);
-                    }
-                }
-            }
-            ResolvedType::Function(expected_params, expected_ret) => {
-                if let ResolvedType::Function(actual_params, actual_ret) = actual {
-                    for (e, a) in expected_params.iter().zip(actual_params.iter()) {
-                        self.infer_type_param_bindings(e, a, bindings);
-                    }
-                    self.infer_type_param_bindings(expected_ret, actual_ret, bindings);
-                }
-            }
-            ResolvedType::Tuple(expected_items) => {
-                if let ResolvedType::Tuple(actual_items) = actual {
-                    for (e, a) in expected_items.iter().zip(actual_items.iter()) {
-                        self.infer_type_param_bindings(e, a, bindings);
-                    }
-                }
-            }
-            ResolvedType::FrozenList(inner) => {
-                if let ResolvedType::FrozenList(actual_inner) = actual {
-                    self.infer_type_param_bindings(inner, actual_inner, bindings);
-                }
-            }
-            ResolvedType::FrozenSet(inner) => {
-                if let ResolvedType::FrozenSet(actual_inner) = actual {
-                    self.infer_type_param_bindings(inner, actual_inner, bindings);
-                }
-            }
-            ResolvedType::FrozenDict(k, v) => {
-                if let ResolvedType::FrozenDict(actual_k, actual_v) = actual {
-                    self.infer_type_param_bindings(k, actual_k, bindings);
-                    self.infer_type_param_bindings(v, actual_v, bindings);
-                }
-            }
-            ResolvedType::Ref(inner) => {
-                if let ResolvedType::Ref(actual_inner) = actual {
-                    self.infer_type_param_bindings(inner, actual_inner, bindings);
-                }
-            }
-            _ => {}
-        }
-    }
-
-    /// Emit diagnostics when inferred concrete generic bindings violate explicit `with` bounds.
-    fn emit_explicit_bound_errors(
-        &mut self,
-        func_name: &str,
-        bounds_by_param: &std::collections::HashMap<String, Vec<String>>,
-        bindings: &std::collections::HashMap<String, ResolvedType>,
-        call_span: Span,
-    ) {
-        for (type_param, bounds) in bounds_by_param {
-            let Some(actual_ty) = bindings.get(type_param) else {
-                continue;
-            };
-            for bound in bounds {
-                if !self.type_satisfies_explicit_bound(actual_ty, bound) {
-                    self.errors.push(errors::generic_bound_not_satisfied(
-                        func_name,
-                        type_param,
-                        bound,
-                        &actual_ty.to_string(),
-                        call_span,
-                    ));
-                }
-            }
-        }
-    }
-
-    /// Best-effort check whether a concrete type satisfies an explicit generic bound.
-    fn type_satisfies_explicit_bound(&self, ty: &ResolvedType, bound: &str) -> bool {
-        match ty {
-            // Unknown / still-generic types are kept permissive to avoid cascading errors.
-            ResolvedType::Unknown | ResolvedType::TypeVar(_) => true,
-            ResolvedType::Int
-            | ResolvedType::Float
-            | ResolvedType::Bool
-            | ResolvedType::Str
-            | ResolvedType::Bytes
-            | ResolvedType::FrozenStr
-            | ResolvedType::FrozenBytes
-            | ResolvedType::Unit => self.primitive_type_satisfies_bound(ty, bound),
-            ResolvedType::Tuple(items) => self.tuple_type_satisfies_bound(items, bound),
-            ResolvedType::FrozenList(inner) => self.collection_type_satisfies_bound(
-                CollectionTypeId::FrozenList,
-                std::slice::from_ref(inner.as_ref()),
-                bound,
-            ),
-            ResolvedType::FrozenSet(inner) => self.collection_type_satisfies_bound(
-                CollectionTypeId::FrozenSet,
-                std::slice::from_ref(inner.as_ref()),
-                bound,
-            ),
-            ResolvedType::FrozenDict(k, v) => {
-                let pair = [k.as_ref().clone(), v.as_ref().clone()];
-                self.collection_type_satisfies_bound(CollectionTypeId::FrozenDict, &pair, bound)
-            }
-            ResolvedType::Generic(name, args) => {
-                if let Some(kind) = collection_type_id(name.as_str()) {
-                    self.collection_type_satisfies_bound(kind, args, bound)
-                } else {
-                    self.named_type_satisfies_bound(name, bound)
-                }
-            }
-            ResolvedType::Named(type_name) => self.named_type_satisfies_bound(type_name, bound),
-            ResolvedType::Ref(inner) => self.type_satisfies_explicit_bound(inner, bound),
-            ResolvedType::Function(_, _) | ResolvedType::SelfType => false,
-        }
-    }
-
-    fn primitive_type_satisfies_bound(&self, ty: &ResolvedType, bound: &str) -> bool {
-        if bound == derives::as_str(DeriveId::Copy) {
-            return self.is_copy_type(ty);
-        }
-
-        match builtin_traits::from_str(bound) {
-            Some(TraitId::Clone | TraitId::Debug | TraitId::Display) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Float
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
-            Some(TraitId::Default) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Float
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
-            Some(TraitId::Eq | TraitId::Ord | TraitId::Hash) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
-            Some(TraitId::PartialEq | TraitId::PartialOrd) => matches!(
-                ty,
-                ResolvedType::Int
-                    | ResolvedType::Float
-                    | ResolvedType::Bool
-                    | ResolvedType::Str
-                    | ResolvedType::Bytes
-                    | ResolvedType::FrozenStr
-                    | ResolvedType::FrozenBytes
-                    | ResolvedType::Unit
-            ),
-            _ => false,
-        }
-    }
-
-    fn tuple_type_satisfies_bound(&self, items: &[ResolvedType], bound: &str) -> bool {
-        match builtin_traits::from_str(bound) {
-            Some(
-                TraitId::Clone
-                | TraitId::Debug
-                | TraitId::Default
-                | TraitId::Eq
-                | TraitId::PartialEq
-                | TraitId::Ord
-                | TraitId::PartialOrd
-                | TraitId::Hash,
-            ) => items.iter().all(|item| self.type_satisfies_explicit_bound(item, bound)),
-            _ => false,
-        }
-    }
-
-    fn collection_type_satisfies_bound(&self, kind: CollectionTypeId, args: &[ResolvedType], bound: &str) -> bool {
-        let all_args_satisfy = || args.iter().all(|arg| self.type_satisfies_explicit_bound(arg, bound));
-        match builtin_traits::from_str(bound) {
-            Some(TraitId::Clone | TraitId::Debug) => all_args_satisfy(),
-            Some(TraitId::Default) => matches!(
-                kind,
-                CollectionTypeId::List
-                    | CollectionTypeId::FrozenList
-                    | CollectionTypeId::Dict
-                    | CollectionTypeId::FrozenDict
-                    | CollectionTypeId::Set
-                    | CollectionTypeId::FrozenSet
-                    | CollectionTypeId::Option
-            ),
-            Some(TraitId::Eq | TraitId::PartialEq) => all_args_satisfy(),
-            Some(TraitId::Ord | TraitId::PartialOrd) => {
-                matches!(
-                    kind,
-                    CollectionTypeId::List
-                        | CollectionTypeId::FrozenList
-                        | CollectionTypeId::Tuple
-                        | CollectionTypeId::Option
-                ) && all_args_satisfy()
-            }
-            Some(TraitId::Hash) => {
-                matches!(
-                    kind,
-                    CollectionTypeId::List
-                        | CollectionTypeId::FrozenList
-                        | CollectionTypeId::Tuple
-                        | CollectionTypeId::Option
-                ) && all_args_satisfy()
-            }
-            _ => false,
-        }
-    }
-
-    fn named_type_satisfies_bound(&self, type_name: &str, bound: &str) -> bool {
-        match self.lookup_type_info(type_name) {
-            Some(TypeInfo::Builtin) => matches!(builtin_traits::from_str(bound), Some(TraitId::Clone | TraitId::Debug)),
-            Some(TypeInfo::Model(info)) => {
-                info.traits.iter().any(|t| t == bound) || info.derives.iter().any(|d| d == bound)
-            }
-            Some(TypeInfo::Class(info)) => {
-                info.traits.iter().any(|t| t == bound) || info.derives.iter().any(|d| d == bound)
-            }
-            Some(TypeInfo::Enum(info)) => {
-                // Enums do not carry explicit trait adoption; best-effort via derive names in symbol metadata is
-                // absent. Keep conservative and require explicit evidence where available.
-                let _ = info;
-                false
-            }
-            Some(TypeInfo::Newtype(_)) => false,
-            Some(TypeInfo::TypeAlias) => false,
-            None => false,
-        }
-    }
-
-    /// Handle a known builtin call (if the callee is a builtin name).
-    fn check_builtin_call(&mut self, name: &str, args: &[CallArg], call_span: Span) -> Option<ResolvedType> {
-        let has_function_symbol = self
-            .symbols
-            .lookup(name)
-            .and_then(|id| self.symbols.get(id))
-            .is_some_and(|sym| matches!(sym.kind, SymbolKind::Function(_)));
-
-        // Constructors (variant-like)
-        if let Some(cid) = constructors::from_str(name) {
-            return match cid {
-                ConstructorId::Ok | ConstructorId::Err => {
-                    let arg_types = self.check_call_arg_types(args);
-                    let current_result = self.symbols.current_return_type().and_then(|ty| match ty {
-                        ResolvedType::Generic(name, args)
-                            if collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
-                                && args.len() >= 2 =>
-                        {
-                            Some((args[0].clone(), args[1].clone()))
-                        }
-                        _ => None,
-                    });
-                    let current_ok = current_result
-                        .as_ref()
-                        .map(|(ok_ty, _)| ok_ty.clone())
-                        .unwrap_or(ResolvedType::Unknown);
-                    let current_err = current_result
-                        .as_ref()
-                        .map(|(_, err_ty)| err_ty.clone())
-                        .or_else(|| self.current_return_error_type.clone())
-                        .unwrap_or(ResolvedType::Unknown);
-                    let inferred_arg = arg_types.first().cloned().unwrap_or(ResolvedType::Unknown);
-
-                    let (ok_ty, err_ty) = if cid == ConstructorId::Ok {
-                        // `Ok(...)` must reflect the payload type so return checking can catch mismatches against the
-                        // declared `Result[T, E]`.
-                        let ok_ty = if current_ok == ResolvedType::Unit
-                            && matches!(
-                                inferred_arg,
-                                ResolvedType::Generic(ref name, ref args)
-                                    if collection_type_id(name.as_str()) == Some(CollectionTypeId::Option)
-                                        && args.len() == 1
-                                        && matches!(args[0], ResolvedType::Unknown)
-                            ) {
-                            ResolvedType::Unit
-                        } else {
-                            inferred_arg
-                        };
-                        (ok_ty, current_err)
-                    } else {
-                        // `Err(...)` mirrors the actual error payload while preserving any known enclosing `Ok` type.
-                        (current_ok, inferred_arg)
-                    };
-                    Some(result_ty(ok_ty, err_ty))
-                }
-                ConstructorId::Some => {
-                    let arg_types = self.check_call_arg_types(args);
-                    let inner = arg_types.first().cloned().unwrap_or(ResolvedType::Unknown);
-                    Some(option_ty(inner))
-                }
-                ConstructorId::None => Some(option_ty(ResolvedType::Unknown)),
-            };
-        }
-
-        // Core builtin functions (registry-driven)
-        if let Some(bid) = builtins::from_str(name) {
-            if bid == BuiltinFnId::Sleep && !has_function_symbol {
-                return None;
-            }
-            return match bid {
-                BuiltinFnId::Print => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Unit)
-                }
-                BuiltinFnId::Len => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Int)
-                }
-                BuiltinFnId::Sum => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Int)
-                }
-                BuiltinFnId::Min | BuiltinFnId::Max => {
-                    if args.len() != 1 {
-                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
-                        self.check_call_args(args);
-                        return Some(ResolvedType::Unknown);
-                    }
-                    let arg_expr = Self::call_arg_expr(&args[0]);
-                    let arg_ty = self.check_expr(arg_expr);
-
-                    // Only support list-like collections for now.
-                    let inner = if let ResolvedType::Generic(n, type_args) = &arg_ty {
-                        if matches!(
-                            collection_type_id(n.as_str()),
-                            Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
-                        ) {
-                            type_args.first().cloned().unwrap_or(ResolvedType::Unknown)
-                        } else {
-                            ResolvedType::Unknown
-                        }
-                    } else if let ResolvedType::FrozenList(t) = &arg_ty {
-                        (**t).clone()
-                    } else {
-                        ResolvedType::Unknown
-                    };
-
-                    if matches!(inner, ResolvedType::Unknown) {
-                        self.errors
-                            .push(errors::builtin_expects_list(name, &arg_ty.to_string(), call_span));
-                        return Some(ResolvedType::Unknown);
-                    }
-
-                    // Require comparable scalar element types (keep narrow for now).
-                    match inner {
-                        ResolvedType::Int
-                        | ResolvedType::Float
-                        | ResolvedType::Bool
-                        | ResolvedType::Str
-                        | ResolvedType::FrozenStr => Some(inner),
-                        other => {
-                            self.errors.push(errors::builtin_list_element_type_not_supported(
-                                name,
-                                &other.to_string(),
-                                call_span,
-                            ));
-                            Some(ResolvedType::Unknown)
-                        }
-                    }
-                }
-                BuiltinFnId::Str => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Str)
-                }
-                BuiltinFnId::Int => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Int)
-                }
-                BuiltinFnId::Float => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Float)
-                }
-                BuiltinFnId::Bool => {
-                    if args.len() != 1 {
-                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
-                        self.check_call_args(args);
-                        return Some(ResolvedType::Bool);
-                    }
-                    let arg_expr = Self::call_arg_expr(&args[0]);
-                    let arg_ty = self.check_expr(arg_expr);
-
-                    let ok = matches!(
-                        arg_ty,
-                        ResolvedType::Bool
-                            | ResolvedType::Int
-                            | ResolvedType::Float
-                            | ResolvedType::Str
-                            | ResolvedType::FrozenStr
-                            | ResolvedType::Bytes
-                            | ResolvedType::FrozenBytes
-                            | ResolvedType::Unknown
-                    ) || matches!(
-                        &arg_ty,
-                        ResolvedType::Generic(n, _)
-                            if matches!(
-                                collection_type_id(n.as_str()),
-                                Some(
-                                    CollectionTypeId::List
-                                        | CollectionTypeId::FrozenList
-                                        | CollectionTypeId::Dict
-                                        | CollectionTypeId::FrozenDict
-                                        | CollectionTypeId::Set
-                                        | CollectionTypeId::FrozenSet
-                                        | CollectionTypeId::Tuple
-                                        | CollectionTypeId::Option
-                                        | CollectionTypeId::Result
-                                )
-                            )
-                    ) || matches!(
-                        arg_ty,
-                        ResolvedType::FrozenList(_) | ResolvedType::FrozenDict(_, _) | ResolvedType::FrozenSet(_)
-                    );
-
-                    if !ok {
-                        self.errors
-                            .push(errors::builtin_bool_type_not_supported(&arg_ty.to_string(), call_span));
-                    }
-                    Some(ResolvedType::Bool)
-                }
-                BuiltinFnId::Abs => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Int)
-                }
-                BuiltinFnId::Range => {
-                    self.check_call_args(args);
-                    Some(list_ty(ResolvedType::Int))
-                }
-                BuiltinFnId::Enumerate => {
-                    // enumerate(xs) -> List[(int, T)] (simple)
-                    let mut inner_ty = ResolvedType::Unknown;
-                    if let Some(arg) = args.first() {
-                        let iter_ty = self.check_expr(Self::call_arg_expr(arg));
-                        if let ResolvedType::Generic(name, type_args) = &iter_ty
-                            && (name == surface_types::as_str(SurfaceTypeId::Vec)
-                                || matches!(
-                                    collection_type_id(name.as_str()),
-                                    Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
-                                ))
-                            && !type_args.is_empty()
-                        {
-                            inner_ty = type_args[0].clone();
-                        }
-                    }
-                    self.check_call_args(args);
-                    Some(list_ty(ResolvedType::Tuple(vec![ResolvedType::Int, inner_ty])))
-                }
-                BuiltinFnId::Zip => {
-                    // zip(a, b) -> List[(T1, T2)] (simple)
-                    let mut ty1 = ResolvedType::Unknown;
-                    let mut ty2 = ResolvedType::Unknown;
-                    if args.len() >= 2 {
-                        let iter1_ty = self.check_expr(Self::call_arg_expr(&args[0]));
-                        let iter2_ty = self.check_expr(Self::call_arg_expr(&args[1]));
-                        if let ResolvedType::Generic(name, type_args) = &iter1_ty
-                            && (name == surface_types::as_str(SurfaceTypeId::Vec)
-                                || matches!(
-                                    collection_type_id(name.as_str()),
-                                    Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
-                                ))
-                            && !type_args.is_empty()
-                        {
-                            ty1 = type_args[0].clone();
-                        }
-                        if let ResolvedType::Generic(name, type_args) = &iter2_ty
-                            && (name == surface_types::as_str(SurfaceTypeId::Vec)
-                                || matches!(
-                                    collection_type_id(name.as_str()),
-                                    Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
-                                ))
-                            && !type_args.is_empty()
-                        {
-                            ty2 = type_args[0].clone();
-                        }
-                    }
-                    self.check_call_args(args);
-                    Some(list_ty(ResolvedType::Tuple(vec![ty1, ty2])))
-                }
-                BuiltinFnId::Sorted => {
-                    if args.len() != 1 {
-                        self.errors.push(errors::builtin_arity(name, 1, args.len(), call_span));
-                        self.check_call_args(args);
-                        return Some(ResolvedType::Unknown);
-                    }
-                    let arg_expr = Self::call_arg_expr(&args[0]);
-                    let arg_ty = self.check_expr(arg_expr);
-
-                    let inner = if let ResolvedType::Generic(n, type_args) = &arg_ty {
-                        if matches!(
-                            collection_type_id(n.as_str()),
-                            Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
-                        ) {
-                            type_args.first().cloned().unwrap_or(ResolvedType::Unknown)
-                        } else {
-                            ResolvedType::Unknown
-                        }
-                    } else if let ResolvedType::FrozenList(t) = &arg_ty {
-                        (**t).clone()
-                    } else {
-                        ResolvedType::Unknown
-                    };
-
-                    if matches!(inner, ResolvedType::Unknown) {
-                        self.errors
-                            .push(errors::builtin_expects_list(name, &arg_ty.to_string(), call_span));
-                        return Some(ResolvedType::Unknown);
-                    }
-
-                    match inner {
-                        ResolvedType::Int
-                        | ResolvedType::Float
-                        | ResolvedType::Bool
-                        | ResolvedType::Str
-                        | ResolvedType::FrozenStr => Some(list_ty(inner)),
-                        other => {
-                            self.errors.push(errors::builtin_list_element_type_not_supported(
-                                name,
-                                &other.to_string(),
-                                call_span,
-                            ));
-                            Some(ResolvedType::Unknown)
-                        }
-                    }
-                }
-                BuiltinFnId::ReadFile => {
-                    self.check_call_args(args);
-                    Some(result_ty(ResolvedType::Str, ResolvedType::Str))
-                }
-                BuiltinFnId::WriteFile => {
-                    self.check_call_args(args);
-                    Some(result_ty(ResolvedType::Unit, ResolvedType::Str))
-                }
-                BuiltinFnId::JsonStringify => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Str)
-                }
-                BuiltinFnId::Sleep => {
-                    if let Some(arg) = args.first() {
-                        let arg_expr = Self::call_arg_expr(arg);
-                        let arg_ty = self.check_expr(arg_expr);
-                        if !self.types_compatible(&arg_ty, &ResolvedType::Float) {
-                            self.errors
-                                .push(errors::type_mismatch("float", &arg_ty.to_string(), arg_expr.span));
-                        }
-                    }
-                    Some(ResolvedType::Unit)
-                }
-            };
-        }
-
-        // Surface/runtime functions (registry-driven)
-        if let Some(fid) = surface_functions::from_str(name) {
-            if !has_function_symbol {
-                return None;
-            }
-            return match fid {
-                SurfaceFnId::SleepMs => {
-                    if let Some(arg) = args.first() {
-                        let arg_expr = Self::call_arg_expr(arg);
-                        let arg_ty = self.check_expr(arg_expr);
-                        if !self.types_compatible(&arg_ty, &ResolvedType::Int) {
-                            self.errors
-                                .push(errors::type_mismatch("int", &arg_ty.to_string(), arg_expr.span));
-                        }
-                    }
-                    Some(ResolvedType::Unit)
-                }
-                SurfaceFnId::Timeout | SurfaceFnId::TimeoutMs | SurfaceFnId::SelectTimeout => {
-                    if let Some(arg) = args.first() {
-                        let arg_expr = Self::call_arg_expr(arg);
-                        let arg_ty = self.check_expr(arg_expr);
-                        let (expected_name, expected_ty) = if fid == SurfaceFnId::Timeout {
-                            ("float", ResolvedType::Float)
-                        } else {
-                            ("int", ResolvedType::Int)
-                        };
-                        if !self.types_compatible(&arg_ty, &expected_ty) {
-                            self.errors
-                                .push(errors::type_mismatch(expected_name, &arg_ty.to_string(), arg_expr.span));
-                        }
-                    }
-                    self.check_call_args(args);
-                    Some(ResolvedType::Unknown)
-                }
-                SurfaceFnId::YieldNow => Some(ResolvedType::Unit),
-                SurfaceFnId::Spawn | SurfaceFnId::SpawnBlocking => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Generic(
-                        surface_types::as_str(SurfaceTypeId::JoinHandle).to_string(),
-                        vec![ResolvedType::Unknown],
-                    ))
-                }
-                SurfaceFnId::Channel => {
-                    self.check_call_args(args);
-                    let inner = ResolvedType::Unknown;
-                    Some(ResolvedType::Tuple(vec![
-                        ResolvedType::Generic(
-                            surface_types::as_str(SurfaceTypeId::Sender).to_string(),
-                            vec![inner.clone()],
-                        ),
-                        ResolvedType::Generic(surface_types::as_str(SurfaceTypeId::Receiver).to_string(), vec![inner]),
-                    ]))
-                }
-                SurfaceFnId::UnboundedChannel => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Tuple(vec![
-                        ResolvedType::Generic(
-                            surface_types::as_str(SurfaceTypeId::Sender).to_string(),
-                            vec![ResolvedType::Unknown],
-                        ),
-                        ResolvedType::Generic(
-                            surface_types::as_str(SurfaceTypeId::Receiver).to_string(),
-                            vec![ResolvedType::Unknown],
-                        ),
-                    ]))
-                }
-                SurfaceFnId::Oneshot => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Tuple(vec![
-                        ResolvedType::Generic(
-                            surface_types::as_str(SurfaceTypeId::OneshotSender).to_string(),
-                            vec![ResolvedType::Unknown],
-                        ),
-                        ResolvedType::Generic(
-                            surface_types::as_str(SurfaceTypeId::OneshotReceiver).to_string(),
-                            vec![ResolvedType::Unknown],
-                        ),
-                    ]))
-                }
-            };
-        }
-
-        // Surface types that behave like constructors and whose result type depends on args.
-        if let Some(tid) = surface_types::from_str(name) {
-            return match tid {
-                SurfaceTypeId::Json | SurfaceTypeId::Query => {
-                    Some(self.check_json_query_constructor_call(tid, args, call_span))
-                }
-                SurfaceTypeId::Mutex => {
-                    let inner = if let Some(arg) = args.first() {
-                        self.check_expr(Self::call_arg_expr(arg))
-                    } else {
-                        ResolvedType::Unknown
-                    };
-                    Some(ResolvedType::Generic(
-                        surface_types::as_str(SurfaceTypeId::Mutex).to_string(),
-                        vec![inner],
-                    ))
-                }
-                SurfaceTypeId::RwLock => {
-                    let inner = if let Some(arg) = args.first() {
-                        self.check_expr(Self::call_arg_expr(arg))
-                    } else {
-                        ResolvedType::Unknown
-                    };
-                    Some(ResolvedType::Generic(
-                        surface_types::as_str(SurfaceTypeId::RwLock).to_string(),
-                        vec![inner],
-                    ))
-                }
-                SurfaceTypeId::Semaphore => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Named(
-                        surface_types::as_str(SurfaceTypeId::Semaphore).to_string(),
-                    ))
-                }
-                SurfaceTypeId::Barrier => {
-                    self.check_call_args(args);
-                    Some(ResolvedType::Named(
-                        surface_types::as_str(SurfaceTypeId::Barrier).to_string(),
-                    ))
-                }
-                _ => None,
-            };
-        }
-
-        // Python-like type conversion helpers (surface). These are not part of `lang::builtins`.
-        if let Some(cid) = collection_type_id(name) {
-            return match cid {
-                CollectionTypeId::Dict => {
-                    let (key_ty, val_ty) = if let Some(arg) = args.first() {
-                        let arg_expr = Self::call_arg_expr(arg);
-                        let arg_ty = self.check_expr(arg_expr);
-                        match &arg_ty {
-                            ResolvedType::Generic(name, type_args)
-                                if collection_type_id(name.as_str()) == Some(CollectionTypeId::Dict)
-                                    && type_args.len() >= 2 =>
-                            {
-                                (type_args[0].clone(), type_args[1].clone())
-                            }
-                            _ => (ResolvedType::Unknown, ResolvedType::Unknown),
-                        }
-                    } else {
-                        (ResolvedType::Unknown, ResolvedType::Unknown)
-                    };
-                    Some(dict_ty(key_ty, val_ty))
-                }
-                CollectionTypeId::List => {
-                    let elem_ty = if let Some(arg) = args.first() {
-                        let arg_expr = Self::call_arg_expr(arg);
-                        let arg_ty = self.check_expr(arg_expr);
-                        match &arg_ty {
-                            ResolvedType::Generic(name, type_args)
-                                if (name == surface_types::as_str(SurfaceTypeId::Vec)
-                                    || matches!(
-                                        collection_type_id(name.as_str()),
-                                        Some(
-                                            CollectionTypeId::List
-                                                | CollectionTypeId::Set
-                                                | CollectionTypeId::FrozenList
-                                                | CollectionTypeId::FrozenSet
-                                        )
-                                    ))
-                                    && !type_args.is_empty() =>
-                            {
-                                type_args[0].clone()
-                            }
-                            ResolvedType::Str => ResolvedType::Str,
-                            _ => ResolvedType::Unknown,
-                        }
-                    } else {
-                        ResolvedType::Unknown
-                    };
-                    Some(list_ty(elem_ty))
-                }
-                CollectionTypeId::Set => {
-                    let elem_ty = if let Some(arg) = args.first() {
-                        let arg_expr = Self::call_arg_expr(arg);
-                        let arg_ty = self.check_expr(arg_expr);
-                        match &arg_ty {
-                            ResolvedType::Generic(name, type_args)
-                                if (name == surface_types::as_str(SurfaceTypeId::Vec)
-                                    || matches!(
-                                        collection_type_id(name.as_str()),
-                                        Some(
-                                            CollectionTypeId::List
-                                                | CollectionTypeId::Set
-                                                | CollectionTypeId::FrozenList
-                                                | CollectionTypeId::FrozenSet
-                                        )
-                                    ))
-                                    && !type_args.is_empty() =>
-                            {
-                                type_args[0].clone()
-                            }
-                            _ => ResolvedType::Unknown,
-                        }
-                    } else {
-                        ResolvedType::Unknown
-                    };
-                    Some(set_ty(elem_ty))
-                }
-                _ => None,
-            };
-        }
-
-        None
-    }
-
-    /// Type-check a call expression and return its result type.
+    /// This is the central call coordinator: it preserves constructor and builtin special cases first, then resolves
+    /// function values, callable objects, and ordinary value calls through the same argument-binding machinery.
+    /// Callable values record their accepted parameter list at the full call span so IR lowering can preserve Rust
+    /// borrow boundaries for calls reached through associated-function member access.
     pub(in crate::frontend::typechecker::check_expr) fn check_call(
         &mut self,
         callee: &Spanned<Expr>,
+        type_args: &[Spanned<Type>],
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
+        if let Some(name) = Self::explicit_builtin_member_name(callee) {
+            let result = self.check_explicit_builtin_call(name, args, span);
+            if !type_args.is_empty() {
+                self.errors
+                    .push(errors::explicit_call_site_type_args_not_supported(span));
+                return ResolvedType::Unknown;
+            }
+            return result;
+        }
+
         // Special-case: Enum variant constructor syntax `Enum.Variant(...)`.
         // If callee is a field access where the base resolves to a known enum type
         // and the field name matches a variant, treat this as a constructor and
         // return the enum type.
-        if let Expr::Field(base, variant_name) = &callee.node {
+        if let Expr::Field(base, member_name) = &callee.node {
             let base_ty = self.check_expr(base);
+            let base_is_enum_type_name = self.is_enum_type_name_expr_for_call(base);
             if let ResolvedType::Named(enum_name) = &base_ty
                 && let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name)
-                && enum_info.variants.iter().any(|v| v == variant_name)
+                && let Some(value_enum) = enum_info.value_enum.clone()
             {
+                if member_name == "from_value" && base_is_enum_type_name {
+                    return self.check_value_enum_from_value_call(enum_name, &value_enum, type_args, args, span);
+                }
+                if member_name == "value" && !base_is_enum_type_name {
+                    return self.check_value_enum_value_call(enum_name, &value_enum, type_args, args, span);
+                }
+            }
+            if let ResolvedType::Named(enum_name) = &base_ty
+                && let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name)
+                && enum_info.variants.iter().any(|v| v == member_name)
+            {
+                if !type_args.is_empty() {
+                    self.errors
+                        .push(errors::explicit_call_site_type_args_not_supported(span));
+                }
                 self.check_call_args(args);
                 return ResolvedType::Named(enum_name.clone());
             }
+            if self.receiver_has_computed_property(&base_ty, member_name, span) {
+                self.check_call_args(args);
+                self.errors.push(errors::property_called_as_method(member_name, span));
+                return ResolvedType::Unknown;
+            }
         }
 
-        // Handle math module function calls (math.sqrt, math.sin, etc.)
+        // Imported module function calls whose signatures are known via the stdlib AST cache
+        // (for example `math.sqrt(...)`).
         if let Expr::Field(base, method) = &callee.node
-            && let Expr::Ident(module) = &base.node
-            && module == math::MATH_MODULE_NAME
+            && let Some((module_name, module_path)) = self.imported_module_for_expr(base)
         {
-            self.check_call_args(args);
-            if math::fn_from_str(method.as_str()).is_some() {
-                return ResolvedType::Float;
+            // Ensure lowering marks the receiver identifier as a module-path binding.
+            let _ = self.check_ident(module_name.as_str(), base.span);
+            if let Some(func_info) = self.resolve_imported_module_function_member(&module_path, method.as_str()) {
+                let callable = format!("{module_name}.{method}");
+                return self.validate_stdlib_module_function_call(callable.as_str(), &func_info, type_args, args, span);
             }
         }
 
         if let Expr::Ident(name) = &callee.node {
+            if keywords::from_str(name.as_str()) == Some(KeywordId::Cls)
+                && self.symbols.lookup(name).is_none()
+                && let (Some(owner_name), Some(self_ty)) = (
+                    self.current_method_owner.clone(),
+                    self.current_classmethod_self_ty.clone(),
+                )
+            {
+                let ctor_fields: Option<std::collections::HashMap<String, FieldInfo>> =
+                    self.lookup_type_info(&owner_name).and_then(|info| match info {
+                        TypeInfo::Model(m) => Some(m.fields.clone()),
+                        TypeInfo::Class(c) => Some(c.fields.clone()),
+                        _ => None,
+                    });
+                if let Some(fields) = ctor_fields {
+                    self.record_expr_type(callee.span, self_ty.clone());
+                    self.type_info
+                        .ident_kinds
+                        .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                    self.check_model_or_class_constructor_call(&owner_name, &fields, args, span);
+                    return self_ty;
+                }
+            }
+
             let marker_binding_in_scope = self
                 .symbols
                 .lookup(name)
@@ -1066,24 +132,67 @@ impl TypeChecker {
             }
 
             if let Some(result) = self.check_builtin_call(name, args, span) {
+                if !type_args.is_empty() {
+                    self.errors
+                        .push(errors::explicit_call_site_type_args_not_supported(span));
+                    return ResolvedType::Unknown;
+                }
                 return result;
             }
 
-            if let Some(func_info) = self.lookup_symbol(name).and_then(|sym| match &sym.kind {
-                SymbolKind::Function(info) => Some(info.clone()),
-                _ => None,
-            }) {
-                return self.validate_function_call(name, &func_info, args, span);
-            }
-
-            // RFC 042: traits are abstract — reject `TraitName(...)` constructor syntax.
-            if self
-                .lookup_symbol(name)
-                .is_some_and(|sym| matches!(sym.kind, SymbolKind::Trait(_)))
-            {
-                self.check_call_args(args);
-                self.errors.push(errors::cannot_instantiate_trait(name, span));
-                return ResolvedType::Unknown;
+            if let Some(sym) = self.lookup_symbol(name).cloned() {
+                match sym.kind {
+                    SymbolKind::Type(type_info) if stdlib::is_graph_constructor_type(name) && args.is_empty() => {
+                        return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
+                    }
+                    SymbolKind::Type(TypeInfo::Newtype(_)) => {
+                        if !type_args.is_empty() {
+                            self.errors
+                                .push(errors::explicit_call_site_type_args_not_supported(span));
+                            self.check_call_args(args);
+                            return ResolvedType::Unknown;
+                        }
+                        self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
+                        self.type_info
+                            .ident_kinds
+                            .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                        return self.check_constructor(name, args, span);
+                    }
+                    SymbolKind::Function(func_info) => {
+                        return self.validate_function_call(name, &func_info, type_args, args, span);
+                    }
+                    SymbolKind::RustItem(info) => {
+                        if !type_args.is_empty() {
+                            self.errors
+                                .push(errors::explicit_call_site_type_args_not_supported(span));
+                            self.check_call_args(args);
+                            return ResolvedType::Unknown;
+                        }
+                        if let Some(meta) = &info.metadata
+                            && let incan_core::interop::RustItemKind::Function(sig) = &meta.kind
+                        {
+                            let error_count_before = self.errors.len();
+                            let result = self.validate_rust_function_call(info.path.as_str(), sig, args, span);
+                            if self.errors.len() == error_count_before {
+                                self.record_expr_type(
+                                    callee.span,
+                                    self.resolved_function_type_from_rust_sig(sig, false),
+                                );
+                                self.type_info
+                                    .ident_kinds
+                                    .insert((callee.span.start, callee.span.end), IdentKind::RustImport);
+                            }
+                            return result;
+                        }
+                    }
+                    // RFC 042: traits are abstract — reject `TraitName(...)` constructor syntax.
+                    SymbolKind::Trait(_) => {
+                        self.check_call_args(args);
+                        self.errors.push(errors::cannot_instantiate_trait(name, span));
+                        return ResolvedType::Unknown;
+                    }
+                    _ => {}
+                }
             }
 
             let in_scope = self.symbols.lookup(name).is_some();
@@ -1119,7 +228,11 @@ impl TypeChecker {
                     _ => None,
                 });
             if let Some(fields) = ctor_fields {
-                self.check_model_or_class_constructor_call(name, &fields, args, span);
+                let constructor_ty = self.check_model_or_class_constructor_call(name, &fields, args, span);
+                self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
+                self.type_info
+                    .ident_kinds
+                    .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
                 if in_scope && let Some(tid) = surface_types::from_str(name) {
                     if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
                         return self.check_json_query_constructor_call(tid, args, span);
@@ -1128,60 +241,85 @@ impl TypeChecker {
                         return ResolvedType::Named(surface_types::as_str(tid).to_string());
                     }
                 }
-                return self.constructor_result_type(name);
+                return constructor_ty;
             }
         }
 
+        if !type_args.is_empty() {
+            self.errors
+                .push(errors::explicit_call_site_type_args_not_supported(span));
+        }
         let callee_ty = self.check_expr(callee);
-        self.check_call_args(args);
 
         match callee_ty {
-            ResolvedType::Function(_, ret) => *ret,
-            ResolvedType::Named(name) => match self.lookup_symbol(&name).map(|s| &s.kind) {
-                Some(SymbolKind::Type(_)) => self.constructor_result_type(&name),
-                Some(SymbolKind::Variant(info)) => ResolvedType::Named(info.enum_name.clone()),
-                _ => ResolvedType::Unknown,
-            },
-            _ => ResolvedType::Unknown,
-        }
-    }
-
-    /// Type-check a constructor-like call (`TypeName(...)` / `VariantName(...)`).
-    pub(in crate::frontend::typechecker::check_expr) fn check_constructor(
-        &mut self,
-        name: &str,
-        args: &[CallArg],
-        span: Span,
-    ) -> ResolvedType {
-        self.check_call_args(args);
-
-        if self
-            .lookup_symbol(name)
-            .is_some_and(|sym| matches!(sym.kind, SymbolKind::Trait(_)))
-        {
-            self.errors.push(errors::cannot_instantiate_trait(name, span));
-            return ResolvedType::Unknown;
-        }
-
-        if self.symbols.lookup(name).is_some()
-            && let Some(tid) = surface_types::from_str(name)
-        {
-            if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
-                return self.check_json_query_constructor_call(tid, args, span);
+            ResolvedType::Function(params, ret) => {
+                let arg_types = self.check_call_arg_types_for_params(args, &params);
+                let mut type_bindings = std::collections::HashMap::new();
+                self.validate_callable_arg_bindings("<callable>", &params, args, &arg_types, &mut type_bindings, span);
+                self.type_info.record_call_site_callable_params(span, &params);
+                substitute_resolved_type(&ret, &type_bindings)
             }
-            if matches!(tid, SurfaceTypeId::Html) {
-                return ResolvedType::Named(surface_types::as_str(tid).to_string());
+            ty if self.is_user_operator_receiver(&ty)
+                && !matches!(
+                    self.type_info.ident_kind(callee.span),
+                    Some(IdentKind::TypeName | IdentKind::Variant | IdentKind::Trait)
+                ) =>
+            {
+                let arg_types = self.check_call_arg_types(args);
+                self.resolve_call_dunder(&ty, args, &arg_types, span)
+                    .unwrap_or(ResolvedType::Unknown)
             }
-        }
-
-        match self.lookup_symbol(name).map(|s| &s.kind) {
-            Some(SymbolKind::Type(_)) => self.constructor_result_type(name),
-            Some(SymbolKind::Variant(info)) => ResolvedType::Named(info.enum_name.clone()),
-            Some(_) => ResolvedType::Unknown,
-            None => {
-                self.errors.push(errors::unknown_symbol(name, span));
+            ResolvedType::Named(name) => {
+                self.check_call_args(args);
+                match self.lookup_symbol(&name).map(|s| &s.kind) {
+                    Some(SymbolKind::Type(_)) => self.constructor_result_type(&name),
+                    Some(SymbolKind::Variant(info)) => ResolvedType::Named(info.enum_name.clone()),
+                    _ => ResolvedType::Unknown,
+                }
+            }
+            _ => {
+                self.check_call_args(args);
                 ResolvedType::Unknown
             }
         }
+    }
+
+    /// Type-check RFC 047 graph direct constructors (`DiGraph[T]()`, `Dag[T]()`, `MultiDiGraph[T]()`).
+    fn check_graph_constructor_call(
+        &mut self,
+        name: &str,
+        type_info: &TypeInfo,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> ResolvedType {
+        if !args.is_empty() {
+            self.errors.push(errors::builtin_arity(name, 0, args.len(), span));
+            self.check_call_args(args);
+            return ResolvedType::Unknown;
+        }
+
+        let type_params = match type_info {
+            TypeInfo::Newtype(info) => info.type_params.as_slice(),
+            TypeInfo::Class(info) => info.type_params.as_slice(),
+            TypeInfo::Model(info) => info.type_params.as_slice(),
+            TypeInfo::Enum(info) => info.type_params.as_slice(),
+            TypeInfo::TypeAlias | TypeInfo::Builtin => &[],
+        };
+        if type_args.len() != type_params.len() {
+            self.errors.push(errors::explicit_type_arg_arity(
+                name,
+                type_params.len(),
+                type_args.len(),
+                span,
+            ));
+            return ResolvedType::Unknown;
+        }
+
+        let resolved_args = type_args
+            .iter()
+            .map(|ty| self.resolve_type_checked(ty))
+            .collect::<Vec<_>>();
+        ResolvedType::Generic(name.to_string(), resolved_args)
     }
 }

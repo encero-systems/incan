@@ -1,0 +1,6 @@
+"""Filtered dict comprehensions over borrowed iterables should own the item before testing the predicate."""
+
+def main() -> None:
+    xs = [1, 2, 3, 4]
+    evens = {x: x * x for x in xs if x % 2 == 0}
+    println(evens[2])

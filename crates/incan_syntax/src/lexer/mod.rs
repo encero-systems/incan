@@ -137,6 +137,7 @@ impl<'a> Lexer<'a> {
     // Main scanning dispatch
     // ========================================================================
 
+    /// Scan the next logical token from the source stream.
     fn scan_token(&mut self) {
         // Handle pending dedents first
         if self.pending_dedents > 0 {
@@ -217,7 +218,17 @@ impl<'a> Lexer<'a> {
             '/' => self.scan_slash(start),
             '%' => self.operator(start, OperatorId::Percent, &[('=', OperatorId::PercentEq)]),
             '?' => self.add_punct(PunctuationId::Question, start),
-            '@' => self.add_punct(PunctuationId::At, start),
+            '@' => {
+                if self.match_char('=') {
+                    self.add_op(OperatorId::MatMulEq, start);
+                } else {
+                    self.add_punct(PunctuationId::At, start);
+                }
+            }
+            '&' => self.operator(start, OperatorId::Amp, &[('=', OperatorId::AmpEq)]),
+            '|' => self.scan_pipe(start),
+            '^' => self.operator(start, OperatorId::Caret, &[('=', OperatorId::CaretEq)]),
+            '~' => self.add_op(OperatorId::Tilde, start),
             ',' => self.add_punct(PunctuationId::Comma, start),
             '(' => self.open_bracket(PunctuationId::LParen, start),
             ')' => self.close_bracket(PunctuationId::RParen, start),
@@ -249,8 +260,8 @@ impl<'a> Lexer<'a> {
                         .push(errors::unexpected_bang(Span::new(start, self.current_pos)));
                 }
             }
-            '<' => self.operator(start, OperatorId::Lt, &[('=', OperatorId::LtEq)]),
-            '>' => self.operator(start, OperatorId::Gt, &[('=', OperatorId::GtEq)]),
+            '<' => self.scan_less(start),
+            '>' => self.scan_greater(start),
             '.' => {
                 if self.match_char('.') {
                     if self.match_char('.') {
@@ -347,6 +358,49 @@ impl<'a> Lexer<'a> {
         } else {
             // `/`
             self.add_op(OperatorId::Slash, start);
+        }
+    }
+
+    /// Scan pipe operators and punctuation: `|`, `|=`, `|>`.
+    fn scan_pipe(&mut self, start: usize) {
+        if self.match_char('>') {
+            self.add_op(OperatorId::PipeForward, start);
+        } else if self.match_char('=') {
+            self.add_op(OperatorId::PipeEq, start);
+        } else {
+            self.add_punct(PunctuationId::Pipe, start);
+        }
+    }
+
+    /// Scan less-than family operators: `<`, `<=`, `<<`, `<<=`, `<|`.
+    fn scan_less(&mut self, start: usize) {
+        if self.match_char('<') {
+            if self.match_char('=') {
+                self.add_op(OperatorId::ShlEq, start);
+            } else {
+                self.add_op(OperatorId::Shl, start);
+            }
+        } else if self.match_char('|') {
+            self.add_op(OperatorId::PipeBackward, start);
+        } else if self.match_char('=') {
+            self.add_op(OperatorId::LtEq, start);
+        } else {
+            self.add_op(OperatorId::Lt, start);
+        }
+    }
+
+    /// Scan greater-than family operators: `>`, `>=`, `>>`, `>>=`.
+    fn scan_greater(&mut self, start: usize) {
+        if self.match_char('>') {
+            if self.match_char('=') {
+                self.add_op(OperatorId::ShrEq, start);
+            } else {
+                self.add_op(OperatorId::Shr, start);
+            }
+        } else if self.match_char('=') {
+            self.add_op(OperatorId::GtEq, start);
+        } else {
+            self.add_op(OperatorId::Gt, start);
         }
     }
 
@@ -473,6 +527,7 @@ mod tests {
                         PunctuationId::Colon => assert!(tokens[0].kind.is_punctuation(PunctuationId::Colon)),
                         PunctuationId::Question => assert!(tokens[0].kind.is_punctuation(PunctuationId::Question)),
                         PunctuationId::At => assert!(tokens[0].kind.is_punctuation(PunctuationId::At)),
+                        PunctuationId::Pipe => assert!(tokens[0].kind.is_punctuation(PunctuationId::Pipe)),
 
                         PunctuationId::Dot => assert!(tokens[0].kind.is_punctuation(PunctuationId::Dot)),
                         PunctuationId::ColonColon => assert!(tokens[0].kind.is_punctuation(PunctuationId::ColonColon)),
@@ -565,6 +620,13 @@ mod tests {
                         _ => panic!("unexpected keyword-spelling operator {:?}", o.id),
                     };
                     assert!(tokens[0].kind.is_keyword(expected_kw));
+                } else if o.id == operators::OperatorId::MatMul {
+                    // Bare `@` remains punctuation so declaration decorators and Rust import versions keep parsing
+                    // through their established token path; expression parsing treats it as MatMul by position.
+                    assert!(tokens[0].kind.is_punctuation(PunctuationId::At));
+                } else if o.id == operators::OperatorId::Pipe {
+                    // Bare `|` remains punctuation for union type syntax and RFC 040 glyph matching.
+                    assert!(tokens[0].kind.is_punctuation(PunctuationId::Pipe));
                 } else {
                     assert!(tokens[0].kind.is_operator(o.id));
                 }
@@ -585,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_operators() {
-        let tokens = lex_ok("+ - * / :: => -> ? @ == !=");
+        let tokens = lex_ok("+ - * / :: => -> ? @ | == != @= |> <| & &= |= ^ ^= ~ << <<= >> >>=");
         assert!(matches!(tokens[0].kind, TokenKind::Operator(OperatorId::Plus)));
         assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::Minus)));
         assert!(matches!(tokens[2].kind, TokenKind::Operator(OperatorId::Star)));
@@ -604,18 +666,34 @@ mod tests {
             TokenKind::Punctuation(PunctuationId::Question)
         ));
         assert!(matches!(tokens[8].kind, TokenKind::Punctuation(PunctuationId::At)));
-        assert!(matches!(tokens[9].kind, TokenKind::Operator(OperatorId::EqEq)));
-        assert!(matches!(tokens[10].kind, TokenKind::Operator(OperatorId::NotEq)));
+        assert!(matches!(tokens[9].kind, TokenKind::Punctuation(PunctuationId::Pipe)));
+        assert!(matches!(tokens[10].kind, TokenKind::Operator(OperatorId::EqEq)));
+        assert!(matches!(tokens[11].kind, TokenKind::Operator(OperatorId::NotEq)));
+        assert!(matches!(tokens[12].kind, TokenKind::Operator(OperatorId::MatMulEq)));
+        assert!(matches!(tokens[13].kind, TokenKind::Operator(OperatorId::PipeForward)));
+        assert!(matches!(tokens[14].kind, TokenKind::Operator(OperatorId::PipeBackward)));
+        assert!(matches!(tokens[15].kind, TokenKind::Operator(OperatorId::Amp)));
+        assert!(matches!(tokens[16].kind, TokenKind::Operator(OperatorId::AmpEq)));
+        assert!(matches!(tokens[17].kind, TokenKind::Operator(OperatorId::PipeEq)));
+        assert!(matches!(tokens[18].kind, TokenKind::Operator(OperatorId::Caret)));
+        assert!(matches!(tokens[19].kind, TokenKind::Operator(OperatorId::CaretEq)));
+        assert!(matches!(tokens[20].kind, TokenKind::Operator(OperatorId::Tilde)));
+        assert!(matches!(tokens[21].kind, TokenKind::Operator(OperatorId::Shl)));
+        assert!(matches!(tokens[22].kind, TokenKind::Operator(OperatorId::ShlEq)));
+        assert!(matches!(tokens[23].kind, TokenKind::Operator(OperatorId::Shr)));
+        assert!(matches!(tokens[24].kind, TokenKind::Operator(OperatorId::ShrEq)));
     }
 
     #[test]
     #[allow(clippy::approx_constant)]
     fn test_numbers() {
-        let tokens = lex_ok("42 3.14 1_000_000 1e10");
-        assert!(matches!(tokens[0].kind, TokenKind::Int(42)));
-        assert!(matches!(tokens[1].kind, TokenKind::Float(f) if (f - 3.14).abs() < 0.001));
-        assert!(matches!(tokens[2].kind, TokenKind::Int(1000000)));
+        let tokens = lex_ok("42 3.14 1_000_000 1e10 19.99d 1_000d");
+        assert!(matches!(&tokens[0].kind, TokenKind::Int(il) if il.value == 42));
+        assert!(matches!(&tokens[1].kind, TokenKind::Float(fl) if (fl.value - 3.14).abs() < 0.001));
+        assert!(matches!(&tokens[2].kind, TokenKind::Int(il) if il.value == 1_000_000 && il.repr == "1_000_000"));
         assert!(matches!(tokens[3].kind, TokenKind::Float(_)));
+        assert!(matches!(&tokens[4].kind, TokenKind::Decimal(dl) if dl.body == "19.99" && dl.repr == "19.99d"));
+        assert!(matches!(&tokens[5].kind, TokenKind::Decimal(dl) if dl.body == "1000" && dl.repr == "1_000d"));
     }
 
     #[test]
@@ -757,17 +835,17 @@ mod tests {
     fn test_range_not_float() {
         // 1..2 should be Int, DotDot, Int - not a float
         let tokens = lex_ok("1..2");
-        assert!(matches!(tokens[0].kind, TokenKind::Int(1)));
+        assert!(matches!(&tokens[0].kind, TokenKind::Int(il) if il.value == 1));
         assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::DotDot)));
-        assert!(matches!(tokens[2].kind, TokenKind::Int(2)));
+        assert!(matches!(&tokens[2].kind, TokenKind::Int(il) if il.value == 2));
     }
 
     #[test]
     fn test_inclusive_range() {
         // 1..=5 should work
         let tokens = lex_ok("1..=5");
-        assert!(matches!(tokens[0].kind, TokenKind::Int(1)));
+        assert!(matches!(&tokens[0].kind, TokenKind::Int(il) if il.value == 1));
         assert!(matches!(tokens[1].kind, TokenKind::Operator(OperatorId::DotDotEq)));
-        assert!(matches!(tokens[2].kind, TokenKind::Int(5)));
+        assert!(matches!(&tokens[2].kind, TokenKind::Int(il) if il.value == 5));
     }
 }

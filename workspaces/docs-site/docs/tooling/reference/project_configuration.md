@@ -5,9 +5,8 @@ This is the reference for the `incan.toml` project manifest format. For a practi
 
 ## Overview
 
-`incan.toml` is an optional project manifest that lives at your project root. It declares project metadata, build
-configuration, Incan library dependencies, Rust crate dependencies, and optional vocab companion crate settings. The
-compiler discovers it by walking upward from the source file's directory.
+`incan.toml` is an optional project manifest that lives at your project root. It declares project metadata, build configuration, Incan library dependencies, Rust crate dependencies, and optional vocab companion crate settings.
+Project-aware commands discover it by walking upward from the current working directory, and file-oriented commands may also resolve it from the provided source path.
 
 ```text
 my_project/
@@ -19,7 +18,7 @@ my_project/
 └── incan.lock            # Generated lock file (commit to VCS)
 ```
 
-You can scaffold a full project (manifest, entry point, and starter test) with `incan init`.
+You can scaffold a full new project (manifest, entry point, starter test, README, and `.gitignore`) with `incan new`. Use `incan init` when you already have a directory and want to add Incan project files there.
 
 ## `[project]`
 
@@ -43,11 +42,10 @@ Named entry points for CLI commands:
 ```toml
 [project.scripts]
 main = "src/main.incn"        # This is the default entry point if no other is set
-migrate = "src/migrate.incn"  # This is a example of a named entry point called "migrate"
+migrate = "src/migrate.incn"  # This is an example of a named entry point called "migrate"
 ```
 
-`incan init` sets `main = "src/main.incn"` by default. When `main` is set, `incan lock` can run without
-a `FILE` argument.
+`incan new` and `incan init` set `main = "src/main.incn"` by default. When `main` is set, `incan lock` can run without a `FILE` argument.
 
 ### `[project.features]`
 
@@ -78,8 +76,63 @@ The directory where the compiler and test runner look for user modules. Resoluti
 2. **Convention**: if a `src/` directory exists at the project root, it is used automatically
 3. **Fallback**: the project root itself (flat layout)
 
-Most projects use the conventional `src/` layout and don't need to set this field. It exists for projects that keep
-their source in a different directory (e.g. `lib/`).
+Most projects use the conventional `src/` layout and don't need to set this field. It exists for projects that keep their source in a different directory (e.g. `lib/`).
+
+## `[tool.incan.envs]`
+
+Named project environments define reusable command contexts for `incan env`. They are useful when a project has different test, build, or release workflows that need different environment variables, working directories, or script arguments. The ambient `default` environment is always available; defining `[tool.incan.envs.default]` customizes it.
+
+```toml
+[tool.incan.envs.default]
+env-vars = { INCAN_NO_BANNER = "1" }
+
+[tool.incan.envs.default.scripts]
+test = ["incan", "test", "tests/"]
+
+[tool.incan.envs.release]
+extends = ["default"]
+env-vars = { INCAN_FANCY_ERRORS = "1" }
+
+[tool.incan.envs.release.scripts]
+build = ["incan", "build", "src/main.incn", "--locked"]
+```
+
+Fields:
+
+| Field      | Type                  | Description                                                                 |
+| ---------- | --------------------- | --------------------------------------------------------------------------- |
+| `extends`  | list of strings       | Other environments to merge before this one                                 |
+| `detached` | bool                  | Do not include `default` automatically                                      |
+| `cwd`      | string                | Working directory for scripts, relative to the project root unless absolute |
+| `env-vars` | table                 | Environment variables to inject into the process                            |
+| `scripts`  | table of string lists | Script names mapped to argv lists                                           |
+
+Use the environment with:
+
+```bash
+incan env list
+incan env show release
+incan env run release build
+```
+
+See [Project lifecycle reference](../../language/reference/project_lifecycle.md) for merge and resolution rules.
+
+## `[tool.incan.metadata]`
+
+Checked contract metadata settings for project-declared model bundles.
+
+```toml
+[tool.incan.metadata]
+model-bundles = ["contracts/order_summary.json"]
+```
+
+Fields:
+
+| Field           | Type            | Description                                                                                                                                                                     |
+| --------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `model-bundles` | list of strings | Canonical model bundle JSON files to validate, materialize during build/run, embed into `.incnlib` artifacts when publishable, and expose through `incan tools metadata model`. |
+
+Bundle paths are resolved relative to the project root unless absolute. See [Checked contract metadata](contract_metadata.md) for the bundle schema and tooling commands.
 
 ## `[vocab]`
 
@@ -94,7 +147,7 @@ Use this only for library projects that export vocab entries. Projects without c
 
 ### Fields
 
-|  Field  |  Type  |                                      Description                                      |
+| Field   | Type   | Description                                                                           |
 | ------- | ------ | ------------------------------------------------------------------------------------- |
 | `crate` | string | Path to the vocab companion crate directory, relative to project root unless absolute |
 
@@ -143,7 +196,7 @@ serde = { version = "1.0", features = ["derive"], default-features = true }
 
 ### All fields
 
-|       Field        |  Type  |                       Description                        |
+| Field              | Type   | Description                                              |
 | ------------------ | ------ | -------------------------------------------------------- |
 | `version`          | string | Cargo SemVer version requirement (required for registry) |
 | `features`         | list   | Cargo features to enable                                 |
@@ -228,8 +281,7 @@ pinned = { git = "https://github.com/company/lib.git", rev = "abc1234" }
 ```
 
 !!! warning "Strict mode and git branches"
-    When building with `--locked` or `--frozen`, git dependencies using `branch = "..."` are rejected
-    because branches are not reproducible. Use `tag` or `rev` instead.
+    When building with `--locked` or `--frozen`, git dependencies using `branch = "..."` are rejected because branches are not reproducible. Use `tag` or `rev` instead.
 
 ### Path
 
@@ -283,11 +335,18 @@ fancy_logging = "0.3"
 
 [rust-dev-dependencies]
 criterion = "0.5"
+
+[tool.incan.envs.default]
+env-vars = { INCAN_NO_BANNER = "1" }
+
+[tool.incan.envs.default.scripts]
+test = ["incan", "test", "tests/"]
 ```
 
 ## See also
 
 - [Managing dependencies](../how-to/dependencies.md) - Practical guide
 - [Rust interop](../../language/how-to/rust_interop.md) - Inline version annotations
-- [CLI reference](cli_reference.md) - `incan init`, `incan lock`, and dependency flags
+- [CLI reference](cli_reference.md) - `incan new`, `incan init`, `incan version`, `incan env`, and dependency flags
+- [Project lifecycle reference](../../language/reference/project_lifecycle.md) - Version bump and environment semantics
 - [Author library DSLs with `incan_vocab`](../../contributing/how-to/authoring_vocab_crates.md) - Companion crate workflow

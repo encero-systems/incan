@@ -1,0 +1,18 @@
+"""Issue #364 regression: filtered list comprehensions must not destructure `&item`."""
+
+@derive(Clone)
+model StoredNode:
+    store_id_raw: int
+    node: str
+
+
+def store_nodes(store_id: int, stored_nodes: list[StoredNode]) -> list[str]:
+    return [stored.node for stored in stored_nodes if stored.store_id_raw == store_id]
+
+
+def main() -> None:
+    nodes: list[StoredNode] = [
+        StoredNode(store_id_raw=1, node="a"),
+        StoredNode(store_id_raw=2, node="b"),
+    ]
+    println(store_nodes(1, nodes)[0])

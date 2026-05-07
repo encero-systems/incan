@@ -1,11 +1,15 @@
 //! Generate Markdown reference docs from `incan_core::lang` registries.
 //!
-//! This binary renders the vocabulary registries (keywords, operators, builtin functions, builtin types, punctuation)
-//! into human-readable Markdown tables under `workspaces/docs-site/docs/language/reference/`.
+//! This binary renders:
+//! - language-core vocabulary registries (keywords, operators, builtins, types, punctuation)
+//!
+//! Outputs are written under `workspaces/docs-site/docs/language/reference/`.
 //!
 //! ## Notes
 //! - The generated files are meant to be checked into the repo and treated as derived artifacts.
-//! - Do not edit the generated Markdown by hand; update the registries instead.
+//! - **Do not edit generated files by hand** (`language.md`).
+//! - Change source registries under `crates/incan_core/src/lang/` for core language tables.
+//! - Re-run this binary so docs remain in sync.
 //!
 //! ## Examples
 //! Run from the workspace root:
@@ -25,6 +29,7 @@ use incan_core::lang::{
     builtins, decorators, derives, errors, keywords, operators, punctuation, stdlib, surface, traits,
 };
 
+/// Reduce trailing blank lines in generated Markdown to at most one empty line.
 fn trim_trailing_newlines_to_at_most_two(out: &mut String) {
     let mut count = 0usize;
     for ch in out.chars().rev() {
@@ -40,6 +45,14 @@ fn trim_trailing_newlines_to_at_most_two(out: &mut String) {
     }
 }
 
+/// Remove all trailing newline characters from generated Markdown.
+fn trim_trailing_newlines(out: &mut String) {
+    while out.ends_with('\n') {
+        out.pop();
+    }
+}
+
+/// Ensure the generated Markdown buffer ends with exactly one blank line when it already has content.
 fn ensure_single_blank_line(out: &mut String) {
     trim_trailing_newlines_to_at_most_two(out);
     if out.is_empty() {
@@ -55,6 +68,7 @@ fn ensure_single_blank_line(out: &mut String) {
     }
 }
 
+/// Append a Markdown section heading after normalizing preceding blank lines.
 fn start_section(out: &mut String, heading: &str) {
     ensure_single_blank_line(out);
     out.push_str(heading);
@@ -98,7 +112,7 @@ fn write_language_reference(path: &Path) {
     out.push_str("- [Builtin types](#builtin-types)\n");
     out.push_str("- [Surface constructors](#surface-constructors)\n");
     out.push_str("- [Surface functions](#surface-functions)\n");
-    out.push_str("- [Surface math](#surface-math)\n");
+    out.push_str("- [Built-in collection helpers](#built-in-collection-helpers)\n");
     out.push_str("- [Surface string methods](#surface-string-methods)\n");
     out.push_str("- [Surface types](#surface-types)\n");
     out.push_str("- [Surface methods](#surface-methods)\n\n");
@@ -117,20 +131,23 @@ fn write_language_reference(path: &Path) {
 
     render_surface_constructors_section(&mut out);
     render_surface_functions_section(&mut out);
-    render_surface_math_section(&mut out);
+    render_builtin_collection_helpers_section(&mut out);
     render_surface_string_methods_section(&mut out);
     render_surface_types_section(&mut out);
     render_surface_methods_section(&mut out);
 
-    trim_trailing_newlines_to_at_most_two(&mut out);
+    trim_trailing_newlines(&mut out);
     out.push('\n');
     if let Err(err) = fs::write(path, out) {
         panic!("write language.md: {err}");
     }
 }
 
+/// Render the keyword registry table and examples.
 fn render_keywords_section(out: &mut String) {
     start_section(out, "## Keywords");
+
+    out.push_str("Reservation describes how a spelling is reserved: `Hard` keywords are always reserved by the lexer, `Contextual` keywords are recognized only in parser-owned syntactic positions, and `Soft` keywords are reserved after importing their activating `std.*` namespace.\n\n");
 
     out.push_str(
         "| Id | Canonical | Aliases | Reservation | Activation | Category | Usage | RFC | Since | Stability |\n",
@@ -152,7 +169,11 @@ fn render_keywords_section(out: &mut String) {
         let activation = keywords::activation(k.id)
             .map(|ns| format!("`std.{}`", ns))
             .unwrap_or_else(|| "-".to_string());
-        let reservation = if keywords::is_soft(k.id) { "Soft" } else { "Hard" };
+        let reservation = match k.activation {
+            keywords::KeywordActivation::Hard => "Hard",
+            keywords::KeywordActivation::Contextual => "Contextual",
+            keywords::KeywordActivation::Soft { .. } => "Soft",
+        };
         let category = format!("{:?}", k.category);
         let usage = if k.usage.is_empty() {
             String::new()
@@ -192,6 +213,7 @@ fn render_keywords_section(out: &mut String) {
     }
 }
 
+/// Render import-activated soft keywords.
 fn render_soft_keywords_section(out: &mut String) {
     start_section(out, "## Soft keywords");
     out.push_str("Soft keywords are only reserved when their activating `std.*` namespace is imported.\n\n");
@@ -230,6 +252,7 @@ fn render_soft_keywords_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render standard-library namespaces and the soft keywords they activate.
 fn render_stdlib_namespaces_section(out: &mut String) {
     start_section(out, "## Standard library namespaces");
     out.push_str("| Namespace | Feature gate | Submodules | Activates soft keywords |\n");
@@ -265,6 +288,7 @@ fn render_stdlib_namespaces_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render builtin exception metadata and examples.
 fn render_exceptions_section(out: &mut String) {
     start_section(out, "## Builtin exceptions");
 
@@ -313,6 +337,7 @@ fn render_exceptions_section(out: &mut String) {
     }
 }
 
+/// Render builtin function metadata.
 fn render_builtins_section(out: &mut String) {
     start_section(out, "## Builtin functions");
 
@@ -343,8 +368,46 @@ fn render_builtins_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render builtin decorator metadata.
 fn render_decorators_section(out: &mut String) {
     start_section(out, "## Decorators");
+
+    out.push_str(
+        r#"User-defined decorators are valid on top-level `def` / `async def` declarations and instance methods. A
+decorator is an ordinary callable value that receives the decorated function value and returns the binding that should
+replace it:
+
+```incan
+def parse(value: int) -> int:
+    return value
+
+def as_int(func: (int) -> str) -> (int) -> int:
+    return parse
+
+@as_int
+def label(value: int) -> str:
+    return "value"
+
+def main() -> None:
+    result = label(1)  # int
+```
+
+Stacked decorators apply bottom-up, matching Python's declaration model: the decorator closest to `def` receives the
+original function value first, and the outer decorators receive each previous result. Decorator factories such as
+`@logged("name")` are checked by first evaluating the factory expression as a callable-producing expression and then
+applying the produced decorator to the function value.
+
+Method decorators receive an unbound callable shape with the receiver first. A decorator on
+`def label(self, value: int) -> str` sees `(&Box, int) -> str`; a decorator on
+`def bump(mut self, value: int) -> int` sees `(&mut Box, int) -> int`. The wrapper passes the actual receiver borrow
+through to the decorated callable, so method decorators do not require cloning the receiver.
+
+Class, model, trait, enum, newtype, field, alias, and module decorators remain limited to compiler-owned decorators.
+Compiler-owned decorators such as `@derive`, `@route`, `@rust.extern`, `@rust.allow`, `@staticmethod`, `@classmethod`,
+and `@requires` keep their existing special behavior.
+
+"#,
+    );
 
     out.push_str("| Id | Canonical | Aliases | Description | RFC | Since | Stability |\n");
     out.push_str("|---|---|---|---|---|---|---|\n");
@@ -373,6 +436,7 @@ fn render_decorators_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render builtin derive metadata.
 fn render_derives_section(out: &mut String) {
     start_section(out, "## Derives");
 
@@ -403,6 +467,7 @@ fn render_derives_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render builtin trait metadata.
 fn render_traits_section(out: &mut String) {
     start_section(out, "## Builtin traits");
 
@@ -433,6 +498,7 @@ fn render_traits_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render operator metadata and explanatory notes.
 fn render_operators_section(out: &mut String) {
     start_section(out, "## Operators");
 
@@ -474,6 +540,7 @@ fn render_operators_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render punctuation metadata.
 fn render_punctuation_section(out: &mut String) {
     start_section(out, "## Punctuation");
 
@@ -504,6 +571,7 @@ fn render_punctuation_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render builtin type metadata grouped by type family.
 fn render_types_section(out: &mut String) {
     start_section(out, "## Builtin types");
 
@@ -583,6 +651,41 @@ fn render_types_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render import-free built-in collection helpers such as `list.repeat(...)`.
+fn render_builtin_collection_helpers_section(out: &mut String) {
+    start_section(out, "## Built-in collection helpers");
+
+    out.push_str("| Id | Receiver | Member | Signature | Aliases | Description | RFC | Since | Stability |\n");
+    out.push_str("|---|---|---|---|---|---|---|---|---|\n");
+
+    for helper in surface::collection_helpers::BUILTIN_COLLECTION_HELPERS {
+        let id = format!("{:?}", helper.item.id);
+        let receiver = format!("`{}`", helper.receiver);
+        let member = format!("`{}`", helper.member);
+        let signature = format!("`{}`", helper.signature);
+        let aliases = if helper.item.aliases.is_empty() {
+            String::new()
+        } else {
+            helper
+                .item
+                .aliases
+                .iter()
+                .map(|alias| format!("`{}`", alias))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let desc = helper.item.description;
+        let rfc = helper.item.introduced_in_rfc;
+        let since = helper.item.since;
+        let stability = format!("{:?}", helper.item.stability);
+        out.push_str(&format!(
+            "| {id} | {receiver} | {member} | {signature} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
+        ));
+    }
+    out.push('\n');
+}
+
+/// Render compiler-recognized surface constructor metadata.
 fn render_surface_constructors_section(out: &mut String) {
     start_section(out, "## Surface constructors");
 
@@ -613,6 +716,7 @@ fn render_surface_constructors_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render compiler-recognized surface function metadata.
 fn render_surface_functions_section(out: &mut String) {
     start_section(out, "## Surface functions");
 
@@ -642,60 +746,7 @@ fn render_surface_functions_section(out: &mut String) {
     out.push('\n');
 }
 
-fn render_surface_math_section(out: &mut String) {
-    start_section(out, "## Surface math");
-
-    out.push_str("### Functions\n\n");
-    out.push_str("| Id | Canonical | Aliases | Description | RFC | Since | Stability |\n");
-    out.push_str("|---|---|---|---|---|---|---|\n");
-    for f in surface::math::MATH_FUNCTIONS {
-        let id = format!("{:?}", f.id);
-        let canonical = format!("`{}`", f.canonical);
-        let aliases = if f.aliases.is_empty() {
-            String::new()
-        } else {
-            f.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = f.description;
-        let rfc = f.introduced_in_rfc;
-        let since = f.since;
-        let stability = format!("{:?}", f.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
-    out.push('\n');
-
-    out.push_str("\n### Constants\n\n");
-    out.push_str("| Id | Canonical | Aliases | Description | RFC | Since | Stability |\n");
-    out.push_str("|---|---|---|---|---|---|---|\n");
-    for c in surface::math::MATH_CONSTANTS {
-        let id = format!("{:?}", c.id);
-        let canonical = format!("`{}`", c.canonical);
-        let aliases = if c.aliases.is_empty() {
-            String::new()
-        } else {
-            c.aliases
-                .iter()
-                .map(|a| format!("`{}`", a))
-                .collect::<Vec<_>>()
-                .join(", ")
-        };
-        let desc = c.description;
-        let rfc = c.introduced_in_rfc;
-        let since = c.since;
-        let stability = format!("{:?}", c.stability);
-        out.push_str(&format!(
-            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
-        ));
-    }
-    out.push('\n');
-}
-
+/// Render compiler-recognized string method metadata.
 fn render_surface_string_methods_section(out: &mut String) {
     start_section(out, "## Surface string methods");
 
@@ -725,6 +776,7 @@ fn render_surface_string_methods_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render compiler-recognized surface type metadata.
 fn render_surface_types_section(out: &mut String) {
     start_section(out, "## Surface types");
 
@@ -756,7 +808,9 @@ fn render_surface_types_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render compiler-recognized surface methods grouped by receiver type.
 fn render_surface_methods_section(out: &mut String) {
+    /// Return the common surface-method table header.
     fn table_header() -> &'static str {
         "| Id | Canonical | Aliases | Description | RFC | Since | Stability |\n|---|---|---|---|---|---|---|\n"
     }
@@ -867,6 +921,31 @@ fn render_surface_methods_section(out: &mut String) {
     out.push_str("\n### Option methods\n\n");
     out.push_str(table_header());
     for m in surface::option_methods::OPTION_METHODS {
+        let id = format!("{:?}", m.id);
+        let canonical = format!("`{}`", m.canonical);
+        let aliases = if m.aliases.is_empty() {
+            String::new()
+        } else {
+            m.aliases
+                .iter()
+                .map(|a| format!("`{}`", a))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let desc = m.description;
+        let rfc = m.introduced_in_rfc;
+        let since = m.since;
+        let stability = format!("{:?}", m.stability);
+        out.push_str(&format!(
+            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
+        ));
+    }
+    out.push('\n');
+
+    // Result
+    out.push_str("\n### Result methods\n\n");
+    out.push_str(table_header());
+    for m in surface::result_methods::RESULT_METHODS {
         let id = format!("{:?}", m.id);
         let canonical = format!("`{}`", m.canonical);
         let aliases = if m.aliases.is_empty() {

@@ -29,10 +29,6 @@ pub enum DeriveId {
     Copy,
     Default,
 
-    // Serialization
-    Serialize,
-    Deserialize,
-
     // Validation
     Validate,
 }
@@ -107,20 +103,6 @@ pub const DERIVES: &[DeriveInfo] = &[
         Since(0, 1),
     ),
     info(
-        DeriveId::Serialize,
-        "Serialize",
-        "Derive serialization support (e.g. JSON).",
-        RFC::_000,
-        Since(0, 1),
-    ),
-    info(
-        DeriveId::Deserialize,
-        "Deserialize",
-        "Derive deserialization support (e.g. JSON).",
-        RFC::_000,
-        Since(0, 1),
-    ),
-    info(
         DeriveId::Validate,
         "Validate",
         "Enable validated construction via `TypeName.new(...)` and require a `validate(self) -> Result[Self, E]` method.",
@@ -148,13 +130,21 @@ pub fn as_str(id: DeriveId) -> &'static str {
 
 /// Return the full metadata entry for a derive.
 ///
-/// ## Panics
-/// - If the registry is missing an entry for `id` (this indicates a programming error).
-pub fn info_for(id: DeriveId) -> &'static DeriveInfo {
-    DERIVES
-        .iter()
-        .find(|d| d.id == id)
-        .expect("INVARIANT: derive info missing")
+/// The lookup is exhaustive over the closed enum, so adding a derive requires updating this match at compile time.
+pub fn info_for(id: DeriveId) -> DeriveInfo {
+    match id {
+        DeriveId::Debug => DERIVES[0],
+        DeriveId::Display => DERIVES[1],
+        DeriveId::Eq => DERIVES[2],
+        DeriveId::PartialEq => DERIVES[3],
+        DeriveId::Ord => DERIVES[4],
+        DeriveId::PartialOrd => DERIVES[5],
+        DeriveId::Hash => DERIVES[6],
+        DeriveId::Clone => DERIVES[7],
+        DeriveId::Copy => DERIVES[8],
+        DeriveId::Default => DERIVES[9],
+        DeriveId::Validate => DERIVES[10],
+    }
 }
 
 const fn info(

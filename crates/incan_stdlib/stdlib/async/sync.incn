@@ -6,6 +6,12 @@ This module provides async-aware synchronization primitives:
 - RwLock: Reader-writer lock
 - Semaphore: Counting semaphore
 - Barrier: Synchronization barrier
+
+Cancellation contracts:
+- `Mutex.lock()`, `RwLock.read()`, `RwLock.write()`, and `Semaphore.acquire()` are cancel-safe-but-lossy:
+  cancelling the wait does not acquire the resource, but the waiter gives up its place in the fairness queue.
+- `Barrier.wait()` is cancellation-aware before release: cancelling a pending wait withdraws that participant from the
+  current generation and frees its arrival slot. Once a generation releases, the participant has crossed the barrier.
 """
 
 import std.async
@@ -19,25 +25,25 @@ from rust::incan_stdlib::async::sync import (
     RawSemaphore,
     RawSemaphorePermit,
     RawBarrier,
-    runtime_mutex_new,
-    runtime_mutex_lock,
-    runtime_mutex_try_lock,
-    runtime_mutex_guard_get,
-    runtime_mutex_guard_set,
-    runtime_rwlock_new,
-    runtime_rwlock_read,
-    runtime_rwlock_write,
-    runtime_rwlock_try_read,
-    runtime_rwlock_try_write,
-    runtime_rwlock_read_guard_get,
-    runtime_rwlock_write_guard_get,
-    runtime_rwlock_write_guard_set,
-    runtime_semaphore_new,
-    runtime_semaphore_acquire,
-    runtime_semaphore_try_acquire,
-    runtime_semaphore_available_permits,
-    runtime_barrier_new,
-    runtime_barrier_wait,
+    mutex_new as rust_mutex_new,
+    mutex_lock as rust_mutex_lock,
+    mutex_try_lock as rust_mutex_try_lock,
+    mutex_guard_get as rust_mutex_guard_get,
+    mutex_guard_set as rust_mutex_guard_set,
+    rwlock_new as rust_rwlock_new,
+    rwlock_read as rust_rwlock_read,
+    rwlock_write as rust_rwlock_write,
+    rwlock_try_read as rust_rwlock_try_read,
+    rwlock_try_write as rust_rwlock_try_write,
+    rwlock_read_guard_get as rust_rwlock_read_guard_get,
+    rwlock_write_guard_get as rust_rwlock_write_guard_get,
+    rwlock_write_guard_set as rust_rwlock_write_guard_set,
+    semaphore_new as rust_semaphore_new,
+    semaphore_acquire as rust_semaphore_acquire,
+    semaphore_try_acquire as rust_semaphore_try_acquire,
+    semaphore_available_permits as rust_semaphore_available_permits,
+    barrier_new as rust_barrier_new,
+    barrier_wait as rust_barrier_wait,
 )
 
 pub model SemaphoreAcquireError with Error:
@@ -82,7 +88,7 @@ pub type Mutex[T with Clone] = newtype RawMutex[T]:
     @staticmethod
     def new(value: T) -> Self:
         """Create a new mutex wrapping the given value"""
-        return Mutex(runtime_mutex_new(value))
+        return Mutex(rust_mutex_new(value))
 
     async def lock(self) -> MutexGuard[T]:
         """
@@ -90,8 +96,11 @@ pub type Mutex[T with Clone] = newtype RawMutex[T]:
 
         Returns a guard that provides access to the inner value.
         The lock is released when the guard is dropped.
+
+        Cancellation contract: cancel-safe-but-lossy. If the wait is cancelled before the guard is
+        returned, the lock is not acquired and the waiter gives up its place in the fairness queue.
         """
-        return MutexGuard(await runtime_mutex_lock(self.0))
+        return MutexGuard(await rust_mutex_lock(self.0))
 
     def try_lock(self) -> Option[MutexGuard[T]]:
         """
@@ -99,7 +108,7 @@ pub type Mutex[T with Clone] = newtype RawMutex[T]:
 
         Returns None immediately if the lock is held.
         """
-        match runtime_mutex_try_lock(self.0):
+        match rust_mutex_try_lock(self.0):
             Some(guard) => return Some(MutexGuard(guard))
             None => return None
 
@@ -120,11 +129,11 @@ pub type MutexGuard[T with Clone] = newtype RawMutexGuard[T]:
 
     def get(self) -> T:
         """Get the current value (by reference)"""
-        return runtime_mutex_guard_get(self.0)
+        return rust_mutex_guard_get(self.0)
 
     def set(self, value: T) -> None:
         """Set a new value"""
-        return runtime_mutex_guard_set(self.0, value)
+        return rust_mutex_guard_set(self.0, value)
 
 
 # ============================================================================
@@ -153,7 +162,7 @@ pub type RwLock[T with Clone] = newtype RawRwLock[T]:
     @staticmethod
     def new(value: T) -> Self:
         """Create a new RwLock wrapping the given value"""
-        return RwLock(runtime_rwlock_new(value))
+        return RwLock(rust_rwlock_new(value))
 
     async def read(self) -> RwLockReadGuard[T]:
         """
@@ -161,27 +170,33 @@ pub type RwLock[T with Clone] = newtype RawRwLock[T]:
 
         Multiple readers can hold the lock simultaneously.
         Blocks if a writer holds the lock.
+
+        Cancellation contract: cancel-safe-but-lossy. If the wait is cancelled before the guard is
+        returned, no read lock is acquired and the waiter gives up its place in the fairness queue.
         """
-        return RwLockReadGuard(await runtime_rwlock_read(self.0))
+        return RwLockReadGuard(await rust_rwlock_read(self.0))
 
     async def write(self) -> RwLockWriteGuard[T]:
         """
         Acquire a write lock.
 
         Exclusive access - blocks all readers and other writers.
+
+        Cancellation contract: cancel-safe-but-lossy. If the wait is cancelled before the guard is
+        returned, no write lock is acquired and the waiter gives up its place in the fairness queue.
         """
-        return RwLockWriteGuard(await runtime_rwlock_write(self.0))
+        return RwLockWriteGuard(await rust_rwlock_write(self.0))
 
     def try_read(self) -> Option[RwLockReadGuard[T]]:
         """Try to acquire a read lock without blocking"""
-        match runtime_rwlock_try_read(self.0):
+        match rust_rwlock_try_read(self.0):
             Some(guard) => return Some(RwLockReadGuard(guard))
             None => return None
 
 
     def try_write(self) -> Option[RwLockWriteGuard[T]]:
         """Try to acquire a write lock without blocking"""
-        match runtime_rwlock_try_write(self.0):
+        match rust_rwlock_try_write(self.0):
             Some(guard) => return Some(RwLockWriteGuard(guard))
             None => return None
 
@@ -192,7 +207,7 @@ pub type RwLockReadGuard[T with Clone] = newtype RawRwLockReadGuard[T]:
 
     def get(self) -> T:
         """Get the current value (read-only)"""
-        return runtime_rwlock_read_guard_get(self.0)
+        return rust_rwlock_read_guard_get(self.0)
 
 
 pub type RwLockWriteGuard[T with Clone] = newtype RawRwLockWriteGuard[T]:
@@ -200,11 +215,11 @@ pub type RwLockWriteGuard[T with Clone] = newtype RawRwLockWriteGuard[T]:
 
     def get(self) -> T:
         """Get the current value (read-only)"""
-        return runtime_rwlock_write_guard_get(self.0)
+        return rust_rwlock_write_guard_get(self.0)
 
     def set(self, value: T) -> None:
         """Set a new value"""
-        return runtime_rwlock_write_guard_set(self.0, value)
+        return rust_rwlock_write_guard_set(self.0, value)
 
 
 # ============================================================================
@@ -232,7 +247,7 @@ pub type Semaphore = newtype RawSemaphore:
     @staticmethod
     def new(permits: int) -> Self:
         """Create a new semaphore with the given number of permits"""
-        return Semaphore(runtime_semaphore_new(permits))
+        return Semaphore(rust_semaphore_new(permits))
 
     async def acquire(self) -> Result[SemaphorePermit, SemaphoreAcquireError]:
         """
@@ -240,21 +255,24 @@ pub type Semaphore = newtype RawSemaphore:
 
         Returns `Err(SemaphoreAcquireError)` if the semaphore is closed while waiting.
         The permit is released when dropped.
+
+        Cancellation contract: cancel-safe-but-lossy. If the wait is cancelled before a permit is
+        returned, no permit is acquired and the waiter gives up its place in the fairness queue.
         """
-        match await runtime_semaphore_acquire(self.0):
+        match await rust_semaphore_acquire(self.0):
             Ok(permit) => return Ok(SemaphorePermit(permit))
             Err(_err) => return Err(SemaphoreAcquireError())
 
     def try_acquire(self) -> Option[SemaphorePermit]:
         """Try to acquire a permit without blocking"""
-        match runtime_semaphore_try_acquire(self.0):
+        match rust_semaphore_try_acquire(self.0):
             Some(permit) => return Some(SemaphorePermit(permit))
             None => return None
 
 
     def available_permits(self) -> int:
         """Get the number of available permits"""
-        return runtime_semaphore_available_permits(self.0)
+        return rust_semaphore_available_permits(self.0)
 
 
 pub type SemaphorePermit = newtype RawSemaphorePermit:
@@ -287,13 +305,19 @@ pub type Barrier = newtype RawBarrier:
     @staticmethod
     def new(count: int) -> Self:
         """Create a barrier that waits for `count` tasks"""
-        return Barrier(runtime_barrier_new(count))
+        return Barrier(rust_barrier_new(count))
 
     async def wait(self) -> int:
         """
         Wait at the barrier until all tasks arrive.
 
-        Returns the arrival index (0 to count-1).
-        """
-        return await runtime_barrier_wait(self.0)
+        Returns a unique participant slot for the completed generation.
 
+        The slot is in the range `0` to `count - 1`. It is useful for leader election within a generation, but it is
+        not a chronological arrival index when cancellation has freed and reused earlier slots.
+
+        Cancellation contract: cancellation-aware before release. Cancelling a pending wait withdraws the participant
+        from the current generation and frees its arrival slot. Remaining participants still need enough active
+        participants to arrive in that generation before they can continue.
+        """
+        return await rust_barrier_wait(self.0)

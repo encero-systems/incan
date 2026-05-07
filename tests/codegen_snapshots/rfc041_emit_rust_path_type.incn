@@ -1,0 +1,5 @@
+from rust::std::collections import HashMap
+from rust::std::string import String
+
+def empty_name_index() -> HashMap[String, int]:
+  return HashMap.new()

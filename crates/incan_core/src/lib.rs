@@ -8,10 +8,12 @@
 //!
 //! - This is a “semantic core” crate: **no IO**, no global state, and no compiler-specific types.
 //! - Current scope: numeric policy (Python-like semantics), string semantics (Unicode-scalar indexing/slicing,
-//!   comparisons, membership, concat, shared error messages), and canonical language vocabulary.
+//!   comparisons, membership, concat, shared error messages), canonical language vocabulary, and portable Rust interop
+//!   metadata shapes (RFC 041).
 
 pub mod errors;
 pub mod indexing;
+pub mod interop;
 pub mod lang;
 pub mod strings;
 

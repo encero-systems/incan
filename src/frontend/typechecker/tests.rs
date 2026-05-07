@@ -1,22 +1,89 @@
 //! Typechecker unit tests.
 
 use super::*;
+use crate::frontend::ast::TypeConstraintKey;
+use crate::frontend::library_exports::{
+    CheckedExportKind, CheckedPartialTargetKind, CheckedPresetValue, collect_checked_public_exports,
+};
 use crate::frontend::library_manifest_index::{
     LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
     LibraryManifestLoadFailure,
 };
+use crate::frontend::testing_markers::TestingFixtureScope;
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
-    ConstExport, EnumExport, EnumVariantExport, FunctionExport, LibraryExports, LibraryManifest, ModelExport,
-    ParamExport, TraitExport, TypeParamExport, TypeRef,
+    ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport, FunctionExport,
+    LibraryContractMetadata, LibraryExports, LibraryManifest, MethodExport, ModelExport, ParamExport, ParamKindExport,
+    PartialExport, PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport, StaticExport,
+    TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
+#[cfg(feature = "rust_inspect")]
+use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
+#[cfg(feature = "rust_inspect")]
+use incan_core::interop::{
+    RustFieldInfo, RustFunctionSig, RustItemKind, RustItemMetadata, RustMethodSig, RustParam, RustTypeInfo,
+    RustTypeShape, RustVariantInfo, RustVisibility,
+};
+use incan_core::lang::surface::constructors::{self as surface_constructors, ConstructorId};
+use incan_core::lang::traits::{self as builtin_traits, TraitId};
+use incan_core::lang::types::collections::CollectionTypeId;
 use std::collections::HashMap;
+#[cfg(feature = "rust_inspect")]
+use std::fs;
 use std::path::PathBuf;
 
 fn check_str(source: &str) -> Result<(), Vec<CompileError>> {
     let tokens = lexer::lex(source)?;
     let ast = parser::parse(&tokens)?;
     check(&ast)
+}
+
+fn parse_program(source: &str, context: &str) -> crate::frontend::ast::Program {
+    let tokens = lexer::lex(source).unwrap_or_else(|errs| panic!("{context} lex failed: {errs:?}"));
+    parser::parse(&tokens).unwrap_or_else(|errs| panic!("{context} parse failed: {errs:?}"))
+}
+
+fn check_str_err(source: &str, context: &str) -> Vec<CompileError> {
+    match check_str(source) {
+        Err(errs) => errs,
+        Ok(()) => panic!("{context}"),
+    }
+}
+
+fn check_str_warnings(source: &str, context: &str) -> Vec<CompileError> {
+    let tokens = match lexer::lex(source) {
+        Ok(tokens) => tokens,
+        Err(errs) => panic!("{context} lex failed: {errs:?}"),
+    };
+    let ast = match parser::parse(&tokens) {
+        Ok(ast) => ast,
+        Err(errs) => panic!("{context} parse failed: {errs:?}"),
+    };
+    let mut checker = TypeChecker::new();
+    if let Err(errs) = checker.check_program(&ast) {
+        panic!("{context} typecheck failed: {errs:?}");
+    }
+    checker.warnings
+}
+
+fn has_unknown_symbol_error(errors: &[CompileError], symbol: &str) -> bool {
+    let needle = format!("Unknown symbol '{symbol}'");
+    errors.iter().any(|err| err.message.contains(&needle))
+}
+
+#[test]
+fn test_ellipsis_abstract_method_outside_trait_is_type_error() {
+    let source = r#"
+model User:
+  def name(self) -> str: ...
+"#;
+    let errs = check_str_err(source, "abstract concrete method should fail typechecking");
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Method 'name' must have a body outside trait declarations")),
+        "expected concrete method body diagnostic, got: {errs:?}"
+    );
 }
 
 fn check_str_with_library_index(source: &str, library_index: LibraryManifestIndex) -> Result<(), Vec<CompileError>> {
@@ -35,6 +102,1095 @@ fn synthetic_artifact_root(name: &str) -> PathBuf {
     root
 }
 
+fn clone_trait_name() -> String {
+    builtin_traits::as_str(TraitId::Clone).to_string()
+}
+
+fn none_constructor_name() -> String {
+    surface_constructors::as_str(ConstructorId::None).to_string()
+}
+
+#[test]
+fn test_partial_function_presets_project_as_defaults() {
+    let source = r#"
+def route(method: str, path: str, content_type: str = "text") -> str:
+  return method
+
+get = partial route(method="GET")
+
+def use() -> str:
+  a = get(path="/health")
+  b = get(method="POST", path="/submit")
+  return b
+"#;
+    let ast = parse_program(source, "partial function defaults");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+    let sym = checker
+        .lookup_symbol("get")
+        .unwrap_or_else(|| panic!("missing projected partial symbol"));
+    let SymbolKind::Function(info) = &sym.kind else {
+        panic!("expected function symbol for partial, got {:?}", sym.kind);
+    };
+    let method = info.params.iter().find(|param| param.name() == Some("method")).unwrap();
+    let path = info.params.iter().find(|param| param.name() == Some("path")).unwrap();
+    let content_type = info
+        .params
+        .iter()
+        .find(|param| param.name() == Some("content_type"))
+        .unwrap();
+    assert!(method.has_default, "{info:?}");
+    assert!(!path.has_default, "{info:?}");
+    assert!(content_type.has_default, "{info:?}");
+}
+
+#[test]
+fn test_public_partial_exports_projected_defaults() {
+    let source = r#"
+pub def route(method: str, path: str, content_type: str = "text") -> str:
+  return method
+
+pub get = partial route(method="GET")
+"#;
+    let ast = parse_program(source, "partial public export");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let get = exports
+        .iter()
+        .find_map(|export| match &export.kind {
+            CheckedExportKind::Partial(partial) if partial.name == "get" => Some(partial),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing public partial export: {exports:?}"));
+    assert_eq!(get.target_path, vec!["route"]);
+    assert_eq!(get.target_kind, CheckedPartialTargetKind::Function);
+    assert_eq!(get.presets[0].name, "method");
+    assert_eq!(get.presets[0].value, CheckedPresetValue::String("GET".to_string()));
+    let method = get.params.iter().find(|param| param.name() == Some("method")).unwrap();
+    let path = get.params.iter().find(|param| param.name() == Some("path")).unwrap();
+    let content_type = get
+        .params
+        .iter()
+        .find(|param| param.name() == Some("content_type"))
+        .unwrap();
+    assert!(method.has_default, "{get:?}");
+    assert!(!path.has_default, "{get:?}");
+    assert!(content_type.has_default, "{get:?}");
+
+    let manifest = LibraryManifest::from_checked_exports("routes".to_string(), "0.1.0".to_string(), &exports);
+    assert_eq!(manifest.exports.partials.len(), 1);
+    assert_eq!(
+        manifest.exports.partials[0].target_kind,
+        PartialTargetKindExport::Function
+    );
+    assert_eq!(
+        manifest.exports.partials[0].presets[0].value,
+        PresetValueExport::String("GET".to_string())
+    );
+}
+
+#[test]
+fn test_public_partial_exports_declaration_safe_preset_values() {
+    let source = r#"
+pub model Profile:
+  name: str
+
+pub def configure(headers: dict[str, str], codes: list[int], profile: Profile) -> str:
+  return profile.name
+
+pub default_config = partial configure(headers={"accept": "json"}, codes=[200], profile=Profile(name="ops"))
+"#;
+    let ast = parse_program(source, "partial public preset metadata");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let default_config = exports
+        .iter()
+        .find_map(|export| match &export.kind {
+            CheckedExportKind::Partial(partial) if partial.name == "default_config" => Some(partial),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing partial export: {exports:?}"));
+
+    assert!(
+        default_config
+            .presets
+            .iter()
+            .any(|preset| matches!(preset.value, CheckedPresetValue::Dict(_))),
+        "{default_config:?}"
+    );
+    assert!(
+        default_config
+            .presets
+            .iter()
+            .any(|preset| matches!(preset.value, CheckedPresetValue::List(_))),
+        "{default_config:?}"
+    );
+    assert!(
+        default_config
+            .presets
+            .iter()
+            .any(|preset| matches!(preset.value, CheckedPresetValue::ModelLiteral { .. })),
+        "{default_config:?}"
+    );
+}
+
+#[test]
+fn test_top_level_partial_rejects_runtime_preset_values() {
+    let source = r#"
+def default_method() -> str:
+  return "GET"
+
+def route(method: str, path: str) -> str:
+  return method
+
+get = partial route(method=default_method())
+"#;
+    let errors = check_str_err(source, "top-level partial runtime preset should fail");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Top-level partial preset 'method' must be declaration-safe")),
+        "expected declaration-safe preset diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_top_level_partial_invalid_diagnostics_are_complete() {
+    for (source, expected, context) in [
+        (
+            r#"
+def route(method: str) -> str:
+  return method
+
+noop = partial route()
+"#,
+            "must preset at least one keyword",
+            "empty partial should be rejected",
+        ),
+        (
+            r#"
+def route(method: str) -> str:
+  return method
+
+get = partial route(method="GET", method="POST")
+"#,
+            "repeats preset keyword 'method'",
+            "duplicate partial preset should be rejected",
+        ),
+        (
+            r#"
+def route(method: str) -> str:
+  return method
+
+get = partial route(verb="GET")
+"#,
+            "presets unknown parameter 'verb'",
+            "unknown partial preset should be rejected",
+        ),
+        (
+            r#"
+const method = "GET"
+get = partial method(value="GET")
+"#,
+            "targets unsupported symbol 'method'",
+            "unsupported partial target should be rejected",
+        ),
+        (
+            r#"
+static method: str = "GET"
+get = partial method(value="GET")
+"#,
+            "targets unsupported symbol 'method'",
+            "unsupported static partial target should be rejected",
+        ),
+        (
+            r#"
+trait Labelled:
+  def label(self) -> str: ...
+
+get = partial Labelled(value="GET")
+"#,
+            "targets unsupported symbol 'Labelled'",
+            "unsupported trait partial target should be rejected",
+        ),
+        (
+            r#"
+enum Method:
+  Get
+
+get = partial Get(value="GET")
+"#,
+            "targets unsupported symbol 'Get'",
+            "unsupported enum variant partial target should be rejected",
+        ),
+        (
+            r#"
+get = partial route(method="GET")
+"#,
+            "targets unknown callable 'route'",
+            "unknown partial target should be rejected",
+        ),
+        (
+            r#"
+def route(method: str, **labels: str) -> str:
+  return method
+
+get = partial route(labels={"accept": "json"})
+"#,
+            "cannot target callable 'route' because parameter 'labels' is a rest parameter",
+            "rest keyword partial target should be rejected",
+        ),
+        (
+            r#"
+def route(method: str, *segments: str) -> str:
+  return method
+
+get = partial route(method="GET")
+"#,
+            "cannot target callable 'route' because parameter 'segments' is a rest parameter",
+            "rest positional partial target should be rejected even when preset fills a normal parameter",
+        ),
+    ] {
+        let errors = check_str_err(source, context);
+        assert!(
+            errors.iter().any(|error| error.message.contains(expected)),
+            "expected diagnostic containing `{expected}` for {context}, got {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_top_level_partial_cycles_are_rejected() {
+    for (source, expected) in [
+        (
+            r#"
+get = partial get(method="GET")
+"#,
+            "Partial cycle detected: get -> get",
+        ),
+        (
+            r#"
+get = partial alias_get(method="GET")
+alias_get = get
+"#,
+            "Partial cycle detected: get -> alias_get -> get",
+        ),
+        (
+            r#"
+left = partial right(method="GET")
+right = partial left(method="POST")
+"#,
+            "Partial cycle detected",
+        ),
+    ] {
+        let errors = check_str_err(source, "partial cycle should fail");
+        assert!(
+            errors.iter().any(|error| error.message.contains(expected)),
+            "expected partial cycle diagnostic containing `{expected}`, got {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_public_partial_rejects_private_target_and_private_preset_values() {
+    for (source, expected) in [
+        (
+            r#"
+def route(method: str) -> str:
+  return method
+
+pub get = partial route(method="GET")
+"#,
+            "Public partial 'get' targets private symbol 'route'",
+        ),
+        (
+            r#"
+const DEFAULT_METHOD = "GET"
+
+pub def route(method: str) -> str:
+  return method
+
+pub get = partial route(method=DEFAULT_METHOD)
+"#,
+            "Public partial 'get' preset 'method' references private symbol 'DEFAULT_METHOD'",
+        ),
+        (
+            r#"
+model Profile:
+  name: str
+
+pub def configure(profile: Profile) -> str:
+  return profile.name
+
+pub default_config = partial configure(profile=Profile(name="ops"))
+"#,
+            "Public partial 'default_config' preset 'profile' references private symbol 'Profile'",
+        ),
+    ] {
+        let errors = check_str_err(source, "public partial visibility leak should fail");
+        assert!(
+            errors.iter().any(|error| error.message.contains(expected)),
+            "expected visibility diagnostic containing `{expected}`, got {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_import_module_collects_public_partial_as_callable() {
+    let library = parse_program(
+        r#"
+pub def route(method: str, path: str) -> str:
+  return path
+
+pub get = partial route(method="GET")
+"#,
+        "partial import library",
+    );
+    let consumer = parse_program(
+        r#"
+def use() -> str:
+  return get(path="/health")
+"#,
+        "partial import consumer",
+    );
+
+    let mut checker = TypeChecker::new();
+    checker.import_module(&library, "routes");
+    checker
+        .check_program(&consumer)
+        .unwrap_or_else(|errs| panic!("consumer should import public partial callable: {errs:?}"));
+}
+
+#[test]
+fn test_method_partial_presets_project_as_defaults_for_trait_and_model() {
+    let source = r#"
+trait Named:
+  def label(self, prefix: str, suffix: str = "!") -> str:
+    return prefix
+  short = partial label(prefix="name")
+
+model User with Named:
+  name: str
+  def label(self, prefix: str, suffix: str = "!") -> str:
+    return prefix
+  loud = partial label(prefix="user")
+
+def use(user: User) -> str:
+  a = user.loud()
+  b = user.loud(prefix="admin")
+  c = user.short()
+  return b
+"#;
+    check_str(source).unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+}
+
+#[test]
+fn test_method_partial_preset_values_are_typechecked() {
+    let source = r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix=1)
+"#;
+    let errors = check_str_err(source, "method partial preset should be typechecked");
+    let messages: Vec<_> = errors.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type mismatch") || message.contains("expected str")),
+        "expected type mismatch, got {messages:?}"
+    );
+}
+
+#[test]
+fn test_method_partial_name_collisions_are_rejected() {
+    for (source, expected) in [
+        (
+            r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  label = partial label(prefix="name")
+"#,
+            "Duplicate method partial 'Named.label'",
+        ),
+        (
+            r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="name")
+  short = partial label(prefix="user")
+"#,
+            "Duplicate method partial 'Named.short'",
+        ),
+        (
+            r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = label
+  short = partial label(prefix="name")
+"#,
+            "Duplicate method partial 'Named.short'",
+        ),
+    ] {
+        let errors = check_str_err(source, "method partial collision should fail");
+        assert!(
+            errors.iter().any(|error| error.message.contains(expected)),
+            "expected method partial collision diagnostic containing `{expected}`, got {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_method_partial_can_target_same_type_method_alias() {
+    let source = r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  labelled = label
+  short = partial labelled(prefix="name")
+
+model User with Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+
+def use(user: User) -> str:
+  return user.short()
+"#;
+    check_str(source).unwrap_or_else(|errs| panic!("method partial targeting alias should typecheck: {errs:?}"));
+}
+
+#[test]
+fn test_trait_partial_override_conflict_is_rejected() {
+    let source = r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="name")
+
+model User with Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  def short(self, prefix: int) -> str:
+    return "bad"
+"#;
+    let errors = check_str_err(source, "trait partial override conflict should fail");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Trait 'Named' requires 'User'::short to match its signature")),
+        "expected trait partial override conflict, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_inherited_trait_partial_ambiguity_is_rejected() {
+    let source = r#"
+trait Left:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="left")
+
+trait Right:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="right")
+
+trait Both with Left, Right:
+  def both(self) -> str: ...
+
+model User with Both:
+  def label(self, prefix: str) -> str:
+    return prefix
+  def both(self) -> str:
+    return "both"
+"#;
+    let errors = check_str_err(source, "inherited trait partial ambiguity should fail");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Ambiguous trait method 'short'")),
+        "expected inherited trait partial ambiguity diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_subtrait_partial_override_must_match_inherited_partial_signature() {
+    let source = r#"
+trait Base:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="base")
+
+trait Child with Base:
+  def labelled(self, prefix: str, count: int) -> str:
+    return prefix
+  short = partial labelled(prefix="child")
+"#;
+    let errors = check_str_err(source, "incompatible subtrait partial override should fail");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Trait 'Base' requires 'Child'::short to match its signature")),
+        "expected inherited partial override conflict, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_subtrait_partial_can_override_inherited_partial_with_compatible_signature() {
+    let source = r#"
+trait Base:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="base")
+
+trait Child with Base:
+  def label_child(self, prefix: str) -> str:
+    return prefix
+  short = partial label_child(prefix="child")
+
+model User with Child:
+  def label(self, prefix: str) -> str:
+    return prefix
+  def label_child(self, prefix: str) -> str:
+    return prefix
+"#;
+    check_str(source).unwrap_or_else(|errs| panic!("compatible inherited partial override should typecheck: {errs:?}"));
+}
+
+#[test]
+fn test_generic_trait_bound_partial_ambiguity_is_rejected() {
+    let source = r#"
+trait Left:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="left")
+
+trait Right:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="right")
+
+trait Both with Left, Right:
+  def both(self) -> str: ...
+
+def use[T with Both](value: T) -> str:
+  return value.short()
+"#;
+    let errors = check_str_err(source, "generic trait-bound partial ambiguity should fail");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Ambiguous trait method 'short'")),
+        "expected generic trait-bound partial ambiguity diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_exact_width_numeric_widening_typechecks() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  small: i16 = 120
+  wide: i64 = small
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_exact_width_numeric_narrowing_requires_explicit_policy() {
+    let source = r#"
+def main() -> None:
+  wide: i16 = 120
+  narrow: i8 = wide
+"#;
+    let errors = check_str_err(source, "expected narrowing assignment to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("expected 'i8', found 'i16'")),
+        "expected i16 -> i8 mismatch, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_integer_literals_are_range_checked_for_exact_width_targets() {
+    let source = r#"
+def main() -> None:
+  small: i8 = 300
+"#;
+    let errors = check_str_err(source, "expected out-of-range i8 literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Integer literal 300 does not fit in i8")),
+        "expected i8 range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_negative_integer_literals_use_signed_exact_width_ranges() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  small: i8 = -128
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_negative_integer_literals_do_not_fit_unsigned_targets() {
+    let source = r#"
+def main() -> None:
+  byte: u8 = -1
+"#;
+    let errors = check_str_err(source, "expected negative u8 literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Integer literal -1 does not fit in u8")),
+        "expected u8 range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_pointer_sized_integer_literals_are_range_checked() {
+    let source = r#"
+def main() -> None:
+  size: usize = -1
+"#;
+    let errors = check_str_err(source, "expected negative usize literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Integer literal -1 does not fit in usize")),
+        "expected usize range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_lossless_resize_uses_contextual_target() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  small: i8 = 120
+  wide: int = small.resize()
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_lossless_resize_rejects_narrowing() {
+    let source = r#"
+def main() -> None:
+  wide: i16 = 120
+  narrow: i8 = wide.resize()
+"#;
+    let errors = check_str_err(source, "expected narrowing resize to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("lossless numeric resize target")),
+        "expected lossless resize diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_explicit_resize_policies_allow_integer_narrowing() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  wide: i16 = 240
+  maybe: Option[i8] = wide.try_resize()
+  wrapped: i8 = wide.wrapping_resize()
+  capped: i8 = wide.saturating_resize()
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_binary_float_literals_are_checked_for_f32_targets() {
+    let ok = r#"
+def main() -> None:
+  value: f32 = 1.5
+"#;
+    check_str(ok).unwrap_or_else(|errs| panic!("expected f32 literal to typecheck: {errs:?}"));
+
+    let too_large = r#"
+def main() -> None:
+  value: f32 = 1e100
+"#;
+    let errors = check_str_err(too_large, "expected out-of-range f32 literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Float literal 1e100 does not fit in f32")),
+        "expected f32 range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_decimal_annotation_accepts_decimal_literal() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  price: decimal[5, 2] = 19.99d
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_decimal_precision_and_scale_are_validated() {
+    let source = r#"
+def main() -> None:
+  price: decimal[39, 2] = 19.99d
+"#;
+    let errors = check_str_err(source, "expected invalid decimal precision to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Decimal precision must be between 1 and 38")),
+        "expected decimal precision diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_bare_decimal_and_numeric_are_reserved() {
+    for (source, name) in [
+        (
+            r#"
+def main() -> None:
+  value: decimal = 1
+"#,
+            "decimal",
+        ),
+        (
+            r#"
+def main() -> None:
+  value: numeric = 1
+"#,
+            "numeric",
+        ),
+    ] {
+        let errors = check_str_err(source, "expected reserved numeric type name to fail");
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains(&format!("`{name}` is reserved for numeric types"))),
+            "expected reserved numeric type diagnostic for {name}, got: {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn rfc009_bigint_and_hugeint_aliases_typecheck() -> Result<(), String> {
+    let source = r#"
+def main() -> None:
+  big: bigint = 1
+  huge: hugeint = big
+"#;
+
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_decimal_literals_are_checked_against_scale() {
+    let source = r#"
+def main() -> None:
+  price: decimal[5, 2] = 19.999d
+"#;
+    let errors = check_str_err(source, "expected invalid decimal literal scale to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("has 3 fractional digit(s)") && err.message.contains("allows at most 2")),
+        "expected decimal literal scale diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn rfc009_decimal_literals_are_checked_against_integer_digits() {
+    let source = r#"
+def main() -> None:
+  price: decimal[5, 2] = 1234.5d
+"#;
+    let errors = check_str_err(source, "expected invalid decimal literal integer width to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("has 4 integer digit(s)") && err.message.contains("allows at most 3")),
+        "expected decimal literal integer digit diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
+fn top_level_function_alias_typechecks_as_callable() -> Result<(), String> {
+    let source = r#"
+def avg(x: int) -> int:
+  return x
+
+mean = avg
+
+def main() -> int:
+  return mean(10)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
+    let alias = checker
+        .lookup_symbol("mean")
+        .ok_or_else(|| "expected alias symbol to be collected".to_string())?;
+    assert!(matches!(alias.kind, crate::frontend::symbols::SymbolKind::Function(_)));
+    Ok(())
+}
+
+#[test]
+fn qualified_top_level_alias_resolves_imported_module_target() -> Result<(), String> {
+    let source = r#"
+import std.math as math
+
+def sqrt(value: str) -> str:
+  return value
+
+root = math.sqrt
+
+def main() -> float:
+  return root(4.0)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
+    let alias = checker
+        .lookup_symbol("root")
+        .ok_or_else(|| "expected qualified alias symbol to be collected".to_string())?;
+    let crate::frontend::symbols::SymbolKind::Function(info) = &alias.kind else {
+        return Err(format!("expected root to resolve as a function, got {:?}", alias.kind));
+    };
+    assert_eq!(info.return_type, ResolvedType::Float);
+    Ok(())
+}
+
+#[test]
+fn top_level_alias_rejects_non_callable_value_target() {
+    let errors = check_str_err(
+        r#"
+const count = 1
+total = count
+"#,
+        "const alias target should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("targets unsupported symbol 'count'")),
+        "expected unsupported alias target diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn top_level_alias_cycle_is_rejected() {
+    let errors = check_str_err(
+        r#"
+left = right
+right = left
+"#,
+        "alias cycle should be rejected",
+    );
+    assert!(
+        errors.iter().any(|err| err.message.contains("Alias cycle detected")),
+        "expected alias cycle diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn public_top_level_alias_rejects_private_target() {
+    let errors = check_str_err(
+        r#"
+pub mean = avg
+
+def avg(x: int) -> int:
+  return x
+"#,
+        "public alias to private target should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Public alias 'mean' targets private symbol 'avg'")),
+        "expected public/private alias diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn same_type_method_alias_typechecks_as_method_call() -> Result<(), String> {
+    let source = r#"
+model Stats:
+  value: int
+  mean = avg
+
+  def avg(self) -> int:
+    return self.value
+
+def main() -> int:
+  let stats = Stats(value=10)
+  return stats.mean()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
+    let Some(TypeInfo::Model(model)) = checker.lookup_type_info("Stats") else {
+        return Err("expected Stats model metadata".to_string());
+    };
+    assert_eq!(model.method_aliases.get("mean").map(String::as_str), Some("avg"));
+    assert!(model.methods.contains_key("mean"));
+    assert_eq!(model.methods["mean"].alias_of.as_deref(), Some("avg"));
+    Ok(())
+}
+
+#[test]
+fn method_alias_rejects_unknown_target() {
+    let errors = check_str_err(
+        r#"
+model Stats:
+  value: int
+  mean = avg
+"#,
+        "method alias to missing target should be rejected",
+    );
+    assert!(
+        errors.iter().any(|err| err
+            .message
+            .contains("Method alias 'Stats.mean' targets unknown method 'avg'")),
+        "expected missing method alias target diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn method_alias_cycle_is_rejected() {
+    let errors = check_str_err(
+        r#"
+model Stats:
+  value: int
+  mean = average
+  average = mean
+"#,
+        "method alias cycle should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Method alias cycle detected on 'Stats'")),
+        "expected method alias cycle diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn public_top_level_alias_exports_as_alias_metadata() -> Result<(), String> {
+    let source = r#"
+pub def avg(x: int) -> int:
+  return x
+
+pub mean = alias avg
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let manifest = LibraryManifest::from_checked_exports("stats".to_string(), "0.1.0".to_string(), &exports);
+    assert_eq!(manifest.exports.aliases.len(), 1);
+    assert_eq!(manifest.exports.aliases[0].name, "mean");
+    assert_eq!(manifest.exports.aliases[0].target_path, vec!["avg"]);
+    assert!(
+        manifest
+            .exports
+            .functions
+            .iter()
+            .all(|function| function.name != "mean"),
+        "alias must not be flattened into a duplicate function export"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+fn write_rust_inspect_probe_crate(root: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(root.join("demo").join("src"))?;
+    fs::write(
+        root.join("Cargo.toml"),
+        r#"[package]
+name = "ra_frontend_probe"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+demo = { path = "demo" }
+"#,
+    )?;
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub fn touch() { let _ = demo::Builder::new(); }\n",
+    )?;
+    fs::write(
+        root.join("demo").join("Cargo.toml"),
+        r#"[package]
+name = "demo"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        root.join("demo").join("src/lib.rs"),
+        r#"pub struct Builder;
+
+impl Builder {
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+pub enum Choice {
+    Some(i32),
+}
+"#,
+    )?;
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+fn seeded_rust_inspect_workspace() -> Result<tempfile::TempDir, Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        r#"[package]
+name = "ra_seeded_metadata_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    Ok(tmp)
+}
+
+#[cfg(feature = "rust_inspect")]
+fn prewarm_metadata(manifest_dir: &std::path::Path, paths: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
+    let inspector = Inspector::new(InspectorConfig::new(manifest_dir.to_path_buf()));
+    inspector.prewarm(
+        paths.iter().map(|path| (*path).to_string()).collect::<Vec<_>>(),
+        &|_| (),
+    )?;
+    Ok(())
+}
+
 fn assert_check_ok(source: &str) {
     if let Err(errs) = check_str(source) {
         for e in &errs {
@@ -44,6 +1200,59 @@ fn assert_check_ok(source: &str) {
     }
 }
 
+fn has_private_field_error(errors: &[CompileError], type_name: &str, field: &str) -> bool {
+    let needle = format!("Field '{field}' on '{type_name}' is private");
+    errors.iter().any(|err| err.message.contains(&needle))
+}
+
+#[test]
+fn test_class_private_field_access_rejected_outside_owner() {
+    let source = r#"
+pub class LazyFrame:
+  _cursor: int
+  pub schema: str
+
+def leak(frame: LazyFrame) -> int:
+  return frame._cursor
+"#;
+    let errors = check_str_err(source, "private class field access should fail typechecking");
+    assert!(
+        has_private_field_error(&errors, "LazyFrame", "_cursor"),
+        "expected private field error, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_class_private_field_access_allowed_inside_owner_method() {
+    let source = r#"
+pub class LazyFrame:
+  _cursor: int
+
+  def cursor(self) -> int:
+    return self._cursor
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_class_private_parent_field_access_rejected_in_child_method() {
+    let source = r#"
+class Parent:
+  private_value: int
+
+class Child extends Parent:
+  def expose(self) -> int:
+    return self.private_value
+"#;
+    let errors = check_str_err(source, "private parent field access should fail in child method");
+    assert!(
+        has_private_field_error(&errors, "Child", "private_value"),
+        "expected private field error, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
 fn library_index_with_mylib_exports() -> LibraryManifestIndex {
     let manifest = LibraryManifest {
         name: "mylib".to_string(),
@@ -51,10 +1260,38 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         incan_version: crate::version::INCAN_VERSION.to_string(),
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
+            aliases: Vec::new(),
+            partials: vec![PartialExport {
+                name: "make_default_widget".to_string(),
+                target_path: vec!["make_widget".to_string()],
+                target_kind: PartialTargetKindExport::Function,
+                presets: vec![PartialPresetExport {
+                    name: "name".to_string(),
+                    ty: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    value: PresetValueExport::String("default".to_string()),
+                }],
+                type_params: Vec::new(),
+                params: vec![ParamExport {
+                    name: "name".to_string(),
+                    ty: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    kind: ParamKindExport::Normal,
+                    has_default: true,
+                }],
+                return_type: TypeRef::Named {
+                    name: "Widget".to_string(),
+                },
+                is_async: false,
+            }],
             models: vec![ModelExport {
                 name: "Widget".to_string(),
                 type_params: Vec::new(),
                 traits: Vec::new(),
+                trait_adoptions: Vec::new(),
+                derives: Vec::new(),
                 fields: Vec::new(),
                 methods: Vec::new(),
             }],
@@ -67,26 +1304,63 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     ty: TypeRef::Named {
                         name: "str".to_string(),
                     },
+                    kind: ParamKindExport::Normal,
+                    has_default: false,
                 }],
                 return_type: TypeRef::Named {
                     name: "Widget".to_string(),
                 },
                 is_async: false,
             }],
-            traits: Vec::new(),
+            traits: vec![TraitExport {
+                name: "Labelled".to_string(),
+                type_params: Vec::new(),
+                supertraits: Vec::new(),
+                requires: Vec::new(),
+                methods: vec![MethodExport {
+                    alias_of: None,
+                    name: "label".to_string(),
+                    type_params: Vec::new(),
+                    receiver: Some(ReceiverExport::Immutable),
+                    params: Vec::new(),
+                    return_type: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    is_async: false,
+                    has_body: false,
+                }],
+            }],
             enums: vec![EnumExport {
                 name: "Status".to_string(),
                 type_params: Vec::new(),
+                traits: vec!["Labelled".to_string()],
+                trait_adoptions: Vec::new(),
+                value_type: Some(EnumValueTypeExport::Str),
                 variants: vec![
                     EnumVariantExport {
                         name: "Active".to_string(),
                         fields: Vec::new(),
+                        value: Some(EnumValueExport::Str("active".to_string())),
                     },
                     EnumVariantExport {
                         name: "Disabled".to_string(),
                         fields: Vec::new(),
+                        value: Some(EnumValueExport::Str("disabled".to_string())),
                     },
                 ],
+                methods: vec![MethodExport {
+                    alias_of: None,
+                    name: "label".to_string(),
+                    type_params: Vec::new(),
+                    receiver: Some(ReceiverExport::Immutable),
+                    params: Vec::new(),
+                    return_type: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    is_async: false,
+                    has_body: true,
+                }],
+                derives: Vec::new(),
             }],
             type_aliases: Vec::new(),
             newtypes: Vec::new(),
@@ -96,9 +1370,19 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     name: "str".to_string(),
                 },
             }],
+            statics: vec![StaticExport {
+                name: "SHARED_ITEMS".to_string(),
+                ty: TypeRef::Applied {
+                    name: "list".to_string(),
+                    args: vec![TypeRef::Named {
+                        name: "int".to_string(),
+                    }],
+                },
+            }],
         },
         vocab: None,
         soft_keywords: Default::default(),
+        contract_metadata: LibraryContractMetadata::default(),
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
@@ -117,6 +1401,8 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
         incan_version: crate::version::INCAN_VERSION.to_string(),
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
+            aliases: Vec::new(),
+            partials: Vec::new(),
             models: Vec::new(),
             classes: Vec::new(),
             functions: Vec::new(),
@@ -134,9 +1420,11 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
             type_aliases: Vec::new(),
             newtypes: Vec::new(),
             consts: Vec::new(),
+            statics: Vec::new(),
         },
         vocab: None,
         soft_keywords: Default::default(),
+        contract_metadata: LibraryContractMetadata::default(),
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
@@ -147,6 +1435,364 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
                 "mylib",
                 "mylib",
                 synthetic_artifact_root("mylib_trait_export"),
+            ),
+        },
+    )]))
+}
+
+fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
+    let convert_int = TypeBoundExport {
+        name: "Convert".to_string(),
+        type_args: vec![TypeRef::Named {
+            name: "int".to_string(),
+        }],
+    };
+    let convert_float = TypeBoundExport {
+        name: "Convert".to_string(),
+        type_args: vec![TypeRef::Named {
+            name: "float".to_string(),
+        }],
+    };
+    let manifest = LibraryManifest {
+        name: "mylib".to_string(),
+        version: "0.1.0".to_string(),
+        incan_version: crate::version::INCAN_VERSION.to_string(),
+        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        exports: LibraryExports {
+            aliases: Vec::new(),
+            partials: Vec::new(),
+            models: vec![ModelExport {
+                name: "ImportedReading".to_string(),
+                type_params: Vec::new(),
+                traits: vec!["Convert".to_string(), "Convert".to_string()],
+                trait_adoptions: vec![convert_int.clone(), convert_float.clone()],
+                derives: Vec::new(),
+                fields: Vec::new(),
+                methods: vec![
+                    MethodExport {
+                        alias_of: None,
+                        name: "convert".to_string(),
+                        type_params: Vec::new(),
+                        receiver: Some(ReceiverExport::Immutable),
+                        params: Vec::new(),
+                        return_type: TypeRef::Named {
+                            name: "int".to_string(),
+                        },
+                        is_async: false,
+                        has_body: true,
+                    },
+                    MethodExport {
+                        alias_of: None,
+                        name: "convert".to_string(),
+                        type_params: Vec::new(),
+                        receiver: Some(ReceiverExport::Immutable),
+                        params: Vec::new(),
+                        return_type: TypeRef::Named {
+                            name: "float".to_string(),
+                        },
+                        is_async: false,
+                        has_body: true,
+                    },
+                ],
+            }],
+            classes: Vec::new(),
+            functions: Vec::new(),
+            traits: vec![TraitExport {
+                name: "Convert".to_string(),
+                type_params: vec![TypeParamExport {
+                    name: "T".to_string(),
+                    bounds: Vec::new(),
+                }],
+                supertraits: Vec::new(),
+                requires: Vec::new(),
+                methods: vec![MethodExport {
+                    alias_of: None,
+                    name: "convert".to_string(),
+                    type_params: Vec::new(),
+                    receiver: Some(ReceiverExport::Immutable),
+                    params: Vec::new(),
+                    return_type: TypeRef::TypeParam { name: "T".to_string() },
+                    is_async: false,
+                    has_body: false,
+                }],
+            }],
+            enums: vec![EnumExport {
+                name: "ImportedToken".to_string(),
+                type_params: Vec::new(),
+                traits: vec!["Convert".to_string(), "Convert".to_string()],
+                trait_adoptions: vec![convert_int.clone(), convert_float.clone()],
+                value_type: None,
+                variants: vec![EnumVariantExport {
+                    name: "Number".to_string(),
+                    fields: Vec::new(),
+                    value: None,
+                }],
+                methods: vec![
+                    MethodExport {
+                        alias_of: None,
+                        name: "convert".to_string(),
+                        type_params: Vec::new(),
+                        receiver: Some(ReceiverExport::Immutable),
+                        params: Vec::new(),
+                        return_type: TypeRef::Named {
+                            name: "int".to_string(),
+                        },
+                        is_async: false,
+                        has_body: true,
+                    },
+                    MethodExport {
+                        alias_of: None,
+                        name: "convert".to_string(),
+                        type_params: Vec::new(),
+                        receiver: Some(ReceiverExport::Immutable),
+                        params: Vec::new(),
+                        return_type: TypeRef::Named {
+                            name: "float".to_string(),
+                        },
+                        is_async: false,
+                        has_body: true,
+                    },
+                ],
+                derives: Vec::new(),
+            }],
+            type_aliases: Vec::new(),
+            newtypes: Vec::new(),
+            consts: Vec::new(),
+            statics: Vec::new(),
+        },
+        vocab: None,
+        soft_keywords: Default::default(),
+        contract_metadata: LibraryContractMetadata::default(),
+    };
+
+    LibraryManifestIndex::from_entries(HashMap::from([(
+        "mylib".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "mylib",
+                "mylib",
+                synthetic_artifact_root("mylib_rfc025"),
+            ),
+        },
+    )]))
+}
+
+fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestIndex {
+    let type_param_t = TypeParamExport {
+        name: "T".to_string(),
+        bounds: Vec::new(),
+    };
+    let manifest = LibraryManifest {
+        name: "pubdemo".to_string(),
+        version: "0.1.0".to_string(),
+        incan_version: crate::version::INCAN_VERSION.to_string(),
+        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        exports: LibraryExports {
+            aliases: Vec::new(),
+            partials: Vec::new(),
+            models: vec![ModelExport {
+                name: "SessionError".to_string(),
+                type_params: Vec::new(),
+                traits: Vec::new(),
+                trait_adoptions: Vec::new(),
+                derives: Vec::new(),
+                fields: Vec::new(),
+                methods: Vec::new(),
+            }],
+            classes: vec![
+                ClassExport {
+                    name: "Session".to_string(),
+                    type_params: Vec::new(),
+                    extends: None,
+                    traits: Vec::new(),
+                    trait_adoptions: Vec::new(),
+                    derives: Vec::new(),
+                    fields: Vec::new(),
+                    methods: vec![
+                        MethodExport {
+                            alias_of: None,
+                            name: "default".to_string(),
+                            type_params: Vec::new(),
+                            receiver: None,
+                            params: Vec::new(),
+                            return_type: TypeRef::Named {
+                                name: "Session".to_string(),
+                            },
+                            is_async: false,
+                            has_body: true,
+                        },
+                        MethodExport {
+                            alias_of: None,
+                            name: "read_csv".to_string(),
+                            type_params: vec![type_param_t.clone()],
+                            receiver: Some(ReceiverExport::Mutable),
+                            params: vec![
+                                ParamExport {
+                                    name: "logical_name".to_string(),
+                                    ty: TypeRef::Named {
+                                        name: "str".to_string(),
+                                    },
+                                    kind: ParamKindExport::Normal,
+                                    has_default: false,
+                                },
+                                ParamExport {
+                                    name: "uri".to_string(),
+                                    ty: TypeRef::Named {
+                                        name: "str".to_string(),
+                                    },
+                                    kind: ParamKindExport::Normal,
+                                    has_default: false,
+                                },
+                            ],
+                            return_type: TypeRef::Applied {
+                                name: "Result".to_string(),
+                                args: vec![
+                                    TypeRef::Applied {
+                                        name: "LazyFrame".to_string(),
+                                        args: vec![TypeRef::TypeParam { name: "T".to_string() }],
+                                    },
+                                    TypeRef::Named {
+                                        name: "SessionError".to_string(),
+                                    },
+                                ],
+                            },
+                            is_async: false,
+                            has_body: true,
+                        },
+                        MethodExport {
+                            alias_of: None,
+                            name: "collect".to_string(),
+                            type_params: vec![type_param_t.clone()],
+                            receiver: Some(ReceiverExport::Immutable),
+                            params: vec![ParamExport {
+                                name: "data".to_string(),
+                                ty: TypeRef::Applied {
+                                    name: "LazyFrame".to_string(),
+                                    args: vec![TypeRef::TypeParam { name: "T".to_string() }],
+                                },
+                                kind: ParamKindExport::Normal,
+                                has_default: false,
+                            }],
+                            return_type: TypeRef::Applied {
+                                name: "Result".to_string(),
+                                args: vec![
+                                    TypeRef::Applied {
+                                        name: "DataFrame".to_string(),
+                                        args: vec![TypeRef::TypeParam { name: "T".to_string() }],
+                                    },
+                                    TypeRef::Named {
+                                        name: "SessionError".to_string(),
+                                    },
+                                ],
+                            },
+                            is_async: false,
+                            has_body: true,
+                        },
+                    ],
+                },
+                ClassExport {
+                    name: "DataFrame".to_string(),
+                    type_params: vec![type_param_t.clone()],
+                    extends: None,
+                    traits: vec!["BoundedDataSet".to_string()],
+                    trait_adoptions: vec![TypeBoundExport {
+                        name: "BoundedDataSet".to_string(),
+                        type_args: Vec::new(),
+                    }],
+                    derives: vec![clone_trait_name()],
+                    fields: Vec::new(),
+                    methods: Vec::new(),
+                },
+                ClassExport {
+                    name: "LazyFrame".to_string(),
+                    type_params: vec![type_param_t.clone()],
+                    extends: None,
+                    traits: vec!["BoundedDataSet".to_string()],
+                    trait_adoptions: vec![TypeBoundExport {
+                        name: "BoundedDataSet".to_string(),
+                        type_args: Vec::new(),
+                    }],
+                    derives: vec![clone_trait_name()],
+                    fields: Vec::new(),
+                    methods: vec![MethodExport {
+                        alias_of: None,
+                        name: "collect".to_string(),
+                        type_params: Vec::new(),
+                        receiver: Some(ReceiverExport::Immutable),
+                        params: Vec::new(),
+                        return_type: TypeRef::Applied {
+                            name: "Result".to_string(),
+                            args: vec![
+                                TypeRef::Applied {
+                                    name: "DataFrame".to_string(),
+                                    args: vec![TypeRef::TypeParam { name: "T".to_string() }],
+                                },
+                                TypeRef::Named {
+                                    name: "SessionError".to_string(),
+                                },
+                            ],
+                        },
+                        is_async: false,
+                        has_body: true,
+                    }],
+                },
+            ],
+            functions: vec![FunctionExport {
+                name: "display".to_string(),
+                type_params: vec![type_param_t.clone()],
+                params: vec![ParamExport {
+                    name: "data".to_string(),
+                    ty: TypeRef::Applied {
+                        name: "DataSet".to_string(),
+                        args: vec![TypeRef::TypeParam { name: "T".to_string() }],
+                    },
+                    kind: ParamKindExport::Normal,
+                    has_default: false,
+                }],
+                return_type: TypeRef::Named {
+                    name: none_constructor_name(),
+                },
+                is_async: false,
+            }],
+            traits: vec![
+                TraitExport {
+                    name: "DataSet".to_string(),
+                    type_params: vec![type_param_t.clone()],
+                    supertraits: Vec::new(),
+                    requires: Vec::new(),
+                    methods: Vec::new(),
+                },
+                TraitExport {
+                    name: "BoundedDataSet".to_string(),
+                    type_params: vec![type_param_t],
+                    supertraits: vec![TypeBoundExport {
+                        name: "DataSet".to_string(),
+                        type_args: vec![TypeRef::TypeParam { name: "T".to_string() }],
+                    }],
+                    requires: Vec::new(),
+                    methods: Vec::new(),
+                },
+            ],
+            enums: Vec::new(),
+            type_aliases: Vec::new(),
+            newtypes: Vec::new(),
+            consts: Vec::new(),
+            statics: Vec::new(),
+        },
+        vocab: None,
+        soft_keywords: Default::default(),
+        contract_metadata: LibraryContractMetadata::default(),
+    };
+
+    LibraryManifestIndex::from_entries(HashMap::from([(
+        "pubdemo".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root(
+                "pubdemo",
+                "pubdemo",
+                synthetic_artifact_root("pub_boundary_type_fidelity"),
             ),
         },
     )]))
@@ -177,7 +1823,7 @@ def accept(f: (int) -> int) -> int:
 def main() -> None:
   _ = accept(id)
 "#;
-    let err = check_str(source).expect_err("generic function name in value position should fail");
+    let err = check_str_err(source, "generic function name in value position should fail");
     assert!(
         err.iter()
             .any(|e| e.message.contains("generic function") && e.message.contains("'id'")),
@@ -204,6 +1850,24 @@ def foo() -> int:
 "#;
     let result = check_str(source);
     assert!(result.is_err());
+}
+
+#[test]
+fn test_unknown_symbol_in_elif_branch_is_reported() {
+    let source = r#"
+def foo(flag: bool) -> int:
+  if flag:
+    return 1
+  elif true:
+    return unknown_var
+  else:
+    return 0
+"#;
+    let errors = check_str_err(source, "Expected typechecker error for unknown symbol in elif branch");
+    assert!(
+        has_unknown_symbol_error(&errors, "unknown_var"),
+        "Expected unknown symbol error for elif branch; got: {errors:?}"
+    );
 }
 
 #[test]
@@ -341,6 +2005,1545 @@ import std.web as rust
     assert!(result.is_err());
 }
 
+/// RFC 041: `import rust::crate` binds the crate root; it is not a concrete Rust type.
+#[test]
+fn test_rust_crate_root_import_rejected_in_type_position() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+import rust::serde_json
+
+def f(x: serde_json) -> None:
+  pass
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let errs = checker
+        .check_program(&ast)
+        .err()
+        .ok_or_else(|| std::io::Error::other("expected type error for crate-root import used as type"))?;
+    assert!(
+        errs.iter().any(|e| e.message.contains("cannot be used as a type")),
+        "expected crate-root-as-type diagnostic, got {errs:?}"
+    );
+    Ok(())
+}
+
+/// RFC 041: `from rust::... import Item` carries canonical path in [`ResolvedType::RustPath`].
+#[test]
+fn test_rust_from_import_records_rust_path_on_ident_use() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::std::time import Instant
+
+def f() -> None:
+  _ = Instant
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expr_types.values().any(|t| {
+            matches!(
+                t,
+                ResolvedType::RustPath(p) if p == "std::time::Instant"
+            )
+        }),
+        "expected RustPath(std::time::Instant) in expr types, got {:?}",
+        info.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rusttype_requires_rust_import_backing() {
+    let source = r#"
+type Email = rusttype str
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected rusttype backing diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("declared as `rusttype`")),
+        "expected rusttype backing diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_interop_block_rejected_on_non_rusttype() {
+    let source = r#"
+type Email = newtype str:
+  interop:
+    from str try Email.parse
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected interop block diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("`interop:` is only valid")),
+        "expected interop-on-newtype diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_interop_try_adapter_requires_result_or_option() {
+    let source = r#"
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+  def parse(raw: str) -> Email:
+    ...
+
+  interop:
+    from str try Email.parse
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected invalid try-adapter diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("`try` interop adapter")),
+        "expected try-adapter return diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_interop_via_adapter_rejects_fallible_return() {
+    let source = r#"
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+  def parse(raw: str) -> Result[Email, str]:
+    ...
+
+  interop:
+    from str via Email.parse
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected invalid via-adapter diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("`via` interop adapter")),
+        "expected via-adapter infallible diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_interop_from_adapter_input_type_mismatch() {
+    let source = r#"
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+  def parse(raw: int) -> Result[Email, str]:
+    ...
+
+  interop:
+    from str try Email.parse
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected interop input-type mismatch diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("incompatible input type")),
+        "expected interop adapter input mismatch diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_interop_into_receiver_method_allowed() {
+    let source = r#"
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+  def as_str(self) -> str:
+    ...
+
+  interop:
+    into str via Email.as_str
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_interop_from_via_positive_path() {
+    let source = r#"
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+  def parse(raw: str) -> Email:
+    ...
+
+  interop:
+    from str via Email.parse
+"#;
+    assert_check_ok(source);
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_ambiguous_short_form_adapter_rejected() {
+    let source = r#"
+from rust::regex import Regex as RustRegex
+
+type WrappedRegex = rusttype RustRegex:
+  def new(pattern: str) -> WrappedRegex:
+    ...
+
+  interop:
+    from str via new
+"#;
+    let result = check_str(source);
+    if let Err(errs) = result {
+        assert!(
+            errs.iter()
+                .any(|e| e.message.contains("Ambiguous short-form interop adapter")),
+            "expected ambiguous short-form adapter diagnostic, got {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn test_rusttype_rebinding_resolves_to_target_method() {
+    let source = r#"
+from rust::mail import Sender as RustSender
+
+type Sender = rusttype RustSender:
+  send_now = try_send
+
+  def try_send(self, value: int) -> Result[None, str]:
+    ...
+
+def push(sender: Sender, value: int) -> Result[None, str]:
+  return sender.send_now(value)
+"#;
+    assert_check_ok(source);
+}
+
+/// Issue #217: payload names bound from `rusttype`-backed enum-style patterns must be in scope in the arm body.
+#[test]
+fn test_rusttype_enum_match_binds_payload_in_arm() {
+    let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+from rust::mail import Sender as RustSender
+
+type PlanRel = rusttype RustSender:
+  def noop(self) -> None:
+    ...
+
+def f(x: PlanRel) -> None:
+  match x:
+    PlanRel.Root(root) =>
+      _ = id(root)
+    _ =>
+      _ = x
+
+def g(x: Option[PlanRel]) -> None:
+  match x:
+    Some(inner) =>
+      match inner:
+        PlanRel.Root(root) =>
+          _ = id(root)
+        _ =>
+          _ = inner
+    None =>
+      _ = 0
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rusttype_enum_match_with_mismatched_qualifier_reports_constructor_resolution_error() {
+    let source = r#"
+from rust::mail import Sender as RustSender
+
+type PlanRel = rusttype RustSender:
+  def noop(self) -> None:
+    ...
+
+type OtherEnum = rusttype RustSender:
+  def noop(self) -> None:
+    ...
+
+def f(x: PlanRel) -> None:
+  match x:
+    OtherEnum.Root(root) =>
+      _ = root
+    _ =>
+      _ = x
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors for mismatched rusttype constructor qualifier");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("does not resolve for this match")),
+        "expected unknown_match_constructor_pattern, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_resolved_type_from_fully_qualified_option_display_extracts_option_payload() {
+    let checker = TypeChecker::new();
+    let resolved = checker.resolved_type_from_rust_display("::core::option::Option<demo::Thing>");
+    assert_eq!(
+        resolved,
+        ResolvedType::Generic(
+            "Option".to_string(),
+            vec![ResolvedType::RustPath("demo::Thing".to_string())],
+        )
+    );
+}
+
+#[test]
+fn test_resolved_type_from_fully_qualified_result_display_normalizes() {
+    let checker = TypeChecker::new();
+    let resolved = checker.resolved_type_from_rust_display("::core::result::Result<demo::OkThing, demo::ErrThing>");
+    assert_eq!(
+        resolved,
+        ResolvedType::Generic(
+            "Result".to_string(),
+            vec![
+                ResolvedType::RustPath("demo::OkThing".to_string()),
+                ResolvedType::RustPath("demo::ErrThing".to_string()),
+            ],
+        )
+    );
+}
+
+#[test]
+fn test_resolved_type_from_namespaced_result_alias_normalizes_ok_payload() {
+    let checker = TypeChecker::new();
+    let resolved = checker.resolved_type_from_rust_display(
+        "datafusion_common::error::Result<datafusion_expr::logical_plan::plan::LogicalPlan>",
+    );
+    assert_eq!(
+        resolved,
+        ResolvedType::Generic(
+            "Result".to_string(),
+            vec![
+                ResolvedType::RustPath("datafusion_expr::logical_plan::plan::LogicalPlan".to_string()),
+                ResolvedType::Unknown,
+            ],
+        )
+    );
+}
+
+#[test]
+fn test_resolved_type_from_borrowed_rust_path_display_extracts_ref_payload() {
+    let checker = TypeChecker::new();
+    let resolved = checker.resolved_type_from_rust_display("&demo::Thing");
+    assert_eq!(
+        resolved,
+        ResolvedType::Ref(Box::new(ResolvedType::RustPath("demo::Thing".to_string()))),
+    );
+}
+
+#[test]
+fn test_resolved_type_from_mut_borrowed_rust_path_display_extracts_refmut_payload() {
+    let checker = TypeChecker::new();
+    let resolved = checker.resolved_type_from_rust_display("&mut demo::Thing");
+    assert_eq!(
+        resolved,
+        ResolvedType::RefMut(Box::new(ResolvedType::RustPath("demo::Thing".to_string()))),
+    );
+}
+
+#[test]
+fn test_resolved_type_from_builtin_borrowed_displays_stays_stable() {
+    let checker = TypeChecker::new();
+    assert_eq!(checker.resolved_type_from_rust_display("&str"), ResolvedType::Str);
+    assert_eq!(checker.resolved_type_from_rust_display("&[u8]"), ResolvedType::Bytes);
+}
+
+#[test]
+fn test_resolved_param_type_from_builtin_borrowed_displays_preserves_ref_payload() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&str"),
+        ResolvedType::Ref(Box::new(ResolvedType::Str)),
+    );
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&[u8]"),
+        ResolvedType::Ref(Box::new(ResolvedType::Bytes)),
+    );
+}
+
+#[test]
+fn test_types_compatible_refmut_is_assignable_to_ref_but_not_reverse() {
+    let checker = TypeChecker::new();
+    let immutable = ResolvedType::Ref(Box::new(ResolvedType::RustPath("demo::Thing".to_string())));
+    let mutable = ResolvedType::RefMut(Box::new(ResolvedType::RustPath("demo::Thing".to_string())));
+    assert!(
+        checker.types_compatible(&mutable, &immutable),
+        "mutable borrow should satisfy immutable borrow expectations"
+    );
+    assert!(
+        !checker.types_compatible(&immutable, &mutable),
+        "immutable borrow must not satisfy mutable borrow expectations"
+    );
+}
+
+#[test]
+fn test_union_member_values_satisfy_explicit_union_return_type() {
+    let source = r#"
+def parse_value(flag: bool) -> int | str:
+  if flag:
+    return 42
+  return "fallback"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_rejects_return_value_outside_member_set() {
+    let source = r#"
+def parse_value() -> int | str:
+  return true
+"#;
+    let errors = check_str_err(source, "bool should not satisfy int | str");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Union") && error.message.contains("bool")),
+        "expected union type mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_union_assignment_canonicalizes_none_through_option() {
+    let source = r#"
+def maybe_name(flag: bool) -> str | None:
+  if flag:
+    return "Ada"
+  return None
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_branch_type() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  if isinstance(value, str):
+    return value.upper()
+  return "number"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_else_branch_for_two_member_union() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    return value.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_wider_else_branch_to_remaining_union() {
+    let source = r#"
+def normalize(value: int | str | bool) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    match value:
+      bool(flag) =>
+        if flag:
+          return "true"
+        return "false"
+      str(text) =>
+        return text.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_elif_chain() {
+    let source = r#"
+def normalize(value: int | str | bool) -> str:
+  if isinstance(value, int):
+    return "number"
+  elif isinstance(value, str):
+    return value.upper()
+  else:
+    if value:
+      return "true"
+    return "false"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_collection_literal_requires_explicit_union_annotation() {
+    let source = r#"
+def values() -> List[int | str]:
+  items: List[int | str] = [1, "two"]
+  return items
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_collection_literal_does_not_synthesize_implicit_union() {
+    let source = r#"
+def values() -> None:
+  items = [1, "two"]
+"#;
+    let errors = check_str_err(source, "mixed list literal should require an explicit union annotation");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("int") && error.message.contains("str")),
+        "expected mixed list element diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_union_is_not_none_narrows_option_canonicalized_union() {
+    let source = r#"
+def normalize(value: str | None) -> str:
+  if value is not None:
+    return value.upper()
+  return "missing"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_is_none_narrows_else_branch_to_option_inner() {
+    let source = r#"
+def normalize(value: str | None) -> str:
+  if value is None:
+    return "missing"
+  else:
+    return value.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_isinstance_narrows_option_wrapped_union_else_branch() {
+    let source = r#"
+def normalize(value: int | str | None) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    if value is None:
+      return "missing"
+    else:
+      return value.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_match_type_patterns_bind_narrowed_values() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  match value:
+    int(n) =>
+      return "number"
+    str(s) =>
+      return s.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_match_requires_exhaustive_type_patterns() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  match value:
+    int(n) =>
+      return "number"
+  return "fallback"
+"#;
+    let errors = check_str_err(source, "missing union match arm should be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("non-exhaustive") || error.message.contains("str")),
+        "expected non-exhaustive union match diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_match_pattern_alternation_typechecks_and_counts_exhaustiveness() {
+    let source = r#"
+enum Status:
+  Pending
+  Retrying
+  Done
+
+def label(status: Status) -> str:
+  match status:
+    Status.Pending | Status.Retrying =>
+      return "waiting"
+    Status.Done =>
+      return "done"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_if_let_pattern_alternation_typechecks_common_binding() {
+    let source = r#"
+def first(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(value) = result:
+    return value
+  return 0
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_pattern_alternation_rejects_missing_binding() {
+    let source = r#"
+def first(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(_) = result:
+    return value
+  return 0
+"#;
+    let errors = check_str_err(source, "pattern alternation with missing binding should be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Pattern alternation binding mismatch")),
+        "expected binding mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_pattern_alternation_rejects_different_binding_names() {
+    let source = r#"
+def first(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(error) = result:
+    return value
+  return 0
+"#;
+    let errors = check_str_err(
+        source,
+        "pattern alternation with different binding names should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Pattern alternation binding mismatch")),
+        "expected binding mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_pattern_alternation_rejects_different_binding_types() {
+    let source = r#"
+def describe(value: int | str) -> str:
+  match value:
+    int(item) | str(item) =>
+      return str(item)
+"#;
+    let errors = check_str_err(
+        source,
+        "pattern alternation with different binding types should be rejected",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("has incompatible types")),
+        "expected binding type mismatch diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_duplicate_interop_edges_rejected() {
+    let source = r#"
+from rust::mail import EmailAddress as RustEmailAddress
+
+type Email = rusttype RustEmailAddress:
+  def parse(raw: str) -> Result[Email, str]:
+    ...
+
+  interop:
+    from str try Email.parse
+    from str try Email.parse
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected duplicate interop edge diagnostic");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("Duplicate interop edge")),
+        "expected duplicate interop edge diagnostic, got {errs:?}"
+    );
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_inspect_unavailable_stays_permissive_for_method_calls() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::regex import Regex
+
+def f() -> None:
+  _ = Regex.no_such_method("x")
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    // Leave rust-inspect disabled for this checker: no manifest dir means cache-only permissive fallback.
+    let result = checker.check_program(&ast);
+    assert!(
+        result.is_ok(),
+        "expected permissive fallback when metadata is unavailable, got {result:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_inspect_function_signature_preserves_borrowed_rust_path_param() -> Result<(), Box<dyn std::error::Error>> {
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::takes_ref".to_string(),
+                definition_path: Some("demo::takes_ref".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Function(RustFunctionSig {
+                    params: vec![RustParam {
+                        name: Some("value".to_string()),
+                        type_display: "&demo::Thing".to_string(),
+                    }],
+                    return_type: "()".to_string(),
+                    is_async: false,
+                    is_unsafe: false,
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect function: {e}")))?;
+    let Some(RustItemMetadata {
+        kind: RustItemKind::Function(sig),
+        ..
+    }) = checker.rust_item_metadata_for_path("demo::takes_ref")
+    else {
+        return Err(std::io::Error::other("expected rust-inspect function entry").into());
+    };
+    assert_eq!(
+        checker.resolved_function_type_from_rust_sig(&sig, false),
+        ResolvedType::Function(
+            vec![CallableParam::positional(ResolvedType::Ref(Box::new(
+                ResolvedType::RustPath("demo::Thing".to_string())
+            )))],
+            Box::new(ResolvedType::Unit),
+        )
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_inspect_lookup_path_strips_outer_generic_instantiation() {
+    assert_eq!(
+        TypeChecker::rust_inspect_lookup_path("incan_stdlib::r#async::channel::SendError<T>"),
+        Some("incan_stdlib::r#async::channel::SendError")
+    );
+    assert_eq!(
+        TypeChecker::rust_inspect_lookup_path("Result<(),incan_stdlib::r#async::channel::SendError<T>>"),
+        None
+    );
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_inspect_lookup_path_rejects_unknown_placeholder() {
+    assert_eq!(TypeChecker::rust_inspect_lookup_path("{unknown}"), None);
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_item_metadata_lookup_reuses_cached_nominal_item_for_instantiated_rust_path()
+-> Result<(), Box<dyn std::error::Error>> {
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::SendError".to_string(),
+                definition_path: Some("demo::SendError".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    fields: Vec::new(),
+                    methods: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect type: {e}")))?;
+
+    let Some(meta) = checker.rust_item_metadata_for_path("demo::SendError<T>") else {
+        return Err(std::io::Error::other("expected nominal rust-inspect hit").into());
+    };
+    assert_eq!(meta.canonical_path, "demo::SendError");
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_types_compatible_accepts_rust_alias_definition_without_metadata_lookup() {
+    let mut checker = TypeChecker::new();
+    checker.symbols.define(Symbol {
+        name: "RawSender".to_string(),
+        kind: SymbolKind::RustItem(RustItemInfo {
+            crate_name: "incan_stdlib".to_string(),
+            path: "incan_stdlib::r#async::channel::RawSender".to_string(),
+            binding: RustImportBindingKind::FromImport,
+            metadata: Some(RustItemMetadata {
+                canonical_path: "incan_stdlib::r#async::channel::RawSender".to_string(),
+                definition_path: Some("incan_stdlib::r#async::channel::Sender".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    fields: Vec::new(),
+                    methods: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            }),
+        }),
+        span: Span::default(),
+        scope: 0,
+    });
+
+    let actual = ResolvedType::Generic("RawSender".to_string(), vec![ResolvedType::Numeric(NumericTypeId::I32)]);
+    let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath(
+        "incan_stdlib::r#async::channel::Sender<i32>".to_string(),
+    )));
+
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Rust alias should satisfy borrowed underlying Rust path without forcing fresh metadata extraction"
+    );
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_types_compatible_accepts_rust_path_alias_with_attached_definition_metadata() {
+    let mut checker = TypeChecker::new();
+    checker.symbols.define(Symbol {
+        name: "RawSemaphore".to_string(),
+        kind: SymbolKind::RustItem(RustItemInfo {
+            crate_name: "incan_stdlib".to_string(),
+            path: "incan_stdlib::r#async::sync::RawSemaphore".to_string(),
+            binding: RustImportBindingKind::FromImport,
+            metadata: Some(RustItemMetadata {
+                canonical_path: "incan_stdlib::r#async::sync::RawSemaphore".to_string(),
+                definition_path: Some("incan_stdlib::r#async::sync::Semaphore".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    fields: Vec::new(),
+                    methods: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            }),
+        }),
+        span: Span::default(),
+        scope: 0,
+    });
+
+    let actual = ResolvedType::RustPath("incan_stdlib::r#async::sync::RawSemaphore".to_string());
+    let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath(
+        "incan_stdlib::r#async::sync::Semaphore".to_string(),
+    )));
+
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "RustPath aliases should reuse attached import metadata instead of forcing external metadata lookup"
+    );
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_types_compatible_keeps_rust_paths_permissive_without_definition_metadata() {
+    let checker = TypeChecker::new();
+    let actual = ResolvedType::RustPath("rust::datafusion_substrait::substrait::proto::Plan".to_string());
+    let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath("substrait::proto::Plan".to_string())));
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Rust path compatibility should stay permissive when definition metadata is unavailable"
+    );
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_inspect_resolves_type_associated_function_field_access() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import Builder
+
+def f() -> None:
+  make = Builder.new
+  _ = make
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = tempfile::tempdir()?;
+    write_rust_inspect_probe_crate(tmp.path())?;
+    checker.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
+    prewarm_metadata(tmp.path(), &["demo::Builder"])?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected associated function field access to typecheck: {errs:?}"
+        ))
+    })?;
+    let info = checker.type_info();
+    assert!(
+        info.expr_types
+            .values()
+            .any(|t| matches!(t, ResolvedType::Function(params, _) if params.is_empty())),
+        "expected associated function field access to resolve to a callable type, got {:?}",
+        info.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_hashset_lookup_records_preserved_arg_shape_for_imported_generic_receiver()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::std::collections import HashSet
+
+def f(words: HashSet[str]) -> None:
+  _ = words.contains("the")
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("expected imported HashMap lookup to typecheck: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.regular_method_arg_shape_preserving_calls
+            .iter()
+            .any(|(_, _, method)| method == "contains"),
+        "expected HashSet.contains lookup to record preserved method arg shape, got {:?}",
+        info.regular_method_arg_shape_preserving_calls
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_inspect_validates_associated_function_arguments() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import Builder
+
+def f() -> None:
+  _ = Builder.new("x")
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let tmp = tempfile::tempdir()?;
+    write_rust_inspect_probe_crate(tmp.path())?;
+    let mut checker = TypeChecker::new();
+    checker.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
+    prewarm_metadata(tmp.path(), &["demo::Builder"])?;
+    let Err(errs) = checker.check_program(&ast) else {
+        panic!("expected arity error for Builder.new with an argument");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Builder.new() expects 0 argument") && e.message.contains("got 1")),
+        "expected associated-function arity diagnostic, got {errs:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_inspect_reports_unsupported_rust_item_shape() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo::Choice import Some
+
+def f() -> None:
+  _ = Some
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let tmp = tempfile::tempdir()?;
+    write_rust_inspect_probe_crate(tmp.path())?;
+    let mut checker = TypeChecker::new();
+    checker.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
+    prewarm_metadata(tmp.path(), &["demo::Choice", "demo::Choice::Some"])?;
+    let Err(errs) = checker.check_program(&ast) else {
+        panic!("expected unsupported Rust item shape diagnostic");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("unsupported shape") && e.message.contains("enum variant")),
+        "expected unsupported-shape diagnostic, got {errs:?}"
+    );
+    Ok(())
+}
+
+/// Field access on a Rust type that isn't a known inherent associated function should be permissive
+/// (metadata only covers inherent methods, not consts, type aliases, or trait-provided items).
+#[test]
+fn test_rust_path_field_access_permissive_when_not_module() {
+    let source = r#"
+from rust::std::time import Instant
+
+def f() -> None:
+  _ = Instant.SOME_UNKNOWN_CONST
+"#;
+    assert_check_ok(source);
+}
+
+/// Method calls on Rust types where the specific method isn't in inherent metadata
+/// should be permissive (trait-provided or extension methods aren't extracted yet).
+#[test]
+fn test_rust_path_method_call_permissive_for_unextracted_methods() {
+    let source = r#"
+from rust::std::time import Instant
+
+def f() -> None:
+  t = Instant.now()
+  _ = t.some_trait_method()
+"#;
+    assert_check_ok(source);
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_typechecker_defaults_to_no_rust_inspect_workspace() {
+    let checker = TypeChecker::new();
+    assert!(
+        checker.rust_inspect_manifest_dir.is_none(),
+        "plain typechecker construction should not eagerly bind a rust-inspect workspace"
+    );
+}
+
+/// Default builds omit `rust-inspect`; Rust receivers stay permissive (no method index).
+#[cfg(not(feature = "rust_inspect"))]
+#[test]
+fn test_without_rust_inspect_missing_rust_method_is_not_an_error() {
+    let source = r#"
+from rust::regex import Regex
+
+def f() -> None:
+  _ = Regex.no_such_method("x")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_rust_capability_import_binds_trait_symbols() {
+    let source = r#"
+from std.rust import Send, Sync
+
+def run[T with Send, Sync](task: T) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_rust_static_capability_bound_typechecks() {
+    let source = r#"
+from std.rust import Static
+
+def run[T with Static](_value: T) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_rust_fn_capability_bounds_typecheck() {
+    let source = r#"
+from std.rust import Fn, FnMut, FnOnce
+
+def run_fn[F with Fn[int]](_f: F) -> None:
+  pass
+
+def run_fn_mut[F with FnMut[int]](_f: F) -> None:
+  pass
+
+def run_fn_once[F with FnOnce[int]](_f: F) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_structural_coercion_option_int_to_option_i64() {
+    let checker = TypeChecker::new();
+    let arg_ty = crate::frontend::symbols::ResolvedType::Generic(
+        "Option".to_string(),
+        vec![crate::frontend::symbols::ResolvedType::Int],
+    );
+    assert!(
+        checker.rust_arg_matches_boundary(&arg_ty, "Option<i64>"),
+        "expected Option[int] to be admitted at Option<i64> Rust boundary"
+    );
+}
+
+#[test]
+fn test_structural_coercion_list_str_to_vec_string() {
+    let checker = TypeChecker::new();
+    let arg_ty = crate::frontend::symbols::ResolvedType::Generic(
+        "List".to_string(),
+        vec![crate::frontend::symbols::ResolvedType::Str],
+    );
+    assert!(
+        checker.rust_arg_matches_boundary(&arg_ty, "Vec<String>"),
+        "expected List[str] to be admitted at Vec<String> Rust boundary"
+    );
+}
+
+/// `maybe_record_rusttype_return_coercion` is metadata-driven; without the `rust-inspect`
+/// feature the cache is empty and the helper is a no-op.  The test below exercises the
+/// *non-metadata* path to assert that the coercion map stays empty (no false positives).
+#[test]
+fn test_rusttype_return_coercion_no_false_positive_without_metadata() {
+    // Declare a rusttype whose underlying path has no metadata loaded.
+    let source = r#"
+from rust::acme import Widget as RustWidget
+
+type Widget = rusttype RustWidget:
+    def label(self) -> str:
+        ...
+
+def use_widget(w: Widget) -> str:
+    return w.label()
+"#;
+    // Should typecheck cleanly; no spurious errors from return coercion path.
+    assert_check_ok(source);
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rusttype_return_coercion_recorded_for_generic_newtype_method_call() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::std::string import String as RustString
+
+type Label[T] = rusttype RustString:
+    def as_str(self) -> str:
+        ...
+
+def render[T](value: Label[T]) -> str:
+    return value.as_str()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "std::string::String".to_string(),
+                definition_path: Some("std::string::String".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![RustMethodSig {
+                        name: "as_str".to_string(),
+                        signature: RustFunctionSig {
+                            params: vec![RustParam {
+                                name: Some("self".to_string()),
+                                type_display: "&self".to_string(),
+                            }],
+                            return_type: "&str".to_string(),
+                            is_async: false,
+                            is_unsafe: false,
+                        },
+                    }],
+                    fields: vec![],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect: {e}")))?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!("expected generic rusttype method call to typecheck: {errs:?}"))
+    })?;
+    let info = checker.type_info();
+    assert!(
+        info.rust_return_coercions
+            .values()
+            .any(|c| c.rust_target_type == "String" && matches!(c.target_type, ResolvedType::Str)),
+        "expected rust return coercion (&str -> String) for generic rusttype method call, got {:?}",
+        info.rust_return_coercions
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_field_access_preserves_type_for_nested_match_binding() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+from rust::demo import Envelope as RustEnvelope
+from rust::demo import Kind as RustKind
+
+type Envelope = rusttype RustEnvelope:
+  def noop(self) -> None:
+    ...
+
+type Kind = rusttype RustKind:
+  def noop(self) -> None:
+    ...
+
+def f(x: Envelope) -> None:
+  match x.kind:
+    Some(Kind.A(inner)) =>
+      _ = id(inner)
+    None =>
+      _ = 0
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Envelope".to_string(),
+                definition_path: Some("demo::Envelope".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![RustFieldInfo {
+                        name: "kind".to_string(),
+                        type_display: "Option<demo::Kind>".to_string(),
+                        type_shape: RustTypeShape::Option(Box::new(RustTypeShape::RustPath {
+                            path: "demo::Kind".to_string(),
+                            args: vec![],
+                        })),
+                    }],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect envelope: {e}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Kind".to_string(),
+                definition_path: Some("demo::Kind".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect kind: {e}")))?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected rust field access + nested match binding to typecheck: {errs:?}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_path_field_access_preserves_type_for_nested_match_binding() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+from rust::demo import Envelope
+from rust::demo import Kind as KindPath
+
+def f(x: Envelope) -> None:
+  match x.kind:
+    Some(KindPath.A(inner)) =>
+      _ = id(inner)
+    None =>
+      _ = 0
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Envelope".to_string(),
+                definition_path: Some("demo::Envelope".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![RustFieldInfo {
+                        name: "kind".to_string(),
+                        type_display: "Option<demo::Kind>".to_string(),
+                        type_shape: RustTypeShape::Option(Box::new(RustTypeShape::RustPath {
+                            path: "demo::Kind".to_string(),
+                            args: vec![],
+                        })),
+                    }],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect envelope: {e}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Kind".to_string(),
+                definition_path: Some("demo::Kind".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect kind: {e}")))?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected rust path field access + nested match binding to typecheck: {errs:?}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_imported_prost_oneof_field_match_uses_concrete_variant_payload_types() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = r#"
+from rust::demo import Rel
+from rust::demo::rel import RelType
+from rust::demo::read_rel import ReadType
+
+def inspect(rel: Rel) -> None:
+  match rel.rel_type:
+    Some(RelType.Read(read)) =>
+      match read.read_type:
+        Some(ReadType.NamedTable(_)) =>
+          _ = 0
+        _ =>
+          _ = 1
+    _ =>
+      _ = 2
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Rel".to_string(),
+                definition_path: Some("demo::Rel".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![RustFieldInfo {
+                        name: "rel_type".to_string(),
+                        type_display: "Option<demo::rel::RelType>".to_string(),
+                        type_shape: RustTypeShape::Option(Box::new(RustTypeShape::RustPath {
+                            path: "demo::rel::RelType".to_string(),
+                            args: vec![],
+                        })),
+                    }],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect rel: {e}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::rel::RelType".to_string(),
+                definition_path: Some("demo::rel::RelType".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![],
+                    variants: vec![RustVariantInfo {
+                        name: "Read".to_string(),
+                        fields: vec![RustTypeShape::RustPath {
+                            path: "demo::ReadRel".to_string(),
+                            args: vec![],
+                        }],
+                    }],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect rel type: {e}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::ReadRel".to_string(),
+                definition_path: Some("demo::ReadRel".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![RustFieldInfo {
+                        name: "read_type".to_string(),
+                        type_display: "Option<demo::read_rel::ReadType>".to_string(),
+                        type_shape: RustTypeShape::Option(Box::new(RustTypeShape::RustPath {
+                            path: "demo::read_rel::ReadType".to_string(),
+                            args: vec![],
+                        })),
+                    }],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect read rel: {e}")))?;
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::read_rel::ReadType".to_string(),
+                definition_path: Some("demo::read_rel::ReadType".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![],
+                    fields: vec![],
+                    variants: vec![RustVariantInfo {
+                        name: "NamedTable".to_string(),
+                        fields: vec![RustTypeShape::RustPath {
+                            path: "demo::NamedTable".to_string(),
+                            args: vec![],
+                        }],
+                    }],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect read type: {e}")))?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected imported prost oneof field match to typecheck: {errs:?}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_real_rust_inspect_allows_imported_prost_oneof_field_match() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    write_substrait_probe_crate(tmp.path())?;
+    let source = r#"
+from rust::substrait::proto import Rel
+from rust::substrait::proto::rel import RelType
+from rust::substrait::proto::read_rel import ReadType
+
+def inspect(rel: Rel) -> None:
+  match rel.rel_type:
+    Some(RelType.Read(read)) =>
+      match read.read_type:
+        Some(ReadType.NamedTable(_)) =>
+          _ = 0
+        _ =>
+          _ = 1
+    _ =>
+      _ = 2
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected extracted prost oneof field metadata to typecheck end-to-end: {errs:?}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_real_rust_inspect_preserves_concrete_borrowed_param_pointees() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    write_borrowed_param_probe_crate(tmp.path())?;
+    let inspector = Inspector::new(InspectorConfig::new(tmp.path().to_path_buf()));
+    let query = "ra_borrowed_param_probe::logical_plan::consumer::consume".to_string();
+    inspector.prewarm([query.clone()], &|_| {})?;
+    let hit = inspector.get(query.as_str())?;
+    let RustItemKind::Function(sig) = &hit.metadata.kind else {
+        return Err(std::io::Error::other("expected function metadata from borrowed-param probe").into());
+    };
+    let displays: Vec<&str> = sig.params.iter().map(|param| param.type_display.as_str()).collect();
+    assert_eq!(
+        displays,
+        vec![
+            "&ra_borrowed_param_probe::execution::session_state::SessionState",
+            "&substrait::proto::Plan",
+        ],
+        "borrowed rust-inspect params must preserve concrete pointees"
+    );
+    assert!(
+        sig.is_async,
+        "expected async metadata for borrowed-param probe function"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_structural_coercion_mismatch_is_rejected() {
+    let checker = TypeChecker::new();
+    let arg_ty = crate::frontend::symbols::ResolvedType::Generic(
+        "List".to_string(),
+        vec![crate::frontend::symbols::ResolvedType::Str],
+    );
+    assert!(
+        !checker.rust_arg_matches_boundary(&arg_ty, "Vec<i64>"),
+        "expected List[str] -> Vec<i64> structural coercion mismatch to be rejected"
+    );
+}
+
 #[test]
 fn test_rust_extern_accepted_in_user_code() {
     // @rust.extern is allowed 'everywhere' per RFC 023.
@@ -422,6 +3625,156 @@ async def foo() -> None:
 }
 
 #[test]
+fn test_local_async_function_named_sleep_shadows_no_builtin() {
+    let source = r#"
+import std.async
+
+async def sleep(seconds: float) -> None:
+  pass
+
+async def foo() -> None:
+  await sleep(1.0)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_await_outside_async_function() {
+    let source = r#"
+from std.async.time import sleep
+
+def foo() -> None:
+  await sleep(1.0)
+"#;
+    let errs = check_str_err(source, "await in sync function should fail");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("await") && e.message.contains("async")),
+        "expected await-outside-async diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_await_outside_async_method() {
+    let source = r#"
+from std.async.time import sleep
+
+model Widget:
+  id: int
+
+  def work(self) -> None:
+    await sleep(1.0)
+"#;
+    let errs = check_str_err(source, "await in sync method should fail");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("await") && e.message.contains("async")),
+        "expected await-outside-async diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_unawaited_async_function_call_warns() {
+    let source = r#"
+import std.async
+
+async def fetch() -> int:
+  return 1
+
+async def main() -> None:
+  fetch()
+"#;
+    let warnings = check_str_warnings(source, "unawaited async function call should warn");
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.message.contains("Async call `fetch` is not awaited")),
+        "expected missing-await warning, got: {warnings:?}"
+    );
+}
+
+#[test]
+fn test_awaited_async_function_call_does_not_warn() {
+    let source = r#"
+import std.async
+
+async def fetch() -> int:
+  return 1
+
+async def main() -> None:
+  value = await fetch()
+"#;
+    let warnings = check_str_warnings(source, "awaited async function call should not warn");
+    assert!(
+        warnings
+            .iter()
+            .all(|warning| !warning.message.contains("Async call `fetch` is not awaited")),
+        "did not expect missing-await warning, got: {warnings:?}"
+    );
+}
+
+#[test]
+fn test_awaited_async_try_call_does_not_warn() {
+    let source = r#"
+import std.async
+
+async def fetch() -> Result[int, str]:
+  return Ok(1)
+
+async def main() -> Result[None, str]:
+  value = await fetch()?
+  return Ok(None)
+"#;
+    let warnings = check_str_warnings(source, "awaited async try call should not warn");
+    assert!(
+        warnings
+            .iter()
+            .all(|warning| !warning.message.contains("Async call `fetch` is not awaited")),
+        "did not expect missing-await warning, got: {warnings:?}"
+    );
+}
+
+#[test]
+fn test_unawaited_imported_async_function_call_warns() {
+    let source = r#"
+from std.async.time import sleep
+
+async def main() -> None:
+  sleep(1.0)
+"#;
+    let warnings = check_str_warnings(source, "unawaited imported async function call should warn");
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.message.contains("Async call `sleep` is not awaited")),
+        "expected missing-await warning, got: {warnings:?}"
+    );
+}
+
+#[test]
+fn test_unawaited_async_method_call_warns() {
+    let source = r#"
+import std.async
+
+model Worker:
+  id: int
+
+  async def run(self) -> int:
+    return self.id
+
+async def main(worker: Worker) -> None:
+  worker.run()
+"#;
+    let warnings = check_str_warnings(source, "unawaited async method call should warn");
+    assert!(
+        warnings
+            .iter()
+            .any(|warning| warning.message.contains("Async call `run` is not awaited")),
+        "expected missing-await warning, got: {warnings:?}"
+    );
+}
+
+#[test]
 fn test_await_join_handle_returns_result_task_join_error() {
     let source = r#"
 from std.async.task import JoinHandle, TaskJoinError
@@ -464,6 +3817,113 @@ def foo(fields: List[FieldInfo]) -> None:
   pass
 "#;
     assert_check_ok(source);
+}
+
+#[test]
+fn test_reflection_magic_methods_record_surface_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model User:
+  name: str
+
+def describe(u: User) -> None:
+  class_name = u.__class_name__()
+  fields = u.__fields__()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expr_types.values().any(|t| matches!(t, ResolvedType::Str)),
+        "expected __class_name__() to resolve to str, got {:?}",
+        info.expr_types
+    );
+    assert!(
+        info.expr_types.values().any(|t| {
+            matches!(
+                t,
+                ResolvedType::FrozenList(inner)
+                    if matches!(inner.as_ref(), ResolvedType::Named(name) if name == "FieldInfo")
+            )
+        }),
+        "expected __fields__() to resolve to FrozenList[FieldInfo], got {:?}",
+        info.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_reflection_fieldinfo_members_typecheck_without_explicit_import() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model User:
+  name [alias="display_name"]: str = "Alice"
+
+def describe(u: User) -> None:
+  for info in u.__fields__():
+    type_name = info.type_name
+    alias = info.alias
+    extra = info.extra
+    has_default = info.has_default
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expr_types.values().any(|t| matches!(t, ResolvedType::FrozenStr)),
+        "expected FieldInfo.name/type_name access to resolve to FrozenStr, got {:?}",
+        info.expr_types
+    );
+    assert!(
+        info.expr_types.values().any(|t| {
+            matches!(
+                t,
+                ResolvedType::Generic(name, args)
+                    if crate::frontend::typechecker::helpers::collection_type_id(name.as_str())
+                        == Some(CollectionTypeId::Option)
+                        && args.len() == 1
+                        && matches!(args.first(), Some(ResolvedType::FrozenStr))
+            )
+        }),
+        "expected FieldInfo.alias access to resolve to Option[FrozenStr], got {:?}",
+        info.expr_types
+    );
+    assert!(
+        info.expr_types.values().any(|t| {
+            matches!(
+                t,
+                ResolvedType::FrozenDict(key, value)
+                    if matches!(key.as_ref(), ResolvedType::FrozenStr)
+                        && matches!(value.as_ref(), ResolvedType::FrozenStr)
+            )
+        }),
+        "expected FieldInfo.extra access to resolve to FrozenDict[FrozenStr, FrozenStr], got {:?}",
+        info.expr_types
+    );
+    assert!(
+        info.expr_types.values().any(|t| matches!(t, ResolvedType::Bool)),
+        "expected FieldInfo.has_default access to resolve to bool, got {:?}",
+        info.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_newtype_class_name_magic_method_is_not_assumed() {
+    let source = r#"
+type UserId = newtype int
+
+def describe(user_id: UserId) -> str:
+  return user_id.__class_name__()
+"#;
+    let result = check_str(source);
+    assert!(result.is_err());
 }
 
 // ============================================================================
@@ -545,6 +4005,336 @@ def foo() -> None:
 "#;
     let result = check_str(source);
     assert!(result.is_err());
+}
+
+#[test]
+fn test_user_defined_plain_decorator_updates_function_binding_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def parse(value: int) -> int:
+  return value
+
+def as_int(func: (int) -> str) -> (int) -> int:
+  return parse
+
+@as_int
+def label(value: int) -> str:
+  return "value"
+
+def main() -> int:
+  return label(1)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+    let symbol = checker
+        .lookup_symbol("label")
+        .ok_or_else(|| "expected decorated label binding".to_string())?;
+    let SymbolKind::Variable(info) = &symbol.kind else {
+        return Err(format!("expected decorated binding to be a value, got {:?}", symbol.kind).into());
+    };
+    let ResolvedType::Function(_, ret) = &info.ty else {
+        return Err(format!("expected decorated binding to stay callable, got {:?}", info.ty).into());
+    };
+    assert_eq!(**ret, ResolvedType::Int);
+    Ok(())
+}
+
+#[test]
+fn test_user_defined_decorator_factory_and_stacking_apply_bottom_up() {
+    let source = r#"
+def keep(func: (int) -> str) -> (int) -> str:
+  return func
+
+def parse(value: int) -> int:
+  return value
+
+def as_int(func: (int) -> str) -> (int) -> int:
+  return parse
+
+def named(label: str) -> Callable[(int) -> str, (int) -> str]:
+  return keep
+
+@as_int
+@named(label="inner")
+def label(value: int) -> str:
+  return "value"
+
+def main() -> int:
+  return label(1)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_defined_decorator_on_async_def_is_kept_as_candidate() {
+    let source = r#"
+import std.async
+
+def keep(func: () -> int) -> () -> int:
+  return func
+
+@keep
+async def fetch() -> int:
+  return 1
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_defined_method_decorator_updates_method_binding_type() {
+    let source = r#"
+class Box:
+  value: int
+
+  @as_int
+  def label(self, value: int) -> str:
+    return "value"
+
+def parse(box: &Box, value: int) -> int:
+  return value
+
+def as_int(func: (&Box, int) -> str) -> (&Box, int) -> int:
+  return parse
+
+def main(box: Box) -> int:
+  return box.label(1)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_defined_trait_method_decorator_is_checked() {
+    let source = r#"
+trait Service:
+  @keep
+  def read(self) -> int
+
+def keep(func: (&Service) -> int) -> (&Service) -> int:
+  return func
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_defined_decorator_on_unsupported_target_is_rejected() {
+    let errors = check_str_err(
+        r#"
+def keep(func: () -> int) -> () -> int:
+  return func
+
+@keep
+model Bad:
+  value: int
+"#,
+        "user-defined model decorator should be rejected",
+    );
+    assert!(
+        errors.iter().any(|err| err
+            .message
+            .contains("User-defined decorator '@keep' cannot be used on model declarations")),
+        "expected unsupported target diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_user_defined_decorator_on_mutable_method_is_checked() {
+    let source = r#"
+class Counter:
+  value: int
+
+  @keep
+  def bump(mut self) -> int:
+    self.value = self.value + 1
+    return self.value
+
+def keep(func: (&mut Counter) -> int) -> (&mut Counter) -> int:
+  return func
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_defined_decorator_rejects_non_callable_and_factory_result() {
+    let non_callable = check_str_err(
+        r#"
+const count: int = 1
+
+@count
+def label() -> int:
+  return 1
+"#,
+        "non-callable decorator should be rejected",
+    );
+    assert!(
+        non_callable
+            .iter()
+            .any(|err| err.message.contains("decorator 'count' is not callable")),
+        "expected non-callable decorator diagnostic, got {non_callable:?}"
+    );
+
+    let bad_factory = check_str_err(
+        r#"
+def count_factory() -> int:
+  return 1
+
+@count_factory()
+def label() -> int:
+  return 1
+"#,
+        "factory returning non-callable should be rejected",
+    );
+    assert!(
+        bad_factory
+            .iter()
+            .any(|err| err.message.contains("'count_factory(...)' does not return a callable")),
+        "expected non-callable factory diagnostic, got {bad_factory:?}"
+    );
+}
+
+#[test]
+fn test_rust_allow_accepts_targeted_lints() {
+    let source = r#"
+@rust.allow("dead_code", "clippy::too_many_arguments")
+model RustAllowed:
+  value: int
+
+@rust.allow("non_snake_case")
+def MixedName() -> int:
+  return 1
+
+@rust.allow("non_camel_case_types")
+type rust_allowed_newtype = newtype int
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rust_allow_rejects_invalid_arguments() {
+    let cases = [
+        (
+            r#"
+@rust.allow()
+def missing() -> None:
+  pass
+"#,
+            "@rust.allow requires one or more positional string literal arguments",
+        ),
+        (
+            r#"
+@rust.allow(name = "dead_code")
+def named() -> None:
+  pass
+"#,
+            "@rust.allow does not accept named argument 'name'",
+        ),
+        (
+            r#"
+@rust.allow(dead_code)
+def non_string() -> None:
+  pass
+"#,
+            "@rust.allow requires one or more positional string literal arguments",
+        ),
+        (
+            r#"
+@rust.allow("")
+def empty() -> None:
+  pass
+"#,
+            "Invalid Rust lint name ''",
+        ),
+        (
+            r#"
+@rust.allow(" dead_code")
+def padded() -> None:
+  pass
+"#,
+            "Invalid Rust lint name ' dead_code'",
+        ),
+        (
+            r#"
+@rust.allow("dead_code", "dead_code")
+def duplicate() -> None:
+  pass
+"#,
+            "Duplicate Rust lint 'dead_code' in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("warnings")
+def broad_warnings() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'warnings' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("unused")
+def broad_unused() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'unused' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("clippy::all")
+def broad_clippy_all() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'clippy::all' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("clippy::pedantic")
+def broad_clippy_pedantic() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'clippy::pedantic' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("clippy::nursery")
+def broad_clippy_nursery() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'clippy::nursery' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("clippy::restriction")
+def broad_clippy_restriction() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'clippy::restriction' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("clippy::cargo")
+def broad_clippy_cargo() -> None:
+  pass
+"#,
+            "Broad Rust lint group 'clippy::cargo' is not allowed in @rust.allow",
+        ),
+        (
+            r#"
+@rust.allow("dead_code")
+trait NotConcrete:
+  def value(self) -> int: ...
+"#,
+            "@rust.allow cannot be used on trait declarations",
+        ),
+    ];
+
+    for (source, expected) in cases {
+        let errors = check_str_err(source, "invalid @rust.allow should fail typechecking");
+        assert!(
+            errors.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got {errors:?}"
+        );
+    }
 }
 
 #[test]
@@ -945,6 +4735,161 @@ def f(i: Intl) -> str:
 }
 
 #[test]
+fn test_computed_property_read_typechecks_and_records_access() -> Result<(), String> {
+    let source = r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return self.cents
+
+def f(account: Account) -> int:
+  return account.dollars
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast).map_err(|errs| format!("{errs:?}"))?;
+    assert_eq!(checker.type_info.computed_property_accesses.len(), 1);
+    let access = checker
+        .type_info
+        .computed_property_accesses
+        .values()
+        .next()
+        .ok_or_else(|| "expected computed property access metadata".to_string())?;
+    assert_eq!(access.owner_type, "Account");
+    assert_eq!(access.property, "dollars");
+    Ok(())
+}
+
+#[test]
+fn test_computed_property_call_syntax_is_rejected() {
+    let source = r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return self.cents
+
+def f(account: Account) -> int:
+  return account.dollars()
+"#;
+    let errors = check_str_err(source, "expected computed property call error");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Computed property 'dollars' is not callable")),
+        "expected property call diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_computed_property_body_return_type_is_checked() {
+    let source = r#"
+model Account:
+  cents: int
+
+  property dollars -> int:
+    return "free"
+"#;
+    let errors = check_str_err(source, "expected computed property return mismatch");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Type mismatch: expected 'int', found 'str'")),
+        "expected property return mismatch diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_trait_computed_property_requirement_must_be_implemented() {
+    let source = r#"
+trait Named:
+  property label -> str
+
+class Person with Named:
+  name: str
+"#;
+    let errors = check_str_err(source, "expected missing trait property error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Trait 'Named' requires property 'label' to be implemented")),
+        "expected missing trait property diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_trait_computed_property_requirement_accepts_matching_property() {
+    let source = r#"
+trait Named:
+  property label -> str
+
+class Person with Named:
+  name: str
+
+  property label -> str:
+    return self.name
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_trait_computed_property_body_is_rejected() {
+    let source = r#"
+trait Named:
+  property label -> str:
+    return "name"
+"#;
+    let errors = check_str_err(source, "expected trait property body error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Trait 'Named' property 'label' cannot define a body")),
+        "expected trait property body diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_property_member_name_collision_is_rejected() {
+    let source = r#"
+class Account:
+  cents: int
+
+  property cents -> int:
+    return self.cents
+"#;
+    let errors = check_str_err(source, "expected duplicate property member error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Duplicate member 'Account.cents' declared as both field and property")),
+        "expected duplicate member diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_property_method_name_collision_is_rejected() {
+    let source = r#"
+class Account:
+  cents: int
+
+  def total(self) -> int:
+    return self.cents
+
+  property total -> int:
+    return self.cents
+"#;
+    let errors = check_str_err(source, "expected duplicate property method member error");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Duplicate member 'Account.total' declared as both method and property")),
+        "expected duplicate member diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
 fn test_alias_self_keyword() {
     let source = r#"
 model Data:
@@ -1154,8 +5099,167 @@ def add(mut xs: List[Mutex], value: Mutex) -> None:
         panic!("expected type errors");
     };
     assert!(
-        errs.iter()
-            .any(|e| e.message.contains("List.append requires element type 'Mutex'"))
+        errs.iter().any(|e| {
+            e.message.contains("List.append requires element type")
+                && e.message.contains("Mutex")
+                && e.message.contains(incan_core::lang::traits::as_str(
+                    incan_core::lang::traits::TraitId::Clone,
+                ))
+        }),
+        "expected List.append / Clone diagnostic for Rust element type; got {errs:?}"
+    );
+}
+
+#[test]
+fn test_list_repeat_infers_list_element_type() {
+    let source = r#"
+def main() -> None:
+  xs: List[int] = list.repeat(-1, 3)
+  ys: list[str] = list.repeat("seed", 2)
+  zs: list[int] = list.repeat(count=2, value=7)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_repeat_rejects_wrong_arity() {
+    let source = r#"
+def main() -> None:
+  xs = list.repeat(1)
+"#;
+    let errors = check_str_err(source, "expected list.repeat arity error");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("list.repeat") && err.message.contains("expects 2")),
+        "expected list.repeat arity diagnostic; got {errors:?}"
+    );
+}
+
+#[test]
+fn test_list_repeat_rejects_non_int_count() {
+    let source = r#"
+def main() -> None:
+  xs = list.repeat(1, "two")
+"#;
+    let errors = check_str_err(source, "expected list.repeat count type error");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("expected 'int'") && err.message.contains("found 'str'")),
+        "expected count type mismatch diagnostic; got {errors:?}"
+    );
+}
+
+#[test]
+fn test_list_repeat_requires_clone_for_external_type() {
+    let source = r#"
+from rust::std::sync import Mutex
+
+def make(value: Mutex) -> List[Mutex]:
+  return list.repeat(value, 2)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors");
+    };
+    assert!(
+        errs.iter().any(|e| {
+            e.message.contains("list.repeat requires element type")
+                && e.message.contains("Mutex")
+                && e.message.contains(incan_core::lang::traits::as_str(
+                    incan_core::lang::traits::TraitId::Clone,
+                ))
+        }),
+        "expected list.repeat / Clone diagnostic for Rust element type; got {errs:?}"
+    );
+}
+
+#[test]
+fn test_list_concat_requires_clone_for_external_type() {
+    let source = r#"
+from rust::std::sync import Mutex
+
+def combine(a: List[Mutex], b: List[Mutex]) -> List[Mutex]:
+  return a + b
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors");
+    };
+    assert!(
+        errs.iter().any(|e| {
+            e.message.contains("List concatenation requires element type")
+                && e.message.contains("Mutex")
+                && e.message.contains(incan_core::lang::traits::as_str(
+                    incan_core::lang::traits::TraitId::Clone,
+                ))
+        }),
+        "expected List + List / Clone diagnostic for Rust element type; got {errs:?}"
+    );
+}
+
+#[test]
+fn test_list_extend_requires_clone_for_external_type() {
+    let source = r#"
+from rust::std::sync import Mutex
+
+def extend_into(mut xs: List[Mutex], other: List[Mutex]) -> None:
+  xs.extend(other)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors");
+    };
+    assert!(
+        errs.iter().any(|e| {
+            e.message.contains("List.extend requires element type")
+                && e.message.contains("Mutex")
+                && e.message.contains(incan_core::lang::traits::as_str(
+                    incan_core::lang::traits::TraitId::Clone,
+                ))
+        }),
+        "expected List.extend / Clone diagnostic for Rust element type; got {errs:?}"
+    );
+}
+
+#[test]
+fn test_list_clone_accepts_clone_element_type() {
+    let source = r#"
+@derive(Clone)
+model Node:
+  id: int
+
+def clone_nodes(nodes: List[Node]) -> List[Node]:
+  return nodes.clone()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_clone_accepts_clone_bound_type_param() {
+    let source = r#"
+def clone_items[T with Clone](items: List[T]) -> List[T]:
+  return items.clone()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_clone_requires_clone_for_external_type() {
+    let source = r#"
+from rust::std::sync import Mutex
+
+def clone_mutexes(xs: List[Mutex]) -> List[Mutex]:
+  return xs.clone()
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors");
+    };
+    assert!(
+        errs.iter().any(|e| {
+            e.message.contains("List.clone requires element type")
+                && e.message.contains("Mutex")
+                && e.message.contains(clone_trait_name().as_str())
+        }),
+        "expected List.clone / Clone diagnostic for Rust element type; got {errs:?}"
     );
 }
 
@@ -1575,6 +5679,44 @@ model Cell[T] with Boxed:
 }
 
 #[test]
+fn test_trait_typed_local_annotation_is_rejected() {
+    let source = r#"
+trait Boxed[T]:
+  def get(self) -> T: ...
+  def keep(self) -> Self: ...
+
+model Item:
+  value: int
+
+class ValueBox[T] with Boxed:
+  value: T
+
+  def get(self) -> T:
+    return self.value
+
+  def keep(self) -> Self:
+    return self
+
+def use_trait_typed_value() -> Item:
+  concrete: ValueBox[Item] = ValueBox[Item](value=Item(value=7))
+  boxed: Boxed[Item] = concrete
+  return boxed.get()
+"#;
+
+    let errs = check_str_err(
+        source,
+        "trait-typed local annotation should be rejected before Rust codegen",
+    );
+    assert!(
+        errs.iter().any(|e| e
+            .message
+            .contains("Trait-typed local annotation 'Boxed[Item]' is not supported")),
+        "expected unsupported trait-typed local diagnostic, got {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_types_compatible_generic_trait_annotation_extra_concrete_type_params() -> Result<(), Vec<CompileError>> {
     let source = r#"
 trait Boxed[T]:
@@ -1669,6 +5811,635 @@ model IntBox with Boxed:
     Ok(())
 }
 
+// RFC 042: trait-typed value assignable to supertrait (trait-to-trait upcasts)
+
+#[test]
+fn test_types_compatible_trait_to_supertrait_named() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Root:
+  def root_m(self) -> int: ...
+
+trait Mid with Root:
+  def mid_m(self) -> int: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Named("Mid".to_string());
+    let expected = ResolvedType::Named("Root".to_string());
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Named subtrait should be assignable to supertrait (RFC 042)"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_trait_to_supertrait_generic() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def id(self) -> T: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+  def bounded(self) -> T: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("BoundedDataSet".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Generic("DataSet".to_string(), vec![ResolvedType::Int]);
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Generic subtrait[T] should be assignable to supertrait[T] with compatible args"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_trait_to_supertrait_transitive_generic() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Root[T]:
+  def r(self) -> T: ...
+
+trait Mid[T] with Root[T]:
+  def m(self) -> T: ...
+
+trait Leaf[T] with Mid[T]:
+  def l(self) -> T: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("Leaf".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Generic("Root".to_string(), vec![ResolvedType::Int]);
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Transitive supertrait generics should substitute through the chain"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_concrete_to_transitive_supertrait_generic() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def filter(self, _p: bool) -> Self: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+  def bounded_marker(self) -> T: ...
+
+class DataFrame[T] with BoundedDataSet:
+  _row_schema_marker: T
+
+  def filter(self, _p: bool) -> Self:
+    return self
+
+  def bounded_marker(self) -> T:
+    return self._row_schema_marker
+
+model Order:
+  id: int
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let order = ResolvedType::Named("Order".to_string());
+    let actual = ResolvedType::Generic("DataFrame".to_string(), vec![order.clone()]);
+    let expected = ResolvedType::Generic("DataSet".to_string(), vec![order]);
+    assert!(
+        checker.types_compatible(&actual, &expected),
+        "Concrete class through intermediate trait should satisfy transitive supertrait"
+    );
+    Ok(())
+}
+
+/// Regression for #237: `-> Self` on a generic class method must type as the instantiated receiver at the call site,
+/// not bare `Self`, so annotations and chaining against `Carrier[Order]` succeed.
+#[test]
+fn test_issue_237_self_return_substituted_at_call_site() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+class Carrier[T]:
+  _m: T
+
+  def filter(self, _p: bool) -> Self:
+    return self
+
+model Order:
+  id: int
+
+def use_filter(x: Carrier[Order]) -> Carrier[Order]:
+  return x.filter(true)
+
+def use_annotated_local(x: Carrier[Order]) -> Carrier[Order]:
+  y: Carrier[Order] = x.filter(true)
+  return y
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    Ok(())
+}
+
+/// `Self` in non-receiver parameters must use the same call-site substitution as the return type (#237 follow-up).
+#[test]
+fn test_self_param_substituted_at_call_site_for_method_args() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+class Carrier[T]:
+  _m: T
+
+  def join(self, other: Self, cond: bool) -> Self:
+    return self
+
+model Order:
+  id: int
+
+def use_join(left: Carrier[Order], right: Carrier[Order]) -> Carrier[Order]:
+  return left.join(right, true)
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    Ok(())
+}
+
+#[test]
+fn test_issue_388_generic_classmethod_cls_constructor_typechecks() {
+    let source = r#"
+@derive(Clone)
+class Box[T with Clone]:
+  value: T
+
+  @classmethod
+  def make(cls, value: T) -> Self:
+    return cls(value=value)
+"#;
+
+    assert_check_ok(source);
+}
+
+/// Trait **default** methods are not copied into `ClassInfo.methods`; dispatch goes through the trait branch of
+/// `resolve_named_method`. Call-site `Self` substitution must still apply (#237).
+#[test]
+fn test_issue_237_self_substitution_trait_default_methods_not_on_class_map() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def filter(self, _p: bool) -> Self:
+    return self
+
+  def join(self, other: Self, cond: bool) -> Self:
+    return self
+
+class Carrier[T] with DataSet:
+  _m: T
+
+model Order:
+  id: int
+
+def use_filter(x: Carrier[Order]) -> Carrier[Order]:
+  return x.filter(true)
+
+def use_annotated_local(x: Carrier[Order]) -> Carrier[Order]:
+  y: Carrier[Order] = x.filter(true)
+  return y
+
+def use_join(left: Carrier[Order], right: Carrier[Order]) -> Carrier[Order]:
+  return left.join(right, true)
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    Ok(())
+}
+
+/// `rusttype` inherent methods declared with `-> Self` must type as the surface newtype at the call site so
+/// `maybe_record_rusttype_return_coercion` and downstream checks see the substituted return (no bare `Self`).
+#[test]
+fn test_rusttype_method_returning_self_substitutes_at_call_site_without_metadata() {
+    let source = r#"
+from rust::acme import Widget as RustWidget
+
+type Widget = rusttype RustWidget:
+    def myself(self) -> Self:
+        ...
+
+def f(w: Widget) -> Widget:
+    return w.myself()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_check_with_imports_concrete_and_supertrait_upcasts() -> Result<(), Box<dyn std::error::Error>> {
+    let dependency_source = r#"
+pub trait DataSet[T]:
+  def filter(self, _p: bool) -> Self: ...
+
+pub trait BoundedDataSet[T] with DataSet[T]:
+  def bounded_marker(self) -> T: ...
+
+pub class DataFrame[T] with BoundedDataSet:
+  _row_schema_marker: T
+
+  def filter(self, _p: bool) -> Self:
+    return self
+
+  def bounded_marker(self) -> T:
+    return self._row_schema_marker
+"#;
+    let consumer_source = r#"
+from dataset import DataFrame, BoundedDataSet, DataSet
+
+def upcast_data_frame[T](v: DataFrame[T]) -> BoundedDataSet[T]:
+  return v
+
+def upcast_bounded[T](v: BoundedDataSet[T]) -> DataSet[T]:
+  return v
+"#;
+
+    let dep_tokens = lexer::lex(dependency_source).map_err(|errs| format!("dependency lex failed: {errs:?}"))?;
+    let dep_ast = parser::parse(&dep_tokens).map_err(|errs| format!("dependency parse failed: {errs:?}"))?;
+    let consumer_tokens = lexer::lex(consumer_source).map_err(|errs| format!("consumer lex failed: {errs:?}"))?;
+    let consumer_ast = parser::parse(&consumer_tokens).map_err(|errs| format!("consumer parse failed: {errs:?}"))?;
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&consumer_ast, &[("dataset", &dep_ast)])
+        .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+    Ok(())
+}
+
+#[test]
+fn test_check_with_imports_preserves_cyclic_dependency_interface_result_types() -> Result<(), Box<dyn std::error::Error>>
+{
+    let dataset_source = r#"
+from session import SessionError
+
+pub class DataFrame[T]:
+  def clone(self) -> Self:
+    return self
+
+pub class LazyFrame[T]:
+  def clone(self) -> Self:
+    return self
+
+  def collect(self) -> Result[DataFrame[T], SessionError]:
+    return Err(str("not implemented"))
+"#;
+    let session_source = r#"
+from dataset import LazyFrame
+
+pub class Session:
+  def read_csv[T](self) -> Result[LazyFrame[T], SessionError]:
+    return Err(str("not implemented"))
+
+pub model SessionError:
+  pub message: str
+"#;
+    let consumer_source = r#"
+from session import Session, SessionError
+
+def main() -> Result[None, SessionError]:
+  session = Session()
+  lines = session.read_csv[int]()?
+  df = lines.clone().collect()?
+  df.clone()
+  return Ok(None)
+"#;
+
+    let dataset_tokens = lexer::lex(dataset_source).map_err(|errs| format!("dataset lex failed: {errs:?}"))?;
+    let dataset_ast = parser::parse(&dataset_tokens).map_err(|errs| format!("dataset parse failed: {errs:?}"))?;
+    let session_tokens = lexer::lex(session_source).map_err(|errs| format!("session lex failed: {errs:?}"))?;
+    let session_ast = parser::parse(&session_tokens).map_err(|errs| format!("session parse failed: {errs:?}"))?;
+    let consumer_tokens = lexer::lex(consumer_source).map_err(|errs| format!("consumer lex failed: {errs:?}"))?;
+    let consumer_ast = parser::parse(&consumer_tokens).map_err(|errs| format!("consumer parse failed: {errs:?}"))?;
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&consumer_ast, &[("dataset", &dataset_ast), ("session", &session_ast)])
+        .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+    Ok(())
+}
+
+#[test]
+fn test_check_with_imports_preserves_imported_generic_method_bounds_for_local_derived_types()
+-> Result<(), Box<dyn std::error::Error>> {
+    let dataset_source = r#"
+from session import SessionError
+
+pub class LazyFrame[T with Clone]:
+  def clone(self) -> Self:
+    return self
+
+  def collect(self) -> Result[DataFrame[T], SessionError]:
+    return Err(SessionError(message=str("not implemented")))
+
+pub class DataFrame[T with Clone]:
+  def clone(self) -> Self:
+    return self
+"#;
+    let session_source = r#"
+from dataset import LazyFrame
+
+pub model SessionError:
+  pub message: str
+
+pub class Session:
+  @staticmethod
+  def default() -> Session:
+    return Session()
+
+  def read_csv[T with Clone](self, _logical_name: str, _uri: str) -> Result[LazyFrame[T], SessionError]:
+    return Err(SessionError(message=str("not implemented")))
+"#;
+    let consumer_source = r#"
+from session import Session, SessionError
+
+@derive(Clone)
+pub model OrderLine:
+  pub sku: str
+
+def main() -> Result[None, SessionError]:
+  session = Session.default()
+  lines = session.read_csv[OrderLine](str("orders"), str("input.csv"))?
+  df = lines.clone().collect()?
+  df.clone()
+  return Ok(None)
+"#;
+
+    let dataset_tokens = lexer::lex(dataset_source).map_err(|errs| format!("dataset lex failed: {errs:?}"))?;
+    let dataset_ast = parser::parse(&dataset_tokens).map_err(|errs| format!("dataset parse failed: {errs:?}"))?;
+    let session_tokens = lexer::lex(session_source).map_err(|errs| format!("session lex failed: {errs:?}"))?;
+    let session_ast = parser::parse(&session_tokens).map_err(|errs| format!("session parse failed: {errs:?}"))?;
+    let consumer_tokens = lexer::lex(consumer_source).map_err(|errs| format!("consumer lex failed: {errs:?}"))?;
+    let consumer_ast = parser::parse(&consumer_tokens).map_err(|errs| format!("consumer parse failed: {errs:?}"))?;
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&consumer_ast, &[("dataset", &dataset_ast), ("session", &session_ast)])
+        .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+    Ok(())
+}
+
+#[test]
+fn test_rfc088_iterator_adapter_chain_types_collect_as_list() {
+    let source = r#"
+def keep(n: int) -> bool:
+  return n > 0
+
+def label(n: int) -> str:
+  return str(n)
+
+def pairs(items: Iterator[int], labels: Iterator[str]) -> list[tuple[int, str]]:
+  return items.filter(keep).take(10).skip(1).zip(labels).collect()
+
+def indexed(items: Iterator[int]) -> list[tuple[int, int]]:
+  return items.enumerate().collect()
+
+def labels(items: Iterator[int]) -> list[str]:
+  return items.map(label).collect()
+
+def leading_positive(items: Iterator[int]) -> list[int]:
+  return items.take_while(keep).collect()
+
+def after_positive_prefix(items: Iterator[int]) -> list[int]:
+  return items.skip_while(keep).collect()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc088_flat_map_accepts_list_callback_result() {
+    let source = r#"
+def words_for(_n: int) -> list[str]:
+  return ["hello"]
+
+def flatten(items: Iterator[int]) -> list[str]:
+  return items.flat_map(words_for).collect()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc088_iterator_terminal_methods_have_frontend_types() {
+    let source = r#"
+def keep(n: int) -> bool:
+  return n > 0
+
+def add(acc: int, n: int) -> int:
+  return acc + n
+
+def visit(_n: int) -> None:
+  pass
+
+def count_items(items: Iterator[int]) -> int:
+  return items.count()
+
+def any_item(items: Iterator[int]) -> bool:
+  return items.any(keep)
+
+def all_items(items: Iterator[int]) -> bool:
+  return items.all(keep)
+
+def find_item(items: Iterator[int]) -> Option[int]:
+  return items.find(keep)
+
+def reduce_items(items: Iterator[int]) -> int:
+  return items.reduce(0, add)
+
+def fold_items(items: Iterator[int]) -> int:
+  return items.fold(0, add)
+
+def visit_items(items: Iterator[int]) -> None:
+  return items.for_each(visit)
+
+def sum_items(items: Iterator[int]) -> int:
+  return items.sum()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc088_iterator_sum_accepts_numeric_items_only() {
+    let source = r#"
+def sum_ints(items: Iterator[int]) -> int:
+  return items.sum()
+
+def sum_floats(items: Iterator[float]) -> float:
+  return items.sum()
+
+type Money = newtype int
+
+def sum_money(items: Iterator[Money]) -> Money:
+  return items.sum()
+"#;
+    assert_check_ok(source);
+
+    let bad_source = r#"
+def sum_strings(items: Iterator[str]) -> str:
+  return items.sum()
+"#;
+    let errs = check_str_err(bad_source, "sum over string iterator should be rejected");
+    assert!(
+        errs.iter().any(|e| e
+            .message
+            .contains("Iterator.sum() requires int, float, or a newtype over a summable type; found str")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc088_builtin_list_iter_enters_iterator_surface() {
+    let source = r#"
+from std.derives.collection import Iterable
+
+def keep(n: int) -> bool:
+  return n > 0
+
+def collect_positive(items: list[int]) -> list[int]:
+  return items.iter().filter(keep).batch(2).flat_map(identity_batch).collect()
+
+def identity_batch(batch: list[int]) -> list[int]:
+  return batch
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc088_filter_callback_return_mismatch_is_rejected() {
+    let source = r#"
+def bad(_n: int) -> str:
+  return "no"
+
+def collect_bad(items: Iterator[int]) -> list[int]:
+  return items.filter(bad).collect()
+"#;
+    let errs = check_str_err(source, "filter callback returning str should be rejected");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("expected '(int) -> bool', found '(int) -> str'")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc088_batch_rejects_static_non_positive_size() {
+    let source = r#"
+def collect_bad(items: Iterator[int]) -> list[list[int]]:
+  return items.batch(0).collect()
+"#;
+    let errs = check_str_err(source, "batch(0) should be rejected");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Iterator.batch() size must be greater than zero")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc088_terminal_consumption_rejects_obvious_same_binding_reuse() {
+    let source = r#"
+def consume_twice(items: Iterator[int]) -> int:
+  first = items.count()
+  return first + items.count()
+"#;
+    let errs = check_str_err(source, "same iterator binding reused after terminal method");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("iterator binding `items` was consumed")),
+        "unexpected errors: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_types_compatible_trait_to_supertrait_identity() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def id(self) -> T: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("DataSet".to_string(), vec![ResolvedType::Str]);
+    let expected = ResolvedType::Generic("DataSet".to_string(), vec![ResolvedType::Str]);
+    assert!(checker.types_compatible(&actual, &expected));
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_trait_to_supertrait_wrong_args() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def id(self) -> T: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+  def b(self) -> T: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("BoundedDataSet".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Generic("DataSet".to_string(), vec![ResolvedType::Str]);
+    assert!(
+        !checker.types_compatible(&actual, &expected),
+        "Mismatched type arguments across trait upcast must be rejected"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_unrelated_traits_rejected() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Apple[T]:
+  def a(self) -> T: ...
+
+trait Orange[T]:
+  def o(self) -> T: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("Apple".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Generic("Orange".to_string(), vec![ResolvedType::Int]);
+    assert!(!checker.types_compatible(&actual, &expected));
+    Ok(())
+}
+
+#[test]
+fn test_types_compatible_wrong_direction_supertrait_to_subtrait_rejected() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait DataSet[T]:
+  def id(self) -> T: ...
+
+trait BoundedDataSet[T] with DataSet[T]:
+  def b(self) -> T: ...
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+    let actual = ResolvedType::Generic("DataSet".to_string(), vec![ResolvedType::Int]);
+    let expected = ResolvedType::Generic("BoundedDataSet".to_string(), vec![ResolvedType::Int]);
+    assert!(
+        !checker.types_compatible(&actual, &expected),
+        "Supertrait must not be assignable to subtrait"
+    );
+    Ok(())
+}
+
 #[test]
 fn test_supertrait_requires_merge_conflict() -> Result<(), Vec<CompileError>> {
     let source = r#"
@@ -1707,7 +6478,7 @@ def main() -> int:
   let _x = T()
   return 0
 "#;
-    let err = check_str(source).expect_err("trait constructor should be rejected");
+    let err = check_str_err(source, "trait constructor should be rejected");
     assert!(
         err.iter().any(|e| e.message.contains("Cannot construct trait")),
         "unexpected errors: {:?}",
@@ -1919,6 +6690,47 @@ def foo() -> int:
 }
 
 #[test]
+fn test_if_let_statement_typechecks() {
+    let source = r#"
+def first(opt: Option[int]) -> int:
+  if let Some(value) = opt:
+    return value
+  return 0
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_while_let_statement_typechecks() {
+    let source = r#"
+def sum_once(opt: Option[int]) -> int:
+  mut total = 0
+  mut current = opt
+  while let Some(value) = current:
+    total = total + value
+    current = None
+  return total
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_if_let_rejects_impossible_pattern() {
+    let source = r#"
+def first(count: int) -> int:
+  if let Some(value) = count:
+    return value
+  return 0
+"#;
+    let errs = check_str_err(source, "expected impossible `if let` pattern to fail");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Constructor pattern 'Some' does not resolve")),
+        "unexpected errors: {errs:?}"
+    );
+}
+
+#[test]
 fn test_for_loop() {
     let source = r#"
 def foo() -> int:
@@ -1944,11 +6756,188 @@ def foo() -> List[int]:
 }
 
 #[test]
+fn test_collection_literal_spreads_typecheck() {
+    let source = r#"
+def values(xs: list[int]) -> list[int]:
+  xy: tuple[int, int] = (2, 3)
+  return [1, *xs, *xy, *(5, 6)]
+
+def headers(defaults: dict[str, str], overrides: dict[str, str]) -> dict[str, str]:
+  return {**defaults, "trace": "enabled", **overrides}
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_collection_literal_spread_type_mismatches_are_reported() {
+    let list_source = r#"
+def bad_list(xs: list[str]) -> list[int]:
+  return [1, *xs]
+"#;
+    let list_errs = check_str_err(list_source, "expected list spread type mismatch");
+    let list_messages: Vec<&str> = list_errs.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        list_messages
+            .iter()
+            .any(|msg| msg.contains("expected 'int', found 'str'")),
+        "expected list spread element mismatch, got: {list_messages:?}"
+    );
+
+    let value_source = r#"
+def bad_dict_values(headers: dict[str, int]) -> dict[str, str]:
+  return {"accept": "json", **headers}
+"#;
+    let value_errs = check_str_err(value_source, "expected dict spread value mismatch");
+    let value_messages: Vec<&str> = value_errs.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        value_messages
+            .iter()
+            .any(|msg| msg.contains("expected 'str', found 'int'")),
+        "expected dict spread value mismatch, got: {value_messages:?}"
+    );
+
+    let key_source = r#"
+def bad_dict_keys(headers: dict[int, str]) -> dict[str, str]:
+  return {"accept": "json", **headers}
+"#;
+    let key_errs = check_str_err(key_source, "expected dict spread key mismatch");
+    let key_messages: Vec<&str> = key_errs.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        key_messages
+            .iter()
+            .any(|msg| msg.contains("expected 'str', found 'int'")),
+        "expected dict spread key mismatch, got: {key_messages:?}"
+    );
+}
+
+#[test]
+fn test_collection_literal_spread_requires_matching_container_shape() {
+    let source = r#"
+def bad_list(xs: dict[str, str]) -> list[int]:
+  return [1, *xs]
+
+def bad_dict(xs: list[int]) -> dict[str, str]:
+  return {**xs}
+
+def bad_frozen_list(xs: FrozenList[int]) -> list[int]:
+  return [*xs]
+
+def bad_frozen_dict(xs: FrozenDict[FrozenStr, int]) -> dict[str, int]:
+  return {**xs}
+"#;
+    let errs = check_str_err(source, "expected spread shape mismatches");
+    let messages: Vec<&str> = errs.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("expected 'List[_] or tuple[...]'")),
+        "expected list spread container diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|msg| msg.contains("expected 'Dict[_, _]'")),
+        "expected dict spread container diagnostic, got: {messages:?}"
+    );
+}
+
+#[test]
+fn test_collection_literal_spread_invalid_markers_are_targeted() {
+    let list_errs = check_str_err(
+        "def f(xs: list[int]) -> None:\n  values = [**xs]\n",
+        "expected invalid list marker diagnostic",
+    );
+    assert!(
+        list_errs
+            .iter()
+            .any(|err| err.message.contains("Invalid list spread marker `**`")),
+        "expected invalid list spread marker diagnostic, got: {list_errs:?}"
+    );
+
+    let dict_errs = check_str_err(
+        "def f(xs: list[int]) -> None:\n  values = {*xs}\n",
+        "expected invalid dict marker diagnostic",
+    );
+    assert!(
+        dict_errs
+            .iter()
+            .any(|err| err.message.contains("Invalid dictionary spread marker `*`")),
+        "expected invalid dictionary spread marker diagnostic, got: {dict_errs:?}"
+    );
+}
+
+#[test]
 fn test_empty_list() {
     let source = r#"
 def foo() -> List[int]:
   let x: List[int] = []
   return x
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_empty_list_matches_typed_call_parameter() {
+    let source = r#"
+def takes_names(names: List[str]) -> int:
+  return len(names)
+
+def foo() -> int:
+  return takes_names([])
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_concatenation_with_plus() {
+    let source = r#"
+def foo() -> List[int]:
+  a: List[int] = [1, 2]
+  b: List[int] = [3, 4]
+  return a + b
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_extend_method() {
+    let source = r#"
+def foo(mut a: List[int], b: List[int]) -> None:
+  a.extend(b)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_generic_model_field_access_returns_substituted_type() {
+    let source = r#"
+pub model Boxed[T]:
+  pub value: T
+
+pub def get_value[T](boxed: Boxed[T]) -> T:
+  return boxed.value
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_generic_class_field_access_substitutes_nested_field_type() {
+    let source = r#"
+pub class Boxed[T]:
+  pub values: List[T]
+
+pub def get_values[T](boxed: Boxed[T]) -> List[T]:
+  return boxed.values
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_list_self_accepts_explicit_owner_instances() {
+    let source = r#"
+pub class Boxed[T]:
+  pub value: T
+
+  def pair(self) -> List[Self]:
+    return [Boxed(value=self.value), Boxed(value=self.value)]
 "#;
     assert!(check_str(source).is_ok());
 }
@@ -2009,6 +6998,278 @@ enum Color:
   Blue
 "#;
     assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_enum_instance_method_typechecks() {
+    let source = r#"
+enum Color:
+  Red
+  Blue
+
+  def label(self) -> str:
+    return "color"
+
+def label_red() -> str:
+  return Red.label()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_enum_associated_method_typechecks() {
+    let source = r#"
+enum Status:
+  Ok
+  Failed
+
+  def fallback() -> Status:
+    return Failed
+
+def choose() -> Status:
+  return Status.fallback()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_enum_explicit_trait_adoption_typechecks() {
+    let source = r#"
+trait Labelled:
+  def label(self) -> str: ...
+
+enum Color with Labelled:
+  Red
+  Blue
+
+  def label(self) -> str:
+    return "color"
+
+def render(color: Color) -> str:
+  return color.label()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_enum_missing_trait_method_is_rejected() {
+    let source = r#"
+trait Labelled:
+  def label(self) -> str: ...
+
+enum Color with Labelled:
+  Red
+  Blue
+"#;
+    let errs = check_str_err(source, "enum should satisfy abstract trait methods");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("requires method") && e.message.contains("label")),
+        "expected missing enum trait method diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_enum_generic_trait_adoption_arity_is_checked() {
+    let source = r#"
+trait Boxed[T]:
+  def get(self) -> T: ...
+
+enum Token with Boxed[int, str]:
+  Number
+
+  def get(self) -> int:
+    return 1
+"#;
+    let errs = check_str_err(source, "enum generic trait adoption should validate arity");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("expects 1") || e.message.contains("arity")),
+        "expected enum trait adoption arity diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_enum_satisfies_explicit_trait_bound() {
+    let source = r#"
+trait Labelled:
+  def label(self) -> str: ...
+
+enum Color with Labelled:
+  Red
+  Blue
+
+  def label(self) -> str:
+    return "color"
+
+def keep_labelled[T with Labelled](value: T) -> T:
+  return value
+
+def keep_red() -> Color:
+  return keep_labelled(Red)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_value_enum_str_generated_surface_typechecks() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+  Prod = "production"
+
+def raw(env: Env) -> str:
+  return env.value()
+
+def parse() -> Option[Env]:
+  return Env.from_value("production")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_value_enum_int_generated_surface_typechecks() {
+    let source = r#"
+enum HttpStatus(int):
+  Ok = 200
+  NotFound = 404
+
+def raw(status: HttpStatus) -> int:
+  return status.value()
+
+def parse() -> Option[HttpStatus]:
+  return HttpStatus.from_value(404)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_value_enum_duplicate_raw_values_rejected() {
+    let source = r#"
+enum Env(str):
+  Dev = "local"
+  Local = "local"
+"#;
+    let errs = check_str_err(source, "duplicate value enum raw values should fail");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Duplicate value enum value") && e.message.contains("Dev")),
+        "expected duplicate value enum diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_generated_names_reserved() {
+    let source = r#"
+enum Env(str):
+  value = "value"
+  Prod = "production"
+"#;
+    let errs = check_str_err(source, "generated value enum helper names should be reserved");
+    assert!(
+        errs.iter().any(|e| e.message.contains("generated member name 'value'")),
+        "expected reserved generated member diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_type_params_rejected() {
+    let source = r#"
+enum Box[T](str):
+  Value = "value"
+"#;
+    let errs = check_str_err(source, "generic value enum should be rejected");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("cannot declare type parameters")),
+        "expected generic value enum diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_from_value_argument_type_checked() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+
+def parse() -> Option[Env]:
+  return Env.from_value(1)
+"#;
+    let errs = check_str_err(source, "from_value should require the value enum backing type");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("expected 'str'") && e.message.contains("found 'int'")),
+        "expected from_value argument type mismatch, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_from_value_arity_checked() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+
+def parse() -> Option[Env]:
+  return Env.from_value()
+"#;
+    let errs = check_str_err(source, "from_value should require one argument");
+    assert!(
+        errs.iter().any(|e| e.message.contains("expects 1 argument")),
+        "expected from_value arity diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_value_arity_checked() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+
+def raw(env: Env) -> str:
+  return env.value(1)
+"#;
+    let errs = check_str_err(source, "value should not accept arguments");
+    assert!(
+        errs.iter().any(|e| e.message.contains("expects 0 argument")),
+        "expected value arity diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_from_value_requires_type_receiver() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+
+def parse(env: Env) -> Option[Env]:
+  return env.from_value("development")
+"#;
+    let errs = check_str_err(source, "from_value should require an enum type receiver");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("from_value") || e.message.contains("Unknown")),
+        "expected receiver-shape diagnostic for from_value, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_value_enum_remains_distinct_from_primitive() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+
+def raw(env: Env) -> str:
+  return env
+"#;
+    let errs = check_str_err(
+        source,
+        "value enum should not be assignable to its backing primitive type",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("expected 'str'") && e.message.contains("found 'Env'")),
+        "expected nominal value enum mismatch, got {errs:?}"
+    );
 }
 
 // ========================================
@@ -2138,6 +7399,273 @@ def foo() -> int:
 }
 
 #[test]
+fn test_variadic_rest_params_typecheck_and_bind_local_container_types() {
+    let source = r#"
+def collect(prefix: str, *items: int, **labels: str) -> int:
+  first: int = items[0]
+  label: str = labels["name"]
+  return first
+
+def main(xs: list[int], kw: dict[str, str]) -> int:
+  return collect("x", 1, *xs, name="demo", **kw)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_fixed_call_unpack_accepts_shaped_positional_sources() {
+    let source = r#"
+def pair(a: int, b: str) -> str:
+  return b
+
+def collect(a: int, b: str, *rest: int) -> int:
+  return a + rest[0]
+
+def main() -> int:
+  xy: tuple[int, str] = (1, "v")
+  left = pair(*(1, "x"))
+  right = pair(*[2, "y"])
+  named = pair(*xy)
+  return collect(*[3, "z", 4])
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_fixed_call_unpack_accepts_shaped_keyword_sources() {
+    let source = r#"
+def user(name: str, age: int) -> str:
+  return name
+
+def collect(name: str, **labels: str) -> str:
+  return labels["city"]
+
+def main() -> str:
+  left = user(**{"name": "Ada", "age": 36})
+  return collect(**{"name": "Ada", "city": "London"})
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_fixed_call_unpack_reports_invalid_positional_cases() {
+    let source = r#"
+def pair(a: int, b: str) -> str:
+  return b
+
+def main(xs: list[int]) -> str:
+  missing = pair(*(1,))
+  wrong_type = pair(*(2, 3))
+  unshaped = pair(*xs)
+  return wrong_type
+"#;
+    let errs = check_str_err(source, "expected invalid fixed positional unpack cases");
+    let messages: Vec<&str> = errs.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Missing required argument 'b' when calling 'pair'")),
+        "expected missing fixed parameter diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|msg| msg.contains("expected 'str', found 'int'")),
+        "expected shaped positional item type mismatch, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|msg| msg.contains("Cannot use `*` unpacking")),
+        "expected unshaped fixed positional unpack rejection, got: {messages:?}"
+    );
+}
+
+#[test]
+fn test_fixed_call_unpack_reports_invalid_keyword_cases() {
+    let source = r#"
+def user(name: str, age: int) -> str:
+  return name
+
+def main(kw: dict[str, int]) -> str:
+  duplicate = user(name="Ada", **{"name": "Grace", "age": 37})
+  missing = user(**{"name": "Ada"})
+  unknown = user(**{"name": "Ada", "age": 36, "city": "London"})
+  wrong_type = user(**{"name": "Ada", "age": "old"})
+  unshaped = user(**kw)
+  return duplicate
+"#;
+    let errs = check_str_err(source, "expected invalid fixed keyword unpack cases");
+    let messages: Vec<&str> = errs.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Duplicate argument 'name' when calling 'user'")),
+        "expected duplicate fixed keyword diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Missing required argument 'age' when calling 'user'")),
+        "expected missing fixed keyword diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Unexpected keyword argument 'city' when calling 'user'")),
+        "expected unknown fixed keyword diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|msg| msg.contains("expected 'int', found 'str'")),
+        "expected shaped keyword value type mismatch, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|msg| msg.contains("Cannot use `**` unpacking")),
+        "expected unshaped fixed keyword unpack rejection, got: {messages:?}"
+    );
+}
+
+#[test]
+fn test_variadic_unpack_requires_matching_rest_param() {
+    let source = r#"
+def fixed(value: int) -> int:
+  return value
+
+def main(xs: list[int], kw: dict[str, str]) -> int:
+  return fixed(*xs, **kw)
+"#;
+    let errs = check_str_err(source, "expected unpacking into fixed function to fail");
+    assert!(
+        errs.iter().any(|err| err.message.contains("Cannot use `*` unpacking")),
+        "expected positional unpack diagnostic, got: {errs:?}"
+    );
+    assert!(
+        errs.iter().any(|err| err.message.contains("Cannot use `**` unpacking")),
+        "expected keyword unpack diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_variadic_rest_type_mismatch_reports_element_and_container_shapes() {
+    let source = r#"
+def collect(*items: int, **labels: str) -> int:
+  return 0
+
+def main(xs: list[str], kw: dict[str, int]) -> int:
+  return collect(1.0, *xs, name=2, **kw)
+"#;
+    let errs = check_str_err(source, "expected rest argument type mismatches");
+    let messages: Vec<&str> = errs.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        messages.iter().any(|msg| msg.contains("expected 'int', found 'float'")),
+        "expected direct rest positional mismatch, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("expected 'List[int]', found 'List[str]'")),
+        "expected positional unpack container mismatch, got: {messages:?}"
+    );
+    assert!(
+        messages.iter().any(|msg| msg.contains("expected 'str', found 'int'")),
+        "expected direct keyword rest mismatch, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("expected 'Dict[str, str]', found 'Dict[str, int]'")),
+        "expected keyword unpack container mismatch, got: {messages:?}"
+    );
+}
+
+#[test]
+fn test_variadic_rest_params_preserved_through_function_values() {
+    let source = r#"
+def collect(*items: int, **labels: str) -> int:
+  return 0
+
+def main(xs: list[int], kw: dict[str, str]) -> int:
+  f = collect
+  return f(1, *xs, name="demo", **kw)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_invalid_rest_parameter_declarations_report_targeted_errors() {
+    let source = r#"
+def normal_after_args(*items: int, value: int) -> int:
+  return value
+
+def duplicate_args(*left: int, *right: int) -> int:
+  return 0
+
+def args_after_kwargs(**labels: str, *items: int) -> int:
+  return 0
+
+def duplicate_kwargs(**left: str, **right: str) -> int:
+  return 0
+
+def rest_with_default(*items: int = []) -> int:
+  return 0
+"#;
+    let errs = check_str_err(source, "expected invalid rest parameter declarations");
+    let messages: Vec<&str> = errs.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Normal parameters cannot appear after a rest parameter")),
+        "expected normal-after-rest diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Only one `*args` rest parameter")),
+        "expected duplicate *args diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("`*args` must appear before `**kwargs`")),
+        "expected *args-after-**kwargs diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Only one `**kwargs` rest parameter")),
+        "expected duplicate **kwargs diagnostic, got: {messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|msg| msg.contains("Rest parameter 'items' cannot declare a default value")),
+        "expected rest-default diagnostic, got: {messages:?}"
+    );
+}
+
+#[test]
+fn test_normal_after_kwargs_reports_single_specific_rest_order_error() {
+    let source = r#"
+def invalid(**labels: str, value: int) -> int:
+  return value
+"#;
+    let errs = check_str_err(source, "expected normal parameter after **kwargs to fail");
+    let messages: Vec<&str> = errs.iter().map(|err| err.message.as_str()).collect();
+    let specific_count = messages
+        .iter()
+        .filter(|msg| msg.contains("Normal parameters cannot appear after a `**kwargs` rest parameter"))
+        .count();
+    let generic_count = messages
+        .iter()
+        .filter(|msg| **msg == "Normal parameters cannot appear after a rest parameter")
+        .count();
+    assert_eq!(
+        specific_count, 1,
+        "expected one **kwargs-specific diagnostic, got: {messages:?}"
+    );
+    assert_eq!(
+        generic_count, 0,
+        "expected no duplicate generic diagnostic, got: {messages:?}"
+    );
+}
+
+#[test]
 fn test_generic_bound_enforced_at_callsite_negative() {
     let source = r#"
 @requires(message: str)
@@ -2198,6 +7726,71 @@ def foo() -> int:
   return sum(x)
 "#;
     assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_local_function_named_sum_shadows_builtin_sum() {
+    let source = r#"
+def sum(value: str) -> str:
+  return value
+
+def foo() -> str:
+  return sum("ok")
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_explicit_std_builtins_sum_call() {
+    let source = r#"
+def foo() -> int:
+  x = [1, 2, 3]
+  return std.builtins.sum(x)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_std_builtins_len_call() {
+    let source = r#"
+def foo() -> int:
+  names = ["a", "b"]
+  return std.builtins.len(names)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_std_builtins_unknown_member_is_rejected() {
+    let source = r#"
+def foo() -> int:
+  return std.builtins.not_real([1, 2, 3])
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("unknown std.builtins member should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Type 'std.builtins' has no method 'not_real(...)'")),
+        "Expected missing-method diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_root_sum_shadowing_preserved_but_explicit_std_builtins_bypasses_shadow() {
+    let source = r#"
+def sum(value: str) -> str:
+  return value
+
+def root_call() -> str:
+  return sum("ok")
+
+def explicit_call() -> int:
+  x = [1, 2, 3]
+  return std.builtins.sum(x)
+"#;
+    assert_check_ok(source);
 }
 
 // ========================================
@@ -2306,6 +7899,99 @@ def foo(x: int) -> str:
     assert!(check_str(source).is_ok());
 }
 
+#[test]
+fn test_match_unknown_incan_enum_variant_reports_constructor_resolution_error() {
+    let source = r#"
+enum Traffic:
+  Red
+  Amber
+
+def f(x: Traffic) -> None:
+  match x:
+    Crimson() =>
+      _ = 0
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors for unknown enum constructor pattern");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("does not resolve for this match")),
+        "expected unknown_match_constructor_pattern, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_match_qualified_incan_enum_variant_resolves_against_scrutinee() {
+    let source = r#"
+pub enum ConformanceRel:
+  Read
+  Filter
+  Project
+
+pub def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+  match rel:
+    ConformanceRel.Read =>
+      return "ReadRel"
+    ConformanceRel.Filter =>
+      return "FilterRel"
+    ConformanceRel.Project =>
+      return "ProjectRel"
+    _ =>
+      return "UnknownRel"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_match_qualified_incan_enum_variant_with_wrong_qualifier_reports_resolution_error() {
+    let source = r#"
+enum ConformanceRel:
+  Read
+  Filter
+
+enum OtherRel:
+  Read
+
+def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+  match rel:
+    OtherRel.Read =>
+      return "ReadRel"
+    _ =>
+      return "UnknownRel"
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected type errors for mismatched enum constructor qualifier");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("does not resolve for this match")),
+        "expected unknown_match_constructor_pattern, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_match_qualified_incan_enum_variant_stays_resolvable_with_duplicate_variant_names() {
+    let source = r#"
+enum ConformanceRel:
+  Read
+  Filter
+
+enum OtherRel:
+  Read
+
+def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+  match rel:
+    ConformanceRel.Read =>
+      return "ReadRel"
+    ConformanceRel.Filter =>
+      return "FilterRel"
+    _ =>
+      return "UnknownRel"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
 // ========================================
 // Async function tests
 // ========================================
@@ -2385,6 +8071,21 @@ def foo() -> int:
   return NUMS.len()
 "#;
     assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_const_frozen_list_spread_is_rejected_in_frontend() {
+    let source = r#"
+const BASE: FrozenList[int] = [1, 2]
+const NUMS: FrozenList[int] = [0, *BASE, 3]
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("expected const list spread to fail");
+    };
+    assert!(
+        errs.iter().any(|err| err.message.contains("not allowed")),
+        "expected const expression diagnostic for list spread, got: {errs:?}"
+    );
 }
 
 #[test]
@@ -2578,12 +8279,13 @@ def foo() -> int:
 fn test_web_wrapper_value_and_deref_access() {
     let source = r#"
 from std.web import Json, Query
+from std.serde import json
 
-@derive(Deserialize)
+@derive(json)
 model SearchParams:
   q: str
 
-@derive(Deserialize)
+@derive(json)
 model CreateUser:
   name: str
 
@@ -2604,12 +8306,14 @@ def use_body(body: Json[CreateUser]) -> str:
 fn test_web_wrapper_invalid_constructor_args() {
     let source = r#"
 from std.web import Json, Query
+from std.serde import json
+from std.serde.json import Serialize
 
 @derive(Serialize)
 model User:
   name: str
 
-@derive(Deserialize)
+@derive(json)
 model SearchParams:
   q: str
 
@@ -2839,6 +8543,37 @@ fn test_unknown_stdlib_module_from_import() {
     );
 }
 
+#[test]
+fn test_known_stdlib_module_rejects_unknown_annotation_only_import() {
+    let source = r#"
+from std.testing import NotExported
+
+def accepts_marker(value: NotExported) -> None:
+  pass
+"#;
+    let errs = check_str_err(source, "unknown stdlib import used only as an annotation should fail");
+    assert!(
+        errs.iter().any(|e| {
+            e.message
+                .contains("Cannot import `NotExported` from stdlib module `std.testing`")
+                && e.message.contains("not exported")
+        }),
+        "Expected not-exported diagnostic for std.testing.NotExported; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_non_stdlib_annotation_only_import_keeps_placeholder_fallback() {
+    let source = r#"
+from app.types import ExternalOnly
+
+def accepts_external(value: ExternalOnly) -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
 // ========================================================================
 // RFC 005: Rust interop
 // ========================================================================
@@ -2941,6 +8676,105 @@ def circle_constant() -> float:
 }
 
 #[test]
+fn test_std_math_module_constants_uppercase_ok() {
+    let source = r#"
+import std.math
+
+def constants() -> float:
+  return math.PI + math.E + math.TAU + math.INFINITY + math.NAN
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_math_lowercase_constant_aliases_rejected() {
+    let source = r#"
+import std.math
+
+def constants() -> float:
+  return math.pi
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("legacy lowercase std.math aliases should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("missing field") || e.message.contains("has no field")),
+        "Expected missing-field diagnostic for lowercase alias; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_std_math_module_extended_functions_ok() {
+    let source = r#"
+import std.math
+
+def value(x: float, y: float, a: int, b: int) -> float:
+  ints = math.gcd(a, b) + math.lcm(a, b)
+  return math.round(x) + math.log2(x) + math.atan2(y, x) + math.hypot(x, y) + float(ints)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_math_unknown_member_is_rejected() {
+    let source = r#"
+import std.math
+
+def broken() -> float:
+  return math.not_real
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("unknown std.math member should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("missing field") || e.message.contains("has no field")),
+        "Expected missing-field diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_std_math_unknown_function_is_rejected() {
+    let source = r#"
+import std.math
+
+def broken() -> float:
+  return math.not_real(1.0)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("unknown std.math function should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Type 'math' has no method 'not_real(...)'")),
+        "Expected missing-method diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_std_math_arity_is_checked() {
+    let source = r#"
+import std.math
+
+def broken() -> float:
+  return math.round(1.0, 2.0)
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("wrong std.math arity should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("math.round() expects 1 argument(s), got 2")),
+        "Expected math arity diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_known_stdlib_module_is_accepted() {
     // `from std.testing import fail` should not trigger unknown-module diagnostic.
     let source = "from std.testing import fail\ndef main() -> None:\n    fail(\"oops\")\n";
@@ -2954,6 +8788,35 @@ fn test_known_stdlib_module_is_accepted() {
             errs.iter().map(|e| &e.message).collect::<Vec<_>>()
         );
     }
+}
+
+#[test]
+fn test_std_graph_imports_and_direct_constructors_typecheck() {
+    let source = r#"
+from std.graph import DiGraph, Dag, MultiDiGraph, NodeId, EdgeId, GraphError
+
+def exercise() -> None:
+    mut graph = DiGraph[str]()
+    a: NodeId = graph.add_node("a")
+    b: NodeId = graph.add_node("b")
+    edge_result: Result[None, GraphError] = graph.add_edge(a, b)
+    removed: Result[None, GraphError] = graph.remove_edge(a, b)
+    successors: Result[list[NodeId], GraphError] = graph.successors(a)
+    topo: Result[list[NodeId], GraphError] = graph.topological_order()
+
+    mut dag = Dag[str]()
+    root: NodeId = dag.add_node("root")
+    leaf: NodeId = dag.add_node("leaf")
+    dag_edge: Result[None, GraphError] = dag.add_edge(root, leaf)
+    dag_order: list[NodeId] = dag.topological_order()
+
+    mut multi = MultiDiGraph[str]()
+    left: NodeId = multi.add_node("left")
+    right: NodeId = multi.add_node("right")
+    multi_edge: Result[EdgeId, GraphError] = multi.add_edge(left, right)
+    between: Result[list[EdgeId], GraphError] = multi.edges_between(left, right)
+"#;
+    assert!(check_str(source).is_ok());
 }
 
 #[test]
@@ -2971,6 +8834,510 @@ def main() -> None:
         errs.iter().any(|e| e.message.contains("cannot be called at runtime")),
         "Expected marker runtime-call diagnostic; got: {:?}",
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_async_fixture_records_frontend_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+import std.async
+from std.testing import fixture
+
+@fixture(scope="module", autouse=true)
+async def resource() -> int:
+  yield 1
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let info = checker
+        .type_info()
+        .testing_fixture("resource")
+        .ok_or_else(|| std::io::Error::other("expected fixture metadata for resource"))?;
+    assert_eq!(info.scope, TestingFixtureScope::Module);
+    assert!(info.autouse);
+    assert!(info.is_async);
+    assert!(info.has_teardown);
+    assert!(info.dependencies.is_empty());
+    Ok(())
+}
+
+#[test]
+fn test_async_fixture_records_mixed_fixture_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+import std.async
+from std.testing import fixture
+
+@fixture
+def config() -> int:
+  return 1
+
+@fixture(scope="session")
+async def service(config: int) -> int:
+  yield config
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let info = checker
+        .type_info()
+        .testing_fixture("service")
+        .ok_or_else(|| std::io::Error::other("expected fixture metadata for service"))?;
+    assert_eq!(info.scope, TestingFixtureScope::Session);
+    assert_eq!(info.dependencies, vec!["config".to_string()]);
+    assert!(info.is_async);
+    Ok(())
+}
+
+#[test]
+fn test_validated_newtype_implicit_coercions_are_recorded() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Attempts, ValidationError]:
+    return Ok(Attempts(n))
+
+type RetryAttempts = newtype Attempts
+
+model Job:
+  attempts: Attempts
+
+def take_attempts(a: Attempts) -> None:
+  return
+
+def main() -> None:
+  take_attempts(3)
+  attempts: Attempts = 4
+  retry: RetryAttempts = 5
+  job = Job(attempts=6)
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let coercions = &checker.type_info().validated_newtype_coercions;
+
+    assert!(
+        coercions.values().any(|info| {
+            info.target_type == ResolvedType::Named("Attempts".to_string())
+                && info.steps.len() == 1
+                && info.steps[0].newtype_name == "Attempts"
+                && info.steps[0].ctor.as_deref() == Some("from_underlying")
+        }),
+        "expected direct Attempts coercion, got {coercions:?}"
+    );
+    assert!(
+        coercions.values().any(|info| {
+            info.target_type == ResolvedType::Named("RetryAttempts".to_string())
+                && info
+                    .steps
+                    .iter()
+                    .map(|step| step.newtype_name.as_str())
+                    .collect::<Vec<_>>()
+                    == vec!["Attempts", "RetryAttempts"]
+        }),
+        "expected transitive RetryAttempts coercion, got {coercions:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_validated_newtype_implicit_coercion_does_not_parse_primitives() {
+    let source = r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Attempts, ValidationError]:
+    return Ok(Attempts(n))
+
+def take_attempts(a: Attempts) -> None:
+  return
+
+def main() -> None:
+  take_attempts("3")
+"#;
+    let errors = check_str_err(source, "expected str-to-newtype coercion to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("expected 'Attempts'") && error.message.contains("found 'str'")),
+        "unexpected errors: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validated_newtype_hook_requires_validation_error() {
+    let source = r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Attempts, str]:
+    return Ok(Attempts(n))
+"#;
+    let errors = check_str_err(source, "expected malformed from_underlying hook to fail");
+    assert!(
+        errors.iter().any(|error| {
+            error
+                .message
+                .contains("Invalid 'Attempts.from_underlying' validation hook")
+                && error.message.contains("ValidationError")
+        }),
+        "unexpected errors: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validated_newtype_hook_allows_self_return() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Self, ValidationError]:
+    return Ok(Attempts(n))
+
+def take_attempts(value: Attempts) -> None:
+  return
+
+def main() -> None:
+  take_attempts(1)
+"#;
+    check_str(source)
+}
+
+#[test]
+fn test_explicit_validated_newtype_constructor_checks_underlying_type() {
+    let source = r#"
+type Attempts = newtype int:
+  def from_underlying(n: int) -> Result[Attempts, ValidationError]:
+    return Ok(Attempts(n))
+
+def main() -> None:
+  attempts = Attempts("3")
+"#;
+    let errors = check_str_err(
+        source,
+        "expected explicit newtype constructor to reject wrong underlying type",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("expected 'int'") && error.message.contains("found 'str'")),
+        "unexpected errors: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validated_newtype_reassignment_is_not_implicit_coercion_site() {
+    let source = r#"
+type Attempts = newtype int
+
+def main() -> None:
+  mut attempts: Attempts = Attempts(1)
+  attempts = 2
+"#;
+    let errors = check_str_err(source, "expected reassignment to reject implicit newtype coercion");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("expected 'Attempts'") && error.message.contains("found 'int'")),
+        "unexpected errors: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validated_newtype_constrained_underlying_records_generated_validation() -> Result<(), Box<dyn std::error::Error>>
+{
+    let source = r#"
+type PositiveInt = newtype int[gt=0]
+
+def take_positive(value: PositiveInt) -> None:
+  return
+
+def main() -> None:
+  take_positive(1)
+"#;
+    let tokens = lexer::lex(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+    let coercions = &checker.type_info().validated_newtype_coercions;
+    assert!(
+        coercions.values().any(|info| {
+            info.target_type == ResolvedType::Named("PositiveInt".to_string())
+                && info.steps.len() == 1
+                && info.steps[0].newtype_name == "PositiveInt"
+                && info.steps[0].ctor.is_none()
+                && info.steps[0]
+                    .constraints
+                    .iter()
+                    .any(|constraint| matches!(constraint.key, TypeConstraintKey::Gt) && constraint.value == 0)
+        }),
+        "expected generated constrained newtype validation metadata, got {coercions:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_validated_newtype_no_implicit_coercion_rejects_site() {
+    let source = r#"
+@no_implicit_coercion
+type Attempts = newtype int
+
+def take_attempts(value: Attempts) -> None:
+  return
+
+def main() -> None:
+  take_attempts(1)
+"#;
+    let errors = check_str_err(source, "expected @no_implicit_coercion to reject implicit site");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Implicit coercion into newtype 'Attempts' is disabled")),
+        "unexpected errors: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_validated_newtype_underlying_cycle_is_rejected() {
+    let source = r#"
+type A = newtype B
+type B = newtype A
+"#;
+    let errors = check_str_err(source, "expected newtype cycle to be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Validated-newtype coercion cycle detected")),
+        "unexpected errors: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_async_fixture_requires_exactly_one_yield() {
+    let missing = r#"
+import std.async
+from std.testing import fixture
+
+@fixture
+async def resource() -> int:
+  return 1
+"#;
+    let missing_errs = check_str_err(missing, "async fixture without yield should fail");
+    assert!(
+        missing_errs
+            .iter()
+            .any(|e| e.message.contains("must contain exactly one top-level `yield value`")),
+        "Expected missing-yield async fixture diagnostic; got: {:?}",
+        missing_errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+
+    let repeated = r#"
+import std.async
+from std.testing import fixture
+
+@fixture
+async def resource() -> int:
+  yield 1
+  yield 2
+"#;
+    let repeated_errs = check_str_err(repeated, "async fixture with repeated yield should fail");
+    assert!(
+        repeated_errs
+            .iter()
+            .any(|e| e.message.contains("must use exactly one top-level `yield value`")),
+        "Expected repeated-yield async fixture diagnostic; got: {:?}",
+        repeated_errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_async_fixture_rejects_nested_or_empty_yield() {
+    let nested = r#"
+import std.async
+from std.testing import fixture
+
+@fixture
+async def resource(flag: bool) -> int:
+  if flag:
+    yield 1
+  return 2
+"#;
+    let nested_errs = check_str_err(nested, "async fixture with nested yield should fail");
+    assert!(
+        nested_errs
+            .iter()
+            .any(|e| e.message.contains("must use exactly one top-level `yield value`")),
+        "Expected nested-yield async fixture diagnostic; got: {:?}",
+        nested_errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+
+    let empty = r#"
+import std.async
+from std.testing import fixture
+
+@fixture
+async def resource() -> int:
+  yield
+"#;
+    let empty_errs = check_str_err(empty, "async fixture with empty yield should fail");
+    assert!(
+        empty_errs
+            .iter()
+            .any(|e| e.message.contains("must yield the fixture value")),
+        "Expected empty-yield async fixture diagnostic; got: {:?}",
+        empty_errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_fixture_rejects_per_fixture_timeout_config() {
+    let source = r#"
+from std.testing import fixture
+
+@fixture(timeout="1s")
+def resource() -> int:
+  return 1
+"#;
+    let errs = check_str_err(source, "fixture timeout config should fail");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("cannot declare per-fixture timeout configuration")),
+        "Expected fixture-timeout diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc018_assert_is_some_binding_is_visible_after_assert() {
+    let source = r#"
+import std.testing
+
+def unwrap_name(value: Option[str]) -> str:
+  assert value is Some(name)
+  return name
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc018_assert_is_result_bindings_are_visible_after_assert() {
+    let source = r#"
+import std.testing
+
+def unwrap_ok(value: Result[int, str]) -> int:
+  assert value is Ok(number)
+  return number
+
+def unwrap_err(value: Result[int, str]) -> str:
+  assert value is Err(message)
+  return message
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc018_assert_is_none_and_wildcard_patterns_typecheck() {
+    let source = r#"
+import std.testing
+
+def check_option(value: Option[int], other: Option[str]) -> None:
+  assert value is None
+  assert other is Some(_)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc018_assert_raises_accepts_builtin_error_vocabulary() {
+    let source = r#"
+def explode() -> None:
+  pass
+
+def check() -> None:
+  assert explode() raises ValueError, "expected failure"
+  assert explode() raises AssertionError
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_rfc018_assert_raises_rejects_unknown_error_type() {
+    let source = r#"
+def explode() -> None:
+  pass
+
+def check() -> None:
+  assert explode() raises MadeUpError
+"#;
+    let errs = check_str_err(source, "unknown assert raises error type should fail");
+    assert!(
+        errs.iter().any(|e| e.message.contains("MadeUpError")),
+        "Expected unknown error type diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc018_assert_is_pattern_rejects_wrong_scrutinee_type() {
+    let source = r#"
+import std.testing
+
+def broken(value: int) -> None:
+  assert value is Some(inner)
+"#;
+    let errs = check_str_err(source, "assert is Some on non-Option should fail");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Option[_]") && e.message.contains("int")),
+        "Expected Option mismatch diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_rfc018_assert_is_pattern_rejects_nested_and_multiple_bindings() {
+    let nested = r#"
+import std.testing
+
+def broken(value: Option[Result[int, str]]) -> None:
+  assert value is Some(Ok(inner))
+"#;
+    let nested_errs = check_str_err(nested, "nested assert pattern should fail");
+    assert!(
+        nested_errs
+            .iter()
+            .any(|e| e.message.contains("Expected assert `is` pattern")
+                || e.message.contains("patterns only support a single identifier or `_`")
+                || e.message.contains("patterns require exactly one binding or `_`")),
+        "Expected nested-pattern diagnostic; got: {:?}",
+        nested_errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+
+    let multiple = r#"
+import std.testing
+
+def broken(value: Option[int]) -> None:
+  assert value is Some(left, right)
+"#;
+    let multiple_errs = check_str_err(multiple, "multiple assert bindings should fail");
+    assert!(
+        multiple_errs
+            .iter()
+            .any(|e| e.message.contains("Expected assert `is` pattern")
+                || e.message.contains("patterns only support a single identifier or `_`")
+                || e.message.contains("patterns require exactly one binding or `_`")),
+        "Expected multiple-binding diagnostic; got: {:?}",
+        multiple_errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
 }
 
@@ -3001,6 +9368,19 @@ fn test_known_stdlib_async_prelude_is_accepted() {
 }
 
 #[test]
+fn test_known_stdlib_fs_module_is_accepted() {
+    let source = "from std.fs import Path, File\n";
+    let result = check_str(source);
+    if let Err(errs) = &result {
+        assert!(
+            !errs.iter().any(|e| e.message.contains("Unknown stdlib module")),
+            "std.fs should be recognized; got: {:?}",
+            errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+        );
+    }
+}
+
+#[test]
 fn test_unknown_stdlib_module_hint_includes_registry_entries() {
     let source = "from std.f64.consts import PI\n";
     let Err(errs) = check_str(source) else {
@@ -3015,6 +9395,11 @@ fn test_unknown_stdlib_module_hint_includes_registry_entries() {
     assert!(
         err.hints.iter().any(|h| h.contains("std.derives")),
         "Expected hint to include std.derives; hints: {:?}",
+        err.hints
+    );
+    assert!(
+        err.hints.iter().any(|h| h.contains("std.fs")),
+        "Expected hint to include std.fs; hints: {:?}",
         err.hints
     );
     assert!(
@@ -3038,6 +9423,43 @@ def build() -> Widget:
 "#;
     let result = check_str_with_library_index(source, library_index_with_mylib_exports());
     assert!(result.is_ok(), "expected pub import to typecheck, got: {result:?}");
+}
+
+#[test]
+fn test_pub_from_import_manifest_partial_callable_typechecks() {
+    let source = r#"
+from pub::mylib import Widget, make_default_widget
+
+def build() -> Widget:
+  first = make_default_widget()
+  return make_default_widget(name="override")
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected pub-imported manifest partial callable to typecheck, got: {result:?}"
+    );
+}
+
+#[test]
+fn test_pub_imported_enum_methods_and_trait_adoption_typecheck() {
+    let source = r#"
+from pub::mylib import Status, Labelled
+
+def label_status(status: Status) -> str:
+  return status.label()
+
+def keep_labelled[T with Labelled](value: T) -> T:
+  return value
+
+def keep_status(status: Status) -> Status:
+  return keep_labelled(status)
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected imported enum methods and traits to typecheck, got: {result:?}"
+    );
 }
 
 #[test]
@@ -3120,6 +9542,1450 @@ model Cell[T] with ExternBox:
         "Imported trait supertraits should be recorded even when empty"
     );
     Ok(())
+}
+
+#[test]
+fn test_model_trait_adoption_rejects_wrong_explicit_type_argument_arity() {
+    let source = r#"
+from std.traits.convert import From
+
+model UserId with From[int, str]:
+  value: int
+
+  @classmethod
+  def from(cls, value: int) -> Self:
+    return UserId(value=value)
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected trait adoption arity error");
+    };
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Trait adoption 'From' expects 1 type argument(s), found 2")),
+        "expected trait adoption arity diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_model_trait_adoption_instantiates_explicit_type_arguments_for_method_checks() {
+    let source = r#"
+from std.traits.convert import From
+
+model UserId with From[str]:
+  value: int
+
+  @classmethod
+  def from(cls, value: int) -> Self:
+    return UserId(value=value)
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected trait method signature mismatch");
+    };
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Trait 'From' requires 'UserId'::from to match its signature")),
+        "expected trait conformance diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_multi_instantiation_trait_method_return_hint_disambiguates() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Into[T]:
+  def into(self) -> T: ...
+
+model Reading with Into[int], Into[float]:
+  value: int
+
+  def into(self) -> int:
+    return self.value
+
+  def into(self) -> float:
+    return 1.0
+
+def main() -> None:
+  reading = Reading(value=1)
+  precise: float = reading.into()
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_multi_instantiation_trait_method_without_hint_is_ambiguous() {
+    let source = r#"
+trait Into[T]:
+  def into(self) -> T: ...
+
+model Reading with Into[int], Into[float]:
+  value: int
+
+  def into(self) -> int:
+    return self.value
+
+  def into(self) -> float:
+    return 1.0
+
+def main() -> None:
+  reading = Reading(value=1)
+  precise = reading.into()
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected ambiguous trait method call");
+    };
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Ambiguous trait method call 'into'")),
+        "expected ambiguity diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_multi_instantiation_trait_method_named_argument_disambiguates() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Reader[T]:
+  def read(self, value: T) -> int: ...
+
+model Source with Reader[str], Reader[int]:
+  label: str
+
+  def read(self, value: str) -> int:
+    return 1
+
+  def read(self, value: int) -> int:
+    return value
+
+def main() -> int:
+  source = Source(label="events")
+  return source.read(value=2)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc028_dunder_only_add_operator_records_resolution() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model Money:
+  cents: int
+
+  def __add__(self, other: Money) -> Money:
+    return Money(cents=self.cents + other.cents)
+
+def main() -> None:
+  total = Money(cents=100) + Money(cents=25)
+"#;
+
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    assert!(
+        checker
+            .type_info()
+            .resolved_operator_calls
+            .values()
+            .any(|call| call.method == "__add__" && call.kind == ResolvedOperatorKind::Binary),
+        "expected + to resolve to __add__, got {:?}",
+        checker.type_info().resolved_operator_calls
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rfc028_trait_backed_operator_dispatch_typechecks() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Add[Rhs, Output]:
+  def __add__(self, other: Rhs) -> Output: ...
+
+model Money with Add[Money, Money]:
+  cents: int
+
+  def __add__(self, other: Money) -> Money:
+    return Money(cents=self.cents + other.cents)
+
+def main() -> Money:
+  return Money(cents=100) + Money(cents=25)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc028_multi_instantiation_operator_dispatch_uses_operand_type() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Add[Rhs, Output]:
+  def __add__(self, other: Rhs) -> Output: ...
+
+model Acc with Add[int, int], Add[str, str]:
+  value: int
+
+  def __add__(self, other: int) -> int:
+    return self.value + other
+
+  def __add__(self, other: str) -> str:
+    return other
+
+def main() -> None:
+  acc = Acc(value=2)
+  n: int = acc + 3
+  s: str = acc + "x"
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc028_trait_dunder_signature_mismatch_is_rejected() {
+    let source = r#"
+trait Add[Rhs, Output]:
+  def __add__(self, other: Rhs) -> Output: ...
+
+model BadMoney with Add[BadMoney, int]:
+  cents: int
+
+  def __add__(self, other: BadMoney) -> BadMoney:
+    return self
+"#;
+
+    let errs = check_str_err(source, "expected operator trait/dunder signature mismatch");
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Trait 'Add' requires 'BadMoney'::__add__ to match its signature")),
+        "expected operator trait conformance diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc028_multi_instantiation_operator_without_hint_is_ambiguous() {
+    let source = r#"
+trait Add[Rhs, Output]:
+  def __add__(self, other: Rhs) -> Output: ...
+
+model Acc with Add[int, int], Add[int, str]:
+  value: int
+
+  def __add__(self, other: int) -> int:
+    return self.value + other
+
+  def __add__(self, other: int) -> str:
+    return "x"
+
+def main() -> None:
+  acc = Acc(value=2)
+  result = acc + 3
+"#;
+
+    let errs = check_str_err(source, "expected ambiguous operator method call");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Ambiguous trait method call '__add__")),
+        "expected operator ambiguity diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc028_missing_operator_hook_reports_missing_dunder() {
+    let source = r#"
+model Box:
+  value: int
+
+def main() -> None:
+  value = Box(value=1) + Box(value=2)
+"#;
+
+    let errs = check_str_err(source, "expected missing __add__ hook");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("has no method '__add__(...)'")),
+        "expected missing __add__ diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc028_compound_assignment_missing_operator_hook_reports_missing_dunder() {
+    let source = r#"
+model Box:
+  value: int
+
+def main() -> None:
+  mut value = Box(value=1)
+  value += Box(value=2)
+"#;
+
+    let errs = check_str_err(source, "expected missing compound assignment fallback hook");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("has no method '__add__(...)'")),
+        "expected missing __add__ diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc028_compound_assignment_resolves_binary_dunder_fallback() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model Box:
+  value: int
+
+  def __add__(self, other: Box) -> Box:
+    return Box(value=self.value + other.value)
+
+def main() -> None:
+  mut value = Box(value=1)
+  value += Box(value=2)
+"#;
+
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    assert!(
+        checker
+            .type_info()
+            .resolved_operator_calls
+            .values()
+            .any(|call| call.method == "__add__" && call.kind == ResolvedOperatorKind::Binary),
+        "expected compound assignment to resolve to __add__, got {:?}",
+        checker.type_info().resolved_operator_calls
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rfc028_comparison_requires_exact_explicit_hook() {
+    let source = r#"
+model Rank:
+  value: int
+
+  def __lt__(self, other: Rank) -> bool:
+    return self.value < other.value
+
+def main() -> None:
+  a = Rank(value=1)
+  b = Rank(value=2)
+  ok = a < b
+  missing = a <= b
+"#;
+
+    let errs = check_str_err(source, "expected missing __le__ hook");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("has no method '__le__(...)'")),
+        "expected missing __le__ diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc028_indexing_resolves_getitem_dunder() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model Row:
+  value: int
+
+  def __getitem__(self, index: int) -> int:
+    return self.value + index
+
+def main() -> int:
+  row = Row(value=4)
+  return row[3]
+"#;
+
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    assert!(
+        checker
+            .type_info()
+            .resolved_operator_calls
+            .values()
+            .any(|call| call.method == "__getitem__" && call.kind == ResolvedOperatorKind::Index),
+        "expected indexing to resolve to __getitem__, got {:?}",
+        checker.type_info().resolved_operator_calls
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rfc028_index_assignment_resolves_setitem_dunder() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model Row:
+  value: int
+
+  def __setitem__(self, index: int, value: int) -> None:
+    pass
+
+def main() -> None:
+  row = Row(value=4)
+  row[3] = 9
+"#;
+
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    assert!(
+        checker
+            .type_info()
+            .resolved_operator_calls
+            .values()
+            .any(|call| call.method == "__setitem__" && call.kind == ResolvedOperatorKind::IndexAssign),
+        "expected index assignment to resolve to __setitem__, got {:?}",
+        checker.type_info().resolved_operator_calls
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rfc068_structural_protocol_hooks_resolve_for_syntax() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model Flag:
+  ready: bool
+
+  def __bool__(self) -> bool:
+    return self.ready
+
+model Bag:
+  size: int
+
+  def __len__(self) -> int:
+    return self.size
+
+  def __contains__(self, item: int) -> bool:
+    return item == self.size
+
+model CallableBox:
+  seed: int
+
+  def __call__(self, value: int) -> int:
+    return self.seed + value
+
+model CounterIter:
+  value: int
+  limit: int
+
+  def __next__(self) -> Option[int]:
+    if self.value < self.limit:
+      return Some(self.value)
+    return None
+
+model Counter:
+  limit: int
+
+  def __iter__(self) -> CounterIter:
+    return CounterIter(value=0, limit=self.limit)
+
+def main() -> None:
+  flag = Flag(ready=true)
+  bag = Bag(size=3)
+  callable = CallableBox(seed=4)
+  if flag:
+    pass
+  while flag:
+    break
+  n = len(bag)
+  present = 3 in bag
+  absent = 4 not in bag
+  called = callable(5)
+  for item in Counter(limit=2):
+    seen = item
+"#;
+
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    let calls: Vec<_> = checker
+        .type_info()
+        .resolved_operator_calls
+        .values()
+        .map(|call| (call.method.as_str(), call.kind))
+        .collect();
+    for expected in [
+        ("__bool__", ResolvedOperatorKind::Truthiness),
+        ("__len__", ResolvedOperatorKind::Len),
+        ("__contains__", ResolvedOperatorKind::Contains),
+        ("__call__", ResolvedOperatorKind::Call),
+    ] {
+        assert!(
+            calls.contains(&expected),
+            "expected RFC 068 hook {:?}, got {:?}",
+            expected,
+            checker.type_info().resolved_operator_calls
+        );
+    }
+    assert!(
+        checker
+            .type_info()
+            .protocol_iterations
+            .values()
+            .any(|info| info.iter_method == "__iter__"
+                && info.next_method == "__next__"
+                && info.item_type == ResolvedType::Int),
+        "expected custom iteration metadata, got {:?}",
+        checker.type_info().protocol_iterations
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rfc068_explicit_trait_adoption_supplies_protocol_hook() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Sized:
+  def __len__(self) -> int: ...
+
+model Bag with Sized:
+  size: int
+
+  def __len__(self) -> int:
+    return self.size
+
+def main() -> int:
+  return len(Bag(size=4))
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc068_missing_protocol_hooks_are_rejected() {
+    let source = r#"
+model Box:
+  value: int
+
+def main() -> None:
+  box_value = Box(value=1)
+  if box_value:
+    pass
+  n = len(box_value)
+  present = 1 in box_value
+  called = box_value()
+  for item in box_value:
+    pass
+"#;
+
+    let errs = check_str_err(source, "expected missing RFC 068 protocol hooks");
+    for method in ["__bool__", "__len__", "__contains__", "__call__", "__iter__"] {
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains(&format!("has no method '{method}(...)'"))),
+            "expected missing {method} diagnostic, got: {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn test_rfc068_incompatible_protocol_hooks_are_rejected() {
+    let source = r#"
+model BadFlag:
+  value: int
+
+  def __bool__(self) -> int:
+    return self.value
+
+model BadBag:
+  value: int
+
+  def __len__(self) -> bool:
+    return true
+
+  def __contains__(self, item: int) -> int:
+    return item
+
+model BadCounter:
+  value: int
+
+  def __iter__(self) -> BadCounter:
+    return self
+
+  def __next__(self) -> int:
+    return self.value
+
+model BadCallable:
+  value: int
+
+  def __call__(self, item: str) -> int:
+    return self.value
+
+def main() -> None:
+  flag = BadFlag(value=1)
+  bag = BadBag(value=1)
+  counter = BadCounter(value=1)
+  callable = BadCallable(value=1)
+  if flag:
+    pass
+  n = len(bag)
+  present = 1 in bag
+  called = callable(1)
+  for item in counter:
+    pass
+"#;
+
+    let errs = check_str_err(source, "expected incompatible RFC 068 protocol hooks");
+    for expected in [
+        "expected 'bool', found 'int'",
+        "expected 'int', found 'bool'",
+        "expected 'Option[_]', found 'int'",
+    ] {
+        assert!(
+            errs.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got: {errs:?}"
+        );
+    }
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("expected 'str', found 'int'")),
+        "expected __call__ argument mismatch diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc070_result_combinators_typecheck() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def double(value: int) -> int:
+  return value * 2
+
+def prefix_error(err: str) -> str:
+  return "error: " + err
+
+def keep_positive(value: int) -> Result[int, str]:
+  if value > 0:
+    return Ok(value)
+  return Err("not positive")
+
+def recover(_err: str) -> Result[int, int]:
+  return Ok(0)
+
+def observe_int(_value: int) -> None:
+  pass
+
+def observe_err(_err: str) -> None:
+  pass
+
+from std.traits.callable import Callable1
+
+model Observer with Callable1[int, None]:
+  def __call__(self, value: int) -> None:
+    pass
+
+def main(result: Result[int, str]) -> None:
+  observer = Observer()
+  mapped: Result[int, str] = result.map(double)
+  mapped_err: Result[int, str] = result.map_err(prefix_error)
+  chained: Result[int, str] = result.and_then(keep_positive)
+  recovered: Result[int, int] = result.or_else(recover)
+  inspected: Result[int, str] = result.inspect(observe_int).inspect(observer)
+  inspected_err: Result[int, str] = result.inspect_err(observe_err)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc070_result_combinators_reject_bad_callbacks() {
+    let source = r#"
+def wrong_arg(value: str) -> int:
+  return 1
+
+def not_result(value: int) -> int:
+  return value
+
+def observes_with_value(value: int) -> int:
+  return value
+
+def main(result: Result[int, str]) -> None:
+  _mapped = result.map(wrong_arg)
+  _chained = result.and_then(not_result)
+  _inspected = result.inspect(observes_with_value)
+"#;
+
+    let errs = check_str_err(source, "bad Result combinator callbacks should fail");
+    for expected in [
+        "expected 'str', found 'int'",
+        "expected 'Result",
+        "expected 'Unit', found 'int'",
+    ] {
+        assert!(
+            errs.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got: {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn test_rfc006_generator_function_yields_iterates_and_collects() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def double(value: int) -> int:
+  return value * 2
+
+def keep(value: int) -> bool:
+  return value > 0
+
+def numbers() -> Generator[int]:
+  yield 1
+  yield 2
+  return
+
+def main() -> List[int]:
+  mut total = 0
+  for item in numbers():
+    total = total + item
+  return numbers().map(double).filter(keep).take(2).collect()
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc006_generator_satisfies_iterable_and_iterator_traits() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def numbers() -> Generator[int]:
+  yield 1
+
+def accept_iterable(values: Iterable[int]) -> None:
+  pass
+
+def accept_iterator(values: Iterator[int]) -> None:
+  pass
+
+def main() -> None:
+  accept_iterable(numbers())
+  accept_iterator(numbers())
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc006_generator_yield_must_match_element_type() {
+    let source = r#"
+def broken() -> Generator[int]:
+  yield "nope"
+"#;
+
+    let errs = check_str_err(source, "expected generator yield type mismatch");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("expected 'int', found 'str'")),
+        "expected generator yield type mismatch, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc006_generator_requires_reachable_yield() {
+    let source = r#"
+def broken() -> Generator[int]:
+  return
+"#;
+
+    let errs = check_str_err(source, "expected missing generator yield diagnostic");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("must contain at least one `yield value`")),
+        "expected missing generator yield diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc006_yield_outside_generator_is_rejected() {
+    let source = r#"
+def broken() -> int:
+  yield 1
+  return 1
+"#;
+
+    let errs = check_str_err(source, "expected ordinary yield rejection");
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("`yield` is only valid in generator functions or fixtures")),
+        "expected yield context diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc006_generator_return_value_is_rejected() {
+    let source = r#"
+def broken() -> Generator[int]:
+  yield 1
+  return 2
+"#;
+
+    let errs = check_str_err(source, "expected generator return-value rejection");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Generator functions cannot use `return value`")),
+        "expected generator return-value diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc006_generator_helpers_validate_arguments() {
+    let source = r#"
+def stringify(value: int) -> str:
+  return f"{value}"
+
+def keep_str(value: str) -> bool:
+  return true
+
+def numbers() -> Generator[int]:
+  yield 1
+
+def main() -> None:
+  mapped = numbers().map(1)
+  filtered = numbers().filter(stringify)
+  wrong_input = numbers().filter(keep_str)
+  limited = numbers().take("2")
+"#;
+
+    let errs = check_str_err(source, "expected generator helper argument diagnostics");
+    for expected in [
+        "(int) -> _",
+        "expected 'bool', found 'str'",
+        "expected 'str', found 'int'",
+        "expected 'int', found 'str'",
+    ] {
+        assert!(
+            errs.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got: {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn test_rfc006_generator_expression_infers_element_type() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def positives(xs: List[int], ys: List[int]) -> Generator[int]:
+  return (x * y for x in xs if x > 0 for y in ys if y > x)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_rfc006_generator_expression_filter_must_be_bool() {
+    let source = r#"
+def broken(xs: List[int]) -> Generator[int]:
+  return (x for x in xs if x)
+"#;
+
+    let errs = check_str_err(source, "expected generator expression filter diagnostic");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("expected 'bool', found 'int'")),
+        "expected generator expression filter diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rfc068_option_and_result_are_not_truthy() {
+    let source = r#"
+def maybe_value() -> Option[int]:
+  return None
+
+def parse_value() -> Result[int, str]:
+  return Ok(1)
+
+def main() -> None:
+  if maybe_value():
+    pass
+  while parse_value():
+    break
+  maybe_bool = bool(maybe_value())
+  result_bool = bool(parse_value())
+"#;
+
+    let errs = check_str_err(source, "expected Option/Result truthiness rejection");
+    for expected in [
+        "expected 'bool', found 'Option[int]'",
+        "expected 'bool', found 'Result[int, str]'",
+        "bool() does not support type Option[int]",
+        "bool() does not support type Result[int, str]",
+    ] {
+        assert!(
+            errs.iter().any(|err| err.message.contains(expected)),
+            "expected diagnostic containing {expected:?}, got: {errs:?}"
+        );
+    }
+}
+
+#[test]
+fn test_rfc028_extended_operator_glyphs_resolve_dunders() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+model OpBox:
+  value: int
+
+  def __matmul__(self, other: OpBox) -> OpBox:
+    return other
+
+  def __pipe_forward__(self, other: OpBox) -> OpBox:
+    return other
+
+  def __pipe_backward__(self, other: OpBox) -> OpBox:
+    return other
+
+  def __and__(self, other: OpBox) -> OpBox:
+    return other
+
+  def __or__(self, other: OpBox) -> OpBox:
+    return other
+
+  def __xor__(self, other: OpBox) -> OpBox:
+    return other
+
+  def __lshift__(self, other: int) -> OpBox:
+    return self
+
+  def __rshift__(self, other: int) -> OpBox:
+    return self
+
+  def __invert__(self) -> OpBox:
+    return self
+
+def main() -> None:
+  a = OpBox(value=1)
+  b = OpBox(value=2)
+  mat = a @ b
+  forward = a |> b
+  backward = a <| b
+  anded = a & b
+  ored = a | b
+  xored = a ^ b
+  left = a << 1
+  right = a >> 1
+  inverted = ~a
+"#;
+
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    let resolved: Vec<_> = checker
+        .type_info()
+        .resolved_operator_calls
+        .values()
+        .map(|call| call.method.as_str())
+        .collect();
+    for expected in [
+        "__matmul__",
+        "__pipe_forward__",
+        "__pipe_backward__",
+        "__and__",
+        "__or__",
+        "__xor__",
+        "__lshift__",
+        "__rshift__",
+        "__invert__",
+    ] {
+        assert!(
+            resolved.contains(&expected),
+            "expected {expected} to resolve in {:?}",
+            checker.type_info().resolved_operator_calls
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_rfc028_primitive_bitwise_compound_assignment_typechecks() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def main() -> int:
+  mut value = 8
+  value &= 3
+  value |= 4
+  value ^= 1
+  value <<= 2
+  value >>= 1
+  return value
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_enum_multi_instantiation_trait_method_return_hint_disambiguates() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Convert[T]:
+  def convert(self) -> T: ...
+
+enum Token with Convert[int], Convert[float]:
+  Number
+
+  def convert(self) -> int:
+    return 1
+
+  def convert(self) -> float:
+    return 1.0
+
+def main() -> None:
+  token: Token = Token.Number
+  precise: float = token.convert()
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_enum_multi_instantiation_trait_method_without_hint_is_ambiguous() {
+    let source = r#"
+trait Convert[T]:
+  def convert(self) -> T: ...
+
+enum Token with Convert[int], Convert[float]:
+  Number
+
+  def convert(self) -> int:
+    return 1
+
+  def convert(self) -> float:
+    return 1.0
+
+def main() -> None:
+  token: Token = Token.Number
+  precise = token.convert()
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected ambiguous enum trait method call");
+    };
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Ambiguous trait method call 'convert'")),
+        "expected enum ambiguity diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_enum_duplicate_identical_trait_instantiation_rejected() {
+    let source = r#"
+trait Convert[T]:
+  def convert(self) -> T: ...
+
+enum Token with Convert[int], Convert[int]:
+  Number
+
+  def convert(self) -> int:
+    return 1
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected duplicate enum trait instantiation diagnostic");
+    };
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Trait 'Convert' is adopted more than once with type arguments [int]")),
+        "expected duplicate enum trait instantiation diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_enum_cross_trait_same_method_name_collision_rejected() {
+    let source = r#"
+trait JsonSerializable:
+  def serialize(self) -> str: ...
+
+trait YamlSerializable:
+  def serialize(self) -> str: ...
+
+enum Event with JsonSerializable, YamlSerializable:
+  Created
+
+  def serialize(self) -> str:
+    return "created"
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected enum cross-trait method collision");
+    };
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Ambiguous trait method 'serialize' from unrelated traits")),
+        "expected enum cross-trait collision diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_cross_trait_same_method_name_collision_rejected() {
+    let source = r#"
+trait JsonSerializable:
+  def serialize(self) -> str: ...
+
+trait YamlSerializable:
+  def serialize(self) -> str: ...
+
+model Event with JsonSerializable, YamlSerializable:
+  value: str
+
+  def serialize(self) -> str:
+    return self.value
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected cross-trait method collision");
+    };
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Ambiguous trait method 'serialize' from unrelated traits")),
+        "expected cross-trait collision diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_cross_trait_same_method_name_with_different_params_rejected_until_aliasing() {
+    let source = r#"
+trait ReadsInt:
+  def read(self, value: int) -> int: ...
+
+trait ReadsStr:
+  def read(self, value: str) -> str: ...
+
+model Source with ReadsStr, ReadsInt:
+  label: str
+
+  def read(self, value: str) -> str:
+    return value
+
+  def read(self, value: int) -> int:
+    return value
+
+def main() -> int:
+  source = Source(label="events")
+  return source.read(2)
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected cross-trait method collision");
+    };
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Ambiguous trait method 'read' from unrelated traits")),
+        "expected cross-trait collision diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_generic_type_parameter_bound_dispatches_through_instantiated_trait() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Serializable[F]:
+  def serialize(self, format: F) -> bytes: ...
+
+model JsonFormat:
+  name: str
+
+model Event with Serializable[JsonFormat]:
+  value: str
+
+  def serialize(self, format: JsonFormat) -> bytes:
+    return b"ok"
+
+def encode[F, T with Serializable[F]](value: T, format: F) -> bytes:
+  return value.serialize(format)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_enum_generic_type_parameter_bound_dispatches_through_instantiated_trait() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+trait Serializable[F]:
+  def serialize(self, format: F) -> bytes: ...
+
+model JsonFormat:
+  name: str
+
+enum Event with Serializable[JsonFormat]:
+  Created
+
+  def serialize(self, format: JsonFormat) -> bytes:
+    return b"ok"
+
+def encode[F, T with Serializable[F]](value: T, format: F) -> bytes:
+  return value.serialize(format)
+
+def main() -> bytes:
+  return encode[JsonFormat, Event](Event.Created, JsonFormat(name="json"))
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_generic_type_parameter_bound_checks_trait_type_arguments() {
+    let source = r#"
+trait Serializable[F]:
+  def serialize(self, format: F) -> bytes: ...
+
+model JsonFormat:
+  name: str
+
+model YamlFormat:
+  name: str
+
+model Event with Serializable[JsonFormat]:
+  value: str
+
+  def serialize(self, format: JsonFormat) -> bytes:
+    return b"ok"
+
+def encode[F, T with Serializable[F]](value: T, format: F) -> bytes:
+  return value.serialize(format)
+
+def main() -> bytes:
+  return encode[YamlFormat, Event](Event(value="x"), YamlFormat(name="yaml"))
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected generic bound type-argument diagnostic");
+    };
+    assert!(
+        errs.iter().any(|err| {
+            err.message
+                .contains("type parameter 'T' requires 'Serializable[YamlFormat]' but got 'Event'")
+        }),
+        "expected generic bound type-argument diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_enum_generic_type_parameter_bound_checks_trait_type_arguments() {
+    let source = r#"
+trait Serializable[F]:
+  def serialize(self, format: F) -> bytes: ...
+
+model JsonFormat:
+  name: str
+
+model YamlFormat:
+  name: str
+
+enum Event with Serializable[JsonFormat]:
+  Created
+
+  def serialize(self, format: JsonFormat) -> bytes:
+    return b"ok"
+
+def encode[F, T with Serializable[F]](value: T, format: F) -> bytes:
+  return value.serialize(format)
+
+def main() -> bytes:
+  return encode[YamlFormat, Event](Event.Created, YamlFormat(name="yaml"))
+"#;
+
+    let Err(errs) = check_str(source) else {
+        panic!("expected enum generic bound type-argument diagnostic");
+    };
+    assert!(
+        errs.iter().any(|err| {
+            err.message
+                .contains("type parameter 'T' requires 'Serializable[YamlFormat]' but got 'Event'")
+        }),
+        "expected enum generic bound type-argument diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_pub_import_multi_instantiation_trait_adoptions_typecheck() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+from pub::mylib import Convert, ImportedReading
+
+def read_float[T with Convert[float]](value: T) -> float:
+  precise: float = value.convert()
+  return precise
+
+def direct(reading: ImportedReading) -> float:
+  precise: float = reading.convert()
+  return precise
+
+def main(reading: ImportedReading) -> float:
+  return read_float[ImportedReading](reading)
+"#;
+
+    check_str_with_library_index(source, library_index_with_rfc025_trait_adoptions())
+}
+
+#[test]
+fn test_pub_import_enum_multi_instantiation_trait_adoptions_typecheck() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+from pub::mylib import Convert, ImportedToken
+
+def read_float[T with Convert[float]](value: T) -> float:
+  precise: float = value.convert()
+  return precise
+
+def direct(token: ImportedToken) -> float:
+  precise: float = token.convert()
+  return precise
+
+def main(token: ImportedToken) -> float:
+  return read_float[ImportedToken](token)
+"#;
+
+    check_str_with_library_index(source, library_index_with_rfc025_trait_adoptions())
+}
+
+#[test]
+fn test_checked_public_exports_preserve_same_name_trait_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+pub trait Convert[T]:
+  def convert(self) -> T: ...
+
+pub model Reading with Convert[int], Convert[float]:
+  value: int
+
+  def convert(self) -> int:
+    return self.value
+
+  def convert(self) -> float:
+    return 1.0
+"#;
+
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let manifest = LibraryManifest::from_checked_exports("mylib".to_string(), "0.1.0".to_string(), &exports);
+    let Some(reading) = manifest.exports.models.iter().find(|model| model.name == "Reading") else {
+        return Err("missing Reading export".into());
+    };
+    let convert_returns = reading
+        .methods
+        .iter()
+        .filter(|method| method.name == "convert")
+        .map(|method| method.return_type.clone())
+        .collect::<Vec<_>>();
+
+    assert_eq!(convert_returns.len(), 2, "expected both convert overloads in manifest");
+    assert!(
+        convert_returns
+            .iter()
+            .any(|ty| matches!(ty, TypeRef::Named { name } if name == "int")),
+        "missing int convert overload: {convert_returns:?}"
+    );
+    assert!(
+        convert_returns
+            .iter()
+            .any(|ty| matches!(ty, TypeRef::Named { name } if name == "float")),
+        "missing float convert overload: {convert_returns:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_pub_import_multi_instantiation_trait_adoptions_check_type_args() {
+    let source = r#"
+from pub::mylib import Convert, ImportedReading
+
+def read_str[T with Convert[str]](value: T) -> str:
+  precise: str = value.convert()
+  return precise
+
+def main(reading: ImportedReading) -> str:
+  return read_str[ImportedReading](reading)
+"#;
+
+    let Err(errs) = check_str_with_library_index(source, library_index_with_rfc025_trait_adoptions()) else {
+        panic!("expected imported generic bound type-argument diagnostic");
+    };
+    assert!(
+        errs.iter().any(|err| {
+            err.message
+                .contains("type parameter 'T' requires 'Convert[str]' but got 'ImportedReading'")
+        }),
+        "expected imported generic bound type-argument diagnostic, got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_pub_import_transitive_method_return_type_supports_follow_up_method_lookup() {
+    let source = r#"
+from pub::pubdemo import Session, SessionError
+
+model Row:
+  value: int
+
+def main() -> Result[None, SessionError]:
+  mut session = Session.default()
+  lines = session.read_csv[Row]("orders", "orders.csv")?
+  df = lines.collect()?
+  print(df)
+  return Ok(None)
+"#;
+
+    let result = check_str_with_library_index(source, library_index_with_pub_boundary_type_fidelity_exports());
+    assert!(
+        result.is_ok(),
+        "expected transitive pub-returned carrier methods to resolve, got: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_pub_import_transitive_derived_method_chain_supports_follow_up_method_lookup() {
+    let source = r#"
+from pub::pubdemo import Session, SessionError
+
+model Row:
+  value: int
+
+def main() -> Result[None, SessionError]:
+  mut session = Session.default()
+  lines = session.read_csv[Row]("orders", "orders.csv")?
+  df = lines.clone().collect()?
+  print(df)
+  return Ok(None)
+"#;
+
+    let result = check_str_with_library_index(source, library_index_with_pub_boundary_type_fidelity_exports());
+    assert!(
+        result.is_ok(),
+        "expected transitive pub derived-method chains to resolve, got: {:?}",
+        result.err()
+    );
+}
+
+#[test]
+fn test_pub_import_transitive_trait_conformance_accepts_concrete_carrier() {
+    let source = r#"
+from pub::pubdemo import Session, SessionError, display
+
+model Row:
+  value: int
+
+def main() -> Result[None, SessionError]:
+  mut session = Session.default()
+  lines = session.read_csv[Row]("orders", "orders.csv")?
+  df = session.collect(lines)?
+  display(df)
+  return Ok(None)
+"#;
+
+    let result = check_str_with_library_index(source, library_index_with_pub_boundary_type_fidelity_exports());
+    assert!(
+        result.is_ok(),
+        "expected transitive pub trait conformance to resolve, got: {:?}",
+        result.err()
+    );
 }
 
 #[test]
@@ -3217,6 +11083,24 @@ def current() -> Status:
 }
 
 #[test]
+fn test_pub_import_value_enum_generated_surface_typechecks() {
+    let source = r#"
+from pub::mylib import Status
+
+def current_raw(status: Status) -> str:
+  return status.value()
+
+def parse() -> Option[Status]:
+  return Status.from_value("active")
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected imported value enum generated helpers to typecheck, got: {result:?}"
+    );
+}
+
+#[test]
 fn test_pub_import_manifest_load_failure_is_error() {
     let broken_index = LibraryManifestIndex::from_entries(HashMap::from([(
         "brokenlib".to_string(),
@@ -3273,6 +11157,241 @@ def main() -> Token:
     );
 }
 
+/// GitHub #193: `@derive(Clone)` must allow `.clone()` on the concrete type (not only through unconstrained `T`).
+#[test]
+fn test_derive_clone_allows_direct_clone_on_model() {
+    let source = r#"
+@derive(Clone)
+model Issue193Foo:
+  id: int
+
+def direct(f: Issue193Foo) -> Issue193Foo:
+  return f.clone()
+
+def via_generic[T](x: T) -> T:
+  return x.clone()
+
+def main() -> Issue193Foo:
+  x = Issue193Foo(id=1)
+  _ = via_generic(x)
+  return direct(x)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_derive_clone_allows_direct_clone_on_enum() {
+    let source = r#"
+@derive(Clone)
+enum Issue193Bar:
+  A
+  B
+
+def dup_bar(e: Issue193Bar) -> Issue193Bar:
+  return e.clone()
+
+def main() -> None:
+  pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_serialize_trait_adoption_allows_default_to_json() {
+    let source = r#"
+from std.serde.json import Serialize
+
+model Payload with Serialize:
+  value: int
+
+def encode(payload: Payload) -> str:
+  return payload.to_json()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_bare_serde_derive_without_import_is_rejected() {
+    let source = r#"
+@derive(Serialize)
+model Payload:
+  value: int
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("bare Serialize derive should require an imported std.serde.json trait or Rust derive");
+    };
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Unknown derive 'Serialize'")),
+        "Expected unknown derive diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rust_imported_serde_derive_still_typechecks() {
+    let source = r#"
+from rust::serde @ "1.0" import Deserialize
+
+@derive(Deserialize)
+model Payload:
+  value: int
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_module_derive_json_adopts_traits_for_methods_and_bounds() {
+    let source = r#"
+from std.serde import json
+
+@derive(json)
+model Payload:
+  value: int
+
+def encode[T with json.Serialize](value: T) -> str:
+  return value.to_json()
+
+def main() -> str:
+  return encode(Payload(value=1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_user_module_derive_adopts_imported_module_traits_for_methods_and_bounds() {
+    let yaml_source = r#"
+__derives__ = [Serialize]
+
+@rust.derive("serde::Serialize")
+pub trait Serialize:
+  def to_yaml(self) -> str:
+    return str("yaml")
+"#;
+    let source = r#"
+import yaml
+
+@derive(yaml)
+model Payload:
+  value: int
+
+def encode[T with yaml.Serialize](value: T) -> str:
+  return value.to_yaml()
+
+def main() -> str:
+  return encode(Payload(value=1))
+"#;
+
+    let yaml_ast = parse_program(yaml_source, "yaml module");
+    let ast = parse_program(source, "consumer");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&ast, &[("yaml", &yaml_ast)])
+        .unwrap_or_else(|errs| panic!("user derivable module should typecheck: {errs:?}"));
+}
+
+#[test]
+fn test_aliased_partial_serde_derive_adopts_trait_for_methods_and_bounds() {
+    let source = r#"
+from std.serde.json import Serialize as JsonSerialize
+
+@derive(JsonSerialize)
+model Payload:
+  value: int
+
+def encode[T with JsonSerialize](value: T) -> str:
+  return value.to_json()
+
+def main() -> str:
+  return encode(Payload(value=1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_module_derive_rejects_user_module_without_derives_metadata() {
+    let yaml_source = r#"
+pub trait Serialize:
+  def to_yaml(self) -> str:
+    return str("yaml")
+"#;
+    let source = r#"
+import yaml
+
+@derive(yaml)
+model Payload:
+  value: int
+"#;
+
+    let yaml_ast = parse_program(yaml_source, "yaml module");
+    let ast = parse_program(source, "consumer");
+    let mut checker = TypeChecker::new();
+    let errs = checker
+        .check_with_imports(&ast, &[("yaml", &yaml_ast)])
+        .expect_err("module derive should require __derives__ metadata");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("does not declare `__derives__`")),
+        "Expected missing __derives__ diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_user_module_derive_reports_method_collision_between_derived_traits() {
+    let left_source = r#"
+__derives__ = [Readable]
+
+pub trait Readable:
+  def label(self) -> str:
+    return str("left")
+"#;
+    let right_source = r#"
+__derives__ = [Displayable]
+
+pub trait Displayable:
+  def label(self) -> str:
+    return str("right")
+"#;
+    let source = r#"
+import left
+import right
+
+@derive(left, right)
+model Item:
+  value: int
+"#;
+
+    let left_ast = parse_program(left_source, "left module");
+    let right_ast = parse_program(right_source, "right module");
+    let ast = parse_program(source, "consumer");
+    let mut checker = TypeChecker::new();
+    let errs = checker
+        .check_with_imports(&ast, &[("left", &left_ast), ("right", &right_ast)])
+        .expect_err("derived traits with the same default method should be ambiguous");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Ambiguous trait method 'label'")),
+        "Expected derived trait method collision diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_derives_metadata_rejects_non_trait_entries() {
+    let source = r#"
+trait Good:
+  def ok(self) -> None: ...
+
+const Bad = 1
+__derives__ = [Good, Bad]
+"#;
+    let errs = check_str_err(source, "__derives__ metadata should reject non-trait entries");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("entry 'Bad' is not a trait")),
+        "Expected non-trait __derives__ diagnostic; got: {:?}",
+        errs
+    );
+}
+
 #[test]
 fn test_explicit_eq_bound_rejects_float_arguments() {
     let source = r#"
@@ -3289,5 +11408,634 @@ def main() -> float:
         errs.iter().any(|e| e.message.contains("violates generic bound")),
         "Expected explicit Eq bound error; got: {:?}",
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_explicit_trait_bound_accepts_transitive_supertrait_adopter() {
+    let source = r#"
+trait Capability:
+  def capability(self) -> int: ...
+
+trait Ordered with Capability:
+  def ordered(self) -> int: ...
+
+model Carrier with Ordered:
+  value: int
+
+  def capability(self) -> int:
+    return self.value
+
+  def ordered(self) -> int:
+    return self.value
+
+def require_capability[T with Capability](value: T) -> T:
+  return value
+
+def main() -> Carrier:
+  return require_capability(Carrier(value=1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_trait_bound_accepts_trait_typed_arguments() {
+    let source = r#"
+trait Capability:
+  def capability(self) -> int: ...
+
+trait Ordered with Capability:
+  def ordered(self) -> int: ...
+
+model Carrier with Ordered:
+  value: int
+
+  def capability(self) -> int:
+    return self.value
+
+  def ordered(self) -> int:
+    return self.value
+
+def as_ordered(value: Carrier) -> Ordered:
+  return value
+
+def require_capability[T with Capability](value: T) -> T:
+  return value
+
+def main() -> Ordered:
+  ordered = as_ordered(Carrier(value=1))
+  return require_capability(ordered)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_method_generic_bound_accepts_transitive_capability_adopter() {
+    let source = r#"
+trait Capability:
+  def capability(self) -> int: ...
+
+trait Ordered with Capability:
+  def ordered(self) -> int: ...
+
+model Carrier with Ordered:
+  value: int
+
+  def capability(self) -> int:
+    return self.value
+
+  def ordered(self) -> int:
+    return self.value
+
+class Helpers:
+  @staticmethod
+  def require_capability[T with Capability](value: T) -> T:
+    return value
+
+def main() -> Carrier:
+  return Helpers.require_capability(Carrier(value=1))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_trait_bound_rejects_missing_capability() {
+    let source = r#"
+trait Capability:
+  def capability(self) -> int: ...
+
+trait Other:
+  def other(self) -> int: ...
+
+model Plain with Other:
+  value: int
+
+  def other(self) -> int:
+    return self.value
+
+def require_capability[T with Capability](value: T) -> T:
+  return value
+
+def main() -> Plain:
+  return require_capability(Plain(value=1))
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("missing capability should fail explicit trait bound");
+    };
+    assert!(
+        errs.iter().any(|e| e.message.contains("violates generic bound")),
+        "Expected explicit generic bound error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_static_initializer_requires_earlier_static() {
+    let source = r#"
+static SECOND: int = FIRST
+static FIRST: int = 1
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("forward static reference should fail");
+    };
+    assert!(
+        errs.iter().any(|e| e
+            .message
+            .contains("Static 'SECOND' cannot reference 'FIRST' before it is initialized")),
+        "expected earlier-static diagnostic, got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_static_dependency_cycle_is_rejected() {
+    let source = r#"
+static A: int = B
+static B: int = A
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("static cycle should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Static dependency cycle detected")),
+        "expected static-cycle diagnostic, got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_static_dependency_cycle_via_function_calls_is_rejected() {
+    let source = r#"
+def read_a() -> int:
+  return A
+
+def read_b() -> int:
+  return B
+
+static A: int = read_b()
+static B: int = read_a()
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("static cycle through helper functions should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Static dependency cycle detected")),
+        "expected static-cycle diagnostic, got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_static_initializer_rejects_helper_static_assignment() {
+    let source = r#"
+static TARGET: int = 0
+
+def mutate_target() -> int:
+  TARGET = TARGET + 1
+  return TARGET
+
+static RESULT: int = mutate_target()
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("static initializer that assigns a static through helper call should fail");
+    };
+    assert!(
+        errs.iter().any(|e| e
+            .message
+            .contains("Static initializer for 'RESULT' cannot assign to static 'TARGET'")),
+        "expected static-initializer write diagnostic, got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_static_initializer_via_function_requires_earlier_static() {
+    let source = r#"
+def read_first() -> int:
+  return FIRST
+
+static SECOND: int = read_first()
+static FIRST: int = 1
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("forward static reference through helper function should fail");
+    };
+    assert!(
+        errs.iter().any(|e| e
+            .message
+            .contains("Static 'SECOND' cannot reference 'FIRST' before it is initialized")),
+        "expected earlier-static diagnostic, got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_imported_static_reassignment_is_rejected() {
+    let source = r#"
+from pub::mylib import SHARED_ITEMS
+
+def main() -> None:
+  SHARED_ITEMS = []
+"#;
+    let Err(errs) = check_str_with_library_index(source, library_index_with_mylib_exports()) else {
+        panic!("imported static reassignment should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Cannot reassign imported static 'SHARED_ITEMS'")),
+        "expected imported-static reassignment diagnostic, got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_const_reassignment_suggests_static() {
+    let source = r#"
+const COUNTER: int = 0
+
+def main() -> None:
+  COUNTER = 1
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("const reassignment should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Cannot reassign const 'COUNTER'"))
+            && errs.iter().any(|e| e
+                .hints
+                .iter()
+                .any(|hint| hint.contains("declare it as `static COUNTER"))),
+        "expected const-reassignment static hint, got: {:?}",
+        errs.iter().map(|e| (&e.message, &e.hints)).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_static_alias_mutation_typechecks() {
+    let source = r#"
+static ITEMS: list[int] = []
+
+def main() -> None:
+  let live = ITEMS
+  live.append(1)
+  println(len(ITEMS))
+  println(len(live))
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_imported_static_mutation_typechecks() {
+    let source = r#"
+from pub::mylib import SHARED_ITEMS
+
+def main() -> None:
+  SHARED_ITEMS.append(1)
+  let live = SHARED_ITEMS
+  live.append(2)
+"#;
+    assert!(
+        check_str_with_library_index(source, library_index_with_mylib_exports()).is_ok(),
+        "expected imported static mutation to typecheck"
+    );
+}
+
+#[test]
+fn test_local_inference_preserves_method_result_field_access_after_factory_call() {
+    let source = r#"
+class Backend:
+  pub enable_optimizer: bool
+
+class Session:
+  @staticmethod
+  def default() -> Session:
+    return Session()
+
+  def backend(self) -> Backend:
+    return Backend(enable_optimizer=True)
+
+def main() -> None:
+  let session = Session.default()
+  let backend = session.backend()
+  let enabled = backend.enable_optimizer
+  let _ = enabled
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_local_inference_preserves_result_match_after_factory_call() {
+    let source = r#"
+@derive(Clone)
+class Source:
+  value: str
+
+model SessionError:
+  kind: str
+
+class Session:
+  regs: list[Source]
+
+  @staticmethod
+  def default() -> Session:
+    return Session(regs=[])
+
+  def register(mut self, logical_name: str, source: Source) -> Result[None, SessionError]:
+    self.regs.append(source)
+    return Ok(None)
+
+def main() -> None:
+  mut session = Session.default()
+  match session.register("x", Source(value="y")):
+    Ok(_) => pass
+    Err(err) => pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_local_inference_preserves_generic_result_match_after_factory_call() {
+    let source = r#"
+model SessionError:
+  kind: str
+
+class Session:
+  @staticmethod
+  def default() -> Session:
+    return Session()
+
+  def table[T with Clone](self, logical_name: str, marker: T) -> Result[T, SessionError]:
+    return Ok(marker)
+
+def main() -> None:
+  let session = Session.default()
+  match session.table("x", 1):
+    Ok(value) => pass
+    Err(err) => pass
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_local_inference_annotation_control_still_typechecks() {
+    let source = r#"
+class Backend:
+  pub enable_optimizer: bool
+
+class Session:
+  @staticmethod
+  def default() -> Session:
+    return Session()
+
+  def backend(self) -> Backend:
+    return Backend(enable_optimizer=True)
+
+def main() -> None:
+  let session: Session = Session.default()
+  let backend: Backend = session.backend()
+  let _ = backend.enable_optimizer
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_direct_construction_method_result_field_access_control_typechecks() {
+    let source = r#"
+class Backend:
+  pub enable_optimizer: bool
+
+class Session:
+  def backend(self) -> Backend:
+    return Backend(enable_optimizer=True)
+
+def main() -> None:
+  let session = Session()
+  let backend = session.backend()
+  let _ = backend.enable_optimizer
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_direct_construction_with_static_factory_present_still_typechecks() {
+    let source = r#"
+class Backend:
+  pub enable_optimizer: bool
+
+class Session:
+  @staticmethod
+  def default() -> Session:
+    return Session()
+
+  def backend(self) -> Backend:
+    return Backend(enable_optimizer=True)
+
+def main() -> None:
+  let session = Session()
+  let backend = session.backend()
+  let _ = backend.enable_optimizer
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn explicit_call_type_args_specialize_generic_function_params() {
+    assert_check_ok(
+        r#"
+def id[T](x: T) -> T:
+  return x
+
+def run() -> int:
+  return id[int](1)
+"#,
+    );
+}
+
+#[test]
+fn explicit_call_type_args_enforce_function_type_arg_arity() {
+    let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+def run() -> int:
+  return id[int, str](1)
+"#;
+    let errs = check_str_err(source, "expected explicit type arg arity error");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("expects 1 explicit type argument(s), got 2")),
+        "expected explicit type argument arity diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn explicit_method_type_args_specialize_generic_method_params() {
+    assert_check_ok(
+        r#"
+class Box:
+  def get[T](self, value: T) -> T:
+    return value
+
+def run() -> int:
+  let b = Box()
+  return b.get[int](1)
+"#,
+    );
+}
+
+#[test]
+fn explicit_method_type_args_enforce_generic_contract() {
+    let source = r#"
+class Box:
+  def get[T](self, value: T) -> T:
+    return value
+
+def run() -> int:
+  let b = Box()
+  return b.get[int](str("x"))
+"#;
+    let errs = check_str_err(source, "expected explicit method type arg mismatch");
+    assert!(
+        errs.iter().any(|e| e.message.contains("expected 'int', found 'str'")),
+        "expected type mismatch after explicit method type specialization, got {errs:?}"
+    );
+}
+
+#[test]
+fn explicit_call_type_args_infer_placeholder_filled_from_value_args() {
+    assert_check_ok(
+        r#"
+def pair_map[T, U](x: T, y: U) -> int:
+  return 0
+
+def run() -> int:
+  return pair_map[int, _](1, 2)
+"#,
+    );
+}
+
+#[test]
+fn explicit_call_type_args_all_infer_placeholders_filled_from_value_args() {
+    assert_check_ok(
+        r#"
+def id[T](x: T) -> T:
+  return x
+
+def run() -> int:
+  return id[_](1)
+"#,
+    );
+}
+
+#[test]
+fn explicit_call_type_args_infer_placeholder_reports_when_unresolved() {
+    let source = r#"
+def mystery[T]() -> int:
+  return 0
+
+def run() -> int:
+  return mystery[_]()
+"#;
+    let errs = check_str_err(source, "expected inference unresolved when no value args bind T");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Could not infer type parameter")),
+        "expected call-site `_` unresolved diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn explicit_call_type_args_rejected_on_builtin_callee() {
+    let source = r#"
+def run() -> int:
+  return len[int]([1, 2])
+"#;
+    let errs = check_str_err(source, "expected unsupported explicit type args on builtin");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("not supported for this call form")),
+        "expected unsupported call-site type args diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn explicit_call_type_args_rejected_on_indirect_function_value_call() {
+    let source = r#"
+def id[T](x: T) -> T:
+  return x
+
+def run() -> int:
+  let f = id
+  return f[int](1)
+"#;
+    let errs = check_str_err(source, "expected unsupported explicit type args on indirect call");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("not supported for this call form")),
+        "expected unsupported call-site type args diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn loop_expression_infers_break_value_type() {
+    assert_check_ok(
+        r#"
+def run() -> int:
+  return loop:
+    break 42
+"#,
+    );
+}
+
+#[test]
+fn break_value_requires_loop_expression() {
+    let errs = check_str_err(
+        r#"
+def run(xs: list[int]) -> None:
+  for x in xs:
+    break x
+"#,
+        "expected break-value diagnostic in for loop",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("only valid inside `loop:` expressions")),
+        "expected loop-expression-only diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn loop_expression_without_break_is_rejected() {
+    let errs = check_str_err(
+        r#"
+def run() -> int:
+  return loop:
+    pass
+"#,
+        "expected missing-break diagnostic for loop expression",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("loop expression must contain at least one `break`")),
+        "expected missing-break diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn break_outside_loop_uses_typed_diagnostic() {
+    let errs = check_str_err(
+        r#"
+def run() -> None:
+  break
+"#,
+        "expected break-outside-loop diagnostic",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("`break` is only valid inside loops")),
+        "expected break-outside-loop diagnostic, got {errs:?}"
     );
 }

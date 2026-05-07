@@ -2,28 +2,72 @@
 
 use std::collections::{HashMap, HashSet};
 
-use super::super::super::decl::{IrRustAttrArg, IrRustAttribute, IrTraitBound, IrTypeParam};
+use super::super::super::decl::{IrRustAttrArg, IrRustAttribute, IrRustLintAllow, IrTraitBound, IrTypeParam};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use crate::frontend::ast::{self, Spanned};
 use crate::frontend::decorator_resolution;
+use incan_core::interop::is_rust_capability_bound;
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::trait_bounds;
 use incan_core::lang::types::numerics::{self, NumericTypeId};
 
+const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
+const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
+
 impl AstLowering {
     // ========================================================================
     // RFC 023: Type parameter lowering with trait bounds
     // ========================================================================
+
+    /// Return whether this decorator should lower through RFC 036 user-defined decorator semantics.
+    pub(in crate::backend::ir::lower) fn is_user_defined_decorator_candidate(&self, dec: &ast::Decorator) -> bool {
+        let resolved = decorator_resolution::resolve_decorator_path(dec, &self.import_aliases);
+        if decorators::from_segments(&resolved).is_some() {
+            return false;
+        }
+        !resolved
+            .first()
+            .is_some_and(|first| decorators::is_known_decorator_namespace(first))
+    }
 
     /// Lower AST type parameters to IR type parameters, mapping explicit `with` bounds to Rust trait paths.
     ///
     /// RFC 023: Incan trait names (e.g., `Eq`) are mapped to their Rust equivalents (e.g., `PartialEq`).
     /// Inferred bounds from body scanning are added later during emission.
     pub(in crate::backend::ir::lower) fn lower_type_params(ast_params: &[ast::TypeParam]) -> Vec<IrTypeParam> {
-        ast_params.iter().map(Self::lower_type_param).collect()
+        let mut lowered: Vec<IrTypeParam> = Vec::new();
+        for tp in ast_params {
+            // RFC 041 capability shorthand support:
+            // `T with Send, Sync` is parsed as two type params (`T with Send`, `Sync`).
+            // Fold trailing bare capability markers back into the prior capability-bounded type param so codegen emits
+            // `T: Send + Sync`.
+            if tp.bounds.is_empty()
+                && is_rust_capability_bound(tp.name.as_str())
+                && let Some(prev) = lowered.last_mut()
+            {
+                let prev_is_capability_bounded = prev.bounds.iter().any(|bound| {
+                    matches!(
+                        bound.origin,
+                        super::super::super::decl::IrTraitBoundOrigin::RustCapability
+                    )
+                });
+                if prev_is_capability_bounded
+                    && !prev.bounds.iter().any(|bound| {
+                        bound.trait_path == tp.name && bound.type_args.is_empty() && bound.assoc_types.is_empty()
+                    })
+                {
+                    prev.bounds
+                        .push(IrTraitBound::with_type_args_classified(tp.name.clone(), Vec::new()));
+                    continue;
+                }
+            }
+
+            lowered.push(Self::lower_type_param(tp));
+        }
+        lowered
     }
 
     /// Lower a single AST type parameter to its IR representation.
@@ -41,20 +85,40 @@ impl AstLowering {
     /// resolution so the two stay in sync when new primitive types are added.
     fn lower_bound_type(ty: &ast::Type) -> IrType {
         match ty {
+            ast::Type::Qualified(segments) => IrType::Struct(segments.join("::")),
             ast::Type::Simple(name) => {
                 let n = name.as_str();
                 if n == conventions::NONE_TYPE_NAME || n == conventions::UNIT_TYPE_NAME {
                     return IrType::Unit;
                 }
                 if let Some(id) = numerics::from_str(n) {
-                    return match id {
-                        NumericTypeId::Int => IrType::Int,
-                        NumericTypeId::Float => IrType::Float,
-                        NumericTypeId::Bool => IrType::Bool,
+                    return match n {
+                        "int" => IrType::Int,
+                        "float" => IrType::Float,
+                        "bool" => IrType::Bool,
+                        _ => match id {
+                            NumericTypeId::Bool => IrType::Bool,
+                            _ => IrType::Numeric(id),
+                        },
                     };
                 }
                 if n == "str" {
                     return IrType::String;
+                }
+                IrType::Generic(name.clone())
+            }
+            ast::Type::ConstrainedPrimitive(name, _) => {
+                let n = name.as_str();
+                if let Some(id) = numerics::from_str(n) {
+                    return match n {
+                        "int" => IrType::Int,
+                        "float" => IrType::Float,
+                        "bool" => IrType::Bool,
+                        _ => match id {
+                            NumericTypeId::Bool => IrType::Bool,
+                            _ => IrType::Numeric(id),
+                        },
+                    };
                 }
                 IrType::Generic(name.clone())
             }
@@ -66,11 +130,15 @@ impl AstLowering {
                 params: params.iter().map(|param| Self::lower_bound_type(&param.node)).collect(),
                 ret: Box::new(Self::lower_bound_type(&ret.node)),
             },
+            ast::Type::Ref(inner) => IrType::Ref(Box::new(Self::lower_bound_type(&inner.node))),
+            ast::Type::RefMut(inner) => IrType::RefMut(Box::new(Self::lower_bound_type(&inner.node))),
             ast::Type::Unit => IrType::Unit,
             ast::Type::Tuple(items) => {
                 IrType::Tuple(items.iter().map(|item| Self::lower_bound_type(&item.node)).collect())
             }
             ast::Type::SelfType => IrType::SelfType,
+            ast::Type::IntLiteral(_) => IrType::Unknown,
+            ast::Type::Infer => IrType::Unknown,
         }
     }
 
@@ -87,7 +155,7 @@ impl AstLowering {
             .iter()
             .map(|arg| Self::lower_bound_type(&arg.node))
             .collect();
-        IrTraitBound::with_type_args(trait_path, type_args)
+        IrTraitBound::with_type_args_classified(trait_path, type_args)
     }
 
     /// Whether `name` resolves to a locally-known trait during lowering.
@@ -116,7 +184,7 @@ impl AstLowering {
                 let trait_path = trait_bounds::incan_to_rust(name)
                     .map(str::to_string)
                     .unwrap_or_else(|| name.clone());
-                Some(IrTraitBound::simple(trait_path))
+                Some(IrTraitBound::with_type_args_classified(trait_path, Vec::new()))
             }
             ast::Type::Generic(base, args) if self.is_known_trait_name(base) => {
                 let trait_path = trait_bounds::incan_to_rust(base)
@@ -126,7 +194,7 @@ impl AstLowering {
                     .iter()
                     .map(|arg| self.lower_type_with_type_params(&arg.node, type_param_names))
                     .collect();
-                Some(IrTraitBound::with_type_args(trait_path, type_args))
+                Some(IrTraitBound::with_type_args_classified(trait_path, type_args))
             }
             _ => None,
         }
@@ -166,7 +234,7 @@ impl AstLowering {
 
     /// Extract derives from decorators.
     ///
-    /// Parses `@derive(Serialize, Deserialize)` decorators and returns the list of derive names.
+    /// Parses `@derive(...)` decorators and returns the Rust derive names or paths they require.
     /// Also adds prerequisite derives (e.g., Eq requires PartialEq).
     pub(in crate::backend::ir::lower) fn extract_derives(
         &mut self,
@@ -177,15 +245,58 @@ impl AstLowering {
 
         for decorator in decorators {
             if decorators::from_str(decorator.node.name.as_str()) == Some(DecoratorId::Derive) {
-                // Extract derive arguments: @derive(Serialize, Deserialize)
+                // Extract derive arguments: @derive(Debug), @derive(json), @derive(Custom)
                 for arg in &decorator.node.args {
                     if let ast::DecoratorArg::Positional(expr) = arg {
                         // Handle simple identifier expressions
                         if let ast::Expr::Ident(name) = &expr.node {
-                            derives.push(name.clone());
-                            if let Some(module_path) = self.resolve_derive_module_path(name) {
-                                derive_rust_modules.insert(name.clone(), module_path);
+                            if derives::from_str(name).is_some() {
+                                Self::push_unique(&mut derives, name.clone());
+                                continue;
                             }
+
+                            if let Some(rust_path) = self.rust_import_aliases.get(name) {
+                                Self::push_rust_derive_path(&mut derives, rust_path.join("::"));
+                                continue;
+                            }
+
+                            if let Some(module_path) = self.module_path_for_derive_name(name)
+                                && let Some(traits) = self.derivable_traits_for_module(&module_path)
+                            {
+                                for trait_name in traits {
+                                    for path in self.rust_derive_paths_for_trait(&module_path, &trait_name) {
+                                        Self::push_rust_derive_path(&mut derives, path);
+                                    }
+                                }
+                                continue;
+                            }
+
+                            let resolved = self.resolve_derive_path(name);
+                            if resolved.len() >= 2 {
+                                let module_segments = &resolved[..resolved.len() - 1];
+                                let trait_name = &resolved[resolved.len() - 1];
+                                let rust_derive_paths = self.rust_derive_paths_for_trait(module_segments, trait_name);
+                                if rust_derive_paths.is_empty() {
+                                    if let Some(meta) = self.stdlib_cache.lookup_trait_meta(module_segments, trait_name)
+                                    {
+                                        if let Some(module_path) = meta.rust_module_path {
+                                            Self::push_unique(&mut derives, name.clone());
+                                            derive_rust_modules.insert(name.clone(), module_path);
+                                        }
+                                        continue;
+                                    }
+                                    if self.derivable_trait_exists(module_segments, trait_name) {
+                                        continue;
+                                    }
+                                } else {
+                                    for path in rust_derive_paths {
+                                        Self::push_rust_derive_path(&mut derives, path);
+                                    }
+                                    continue;
+                                }
+                            }
+
+                            Self::push_unique(&mut derives, name.clone());
                         }
                     }
                 }
@@ -219,6 +330,145 @@ impl AstLowering {
         }
 
         (derives, derive_rust_modules)
+    }
+
+    /// Return trait impl targets introduced by RFC 024 module-level derives such as `@derive(json)`.
+    pub(in crate::backend::ir::lower) fn derive_trait_impl_targets(
+        &mut self,
+        decorators: &[Spanned<ast::Decorator>],
+    ) -> Vec<(String, Vec<IrType>)> {
+        let mut targets = Vec::new();
+        for decorator in decorators {
+            if decorators::from_str(decorator.node.name.as_str()) != Some(DecoratorId::Derive) {
+                continue;
+            }
+            for arg in &decorator.node.args {
+                let ast::DecoratorArg::Positional(expr) = arg else {
+                    continue;
+                };
+                let ast::Expr::Ident(name) = &expr.node else {
+                    continue;
+                };
+                if derives::from_str(name).is_some() {
+                    continue;
+                }
+                if let Some(module_path) = self.module_path_for_derive_name(name)
+                    && let Some(traits) = self.derivable_traits_for_module(&module_path)
+                {
+                    for trait_name in traits {
+                        let target = format!("{name}.{trait_name}");
+                        if !targets.iter().any(|(existing, _)| existing == &target) {
+                            targets.push((target, Vec::new()));
+                        }
+                    }
+                    continue;
+                }
+                let resolved = self.resolve_derive_path(name);
+                if resolved.len() >= 2 {
+                    let module_segments = &resolved[..resolved.len() - 1];
+                    let trait_name = &resolved[resolved.len() - 1];
+                    if self.derivable_trait_exists(module_segments, trait_name)
+                        && !targets.iter().any(|(existing, _)| existing == name)
+                    {
+                        targets.push((name.clone(), Vec::new()));
+                    }
+                }
+            }
+        }
+        targets
+    }
+
+    /// Look up RFC 024 derivable traits for a module, preferring imported dependency metadata over stdlib metadata.
+    fn derivable_traits_for_module(&mut self, module_path: &[String]) -> Option<Vec<String>> {
+        let key = module_path.join(".");
+        if let Some(traits) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.derivable_modules.get(&key))
+        {
+            return Some(traits.clone());
+        }
+        self.stdlib_cache.lookup_derivable_traits(module_path)
+    }
+
+    /// Return Rust `#[derive(...)]` paths attached to one derivable trait.
+    fn rust_derive_paths_for_trait(&mut self, module_path: &[String], trait_name: &str) -> Vec<String> {
+        let key = format!("{}.{}", module_path.join("."), trait_name);
+        if let Some(paths) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.trait_rust_derive_paths.get(&key))
+        {
+            return paths.clone();
+        }
+        self.stdlib_cache
+            .lookup_trait_meta(module_path, trait_name)
+            .map(|meta| meta.rust_derive_paths)
+            .unwrap_or_default()
+    }
+
+    /// Return whether a module-qualified trait is known to participate in the RFC 024 derive protocol.
+    fn derivable_trait_exists(&mut self, module_path: &[String], trait_name: &str) -> bool {
+        let module_key = module_path.join(".");
+        if self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.derivable_modules.get(&module_key))
+            .is_some_and(|traits| traits.iter().any(|candidate| candidate == trait_name))
+        {
+            return true;
+        }
+        if self.type_info.as_ref().is_some_and(|info| {
+            info.trait_rust_derive_paths
+                .contains_key(&format!("{module_key}.{trait_name}"))
+        }) {
+            return true;
+        }
+        self.stdlib_cache.lookup_trait_meta(module_path, trait_name).is_some()
+    }
+
+    /// Append a string only when it is not already present.
+    fn push_unique(items: &mut Vec<String>, value: String) {
+        if !items.iter().any(|item| item == &value) {
+            items.push(value);
+        }
+    }
+
+    /// Add a Rust derive path, preserving serde derives as explicit Rust paths.
+    fn push_rust_derive_path(derives: &mut Vec<String>, path: String) {
+        Self::push_unique(derives, path);
+    }
+
+    /// Forward explicit `with Serialize` / `with Deserialize` adoption into Rust derive emission.
+    ///
+    /// This keeps direct-interop serde trait defaults honest: a type that adopts the stdlib serde trait surface must
+    /// also satisfy the matching Rust-side serde capability when codegen expands those methods.
+    pub(in crate::backend::ir::lower) fn extend_derives_with_adopted_serde_traits(
+        &self,
+        derives: &mut Vec<String>,
+        trait_bounds: &[Spanned<ast::TraitBound>],
+    ) {
+        fn has(derives: &[String], name: &str) -> bool {
+            derives.iter().any(|d| d == name)
+        }
+
+        for bound in trait_bounds {
+            match bound.node.name.as_str() {
+                "Serialize" if !has(derives, SERDE_SERIALIZE_DERIVE) => {
+                    derives.push(SERDE_SERIALIZE_DERIVE.to_string());
+                }
+                "Deserialize" if !has(derives, SERDE_DESERIALIZE_DERIVE) => {
+                    derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
+                }
+                name if name.ends_with(".Serialize") && !has(derives, SERDE_SERIALIZE_DERIVE) => {
+                    derives.push(SERDE_SERIALIZE_DERIVE.to_string());
+                }
+                name if name.ends_with(".Deserialize") && !has(derives, SERDE_DESERIALIZE_DERIVE) => {
+                    derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Extract passthrough Rust attributes from decorators.
@@ -255,6 +505,32 @@ impl AstLowering {
         attrs
     }
 
+    /// Extract targeted Rust lint suppressions from RFC 057 `@rust.allow(...)` decorators.
+    ///
+    /// Typechecking validates the decorator shape and lint names; lowering only preserves the already-validated
+    /// string literal payloads as explicit IR metadata for item-boundary emission.
+    pub(in crate::backend::ir::lower) fn extract_rust_lint_allows(
+        &self,
+        decorators: &[Spanned<ast::Decorator>],
+    ) -> Vec<IrRustLintAllow> {
+        decorators
+            .iter()
+            .filter(|decorator| {
+                let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, &self.import_aliases);
+                decorators::from_segments(&resolved) == Some(DecoratorId::RustAllow)
+            })
+            .flat_map(|decorator| {
+                decorator.node.args.iter().filter_map(|arg| match arg {
+                    ast::DecoratorArg::Positional(expr) => match &expr.node {
+                        ast::Expr::Literal(ast::Literal::String(lint)) => Some(IrRustLintAllow { lint: lint.clone() }),
+                        _ => None,
+                    },
+                    ast::DecoratorArg::Named(_, _) => None,
+                })
+            })
+            .collect()
+    }
+
     /// Check whether a `rust.module()` path qualifies for decorator passthrough.
     ///
     /// `incan_stdlib::*` decorators are runtime/runner markers (e.g. `std.testing.parametrize`) and must not be emitted
@@ -264,13 +540,9 @@ impl AstLowering {
         !module_path.starts_with("incan_stdlib::")
     }
 
-    /// Resolve the `rust.module()` backing path for a `@derive(Trait)` reference.
-    ///
-    /// Uses the import alias table and the `StdlibAstCache` to map a trait name (e.g. `IntoResponse`) back to its
-    /// owning Rust module path (e.g. `incan_web_macros`). Returns `None` if the trait is not from a `rust.module()`
-    /// stdlib module.
-    fn resolve_derive_module_path(&mut self, derive_name: &str) -> Option<String> {
-        let resolved = decorator_resolution::resolve_decorator_path(
+    /// Resolve a derive argument through the import alias map as if it were a decorator path.
+    fn resolve_derive_path(&self, derive_name: &str) -> Vec<String> {
+        decorator_resolution::resolve_decorator_path(
             &ast::Decorator {
                 path: ast::ImportPath {
                     segments: vec![derive_name.to_string()],
@@ -278,18 +550,16 @@ impl AstLowering {
                     parent_levels: 0,
                 },
                 name: derive_name.to_string(),
+                is_call: false,
                 args: Vec::new(),
             },
             &self.import_aliases,
-        );
-        if resolved.len() < 2 {
-            return None;
-        }
-        let module_segments = &resolved[..resolved.len() - 1];
-        let trait_name = &resolved[resolved.len() - 1];
-        self.stdlib_cache
-            .lookup_trait_meta(module_segments, trait_name)
-            .and_then(|meta| meta.rust_module_path)
+        )
+    }
+
+    /// Return the imported module path for a whole-module derive argument.
+    fn module_path_for_derive_name(&self, derive_name: &str) -> Option<Vec<String>> {
+        self.import_aliases.get(derive_name).cloned()
     }
 
     /// Convert AST decorator arguments into their IR representation for Rust attribute emission.
@@ -320,8 +590,9 @@ impl AstLowering {
         match expr {
             ast::Expr::Literal(lit) => match lit {
                 ast::Literal::String(s) => Some(format!("{s:?}")),
-                ast::Literal::Int(i) => Some(i.to_string()),
-                ast::Literal::Float(f) => Some(f.to_string()),
+                ast::Literal::Int(i) => Some(i.value.to_string()),
+                ast::Literal::Float(f) => Some(f.value.to_string()),
+                ast::Literal::Decimal(_) => None,
                 ast::Literal::Bool(b) => Some(b.to_string()),
                 ast::Literal::Bytes(bytes) => Some(format!("{bytes:?}")),
                 ast::Literal::None => Some("()".to_string()),
@@ -330,7 +601,10 @@ impl AstLowering {
             ast::Expr::List(items) => {
                 let mut out = Vec::new();
                 for item in items {
-                    out.push(Self::serialize_expr(&item.node)?);
+                    let ast::ListEntry::Element(value) = item else {
+                        return None;
+                    };
+                    out.push(Self::serialize_expr(&value.node)?);
                 }
                 Some(format!("[{}]", out.join(", ")))
             }
@@ -342,6 +616,7 @@ impl AstLowering {
     fn serialize_type(ty: &ast::Type) -> String {
         match ty {
             ast::Type::Simple(name) => name.clone(),
+            ast::Type::Qualified(segments) => segments.join("::"),
             ast::Type::Generic(name, args) => {
                 let inner = args
                     .iter()
@@ -350,7 +625,10 @@ impl AstLowering {
                     .join(", ");
                 format!("{name}<{inner}>")
             }
+            ast::Type::ConstrainedPrimitive(_, _) => ty.to_string(),
             ast::Type::Function(_, _) => "fn".to_string(),
+            ast::Type::Ref(inner) => format!("&{}", Self::serialize_type(&inner.node)),
+            ast::Type::RefMut(inner) => format!("&mut {}", Self::serialize_type(&inner.node)),
             ast::Type::Unit => "()".to_string(),
             ast::Type::Tuple(items) => {
                 let inner = items
@@ -361,6 +639,8 @@ impl AstLowering {
                 format!("({inner})")
             }
             ast::Type::SelfType => "Self".to_string(),
+            ast::Type::IntLiteral(value) => value.repr.clone(),
+            ast::Type::Infer => "_".to_string(),
         }
     }
 }

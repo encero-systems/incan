@@ -36,6 +36,15 @@ def test_collections() -> None:
     sub_list: List[int] = numbers[1:3]
     all_but_first: List[int] = numbers[1:]
     all_but_last: List[int] = numbers[:-1]
+    more_numbers: List[int] = [6, 7]
+    combined: List[int] = numbers + more_numbers
+    original_tail: int = numbers[-1]
+    source_tail: int = more_numbers[-1]
+    combined_tail: int = combined[-1]
+    mut extended: List[int] = [8, 9]
+    extended.extend(more_numbers)
+    extended_tail: int = extended[-1]
+    source_tail_after_extend: int = more_numbers[-1]
 
 
 def main() -> None:

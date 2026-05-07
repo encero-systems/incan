@@ -2,15 +2,15 @@
 JSON serialization traits for typed models.
 
 This module provides `Serialize` and `Deserialize` traits that enable `.to_json()` and `.from_json()` on models.
-Use `@derive(Serialize, Deserialize)` to adopt both traits, or import and derive individually for partial support
-(serialize-only or deserialize-only).
+Use `@derive(json)` to adopt both traits, or import and derive individually for partial support (serialize-only or
+deserialize-only).
 
 Example:
 
 ```incan
-from std.serde.json import Serialize, Deserialize
+from std.serde import json
 
-@derive(Serialize, Deserialize)
+@derive(json)
 model Config:
     host: str
     port: int
@@ -26,16 +26,22 @@ Python equivalents: `json.dumps()`, `json.loads()`.
 
 rust.module("incan_stdlib::serde")
 
-trait Serialize:
+__derives__ = [Serialize, Deserialize]
+
+@rust.derive("serde::Serialize")
+pub trait Serialize:
     """
     Enables serialization of a type to a JSON string.
 
-    When derived, all fields are serialized in declaration order. Use `@derive(Serialize)` or adopt via `with Serialize`
-    and implement `to_json` for custom behavior.
+    When derived, all fields are serialized in declaration order. Importing `Serialize` and adopting it with
+    `with Serialize` also provides this default method body, which uses the compiler's direct serde interop path.
+    Override `to_json` only when you need custom serialization behavior.
 
     Example:
 
     ```incan
+    from std.serde.json import Serialize
+
     @derive(Serialize)
     model LogEntry:
         message: str
@@ -46,20 +52,23 @@ trait Serialize:
     println(entry.to_json())
     ```
     """
-    @rust.extern
-    def to_json(self) -> str: ...
+    def to_json(self) -> str:
+        return json_stringify(self)
 
 
-trait Deserialize:
+@rust.derive("serde::Deserialize")
+pub trait Deserialize:
     """
     Enables deserialization of a type from a JSON string.
 
-    When derived, all fields are deserialized by name. Use `@derive(Deserialize)` or adopt via `with Deserialize` and
-    implement `from_json` for custom behavior.
+    When derived, all fields are deserialized by name. Import `Deserialize` and use `@derive(Deserialize)`, or adopt via
+    `with Deserialize` and implement `from_json` for custom behavior.
 
     Example:
 
     ```incan
+    from std.serde.json import Deserialize
+
     @derive(Deserialize)
     model Config:
         host: str

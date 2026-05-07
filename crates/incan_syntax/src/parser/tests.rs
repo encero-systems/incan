@@ -6,10 +6,18 @@
 mod tests {
     use super::*;
     use crate::lexer;
+    use incan_core::lang::types::collections::{self, CollectionTypeId};
 
     fn parse_str(source: &str) -> Result<Program, Vec<CompileError>> {
         let tokens = lexer::lex(source).map_err(|_| vec![])?;
         parse(&tokens)
+    }
+
+    fn parse_str_err(source: &str, context: &str) -> Vec<CompileError> {
+        match parse_str(source) {
+            Err(errs) => errs,
+            Ok(_) => panic!("{context}"),
+        }
     }
 
     fn parse_str_with_module_path(source: &str, module_path: Option<&str>) -> Result<Program, Vec<CompileError>> {
@@ -39,6 +47,337 @@ mod tests {
         }
     }
 
+    fn require_newtype_decl(decl: &Spanned<Declaration>) -> Result<&NewtypeDecl, Vec<CompileError>> {
+        match &decl.node {
+            Declaration::Newtype(nt) => Ok(nt),
+            _ => Err(vec![CompileError::new(
+                "parser test internal error: expected newtype/rusttype declaration".to_string(),
+                decl.span,
+            )]),
+        }
+    }
+
+    fn require_model_decl(decl: &Spanned<Declaration>) -> Result<&ModelDecl, Vec<CompileError>> {
+        match &decl.node {
+            Declaration::Model(m) => Ok(m),
+            _ => Err(vec![CompileError::new(
+                "parser test internal error: expected model declaration".to_string(),
+                decl.span,
+            )]),
+        }
+    }
+
+    fn require_class_decl(decl: &Spanned<Declaration>) -> Result<&ClassDecl, Vec<CompileError>> {
+        match &decl.node {
+            Declaration::Class(c) => Ok(c),
+            _ => Err(vec![CompileError::new(
+                "parser test internal error: expected class declaration".to_string(),
+                decl.span,
+            )]),
+        }
+    }
+
+    fn require_enum_decl(decl: &Spanned<Declaration>) -> Result<&EnumDecl, Vec<CompileError>> {
+        match &decl.node {
+            Declaration::Enum(e) => Ok(e),
+            _ => Err(vec![CompileError::new(
+                "parser test internal error: expected enum declaration".to_string(),
+                decl.span,
+            )]),
+        }
+    }
+
+    fn require_function_decl(decl: &Spanned<Declaration>) -> Result<&FunctionDecl, Vec<CompileError>> {
+        match &decl.node {
+            Declaration::Function(f) => Ok(f),
+            _ => Err(vec![CompileError::new(
+                "parser test internal error: expected function declaration".to_string(),
+                decl.span,
+            )]),
+        }
+    }
+
+    fn require_test_module_decl(decl: &Spanned<Declaration>) -> Result<&TestModuleDecl, Vec<CompileError>> {
+        match &decl.node {
+            Declaration::TestModule(t) => Ok(t),
+            _ => Err(vec![CompileError::new(
+                "parser test internal error: expected test module declaration".to_string(),
+                decl.span,
+            )]),
+        }
+    }
+
+    #[test]
+    fn test_parse_trait_method_named_from() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait From[T]:
+  @classmethod
+  def from(cls, value: T) -> Self: ...
+"#;
+        let program = parse_str(source)?;
+        let trait_decl = require_trait_decl(&program.declarations[0])?;
+        assert_eq!(trait_decl.name, "From");
+        assert_eq!(trait_decl.methods.len(), 1);
+        assert_eq!(trait_decl.methods[0].node.name, "from");
+        Ok(())
+    }
+
+    #[test]
+    fn test_assert_keyword_lexes_as_identifier() -> Result<(), Vec<CompileError>> {
+        let tokens = lexer::lex("assert value\n").map_err(|_| {
+            vec![CompileError::new(
+                "parser test internal error: lex failed".to_string(),
+                Span::default(),
+            )]
+        })?;
+
+        assert!(matches!(&tokens[0].kind, TokenKind::Ident(name) if name == "assert"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_statement_without_testing_import() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(value: int) -> None:
+  assert value > 0
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Assert(assert_stmt) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+
+        assert!(matches!(assert_stmt.kind, AssertKind::Condition(_)));
+        assert!(assert_stmt.message.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_statement_with_message() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(value: int) -> None:
+  assert value > 0, "positive required"
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Assert(assert_stmt) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+
+        assert!(matches!(assert_stmt.kind, AssertKind::Condition(_)));
+        assert!(matches!(
+            assert_stmt.message.as_ref().map(|msg| &msg.node),
+            Some(Expr::Literal(Literal::String(msg))) if msg == "positive required"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_raises_statement() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check() -> None:
+  assert explode() raises AssertionError, "boom"
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Assert(assert_stmt) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+
+        let AssertKind::Raises { call, error_type } = &assert_stmt.kind else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected raises assert".to_string(),
+                func.body[0].span,
+            )]);
+        };
+        assert!(matches!(call.node, Expr::Call(_, _, _)));
+        assert!(matches!(error_type.node, Type::Simple(ref name) if name == "AssertionError"));
+        assert!(assert_stmt.message.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_identity_bool_literals_as_condition() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(ready: bool, done: bool) -> None:
+  assert ready is true, "ready should be true"
+  assert done is false
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+
+        let Statement::Assert(true_assert) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected true assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+        assert!(matches!(true_assert.kind, AssertKind::Condition(_)));
+        assert!(true_assert.message.is_some());
+
+        let Statement::Assert(false_assert) = &func.body[1].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected false assert statement".to_string(),
+                func.body[1].span,
+            )]);
+        };
+        assert!(matches!(false_assert.kind, AssertKind::Condition(_)));
+        assert!(false_assert.message.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_is_some_pattern_statement() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(user: Option[str]) -> None:
+  assert user is Some(value), "user required"
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Assert(assert_stmt) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+
+        let AssertKind::IsPattern { value, pattern } = &assert_stmt.kind else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected pattern assert".to_string(),
+                func.body[0].span,
+            )]);
+        };
+        assert!(matches!(value.node, Expr::Ident(ref name) if name == "user"));
+        assert!(matches!(
+            &pattern.node,
+            Pattern::Constructor(name, args)
+                if name == "Some"
+                    && matches!(args.first(), Some(PatternArg::Positional(arg)) if matches!(&arg.node, Pattern::Binding(binding) if binding == "value"))
+        ));
+        assert!(assert_stmt.message.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_is_none_pattern_statement() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(user: Option[str]) -> None:
+  assert user is None
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Assert(assert_stmt) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+
+        assert!(matches!(
+            &assert_stmt.kind,
+            AssertKind::IsPattern { pattern, .. }
+                if matches!(&pattern.node, Pattern::Constructor(name, args) if name == "None" && args.is_empty())
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_is_ok_and_err_pattern_statements() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def check(result: Result[int, str]) -> None:
+  assert result is Ok(value)
+  assert result is Err(_), "error required"
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+
+        let Statement::Assert(ok_assert) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected Ok assert statement".to_string(),
+                func.body[0].span,
+            )]);
+        };
+        assert!(matches!(
+            &ok_assert.kind,
+            AssertKind::IsPattern { pattern, .. }
+                if matches!(
+                    &pattern.node,
+                    Pattern::Constructor(name, args)
+                        if name == "Ok"
+                            && matches!(args.first(), Some(PatternArg::Positional(arg)) if matches!(&arg.node, Pattern::Binding(binding) if binding == "value"))
+                )
+        ));
+
+        let Statement::Assert(err_assert) = &func.body[1].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected Err assert statement".to_string(),
+                func.body[1].span,
+            )]);
+        };
+        assert!(matches!(
+            &err_assert.kind,
+            AssertKind::IsPattern { pattern, .. }
+                if matches!(
+                    &pattern.node,
+                    Pattern::Constructor(name, args)
+                        if name == "Err"
+                            && matches!(args.first(), Some(PatternArg::Positional(arg)) if matches!(arg.node, Pattern::Wildcard))
+                )
+        ));
+        assert!(err_assert.message.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_module_tests_block() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def add(a: int, b: int) -> int:
+  return a + b
+
+module tests:
+  from testing import assert_eq
+
+  def test_add() -> None:
+    assert add(1, 2) == 3
+"#;
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 2);
+        let test_module = require_test_module_decl(&program.declarations[1])?;
+        assert_eq!(test_module.name, "tests");
+        assert_eq!(test_module.body.len(), 2);
+        assert!(matches!(test_module.body[0].node, Declaration::Import(_)));
+        assert!(matches!(test_module.body[1].node, Declaration::Function(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_duplicate_module_tests_block_is_error() {
+        let source = r#"
+module tests:
+  pass
+
+module tests:
+  pass
+"#;
+        let errors = parse_str_err(source, "duplicate module tests block should fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Only one `module tests:` block is allowed")),
+            "expected duplicate module tests error, got: {:?}",
+            errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn test_unexpected_indent_at_toplevel_is_single_clear_error() {
         // We intentionally allow the lexer to emit INDENT/DEDENT tokens at the top-level.
@@ -64,14 +403,107 @@ model User:
 "#;
         let program = parse_str(source)?;
         assert_eq!(program.declarations.len(), 1);
-        match &program.declarations[0].node {
-            Declaration::Model(m) => {
-                assert_eq!(m.name, "User");
-                assert_eq!(m.fields.len(), 2);
-                assert!(m.traits.is_empty());
-            }
-            _ => panic!("Expected model"),
+        let m = require_model_decl(&program.declarations[0])?;
+        assert_eq!(m.name, "User");
+        assert_eq!(m.fields.len(), 2);
+        assert!(m.traits.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_generic_method_type_params() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class Box:
+  def get[T with Clone](self, value: T) -> T:
+    return value
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert_eq!(class.methods.len(), 1);
+        let method = &class.methods[0].node;
+        assert_eq!(method.name, "get");
+        assert_eq!(method.type_params.len(), 1);
+        assert_eq!(method.type_params[0].name, "T");
+        assert_eq!(method.type_params[0].bounds.len(), 1);
+        assert_eq!(method.type_params[0].bounds[0].name, "Clone");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_trait_bodyless_method_is_abstract() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait Serializer:
+  def serialize(self, value: str) -> str
+  def deserialize(self, data: str) -> str: ...
+"#;
+        let program = parse_str(source)?;
+        let trait_decl = require_trait_decl(&program.declarations[0])?;
+        assert_eq!(trait_decl.methods.len(), 2);
+        assert_eq!(trait_decl.methods[0].node.name, "serialize");
+        assert!(trait_decl.methods[0].node.body.is_none());
+        assert_eq!(trait_decl.methods[1].node.name, "deserialize");
+        assert!(trait_decl.methods[1].node.body.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_bodyless_methods_outside_traits_are_rejected() {
+        for source in [
+            "model User:\n  def name(self) -> str\n",
+            "class User:\n  def name(self) -> str\n",
+            "type UserId = newtype str:\n  def display(self) -> str\n",
+            "enum Token:\n  Word\n  def text(self) -> str\n",
+        ] {
+            let errs = parse_str_err(source, "bodyless methods outside traits should fail");
+            assert!(
+                errs.iter()
+                    .any(|err| err.message.contains("Expected ':' after method return type")),
+                "expected method body diagnostic, got: {errs:?}"
+            );
         }
+    }
+
+    #[test]
+    fn test_parse_bodyless_trait_method_followed_by_docstring_is_rejected() {
+        let source = r#"
+trait Named:
+  def name(self) -> str
+    "Return the display name."
+"#;
+        parse_str_err(source, "bodyless trait method docstring should require a colon body");
+    }
+
+    #[test]
+    fn test_parse_pub_class_preserves_authored_field_visibility() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+pub class LazyFrame:
+  _cursor: int
+  pub schema: str
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert!(matches!(class.visibility, Visibility::Public));
+        assert!(matches!(class.fields[0].node.visibility, Visibility::Private));
+        assert!(matches!(class.fields[1].node.visibility, Visibility::Public));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_method_multiline_receiver_allows_trailing_comma() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class Box:
+  def get(
+    self,
+  ) -> int:
+    return 1
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert_eq!(class.methods.len(), 1);
+        let method = &class.methods[0].node;
+        assert_eq!(method.name, "get");
+        assert!(matches!(method.receiver, Some(Receiver::Immutable)));
+        assert!(method.params.is_empty());
         Ok(())
     }
 
@@ -87,14 +519,160 @@ class FieldInfo:
 "#;
         let program = parse_str(source)?;
         assert_eq!(program.declarations.len(), 1);
-        match &program.declarations[0].node {
-            Declaration::Class(c) => {
-                assert_eq!(c.name, "FieldInfo");
-                assert_eq!(c.fields.len(), 1);
-                assert_eq!(c.fields[0].node.name, "name");
-            }
-            _ => panic!("Expected class"),
-        }
+        let c = require_class_decl(&program.declarations[0])?;
+        assert_eq!(c.name, "FieldInfo");
+        assert_eq!(
+            c.docstring.as_deref(),
+            Some(
+                "\n  Compiler-provided field metadata returned by __fields__().\n  Instances are immutable and read-only.\n  "
+            )
+        );
+        assert_eq!(c.fields.len(), 1);
+        assert_eq!(c.fields[0].node.name, "name");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_model_leading_docstring_stored_on_ast() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+model Widget:
+  """Model-level narrative for tooling."""
+  id: int
+"#;
+        let program = parse_str(source)?;
+        let m = require_model_decl(&program.declarations[0])?;
+        assert_eq!(m.docstring.as_deref(), Some("Model-level narrative for tooling."));
+        assert_eq!(m.fields.len(), 1);
+        assert_eq!(m.fields[0].node.name, "id");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_enum_leading_docstring_stored_on_ast() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+enum Color:
+  """Semantic colors for UI."""
+  Red
+  Green
+"#;
+        let program = parse_str(source)?;
+        let en = require_enum_decl(&program.declarations[0])?;
+        assert_eq!(en.docstring.as_deref(), Some("Semantic colors for UI."));
+        assert_eq!(en.variants.len(), 2);
+        assert_eq!(en.variants[0].node.name, "Red");
+        assert_eq!(en.variants[1].node.name, "Green");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_block_leading_blank_lines_single_empty_line() -> Result<(), Vec<CompileError>> {
+        let source = r#"def f() -> int:
+    a = 1
+
+    b = 2
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.body.len(), 2, "expected two statements");
+        assert_eq!(func.body[0].leading_blank_lines, 0);
+        assert_eq!(func.body[1].leading_blank_lines, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_block_leading_blank_lines_collapses_multiple_empty_lines() -> Result<(), Vec<CompileError>> {
+        let source = r#"def f() -> int:
+    a = 1
+
+
+
+    b = 2
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.body.len(), 2);
+        assert_eq!(func.body[0].leading_blank_lines, 0);
+        assert_eq!(func.body[1].leading_blank_lines, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_block_preserves_blank_line_after_nested_suite() -> Result<(), Vec<CompileError>> {
+        let source = r#"def f(items: list[int]) -> int:
+    for item in items:
+        value = item
+
+    result = 1
+    return result
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.body.len(), 3);
+        assert_eq!(func.body[0].leading_blank_lines, 0);
+        assert_eq!(func.body[1].leading_blank_lines, 1);
+        assert_eq!(func.body[2].leading_blank_lines, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_block_preserves_single_blank_line_between_sibling_if_statements() -> Result<(), Vec<CompileError>> {
+        let source = r#"def f(a: bool, b: bool) -> None:
+    if a:
+        x = 1
+
+    if b:
+        y = 2
+
+    z = 3
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.body.len(), 3);
+        assert_eq!(func.body[0].leading_blank_lines, 0);
+        assert_eq!(func.body[1].leading_blank_lines, 1);
+        assert_eq!(func.body[2].leading_blank_lines, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_block_does_not_invent_blank_line_between_sibling_if_statements() -> Result<(), Vec<CompileError>> {
+        let source = r#"def f(a: bool, b: bool) -> None:
+    if a:
+        x = 1
+    if b:
+        y = 2
+    z = 3
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.body.len(), 3);
+        assert_eq!(func.body[0].leading_blank_lines, 0);
+        assert_eq!(func.body[1].leading_blank_lines, 0);
+        assert_eq!(func.body[2].leading_blank_lines, 0);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_block_preserves_single_blank_line_between_if_blocks_ending_in_match() -> Result<(), Vec<CompileError>> {
+        let source = r#"def f(a: bool, b: bool, result: Result[int, str]) -> None:
+    if a:
+        match result:
+            Ok(_) => return
+            Err(err) => return
+
+    if b:
+        match result:
+            Ok(_) => return
+            Err(err) => return
+
+    z = 3
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.body.len(), 3);
+        assert_eq!(func.body[0].leading_blank_lines, 0);
+        assert_eq!(func.body[1].leading_blank_lines, 1);
+        assert_eq!(func.body[2].leading_blank_lines, 1);
         Ok(())
     }
 
@@ -174,7 +752,7 @@ def f(a: Foo) -> int:
         };
         let call_expr = match &func.body[0].node {
             Statement::Assignment(stmt) => match &stmt.value.node {
-                Expr::Call(_, args) => args,
+                Expr::Call(_, _, args) => args,
                 _ => panic!("Expected call expression"),
             },
             _ => panic!("Expected assignment statement"),
@@ -187,6 +765,97 @@ def f(a: Foo) -> int:
         };
         assert!(matches!(&return_expr.node, Expr::Field(_, name) if name == "type"));
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_rest_params_and_call_unpacking() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def collect(prefix: str, *items: int, **labels: str) -> int:
+  return 0
+
+def use(xs: list[int], kw: dict[str, str]) -> int:
+  return collect("x", 1, *xs, name="demo", **kw)
+"#;
+        let program = parse_str(source)?;
+        let collect = require_function_decl(&program.declarations[0])?;
+        assert_eq!(collect.params[0].node.kind, ParamKind::Normal);
+        assert_eq!(collect.params[1].node.kind, ParamKind::RestPositional);
+        assert_eq!(collect.params[1].node.name, "items");
+        assert_eq!(collect.params[2].node.kind, ParamKind::RestKeyword);
+        assert_eq!(collect.params[2].node.name, "labels");
+
+        let use_fn = require_function_decl(&program.declarations[1])?;
+        let call_args = match &use_fn.body[0].node {
+            Statement::Return(Some(expr)) => match &expr.node {
+                Expr::Call(_, _, args) => args,
+                _ => panic!("expected call expression"),
+            },
+            _ => panic!("expected return statement"),
+        };
+        assert!(matches!(call_args[0], CallArg::Positional(_)));
+        assert!(matches!(call_args[1], CallArg::Positional(_)));
+        assert!(matches!(call_args[2], CallArg::PositionalUnpack(_)));
+        assert!(matches!(call_args[3], CallArg::Named(ref name, _) if name == "name"));
+        assert!(matches!(call_args[4], CallArg::KeywordUnpack(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_list_and_dict_literal_spread_entries() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def use(xs: list[int], headers: dict[str, str]) -> None:
+  values = [1, *xs, 4]
+  merged = {"accept": "json", **headers}
+"#;
+        let program = parse_str(source)?;
+        let use_fn = require_function_decl(&program.declarations[0])?;
+
+        let list_entries = match &use_fn.body[0].node {
+            Statement::Assignment(stmt) => match &stmt.value.node {
+                Expr::List(entries) => entries,
+                _ => panic!("expected list literal"),
+            },
+            _ => panic!("expected assignment statement"),
+        };
+        assert!(matches!(list_entries[0], ListEntry::Element(_)));
+        assert!(matches!(list_entries[1], ListEntry::Spread(_)));
+        assert!(matches!(list_entries[2], ListEntry::Element(_)));
+
+        let dict_entries = match &use_fn.body[1].node {
+            Statement::Assignment(stmt) => match &stmt.value.node {
+                Expr::Dict(entries) => entries,
+                _ => panic!("expected dict literal"),
+            },
+            _ => panic!("expected assignment statement"),
+        };
+        assert!(matches!(dict_entries[0], DictEntry::Pair(_, _)));
+        assert!(matches!(dict_entries[1], DictEntry::Spread(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_collection_literal_spread_invalid_markers() {
+        let list_errs = parse_str_err(
+            "def f(xs: list[int]) -> None:\n  values = [**xs]\n",
+            "list literal should reject dictionary spread marker",
+        );
+        assert!(
+            list_errs
+                .iter()
+                .any(|err| err.message.contains("Invalid list spread marker `**`")),
+            "expected invalid list spread marker diagnostic, got: {list_errs:?}"
+        );
+
+        let dict_errs = parse_str_err(
+            "def f(xs: list[int]) -> None:\n  values = {*xs}\n",
+            "dict literal should reject list spread marker",
+        );
+        assert!(
+            dict_errs
+                .iter()
+                .any(|err| err.message.contains("Invalid dictionary spread marker `*`")),
+            "expected invalid dictionary spread marker diagnostic, got: {dict_errs:?}"
+        );
     }
 
     #[test]
@@ -222,6 +891,242 @@ def f(a: Foo) -> int:
             _ => panic!("Expected constructor pattern"),
         }
         Ok(())
+    }
+
+    /// Qualified unit variant patterns parse as `Type::Variant` in the AST (for Rust lowering); surface syntax uses `.`.
+    #[test]
+    fn test_parse_qualified_unit_pattern_stores_double_colon_in_ast() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(x: int) -> int:
+  match x:
+    Kind.Read =>
+      return 1
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function"),
+        };
+        let match_expr = match &func.body[0].node {
+            Statement::Expr(expr) => expr,
+            _ => panic!("Expected match expression statement"),
+        };
+        let arms = match &match_expr.node {
+            Expr::Match(_, arms) => arms,
+            _ => panic!("Expected match expression"),
+        };
+        let arm = &arms[0].node;
+        match &arm.pattern.node {
+            Pattern::Constructor(name, args) => {
+                assert_eq!(name, "Kind::Read");
+                assert!(args.is_empty());
+            }
+            _ => panic!("Expected constructor pattern"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_match_pattern_alternation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(kind: Kind) -> int:
+  match kind:
+    Kind.Read | Kind.Scan | _ => return 1
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function"),
+        };
+        let match_expr = match &func.body[0].node {
+            Statement::Expr(expr) => expr,
+            _ => panic!("Expected match expression statement"),
+        };
+        let arms = match &match_expr.node {
+            Expr::Match(_, arms) => arms,
+            _ => panic!("Expected match expression"),
+        };
+        match &arms[0].node.pattern.node {
+            Pattern::Or(patterns) => {
+                assert_eq!(patterns.len(), 3);
+                assert!(matches!(&patterns[0].node, Pattern::Constructor(name, args) if name == "Kind::Read" && args.is_empty()));
+                assert!(matches!(&patterns[1].node, Pattern::Constructor(name, args) if name == "Kind::Scan" && args.is_empty()));
+                assert!(matches!(&patterns[2].node, Pattern::Wildcard));
+            }
+            _ => panic!("Expected pattern alternation"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_grouped_pattern_alternation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(kind: Kind) -> int:
+  match kind:
+    (
+      Kind.Read
+      | Kind.Scan
+      | _
+    ) => return 1
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Expr(match_expr) = &func.body[0].node else {
+            panic!("Expected match expression statement");
+        };
+        let Expr::Match(_, arms) = &match_expr.node else {
+            panic!("Expected match expression");
+        };
+        match &arms[0].node.pattern.node {
+            Pattern::Group(inner) => {
+                assert!(matches!(&inner.node, Pattern::Or(patterns) if patterns.len() == 3));
+            }
+            _ => panic!("Expected grouped pattern alternation"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_if_let_condition() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(opt: Option[int]) -> int:
+  if let Some(value) = opt:
+    return value
+  return 0
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let stmt = &func.body[0].node;
+        let Statement::If(if_stmt) = stmt else {
+            panic!("Expected if statement");
+        };
+        match &if_stmt.condition {
+            Condition::Let { pattern, value } => {
+                assert!(matches!(&value.node, Expr::Ident(name) if name == "opt"));
+                match &pattern.node {
+                    Pattern::Constructor(name, args) => {
+                        assert_eq!(name, "Some");
+                        assert!(matches!(
+                            &args[0],
+                            PatternArg::Positional(pat)
+                                if matches!(&pat.node, Pattern::Binding(binding) if binding == "value")
+                        ));
+                    }
+                    _ => panic!("Expected constructor pattern"),
+                }
+            }
+            Condition::Expr(_) => panic!("Expected let condition"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_if_let_pattern_alternation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(result: Result[int, int]) -> int:
+  if let Ok(value) | Err(value) = result:
+    return value
+  return 0
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::If(if_stmt) = &func.body[0].node else {
+            panic!("Expected if statement");
+        };
+        match &if_stmt.condition {
+            Condition::Let { pattern, value } => {
+                let Expr::Ident(value_name) = &value.node else {
+                    panic!("Expected identifier value");
+                };
+                assert_eq!(value_name, "result");
+                match &pattern.node {
+                    Pattern::Or(patterns) => {
+                        assert_eq!(patterns.len(), 2);
+                        assert!(matches!(
+                            &patterns[0].node,
+                            Pattern::Constructor(name, args)
+                                if name == "Ok"
+                                    && matches!(&args[0], PatternArg::Positional(pat) if matches!(&pat.node, Pattern::Binding(binding) if binding == "value"))
+                        ));
+                        assert!(matches!(
+                            &patterns[1].node,
+                            Pattern::Constructor(name, args)
+                                if name == "Err"
+                                    && matches!(&args[0], PatternArg::Positional(pat) if matches!(&pat.node, Pattern::Binding(binding) if binding == "value"))
+                        ));
+                    }
+                    _ => panic!("Expected pattern alternation"),
+                }
+            }
+            Condition::Expr(_) => panic!("Expected let condition"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_while_let_condition() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def drain(current: Option[int]) -> int:
+  while let Some(value) = current:
+    return value
+  return 0
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let stmt = &func.body[0].node;
+        let Statement::While(while_stmt) = stmt else {
+            panic!("Expected while statement");
+        };
+        match &while_stmt.condition {
+            Condition::Let { pattern, value } => {
+                assert!(matches!(&value.node, Expr::Ident(name) if name == "current"));
+                assert!(matches!(
+                    &pattern.node,
+                    Pattern::Constructor(name, args)
+                        if name == "Some"
+                            && matches!(
+                                &args[0],
+                                PatternArg::Positional(pat)
+                                    if matches!(&pat.node, Pattern::Binding(binding) if binding == "value")
+                            )
+                ));
+            }
+            Condition::Expr(_) => panic!("Expected let condition"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_while_let_rejects_pattern_alternation() {
+        let source = r#"
+def drain(current: Result[int, int]) -> int:
+  while let Ok(value) | Err(value) = current:
+    return value
+  return 0
+"#;
+        let errors = parse_str_err(source, "`while let` pattern alternation should fail");
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains("Pattern alternation is only supported in match arms and if let patterns")),
+            "expected `while let` pattern alternation rejection, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_if_let_rejects_else_branch() {
+        let source = r#"
+def f(opt: Option[int]) -> int:
+  if let Some(value) = opt:
+    return value
+  else:
+    return 0
+"#;
+        let errors = parse_str_err(source, "`if let` with else should fail");
+        assert!(
+            errors.iter().any(|err| err.message.contains("`if let` does not support `else` branches")),
+            "expected `if let` else rejection, got: {errors:?}"
+        );
     }
 
     #[test]
@@ -263,6 +1168,51 @@ def c() -> None:
         let dec_c = &funcs[2].decorators[0].node;
         assert_eq!(dec_c.path.segments, vec!["web", "route"]);
         assert_eq!(dec_c.name, "route");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_unknown_decorators_on_functions_async_defs_and_methods() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+import std.async
+
+@logged
+def sync_func() -> None:
+  pass
+
+@traced
+async def async_func() -> None:
+  pass
+
+class Service:
+  value: int
+
+  @cached
+  def read(self) -> int:
+    return self.value
+"#;
+        let program = parse_str(source)?;
+        let funcs: Vec<_> = program
+            .declarations
+            .iter()
+            .filter_map(|d| match &d.node {
+                Declaration::Function(f) => Some(f),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(funcs.len(), 2);
+        assert_eq!(funcs[0].decorators[0].node.name, "logged");
+        assert_eq!(funcs[1].decorators[0].node.name, "traced");
+
+        let class = program
+            .declarations
+            .iter()
+            .find_map(|d| match &d.node {
+                Declaration::Class(c) => Some(c),
+                _ => None,
+            })
+            .ok_or_else(|| vec![CompileError::new("expected class declaration".to_string(), Span::default())])?;
+        assert_eq!(class.methods[0].node.decorators[0].node.name, "cached");
         Ok(())
     }
 
@@ -370,6 +1320,28 @@ async def foo() -> None:
     }
 
     #[test]
+    fn test_parse_async_fixture_with_yield_ok() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+import std.async
+from std.testing import fixture
+
+@fixture(scope="function")
+async def resource() -> int:
+  yield 1
+"#;
+        let program = parse_str(source).map_err(|errors| std::io::Error::other(format!("{errors:?}")))?;
+        let Declaration::Function(func) = &program.declarations[2].node else {
+            return Err(std::io::Error::other("expected function declaration").into());
+        };
+        assert!(func.is_async());
+        assert!(matches!(
+            &func.body[0].node,
+            Statement::Expr(expr) if matches!(expr.node, Expr::Yield(Some(_)))
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_await_with_std_async_import_ok() -> Result<(), Vec<CompileError>> {
         let source = r#"
 from std.async.time import sleep
@@ -408,23 +1380,144 @@ def value(async: int) -> int:
     }
 
     #[test]
-    fn test_parse_assert_requires_std_testing_import() {
+    fn test_parse_property_identifier_without_member_context_ok() -> Result<(), Vec<CompileError>> {
         let source = r#"
-def f(x: int) -> None:
-  assert x > 0
+def value(property: int) -> int:
+  return property
 "#;
-        let Err(err) = parse_str(source) else {
-            panic!("Expected assert statement without std.testing import to fail");
-        };
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert_eq!(func.params[0].node.name, "property");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_class_computed_property() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class Dataset:
+  property schema_fields -> list[str]:
+    return self._fields
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert_eq!(class.properties.len(), 1);
+        let property = &class.properties[0];
+        assert_eq!(property.node.name, "schema_fields");
+        assert!(matches!(property.node.visibility, Visibility::Private));
         assert!(
-            err[0].message.contains("only available after importing `std.testing`"),
-            "Unexpected error: {}",
-            err[0].message
+            matches!(property.node.return_type.node, Type::Generic(ref name, _) if collections::from_str(name) == Some(CollectionTypeId::List))
+        );
+        assert!(property.node.body.is_some());
+        assert!(
+            property.span.start < property.node.return_type.span.start
+                && property.node.return_type.span.end <= property.span.end,
+            "property span should enclose return type span"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_model_pub_computed_property() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+model User:
+  name: str
+
+  pub property display_name -> str:
+    return self.name
+"#;
+        let program = parse_str(source)?;
+        let model = require_model_decl(&program.declarations[0])?;
+        assert_eq!(model.fields.len(), 1);
+        assert_eq!(model.properties.len(), 1);
+        let property = &model.properties[0].node;
+        assert_eq!(property.name, "display_name");
+        assert!(matches!(property.visibility, Visibility::Public));
+        assert!(property.body.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_trait_abstract_computed_property() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait HasArea:
+  property area -> float: ...
+"#;
+        let program = parse_str(source)?;
+        let trait_decl = require_trait_decl(&program.declarations[0])?;
+        assert_eq!(trait_decl.properties.len(), 1);
+        let property = &trait_decl.properties[0].node;
+        assert_eq!(property.name, "area");
+        assert!(matches!(property.return_type.node, Type::Simple(ref name) if name == "float"));
+        assert!(property.body.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_trait_abstract_computed_property_without_ellipsis() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait HasArea:
+  property area -> float
+"#;
+        let program = parse_str(source)?;
+        let trait_decl = require_trait_decl(&program.declarations[0])?;
+        assert_eq!(trait_decl.properties.len(), 1);
+        assert!(trait_decl.properties[0].node.body.is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_class_abstract_property_is_focused_error() {
+        let errs = parse_str_err(
+            "class Shape:\n  property area -> float\n",
+            "bodyless properties outside traits should fail",
+        );
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Expected ':' after property return type")),
+            "expected property body diagnostic, got: {errs:?}"
         );
     }
 
     #[test]
-    fn test_parse_assert_with_std_testing_import_ok() -> Result<(), Vec<CompileError>> {
+    fn test_parse_property_parameter_list_is_focused_error() {
+        let errs = parse_str_err(
+            "class Shape:\n  property area(self) -> float:\n    return 0.0\n",
+            "property declarations with parameter lists should fail",
+        );
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Computed properties do not accept parameter lists")),
+            "expected property parameter diagnostic, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_property_declaration_modifier_is_focused_error() {
+        let errs = parse_str_err(
+            "import std.async\n\nclass Worker:\n  pub async property status -> str:\n    return \"ready\"\n",
+            "property declarations with async modifiers should fail",
+        );
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Declaration modifiers are not supported on properties")),
+            "expected property modifier diagnostic, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_assert_without_std_testing_import_ok() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(x: int) -> None:
+  assert x > 0
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        assert!(matches!(&func.body[0].node, Statement::Assert(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_assert_with_std_testing_import_still_uses_core_assert_ast() -> Result<(), Vec<CompileError>> {
         let source = r#"
 import std.testing
 
@@ -432,18 +1525,15 @@ def f(x: int) -> None:
   assert x > 0, "x must be positive"
 "#;
         let program = parse_str(source)?;
-        let func = match &program.declarations[1].node {
-            Declaration::Function(f) => f,
-            _ => panic!("Expected function declaration"),
+        let func = require_function_decl(&program.declarations[1])?;
+        let Statement::Assert(assert_stmt) = &func.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assert statement".to_string(),
+                func.body[0].span,
+            )]);
         };
-        assert!(matches!(
-            &func.body[0].node,
-            Statement::Surface(surface)
-                if matches!(
-                    surface.payload,
-                    SurfaceStmtPayload::KeywordArgs(_)
-                )
-        ));
+        assert!(matches!(assert_stmt.kind, AssertKind::Condition(_)));
+        assert!(assert_stmt.message.is_some());
         Ok(())
     }
 
@@ -489,11 +1579,9 @@ trait Debug:
     def __repr__(self) -> str: ...
 "#;
         let program = parse_str(source)?;
-        let tr = match &program.declarations[0].node {
-            Declaration::Trait(t) => t,
-            _ => panic!("Expected trait declaration"),
-        };
+        let tr = require_trait_decl(&program.declarations[0])?;
         assert_eq!(tr.name, "Debug");
+        assert_eq!(tr.docstring.as_deref(), Some("Debug representation."));
         assert_eq!(tr.methods.len(), 1);
         assert_eq!(tr.methods[0].node.name, "__repr__");
         Ok(())
@@ -545,16 +1633,146 @@ type UserId[T] = newtype int:
         return 1
 "#;
         let program = parse_str(source)?;
-        let nt = match &program.declarations[0].node {
-            Declaration::Newtype(nt) => nt,
-            _ => panic!("Expected newtype declaration"),
-        };
+        let nt = require_newtype_decl(&program.declarations[0])?;
         assert_eq!(nt.name, "UserId");
         assert_eq!(nt.type_params.len(), 1);
         assert_eq!(nt.docstring.as_deref(), Some("Opaque identifier wrapper."));
         assert_eq!(nt.methods.len(), 1);
         assert_eq!(nt.methods[0].node.name, "raw");
+        assert!(!nt.is_rusttype);
+        assert!(nt.rebindings.is_empty());
+        assert!(nt.interop_edges.is_empty());
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_rusttype_with_rebinding_and_interop() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+type Sender[T] = rusttype RustSender[T]:
+    send_now = try_send
+
+    interop:
+        from str try Sender.parse
+        into bytes via Sender.encode
+"#;
+        let program = parse_str(source)?;
+        let nt = require_newtype_decl(&program.declarations[0])?;
+        assert!(nt.is_rusttype);
+        assert_eq!(nt.rebindings.len(), 1);
+        assert_eq!(nt.rebindings[0].node.name, "send_now");
+        assert_eq!(nt.interop_edges.len(), 2);
+        assert!(matches!(
+            nt.interop_edges[0].node.direction,
+            InteropDirection::From
+        ));
+        assert!(matches!(
+            nt.interop_edges[0].node.adapter_kind,
+            InteropAdapterKind::Try
+        ));
+        assert!(matches!(
+            nt.interop_edges[1].node.direction,
+            InteropDirection::Into
+        ));
+        assert!(matches!(
+            nt.interop_edges[1].node.adapter_kind,
+            InteropAdapterKind::Via
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_rusttype_minimal() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+type Email = rusttype RustEmailAddress
+"#;
+        let program = parse_str(source)?;
+        let nt = require_newtype_decl(&program.declarations[0])?;
+        assert!(nt.is_rusttype);
+        assert!(nt.methods.is_empty());
+        assert!(nt.rebindings.is_empty());
+        assert!(nt.interop_edges.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_rusttype_qualified_underlying() -> Result<(), Vec<CompileError>> {
+        let source = "type MyBin = rusttype proto_type::Binary\n";
+        let program = parse_str(source)?;
+        let nt = require_newtype_decl(&program.declarations[0])?;
+        assert!(nt.is_rusttype);
+        assert!(matches!(
+            &nt.underlying.node,
+            Type::Qualified(segs) if segs == &vec!["proto_type".to_string(), "Binary".to_string()]
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_into_try_interop_edge() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+type Email = rusttype RustEmailAddress:
+    def try_into_str(self) -> Result[str, str]:
+        ...
+
+    interop:
+        into str try Email.try_into_str
+"#;
+        let program = parse_str(source)?;
+        let nt = require_newtype_decl(&program.declarations[0])?;
+        assert_eq!(nt.interop_edges.len(), 1);
+        assert!(matches!(
+            nt.interop_edges[0].node.direction,
+            InteropDirection::Into
+        ));
+        assert!(matches!(
+            nt.interop_edges[0].node.adapter_kind,
+            InteropAdapterKind::Try
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_interop_edge_missing_via_or_try_is_error() {
+        let source = r#"
+type Email = rusttype RustEmailAddress:
+    interop:
+        from str Email.parse
+"#;
+        let result = parse_str(source);
+        assert!(
+            result.is_err(),
+            "expected parser error for missing `via`/`try` in interop edge"
+        );
+        let errs = match result {
+            Err(errs) => errs,
+            Ok(_) => Vec::new(),
+        };
+        assert!(
+            errs.iter().any(|e| e.message.contains("Expected `via` or `try` in interop edge")),
+            "expected missing-adapter-kind parser error, got: {errs:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_interop_edge_missing_from_or_into_is_error() {
+        let source = r#"
+type Email = rusttype RustEmailAddress:
+    interop:
+        str via Email.parse
+"#;
+        let result = parse_str(source);
+        assert!(
+            result.is_err(),
+            "expected parser error for missing `from`/`into` in interop edge"
+        );
+        let errs = match result {
+            Err(errs) => errs,
+            Ok(_) => Vec::new(),
+        };
+        assert!(
+            errs.iter().any(|e| e.message.contains("Expected `from` or `into` in interop edge")),
+            "expected missing-direction parser error, got: {errs:?}"
+        );
     }
 
     #[test]
@@ -657,7 +1875,7 @@ model User with Describable:
             Declaration::Model(m) => {
                 assert_eq!(m.name, "User");
                 assert_eq!(m.traits.len(), 1);
-                assert_eq!(m.traits[0].node, "Describable");
+                assert_eq!(m.traits[0].node.name, "Describable");
             }
             _ => panic!("Expected model"),
         }
@@ -682,8 +1900,31 @@ model User with A, B:
             Declaration::Model(m) => {
                 assert_eq!(m.name, "User");
                 assert_eq!(m.traits.len(), 2);
-                assert_eq!(m.traits[0].node, "A");
-                assert_eq!(m.traits[1].node, "B");
+                assert_eq!(m.traits[0].node.name, "A");
+                assert_eq!(m.traits[1].node.name, "B");
+            }
+            _ => panic!("Expected model"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_model_with_generic_trait_adoption_named_from() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+trait From[T]:
+  @classmethod
+  def from(cls, value: T) -> Self: ...
+
+model UserId with From[int]:
+  value: int
+"#;
+        let program = parse_str(source)?;
+        match &program.declarations[1].node {
+            Declaration::Model(m) => {
+                assert_eq!(m.name, "UserId");
+                assert_eq!(m.traits.len(), 1);
+                assert_eq!(m.traits[0].node.name, "From");
+                assert_eq!(m.traits[0].node.type_args.len(), 1);
             }
             _ => panic!("Expected model"),
         }
@@ -702,6 +1943,27 @@ def add(a: int, b: int) -> int:
             Declaration::Function(f) => {
                 assert_eq!(f.name, "add");
                 assert_eq!(f.params.len(), 2);
+            }
+            _ => panic!("Expected function"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_function_multiline_params_allow_trailing_comma() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def identity(
+  value: int,
+) -> int:
+  return value
+"#;
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0].node {
+            Declaration::Function(f) => {
+                assert_eq!(f.name, "identity");
+                assert_eq!(f.params.len(), 1);
+                assert_eq!(f.params[0].node.name, "value");
             }
             _ => panic!("Expected function"),
         }
@@ -753,13 +2015,60 @@ def add(a: int, b: int) -> int:
     }
 
     #[test]
-    fn test_parse_pub_from_outside_src_lib_is_error() {
+    fn test_parse_pub_from_in_src_main_is_public_reexport() -> Result<(), Vec<CompileError>> {
         let source = "pub from widgets import Widget\n";
-        let result = parse_str_with_module_path(source, Some("project/src/main.incn"));
-        assert!(result.is_err(), "Expected parser to reject `pub from` outside src/lib.incn");
+        let program = parse_str_with_module_path(source, Some("project/src/main.incn"))?;
+        assert_eq!(program.declarations.len(), 1);
+
+        let Declaration::Import(import) = &program.declarations[0].node else {
+            panic!("Expected import declaration");
+        };
+        assert!(matches!(import.visibility, Visibility::Public));
+        let ImportKind::From { module, items } = &import.kind else {
+            panic!("Expected from-import");
+        };
+        assert_eq!(module.segments, vec!["widgets".to_string()]);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Widget");
+        assert_eq!(items[0].alias, None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_pub_from_rust_in_src_module_is_public_reexport() -> Result<(), Vec<CompileError>> {
+        let source = "pub from rust::time import Instant\n";
+        let program = parse_str_with_module_path(source, Some("project/src/session/mod.incn"))?;
+        assert_eq!(program.declarations.len(), 1);
+
+        let Declaration::Import(import) = &program.declarations[0].node else {
+            panic!("Expected import declaration");
+        };
+        assert!(matches!(import.visibility, Visibility::Public));
+        let ImportKind::RustFrom {
+            crate_name,
+            path,
+            items,
+            ..
+        } = &import.kind
+        else {
+            panic!("Expected rust from-import");
+        };
+        assert_eq!(crate_name, "time");
+        assert!(path.is_empty());
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].name, "Instant");
+        assert_eq!(items[0].alias, None);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_pub_from_outside_src_is_error() {
+        let source = "pub from widgets import Widget\n";
+        let result = parse_str_with_module_path(source, Some("project/tests/test_main.incn"));
+        assert!(result.is_err(), "Expected parser to reject `pub from` outside src/");
         let err = result.err().unwrap_or_default();
         assert!(
-            err[0].message.contains("only valid in `src/lib.incn`"),
+            err[0].message.contains("only valid in modules under `src/`"),
             "Unexpected error: {}",
             err[0].message
         );
@@ -1095,8 +2404,7 @@ def add(a: int, b: int) -> int:
     #[test]
     fn test_parse_from_import_parenthesized_unclosed_error() {
         let source = "from db import (CategoryId, TagId\n";
-        let result = parse_str(source);
-        let err = result.expect_err("Unclosed import list should produce a parse error");
+        let err = parse_str_err(source, "Unclosed import list should produce a parse error");
         assert!(
             err[0].message.contains(')') || err[0].message.to_lowercase().contains("close"),
             "Expected error to mention ')'; got: {}",
@@ -1108,8 +2416,7 @@ def add(a: int, b: int) -> int:
     #[test]
     fn test_parse_from_import_empty_parens_error() {
         let source = "from db import ()\n";
-        let result = parse_str(source);
-        let err = result.expect_err("Empty import list should produce a parse error");
+        let err = parse_str_err(source, "Empty import list should produce a parse error");
         assert!(
             err[0].message.to_lowercase().contains("empty") || err[0].message.to_lowercase().contains("cannot"),
             "Expected 'empty' diagnostic; got: {}",
@@ -1185,6 +2492,86 @@ def add(a: int, b: int) -> int:
         Ok(())
     }
 
+    /// Rust item paths may use module names that are Incan keywords (e.g. Substrait `proto::type`).
+    #[test]
+    fn test_parse_rust_from_import_path_type_keyword_segment() -> Result<(), Vec<CompileError>> {
+        let source = "from rust::substrait::proto::type import Binary, Boolean\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustFrom { crate_name, path, items, .. } => {
+                    assert_eq!(crate_name, "substrait");
+                    assert_eq!(path, &["proto".to_string(), "type".to_string()]);
+                    assert_eq!(items.len(), 2);
+                    assert_eq!(items[0].name, "Binary");
+                    assert_eq!(items[1].name, "Boolean");
+                }
+                _ => panic!("Expected RustFrom import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_rust_import_crate_path_type_keyword_segment() -> Result<(), Vec<CompileError>> {
+        let source = "import rust::substrait::proto::type::Binary\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustCrate {
+                    crate_name,
+                    path,
+                    version,
+                    features,
+                } => {
+                    assert_eq!(crate_name, "substrait");
+                    assert_eq!(
+                        path,
+                        &[
+                            "proto".to_string(),
+                            "type".to_string(),
+                            "Binary".to_string()
+                        ]
+                    );
+                    assert!(version.is_none());
+                    assert!(features.is_empty());
+                }
+                _ => panic!("Expected RustCrate import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    /// `from rust::... import` may name Rust items that are Incan keywords (e.g. `type` module).
+    #[test]
+    fn test_parse_rust_from_import_keyword_item_with_alias() -> Result<(), Vec<CompileError>> {
+        let source = "from rust::substrait::proto import type as proto_type\n";
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(i) => match &i.kind {
+                ImportKind::RustFrom { crate_name, path, items, .. } => {
+                    assert_eq!(crate_name, "substrait");
+                    assert_eq!(path, &["proto".to_string()]);
+                    assert_eq!(items.len(), 1);
+                    assert_eq!(items[0].name, "type");
+                    assert_eq!(items[0].alias.as_deref(), Some("proto_type"));
+                }
+                _ => panic!("Expected RustFrom import"),
+            },
+            _ => panic!("Expected import declaration"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_from_import_rejects_keyword_item_name_for_incan_modules() {
+        let source = "from db import type\n";
+        let result = parse_str(source);
+        assert!(result.is_err(), "expected parse error for keyword import item on Incan from-import");
+    }
+
     #[test]
     fn test_parse_match() -> Result<(), Vec<CompileError>> {
         let source = r#"
@@ -1237,6 +2624,96 @@ def f() -> int:
     }
 
     #[test]
+    fn test_parse_match_fat_arrow_block_allows_blank_before_body() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f() -> int:
+  match Err("bad"):
+    Ok(x) =>
+      return x
+    Err(err) =>
+
+      return 0
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function declaration"),
+        };
+        let match_expr = match &func.body[0].node {
+            Statement::Expr(expr) => expr,
+            _ => panic!("Expected match expression statement"),
+        };
+        let arms = match &match_expr.node {
+            Expr::Match(_, arms) => arms,
+            _ => panic!("Expected match expression"),
+        };
+        assert_eq!(arms.len(), 2);
+        assert!(matches!(arms[1].node.body, MatchBody::Block(ref stmts) if stmts.len() == 1));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_match_arm_suite_does_not_inherit_outer_blank_line_intent() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(result: Result[int, str]) -> int:
+  match result:
+    Ok(value) => match value:
+      Ready(x) => return x
+
+      Failed(err) => return 0
+
+    Err(err) =>
+      return 1
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function declaration"),
+        };
+        let match_expr = match &func.body[0].node {
+            Statement::Expr(expr) => expr,
+            _ => panic!("Expected match expression statement"),
+        };
+        let arms = match &match_expr.node {
+            Expr::Match(_, arms) => arms,
+            _ => panic!("Expected match expression"),
+        };
+        let err_body = match &arms[1].node.body {
+            MatchBody::Block(stmts) => stmts,
+            _ => panic!("Expected block match body"),
+        };
+        assert_eq!(err_body.len(), 1);
+        assert_eq!(
+            err_body[0].leading_blank_lines, 0,
+            "outer Err arm body should not inherit the preserved gap from the nested Ok arm"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_if_elif_else_allows_blank_before_suite_body() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def f(kind: str) -> int:
+  if kind == "a":
+    return 1
+  elif kind == "b":
+
+    return 2
+  else:
+
+    return 3
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(func) => func,
+            _ => panic!("Expected function declaration"),
+        };
+        assert_eq!(func.body.len(), 1);
+        assert!(matches!(func.body[0].node, Statement::If(_)));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_const_decl() -> Result<(), Vec<CompileError>> {
         let source = r#"
 const ANSWER: int = 42
@@ -1250,6 +2727,237 @@ const ANSWER: int = 42
             _ => panic!("Expected const"),
         }
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_implicit_derives_metadata_decl() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+__derives__ = [Serialize, Deserialize]
+"#;
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 1);
+        let Declaration::Const(c) = &program.declarations[0].node else {
+            panic!("Expected __derives__ metadata as const declaration");
+        };
+        assert_eq!(c.name, "__derives__");
+        assert!(c.ty.is_none());
+        let Expr::List(entries) = &c.value.node else {
+            panic!("Expected __derives__ value to parse as list literal");
+        };
+        assert_eq!(entries.len(), 2);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_module_qualified_trait_bound() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def encode[T with json.Serialize](value: T) -> str:
+  return value.to_json()
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Function(func) = &program.declarations[0].node else {
+            panic!("Expected function declaration");
+        };
+        assert_eq!(func.type_params.len(), 1);
+        assert_eq!(func.type_params[0].bounds.len(), 1);
+        assert_eq!(func.type_params[0].bounds[0].name, "json.Serialize");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_decimal_literal() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+const PRICE = 19.99d
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Const(c) = &program.declarations[0].node else {
+            panic!("Expected const");
+        };
+        let Expr::Literal(Literal::Decimal(value)) = &c.value.node else {
+            panic!("Expected decimal literal");
+        };
+        assert_eq!(value.body, "19.99");
+        assert_eq!(value.repr, "19.99d");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_decimal_type_arguments() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+const PRICE: decimal[10, 2] = 19.99d
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Const(c) = &program.declarations[0].node else {
+            panic!("Expected const");
+        };
+        let Some(ty) = &c.ty else {
+            panic!("Expected const type annotation");
+        };
+        let Type::Generic(name, args) = &ty.node else {
+            panic!("Expected generic decimal type");
+        };
+        assert_eq!(name, "decimal");
+        assert_eq!(args.len(), 2);
+        assert!(matches!(&args[0].node, Type::IntLiteral(value) if value.value == 10));
+        assert!(matches!(&args[1].node, Type::IntLiteral(value) if value.value == 2));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_int_single_constraint() -> Result<(), Vec<CompileError>> {
+        let source = "type NonNegativeInt = newtype int[ge=0]\n";
+        let program = parse_str(source)?;
+        let newtype = require_newtype_decl(&program.declarations[0])?;
+        let Type::ConstrainedPrimitive(name, constraints) = &newtype.underlying.node else {
+            panic!("Expected constrained primitive type, got: {:?}", newtype.underlying.node);
+        };
+        assert_eq!(name, "int");
+        assert_eq!(constraints.len(), 1);
+        assert_eq!(constraints[0].node.key, TypeConstraintKey::Ge);
+        assert_eq!(constraints[0].node.value.value, 0);
+        assert_eq!(constraints[0].node.value.repr, "0");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_multiple_constraints() -> Result<(), Vec<CompileError>> {
+        let source = "type Digit = newtype int[gt=-1, lt=10]\n";
+        let program = parse_str(source)?;
+        let newtype = require_newtype_decl(&program.declarations[0])?;
+        let Type::ConstrainedPrimitive(name, constraints) = &newtype.underlying.node else {
+            panic!("Expected constrained primitive type, got: {:?}", newtype.underlying.node);
+        };
+        assert_eq!(name, "int");
+        assert_eq!(constraints.len(), 2);
+        assert_eq!(constraints[0].node.key, TypeConstraintKey::Gt);
+        assert_eq!(constraints[0].node.value.value, -1);
+        assert_eq!(constraints[0].node.value.repr, "-1");
+        assert_eq!(constraints[1].node.key, TypeConstraintKey::Lt);
+        assert_eq!(constraints[1].node.value.value, 10);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_float_accepts_integer_literal_constraint() -> Result<(), Vec<CompileError>> {
+        let source = "type UnitRatio = newtype float[ge=0, le=1]\n";
+        let program = parse_str(source)?;
+        let newtype = require_newtype_decl(&program.declarations[0])?;
+        let Type::ConstrainedPrimitive(name, constraints) = &newtype.underlying.node else {
+            panic!("Expected constrained primitive type, got: {:?}", newtype.underlying.node);
+        };
+        assert_eq!(name, "float");
+        assert_eq!(constraints.len(), 2);
+        assert_eq!(constraints[0].node.key, TypeConstraintKey::Ge);
+        assert_eq!(constraints[1].node.key, TypeConstraintKey::Le);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_duplicate_key() {
+        let source = "type Bad = newtype int[ge=0, ge=1]\n";
+        let errs = parse_str_err(source, "duplicate constrained primitive key should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Duplicate constrained primitive key `ge`")),
+            "Expected duplicate constraint key error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_unsupported_key() {
+        let source = "type Bad = newtype int[min=0]\n";
+        let errs = parse_str_err(source, "unsupported constrained primitive key should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Unsupported constrained primitive key `min`")),
+            "Expected unsupported constraint key error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_empty_constraint_block() {
+        let source = "type Bad = newtype int[]\n";
+        let errs = parse_str_err(source, "empty constrained primitive block should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("requires at least one constraint")),
+            "Expected empty constraint block error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_second_constraint_block() {
+        let source = "type Bad = newtype int[ge=0][lt=10]\n";
+        let errs = parse_str_err(source, "second constrained primitive block should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Only one constraint block is allowed")),
+            "Expected second constraint block error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_constrained_primitive_rejects_non_integer_literal_value() {
+        let source = "type Bad = newtype int[ge=MIN_VALUE]\n";
+        let errs = parse_str_err(source, "non-literal constrained primitive value should fail");
+        assert!(
+            errs.iter()
+                .any(|err| err.message.contains("Expected integer literal constraint value")),
+            "Expected integer literal constraint value error, got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn test_parse_static_decl() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+pub static counter: int = 0
+"#;
+        let program = parse_str(source)?;
+        assert_eq!(program.declarations.len(), 1);
+        match &program.declarations[0].node {
+            Declaration::Static(static_decl) => {
+                assert_eq!(static_decl.name, "counter");
+                assert_eq!(static_decl.visibility, Visibility::Public);
+            }
+            _ => panic!("Expected static"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_static_requires_type_annotation() {
+        let source = "static counter = 0\n";
+        let Err(errors) = parse_str(source) else {
+            panic!("expected parse error");
+        };
+        assert!(errors.iter().any(|error| error.message.contains("requires an explicit type annotation")));
+    }
+
+    #[test]
+    fn test_parse_static_requires_initializer() {
+        let source = "static counter: int\n";
+        let Err(errors) = parse_str(source) else {
+            panic!("expected parse error");
+        };
+        assert!(errors.iter().any(|error| error.message.contains("requires an initializer")));
+    }
+
+    #[test]
+    fn test_parse_static_rejected_in_function_body() {
+        let source = r#"
+def main() -> int:
+  static counter: int = 0
+  return counter
+"#;
+        let Err(errors) = parse_str(source) else {
+            panic!("expected parse error");
+        };
+        assert!(errors.iter().any(|error| error.message.contains("only allowed at module scope")));
     }
 
     #[test]
@@ -1371,7 +3079,7 @@ const ANSWER: int = 42
         );
 
         let (base, method, args) = match &interpolation.node {
-            Expr::MethodCall(base, method, args) => (base, method, args),
+            Expr::MethodCall(base, method, _, args) => (base, method, args),
             _ => panic!("Expected method call interpolation"),
         };
         assert_eq!(method, "upper");
@@ -1393,6 +3101,106 @@ const ANSWER: int = 42
         assert_eq!(index.span.start, expected_index_start);
         assert_eq!(index.span.end, expected_index_start + "unknown_idx".len());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_function_call_with_explicit_type_args() -> Result<(), Vec<CompileError>> {
+        let source = "def run() -> int:\n  return id[int](1)\n";
+        let program = parse_str(source)?;
+        let function = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+        let return_expr = match &function.body[0].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return expression"),
+        };
+        match &return_expr.node {
+            Expr::Call(callee, type_args, args) => {
+                assert!(matches!(callee.node, Expr::Ident(ref name) if name == "id"));
+                assert_eq!(type_args.len(), 1);
+                assert!(matches!(type_args[0].node, Type::Simple(ref name) if name == "int"));
+                assert_eq!(args.len(), 1);
+            }
+            other => panic!("Expected explicit-generic call, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_method_call_with_explicit_type_args() -> Result<(), Vec<CompileError>> {
+        let source = "def run(box: Boxed[int]) -> int:\n  return box.get[int]()\n";
+        let program = parse_str(source)?;
+        let function = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+        let return_expr = match &function.body[0].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return expression"),
+        };
+        match &return_expr.node {
+            Expr::MethodCall(base, method, type_args, args) => {
+                assert!(matches!(base.node, Expr::Ident(ref name) if name == "box"));
+                assert_eq!(method, "get");
+                assert_eq!(type_args.len(), 1);
+                assert!(matches!(type_args[0].node, Type::Simple(ref name) if name == "int"));
+                assert!(args.is_empty());
+            }
+            other => panic!("Expected explicit-generic method call, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_function_call_with_infer_type_arg_placeholder() -> Result<(), Vec<CompileError>> {
+        let source = "def run() -> int:\n  return pair_map[int, _](1, 2)\n";
+        let program = parse_str(source)?;
+        let function = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+        let return_expr = match &function.body[0].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return expression"),
+        };
+        match &return_expr.node {
+            Expr::Call(callee, type_args, args) => {
+                assert!(matches!(callee.node, Expr::Ident(ref name) if name == "pair_map"));
+                assert_eq!(type_args.len(), 2);
+                assert!(matches!(type_args[0].node, Type::Simple(ref name) if name == "int"));
+                assert!(matches!(type_args[1].node, Type::Infer));
+                assert_eq!(args.len(), 2);
+            }
+            other => panic!("Expected explicit-generic call with infer, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_method_call_with_infer_type_arg_placeholder() -> Result<(), Vec<CompileError>> {
+        let source = "def run(box: Boxed[int]) -> int:\n  return box.unwrap[int, _](0)\n";
+        let program = parse_str(source)?;
+        let function = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+        let return_expr = match &function.body[0].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return expression"),
+        };
+        match &return_expr.node {
+            Expr::MethodCall(base, method, type_args, args) => {
+                assert!(matches!(base.node, Expr::Ident(ref name) if name == "box"));
+                assert_eq!(method, "unwrap");
+                assert_eq!(type_args.len(), 2);
+                assert!(matches!(type_args[0].node, Type::Simple(ref name) if name == "int"));
+                assert!(matches!(type_args[1].node, Type::Infer));
+                assert_eq!(args.len(), 1);
+            }
+            other => panic!("Expected explicit-generic method call with infer, got {other:?}"),
+        }
         Ok(())
     }
 
@@ -1440,7 +3248,7 @@ const ANSWER: int = 42
             None => panic!("Expected list comprehension filter"),
         };
         let callee = match &filter.node {
-            Expr::Call(callee, _args) => callee,
+            Expr::Call(callee, _, _args) => callee,
             _ => panic!("Expected filter call expression"),
         };
 
@@ -1452,6 +3260,99 @@ const ANSWER: int = 42
         assert_eq!(callee.span.start, expected_callee_start);
         assert_eq!(callee.span.end, expected_callee_start + "unknown_pred".len());
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_generator_expression_full_clause_shape() -> Result<(), Vec<CompileError>> {
+        let source = "def run(xs: list[int], ys: list[int]) -> Generator[int]:\n  return (x * y for x in xs if x > 0 for y in ys if y > x)\n";
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let Statement::Return(Some(expr)) = &function.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected return statement".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        let Expr::Generator(generator) = &expr.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected generator expression".to_string(),
+                expr.span,
+            )]);
+        };
+
+        assert_eq!(generator.clauses.len(), 4);
+        let ComprehensionClause::For { pattern, iter } = &generator.clauses[0] else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected first for clause".to_string(),
+                expr.span,
+            )]);
+        };
+        assert_eq!(pattern.node, Pattern::Binding("x".to_string()));
+        assert!(matches!(iter.node, Expr::Ident(ref name) if name == "xs"));
+        assert!(matches!(generator.clauses[1], ComprehensionClause::If(_)));
+        let ComprehensionClause::For { pattern, iter } = &generator.clauses[2] else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected second for clause".to_string(),
+                expr.span,
+            )]);
+        };
+        assert_eq!(pattern.node, Pattern::Binding("y".to_string()));
+        assert!(matches!(iter.node, Expr::Ident(ref name) if name == "ys"));
+        assert!(matches!(generator.clauses[3], ComprehensionClause::If(_)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_generator_expression_tuple_unpack_binding() -> Result<(), Vec<CompileError>> {
+        let source = "def names(xs: list[str]) -> Generator[str]:\n  return (name for idx, name in enumerate(xs))\n";
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let Statement::Return(Some(expr)) = &function.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected return statement".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        let Expr::Generator(generator) = &expr.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected generator expression".to_string(),
+                expr.span,
+            )]);
+        };
+
+        let ComprehensionClause::For { pattern, .. } = &generator.clauses[0] else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected for clause".to_string(),
+                expr.span,
+            )]);
+        };
+        let Pattern::Tuple(items) = &pattern.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected tuple binding pattern".to_string(),
+                pattern.span,
+            )]);
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].node, Pattern::Binding("idx".to_string()));
+        assert_eq!(items[1].node, Pattern::Binding("name".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_generator_function_yield_compatibility() -> Result<(), Vec<CompileError>> {
+        let source = "def count() -> Generator[int]:\n  yield 1\n";
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        if !matches!(
+            &function.body[0].node,
+            Statement::Expr(expr) if matches!(expr.node, Expr::Yield(Some(_)))
+        ) {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected yield expression statement".to_string(),
+                function.body[0].span,
+            )]);
+        };
         Ok(())
     }
 
@@ -1499,6 +3400,98 @@ const ANSWER: int = 42
     }
 
     #[test]
+    fn test_parse_value_enum_with_string_values() -> Result<(), Vec<CompileError>> {
+        let source = "enum Color(str):\n    Red = \"red\"\n    Blue = \"blue\"\n";
+        let program = parse_str(source)?;
+        let en = require_enum_decl(&program.declarations[0])?;
+
+        assert!(matches!(en.value_type.as_ref().map(|ty| ty.node), Some(ValueEnumType::Str)));
+        assert_eq!(en.variants.len(), 2);
+        assert_eq!(en.variants[0].node.name, "Red");
+        assert!(en.variants[0].node.fields.is_empty());
+        assert!(matches!(
+            en.variants[0].node.value.as_ref().map(|value| &value.node),
+            Some(ValueEnumLiteral::Str(value)) if value == "red"
+        ));
+        assert!(matches!(
+            en.variants[1].node.value.as_ref().map(|value| &value.node),
+            Some(ValueEnumLiteral::Str(value)) if value == "blue"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_value_enum_with_integer_values() -> Result<(), Vec<CompileError>> {
+        let source = "enum Status(int):\n    Pending = 1\n    Done = 2\n";
+        let program = parse_str(source)?;
+        let en = require_enum_decl(&program.declarations[0])?;
+
+        assert!(matches!(en.value_type.as_ref().map(|ty| ty.node), Some(ValueEnumType::Int)));
+        assert_eq!(en.variants.len(), 2);
+        assert!(matches!(
+            en.variants[0].node.value.as_ref().map(|value| &value.node),
+            Some(ValueEnumLiteral::Int(value)) if value.value == 1
+        ));
+        assert!(matches!(
+            en.variants[1].node.value.as_ref().map(|value| &value.node),
+            Some(ValueEnumLiteral::Int(value)) if value.value == 2
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_value_enum_variant_requires_explicit_value() {
+        let source = "enum Color(str):\n    Red\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Value enum variant without assigned value should be rejected");
+        };
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("explicit literal values"),
+            "Expected hint about explicit literal values, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_value_enum_variant_payload_rejected() {
+        let source = "enum Color(str):\n    Red(str) = \"red\"\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Value enum variant payload should be rejected");
+        };
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("cannot carry tuple or struct payloads"),
+            "Expected hint about value enum payloads, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_value_enum_variant_literal_type_must_match_header() {
+        let source = "enum Color(str):\n    Red = 1\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Value enum variant with wrong literal type should be rejected");
+        };
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("Expected string literal value"),
+            "Expected hint about string literal values, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn test_value_enum_header_type_must_be_str_or_int() {
+        let source = "enum Color(float):\n    Red = 1\n";
+        let Err(err) = parse_str(source) else {
+            panic!("Value enum with unsupported backing type should be rejected");
+        };
+        let msg = format!("{:?}", err);
+        assert!(
+            msg.contains("must be 'str' or 'int'"),
+            "Expected hint about value enum backing types, got: {msg}"
+        );
+    }
+
+    #[test]
     fn test_enum_colon_annotation_rejected_with_hint() {
         let source = "enum Fields:\n    Name: str\n";
         let Err(err) = parse_str(source) else {
@@ -1512,6 +3505,62 @@ const ANSWER: int = 42
     }
 
     #[test]
+    fn test_parse_enum_with_trait_adoption_and_method() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+enum Lookup with Index[str, int]:
+    Mapping
+    Empty
+
+    def __getitem__(self, key: str) -> int:
+        return 0
+"#;
+        let program = parse_str(source)?;
+        let en = require_enum_decl(&program.declarations[0])?;
+
+        assert_eq!(en.name, "Lookup");
+        assert_eq!(en.traits.len(), 1);
+        assert_eq!(en.traits[0].node.name, "Index");
+        assert_eq!(en.traits[0].node.type_args.len(), 2);
+        assert_eq!(require_simple_type(&en.traits[0].node.type_args[0])?, "str");
+        assert_eq!(require_simple_type(&en.traits[0].node.type_args[1])?, "int");
+        assert_eq!(en.variants.len(), 2);
+        assert_eq!(en.methods.len(), 1);
+        assert_eq!(en.methods[0].node.name, "__getitem__");
+        assert_eq!(en.methods[0].node.receiver, Some(Receiver::Immutable));
+        assert_eq!(en.methods[0].node.params.len(), 1);
+        assert!(en.methods[0].node.body.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_value_enum_with_trait_adoption_after_value_type() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+enum Env(str) with From[str]:
+    Dev = "development"
+    Prod = "production"
+
+    @classmethod
+    def from(cls, value: str) -> Self:
+        return Env.Dev
+"#;
+        let program = parse_str(source)?;
+        let en = require_enum_decl(&program.declarations[0])?;
+
+        assert!(matches!(en.value_type.as_ref().map(|ty| ty.node), Some(ValueEnumType::Str)));
+        assert_eq!(en.traits.len(), 1);
+        assert_eq!(en.traits[0].node.name, "From");
+        assert_eq!(en.traits[0].node.type_args.len(), 1);
+        assert_eq!(require_simple_type(&en.traits[0].node.type_args[0])?, "str");
+        assert_eq!(en.variants.len(), 2);
+        assert_eq!(en.methods.len(), 1);
+        assert_eq!(en.methods[0].node.name, "from");
+        assert_eq!(en.methods[0].node.receiver, None);
+        assert_eq!(en.methods[0].node.params.len(), 1);
+        assert_eq!(en.methods[0].node.decorators.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn test_valid_enum_still_parses() {
         let source = "enum Status:\n    Pending\n    Active\n    Done(str)\n";
         let Ok(program) = parse_str(source) else {
@@ -1520,10 +3569,12 @@ const ANSWER: int = 42
         assert_eq!(program.declarations.len(), 1);
         match &program.declarations[0].node {
             Declaration::Enum(e) => {
+                assert!(e.value_type.is_none());
                 assert_eq!(e.variants.len(), 3);
                 assert_eq!(e.variants[0].node.name, "Pending");
                 assert_eq!(e.variants[1].node.name, "Active");
                 assert_eq!(e.variants[2].node.name, "Done");
+                assert!(e.variants.iter().all(|variant| variant.node.value.is_none()));
                 assert_eq!(e.variants[2].node.fields.len(), 1);
             }
             _ => panic!("Expected enum"),
@@ -1724,6 +3775,31 @@ def check(f: Callable[(int, str), bool]) -> None:
     }
 
     #[test]
+    fn test_function_type_accepts_reference_params() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class Box:
+  value: int
+
+def decorate(f: (&Box, &mut Box) -> int) -> (&Box) -> int:
+  return f
+"#;
+        let program = parse_str(source)?;
+        let function = match &program.declarations[1].node {
+            Declaration::Function(function) => function,
+            _ => panic!("Expected function declaration"),
+        };
+        let first_param = &function.params[0].node;
+        match &first_param.ty.node {
+            Type::Function(params, _) => {
+                assert!(matches!(params[0].node, Type::Ref(_)));
+                assert!(matches!(params[1].node, Type::RefMut(_)));
+            }
+            other => panic!("Expected function type, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_callable_invalid_arity_is_parse_error() {
         let source = r#"
 def bad(f: Callable[int]) -> None:
@@ -1738,6 +3814,126 @@ def bad(f: Callable[int]) -> None:
             "Expected Callable arity error, got: {:?}",
             errs.iter().map(|err| &err.message).collect::<Vec<_>>()
         );
+    }
+
+    // ---- RFC 029: union type parser normalization ----
+
+    #[test]
+    fn test_union_pipe_return_type_desugars_to_canonical_generic() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def parse_value(raw: str) -> int | str:
+  return raw
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        match &function.return_type.node {
+            Type::Generic(name, args) => {
+                assert_eq!(name, "Union");
+                assert_eq!(args.len(), 2);
+                assert!(matches!(args[0].node, Type::Simple(ref name) if name == "int"));
+                assert!(matches!(args[1].node, Type::Simple(ref name) if name == "str"));
+            }
+            other => panic!("Expected canonical Union generic, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_union_pipe_inside_generic_binds_looser_than_type_args() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def load_values() -> List[int | str]:
+  return []
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        match &function.return_type.node {
+            Type::Generic(name, args) => {
+                assert_eq!(name, "List");
+                assert_eq!(args.len(), 1);
+                match &args[0].node {
+                    Type::Generic(name, members) => {
+                        assert_eq!(name, "Union");
+                        assert_eq!(members.len(), 2);
+                        assert!(matches!(members[0].node, Type::Simple(ref name) if name == "int"));
+                        assert!(matches!(members[1].node, Type::Simple(ref name) if name == "str"));
+                    }
+                    other => panic!("Expected nested canonical Union generic, got: {other:?}"),
+                }
+            }
+            other => panic!("Expected List generic, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_union_pipe_accepts_none_member_in_annotation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def maybe_name() -> str | None:
+  return None
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        match &function.return_type.node {
+            Type::Generic(name, args) => {
+                assert_eq!(name, "Union");
+                assert_eq!(args.len(), 2);
+                assert!(matches!(args[0].node, Type::Simple(ref name) if name == "str"));
+                assert!(matches!(args[1].node, Type::Simple(ref name) if name == "None"));
+            }
+            other => panic!("Expected canonical Union generic containing None, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_union_pipe_flattens_nested_union_and_preserves_duplicates() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def parse_value() -> int | Union[str, int] | None | str:
+  return 1
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        match &function.return_type.node {
+            Type::Generic(name, args) => {
+                assert_eq!(name, "Union");
+                let names: Vec<_> = args
+                    .iter()
+                    .map(|arg| match &arg.node {
+                        Type::Simple(name) => name.as_str(),
+                        other => panic!("Expected simple union member, got: {other:?}"),
+                    })
+                    .collect();
+                assert_eq!(names, vec!["int", "str", "int", "None", "str"]);
+            }
+            other => panic!("Expected flattened canonical Union generic, got: {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_is_not_none_parses_as_identity_negation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def has_name(name: str | None) -> bool:
+  if name is not None:
+    return true
+  return false
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let Statement::If(if_stmt) = &function.body[0].node else {
+            panic!("Expected first statement to be if, got: {:?}", function.body[0].node);
+        };
+        let Condition::Expr(condition) = &if_stmt.condition else {
+            panic!("Expected expression condition");
+        };
+        match &condition.node {
+            Expr::Binary(left, BinaryOp::IsNot, right) => {
+                assert!(matches!(left.node, Expr::Ident(ref name) if name == "name"));
+                assert!(matches!(right.node, Expr::Literal(Literal::None)));
+            }
+            other => panic!("Expected `is not None` binary expression, got: {other:?}"),
+        }
+        Ok(())
     }
 
     #[test]
@@ -1862,6 +4058,847 @@ def bad(f: Callable[int]) -> None:
         assert!(matches!(
             function.body[0].node,
             crate::ast::Statement::Assignment(_)
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_imported_vocab_block_accepts_scoped_leading_dot_path() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  query:\n    .order.amount\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "analytics".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "analytics.query".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "query".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                            .in_declaration_body("query")
+                            .with_receiver(incan_vocab::ScopedSurfaceReceiver::OwningDeclaration),
+                    ),
+            ],
+        );
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(block) = &function.body[0].node else {
+            return Err(format!("expected vocab block, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Statement::Expr(expr) = &block.body[0].node else {
+            return Err(format!("expected expression statement, got {:?}", block.body[0].node).into());
+        };
+        let crate::ast::Expr::Surface(surface_expr) = &expr.node else {
+            return Err(format!("expected surface expression, got {:?}", expr.node).into());
+        };
+        assert!(matches!(
+            &surface_expr.key,
+            incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+                dependency_key,
+                descriptor_key,
+            } if dependency_key == "analytics" && descriptor_key == "query.field"
+        ));
+        assert!(matches!(
+            &surface_expr.payload,
+            crate::ast::SurfaceExprPayload::LeadingDotPath { segments, owner, .. }
+                if segments == &["order".to_string(), "amount".to_string()]
+                    && owner.declaration == "query"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_scoped_leading_dot_path_still_rejects_outside_vocab_block() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  .amount\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let keyword_map = std::collections::HashMap::new();
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                            .in_declaration_body("query")
+                            .with_receiver(incan_vocab::ScopedSurfaceReceiver::OwningDeclaration)
+                            .with_misuse_scope(incan_vocab::ScopedSurfaceMisuseScope::ActivatingFile)
+                            .with_diagnostic(
+                                incan_vocab::ScopedSurfaceDiagnosticTemplate::new(
+                                    "query-field-outside-scope",
+                                    incan_vocab::ScopedSurfaceDiagnosticKind::OutsideScope,
+                                    "query field shorthand is only valid inside query blocks",
+                                )
+                                .with_help("move this expression into a `query:` block"),
+                            ),
+                    ),
+            ],
+        );
+
+        let result =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map));
+        let errors = result.expect_err("leading-dot path should remain invalid outside the owning vocab block");
+        let first_error = errors.first().expect("expected at least one leading-dot diagnostic");
+        assert!(
+            first_error
+                .message
+                .contains("query field shorthand is only valid inside query blocks"),
+            "expected author-provided diagnostic, got {:?}",
+            errors
+        );
+        assert!(
+            first_error
+                .hints
+                .iter()
+                .any(|hint| hint.contains("move this expression")),
+            "expected author-provided help, got {:?}",
+            errors
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_imported_vocab_block_prefers_scoped_glyph_over_core_binary() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::pipeline\n\ndef configure() -> None:\n  flow:\n    extract + normalize\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "pipeline".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "pipeline.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "flow".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "pipeline".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("pipeline.dsl")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("flow"))
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::operator("flow.link", "+")
+                            .in_declaration_body("flow")
+                            .pairwise_chain(),
+                    ),
+            ],
+        );
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(block) = &function.body[0].node else {
+            return Err(format!("expected vocab block, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Statement::Expr(expr) = &block.body[0].node else {
+            return Err(format!("expected expression statement, got {:?}", block.body[0].node).into());
+        };
+        assert!(matches!(
+            &expr.node,
+            crate::ast::Expr::Surface(surface)
+                if matches!(
+                    &surface.payload,
+                    crate::ast::SurfaceExprPayload::ScopedGlyph { glyph, owner, .. }
+                        if glyph == "+" && owner.declaration == "flow"
+                )
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_imported_vocab_block_prefers_scoped_symbol_over_core_call() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  query:\n    sum(amount)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "analytics".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "analytics.query".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "query".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                            .with_misuse_scope(incan_vocab::ScopedSymbolMisuseScope::ActiveDsl)
+                            .in_declaration_body("query"),
+                    ),
+            ],
+        );
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(block) = &function.body[0].node else {
+            return Err(format!("expected vocab block, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Statement::Expr(expr) = &block.body[0].node else {
+            return Err(format!("expected expression statement, got {:?}", block.body[0].node).into());
+        };
+        assert!(matches!(
+            &expr.node,
+            crate::ast::Expr::Surface(surface)
+                if matches!(
+                    &surface.payload,
+                    crate::ast::SurfaceExprPayload::ScopedSymbolCall { symbol, args, owner }
+                        if symbol == "sum" && args.len() == 1 && owner.declaration == "query"
+                )
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_scoped_symbol_descriptor_does_not_change_call_outside_vocab_block()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  sum(amount)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+        let keyword_map = std::collections::HashMap::new();
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                            .in_declaration_body("query"),
+                    ),
+            ],
+        );
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        assert!(matches!(
+            &function.body[0].node,
+            crate::ast::Statement::Expr(expr)
+                if matches!(&expr.node, crate::ast::Expr::Call(callee, _, _)
+                    if matches!(&callee.node, crate::ast::Expr::Ident(name) if name == "sum"))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_same_depth_scoped_symbol_ambiguity_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\nimport pub::metrics\n\ndef configure() -> None:\n  query:\n    sum(amount)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "analytics".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "analytics.query".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::block("query")],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum.analytics", "sum")
+                            .in_declaration_body("query"),
+                    ),
+            ],
+        );
+        surface_map.insert(
+            "metrics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("metrics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum.metrics", "sum")
+                            .in_declaration_body("query"),
+                    ),
+            ],
+        );
+
+        let result =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map));
+        let errors = result.expect_err("same-depth scoped symbol collision should be ambiguous");
+        assert!(
+            errors
+                .iter()
+                .any(|err| err.message.contains("Ambiguous scoped symbol `sum`")),
+            "expected ambiguous scoped symbol diagnostic, got {:?}",
+            errors
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_nested_vocab_block_prefers_innermost_scoped_symbol() -> Result<(), Box<dyn std::error::Error>> {
+        let source =
+            "import pub::analytics\n\ndef configure() -> None:\n  query:\n    stage:\n      sum(amount)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "analytics".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "analytics.query".to_string(),
+                },
+                keywords: vec![
+                    incan_vocab::KeywordSpec::block("query"),
+                    incan_vocab::KeywordSpec::sub_block("stage", "query"),
+                ],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_declaration(incan_vocab::DeclarationSurface::named("stage").in_block("query"))
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                            .in_declaration_body("query"),
+                    )
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("stage.sum", "sum")
+                            .in_declaration_body("stage"),
+                    ),
+            ],
+        );
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(query_block) = &function.body[0].node else {
+            return Err(format!("expected query block, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Statement::VocabBlock(stage_block) = &query_block.body[0].node else {
+            return Err(format!("expected stage block, got {:?}", query_block.body[0].node).into());
+        };
+        let crate::ast::Statement::Expr(expr) = &stage_block.body[0].node else {
+            return Err(format!("expected expression statement, got {:?}", stage_block.body[0].node).into());
+        };
+        assert!(matches!(
+            &expr.node,
+            crate::ast::Expr::Surface(surface)
+                if matches!(
+                    &surface.payload,
+                    crate::ast::SurfaceExprPayload::ScopedSymbolCall { symbol, owner, .. }
+                        if symbol == "sum" && owner.declaration == "stage"
+                )
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_active_scoped_symbol_misuse_uses_descriptor_diagnostic() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  query:\n    sum(amount)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "analytics".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "analytics.query".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec::block("query")],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "analytics".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(
+                        incan_vocab::DeclarationSurface::named("query")
+                            .with_clause(incan_vocab::ClauseSurface::expr("SELECT")),
+                    )
+                    .with_scoped_symbol(
+                        incan_vocab::ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                            .in_clause_body("query", "SELECT")
+                            .with_misuse_scope(incan_vocab::ScopedSymbolMisuseScope::ActiveDsl)
+                            .with_diagnostic(
+                                incan_vocab::ScopedSymbolDiagnosticTemplate::new(
+                                    "query-sum-outside-select",
+                                    incan_vocab::ScopedSymbolDiagnosticKind::OutsideEligiblePosition,
+                                    "query aggregate `sum` is only valid inside SELECT clauses",
+                                )
+                                .with_help("move `sum(...)` into a SELECT clause"),
+                            ),
+                    ),
+            ],
+        );
+
+        let result =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map));
+        let errors = result.expect_err("active scoped symbol misuse should use descriptor diagnostic");
+        let first_error = errors.first().expect("expected at least one scoped-symbol diagnostic");
+        assert!(
+            first_error
+                .message
+                .contains("query aggregate `sum` is only valid inside SELECT clauses"),
+            "expected author-provided scoped-symbol diagnostic, got {:?}",
+            errors
+        );
+        assert!(
+            first_error.hints.iter().any(|hint| hint.contains("move `sum(...)`")),
+            "expected author-provided scoped-symbol help, got {:?}",
+            errors
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_imported_vocab_block_accepts_multitoken_pipe_glyph() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::querykit\n\ndef configure() -> None:\n  query:\n    orders |> paid_orders\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "querykit".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "querykit".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "query".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "querykit".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("querykit")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::operator("query.pipe", "|>")
+                            .in_declaration_body("query")
+                            .pairwise_chain(),
+                    ),
+            ],
+        );
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(block) = &function.body[0].node else {
+            return Err(format!("expected vocab block, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Statement::Expr(expr) = &block.body[0].node else {
+            return Err(format!("expected expression statement, got {:?}", block.body[0].node).into());
+        };
+        assert!(matches!(
+            &expr.node,
+            crate::ast::Expr::Surface(surface)
+                if matches!(
+                    &surface.payload,
+                    crate::ast::SurfaceExprPayload::ScopedGlyph { glyph, owner, .. }
+                        if glyph == "|>" && owner.declaration == "query"
+                )
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_scoped_glyph_descriptor_does_not_change_core_binary_outside_vocab_block()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::pipeline\n\ndef configure() -> None:\n  extract + normalize\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+        let keyword_map = std::collections::HashMap::new();
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "pipeline".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("pipeline.dsl")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("flow"))
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::operator("flow.link", "+")
+                            .in_declaration_body("flow")
+                            .pairwise_chain(),
+                    ),
+            ],
+        );
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        assert!(matches!(
+            &function.body[0].node,
+            crate::ast::Statement::Expr(expr)
+                if matches!(&expr.node, crate::ast::Expr::Binary(_, crate::ast::BinaryOp::Add, _))
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn rfc040_product_probe_query_method_arguments_accept_leading_dot_fields()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::querykit\n\ndef configure(orders: Any) -> None:\n  orders.filter(.amount > 100).select(.customer_id)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let keyword_map = std::collections::HashMap::new();
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "querykit".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("querykit")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                            .with_eligibilities([
+                                incan_vocab::ScopedSurfaceEligibility::call_argument("query", "filter"),
+                                incan_vocab::ScopedSurfaceEligibility::call_argument("query", "select"),
+                            ])
+                            .with_receiver(incan_vocab::ScopedSurfaceReceiver::custom("method-receiver")),
+                    ),
+            ],
+        );
+
+        let program = crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+            .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::Expr(expr) = &function.body[0].node else {
+            return Err(format!("expected expression statement, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Expr::MethodCall(filter_call, select_name, _, select_args) = &expr.node else {
+            return Err(format!("expected select method call, got {:?}", expr.node).into());
+        };
+        assert_eq!(select_name, "select");
+        assert!(matches!(
+            &select_args[0],
+            crate::ast::CallArg::Positional(arg)
+                if matches!(
+                    &arg.node,
+                    crate::ast::Expr::Surface(surface)
+                        if matches!(
+                            &surface.payload,
+                            crate::ast::SurfaceExprPayload::LeadingDotPath { segments, owner, .. }
+                                if segments == &["customer_id".to_string()]
+                                    && owner.declaration == "query"
+                                    && owner.call.as_deref() == Some("select")
+                        )
+                )
+        ));
+        let crate::ast::Expr::MethodCall(_, filter_name, _, filter_args) = &filter_call.node else {
+            return Err(format!("expected filter method call, got {:?}", filter_call.node).into());
+        };
+        assert_eq!(filter_name, "filter");
+        assert!(matches!(
+            &filter_args[0],
+            crate::ast::CallArg::Positional(arg)
+                if matches!(
+                    &arg.node,
+                    crate::ast::Expr::Binary(left, crate::ast::BinaryOp::Gt, _)
+                        if matches!(
+                            &left.node,
+                            crate::ast::Expr::Surface(surface)
+                                if matches!(
+                                    &surface.payload,
+                                    crate::ast::SurfaceExprPayload::LeadingDotPath { segments, owner, .. }
+                                        if segments == &["amount".to_string()]
+                                            && owner.declaration == "query"
+                                            && owner.call.as_deref() == Some("filter")
+                                )
+                        )
+                )
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_call_argument_scoped_leading_dot_rejects_unregistered_call() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::querykit\n\ndef configure(orders: Any) -> None:\n  orders.map(.amount)\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let keyword_map = std::collections::HashMap::new();
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "querykit".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("querykit")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("query"))
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                            .in_call_argument("query", "filter")
+                            .with_receiver(incan_vocab::ScopedSurfaceReceiver::custom("method-receiver")),
+                    ),
+            ],
+        );
+
+        let result =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map));
+        let errors = result.expect_err("leading-dot path should remain invalid in unregistered calls");
+        let first_error = errors.first().expect("expected at least one unregistered-call diagnostic");
+        assert!(
+            first_error
+                .message
+                .contains("Expected expression, found Punctuation(Dot)"),
+            "expected ordinary leading-dot parse rejection, got {:?}",
+            errors
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rfc040_product_probe_route_head_accepts_verb_composition_and_mapping()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::routekit\n\ndef configure() -> None:\n  route \"/users\":\n    get + post -> users.index\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "routekit".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "routekit".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "route".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "routekit".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("routekit")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("route"))
+                    .with_scoped_surfaces([
+                        incan_vocab::ScopedSurfaceDescriptor::operator("route.verb", "+")
+                            .in_declaration_body("route")
+                            .pairwise_chain(),
+                        incan_vocab::ScopedSurfaceDescriptor::operator("route.map", "->")
+                            .in_declaration_body("route"),
+                    ]),
+            ],
+        );
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(block) = &function.body[0].node else {
+            return Err(format!("expected vocab block, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Statement::Expr(expr) = &block.body[0].node else {
+            return Err(format!("expected route expression statement, got {:?}", block.body[0].node).into());
+        };
+        let crate::ast::Expr::Surface(surface) = &expr.node else {
+            return Err(format!("expected route mapping surface expression, got {:?}", expr.node).into());
+        };
+        let crate::ast::SurfaceExprPayload::ScopedGlyph {
+            glyph,
+            left,
+            right,
+            owner,
+        } = &surface.payload
+        else {
+            return Err(format!("expected route mapping scoped glyph, got {:?}", surface.payload).into());
+        };
+        assert_eq!(glyph, "->");
+        assert_eq!(owner.declaration, "route");
+        assert!(matches!(
+            &left.node,
+            crate::ast::Expr::Surface(left_surface)
+                if matches!(
+                    &left_surface.payload,
+                    crate::ast::SurfaceExprPayload::ScopedGlyph { glyph, owner, .. }
+                        if glyph == "+" && owner.declaration == "route"
+                )
+        ));
+        assert!(matches!(
+            &right.node,
+            crate::ast::Expr::Field(object, field)
+                if matches!(&object.node, crate::ast::Expr::Ident(name) if name == "users")
+                    && field == "index"
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn rfc040_product_probe_workflow_accepts_pipeline_fallback_binding_and_shape_check()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::workflowkit\n\ndef configure() -> None:\n  flow:\n    extract >> normalize // fallback\n    result := check === expected\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert(
+            "workflowkit".to_string(),
+            vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "workflowkit".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "flow".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+        );
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert(
+            "workflowkit".to_string(),
+            vec![
+                incan_vocab::DslSurface::on_import("workflowkit")
+                    .with_declaration(incan_vocab::DeclarationSurface::named("flow"))
+                    .with_scoped_surfaces([
+                        incan_vocab::ScopedSurfaceDescriptor::operator("flow.pipe", ">>")
+                            .in_declaration_body("flow")
+                            .pairwise_chain(),
+                        incan_vocab::ScopedSurfaceDescriptor::operator("flow.fallback", "//")
+                            .in_declaration_body("flow"),
+                        incan_vocab::ScopedSurfaceDescriptor::binding("flow.bind", ":=")
+                            .in_declaration_body("flow"),
+                        incan_vocab::ScopedSurfaceDescriptor::operator("flow.shape", "===")
+                            .in_declaration_body("flow"),
+                    ]),
+            ],
+        );
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(block) = &function.body[0].node else {
+            return Err(format!("expected vocab block, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Statement::Expr(pipe_expr) = &block.body[0].node else {
+            return Err(format!("expected workflow pipeline expression, got {:?}", block.body[0].node).into());
+        };
+        let crate::ast::Statement::Expr(bind_expr) = &block.body[1].node else {
+            return Err(format!("expected workflow binding expression, got {:?}", block.body[1].node).into());
+        };
+        assert!(matches!(
+            &pipe_expr.node,
+            crate::ast::Expr::Surface(surface)
+                if matches!(
+                    &surface.payload,
+                    crate::ast::SurfaceExprPayload::ScopedGlyph { glyph, right, owner, .. }
+                        if glyph == ">>"
+                            && owner.declaration == "flow"
+                            && matches!(
+                                &right.node,
+                                crate::ast::Expr::Surface(right_surface)
+                                    if matches!(
+                                        &right_surface.payload,
+                                        crate::ast::SurfaceExprPayload::ScopedGlyph { glyph, owner, .. }
+                                            if glyph == "//" && owner.declaration == "flow"
+                                    )
+                            )
+                )
+        ));
+        assert!(matches!(
+            &bind_expr.node,
+            crate::ast::Expr::Surface(surface)
+                if matches!(
+                    &surface.payload,
+                    crate::ast::SurfaceExprPayload::ScopedGlyph { glyph, right, owner, .. }
+                        if glyph == ":="
+                            && owner.declaration == "flow"
+                            && matches!(
+                                &right.node,
+                                crate::ast::Expr::Surface(right_surface)
+                                    if matches!(
+                                        &right_surface.payload,
+                                        crate::ast::SurfaceExprPayload::ScopedGlyph { glyph, owner, .. }
+                                            if glyph == "===" && owner.declaration == "flow"
+                                    )
+                            )
+                )
         ));
         Ok(())
     }
@@ -2024,5 +5061,366 @@ def bad(f: Callable[int]) -> None:
         };
         assert_eq!(context_block.keyword, "middleware");
         Ok(())
+    }
+
+    #[test]
+    fn test_parse_for_tuple_unpack_binding() {
+        let source = "def bind(xs: list[str]) -> list[str]:\n  mut out: list[str] = []\n  for idx, name in enumerate(xs):\n    out.append(name)\n  return out\n";
+        let program = match parse_str(source) {
+            Ok(program) => program,
+            Err(errs) => panic!("for tuple-unpack binding should parse: {errs:?}"),
+        };
+        let Declaration::Function(function) = &program.declarations[0].node else {
+            panic!("expected function declaration");
+        };
+        let Statement::For(for_stmt) = &function.body[1].node else {
+            panic!("expected for statement");
+        };
+        let Pattern::Tuple(items) = &for_stmt.pattern.node else {
+            panic!("expected tuple binding pattern");
+        };
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].node, Pattern::Binding("idx".to_string()));
+        assert_eq!(items[1].node, Pattern::Binding("name".to_string()));
+    }
+
+    #[test]
+    fn test_parse_list_comprehension_tuple_unpack_binding() {
+        let source =
+            "def names(xs: list[str]) -> list[str]:\n  return [name for idx, name in enumerate(xs)]\n";
+        let program = match parse_str(source) {
+            Ok(program) => program,
+            Err(errs) => panic!("list comprehension tuple-unpack binding should parse: {errs:?}"),
+        };
+        let Declaration::Function(function) = &program.declarations[0].node else {
+            panic!("expected function declaration");
+        };
+        let Statement::Return(Some(expr)) = &function.body[0].node else {
+            panic!("expected return statement");
+        };
+        let Expr::ListComp(comp) = &expr.node else {
+            panic!("expected list comprehension");
+        };
+        let Pattern::Tuple(items) = &comp.pattern.node else {
+            panic!("expected tuple binding pattern");
+        };
+
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].node, Pattern::Binding("idx".to_string()));
+        assert_eq!(items[1].node, Pattern::Binding("name".to_string()));
+    }
+
+    #[test]
+    fn test_parse_loop_expression_with_break_value() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def run() -> int:
+  return loop:
+    break 1
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let Statement::Return(Some(expr)) = &function.body[0].node else {
+            return Err(vec![CompileError::new(
+                "expected return statement with loop expression".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        let Expr::Loop(loop_expr) = &expr.node else {
+            return Err(vec![CompileError::new(
+                "expected loop expression".to_string(),
+                expr.span,
+            )]);
+        };
+        let Statement::Break(Some(value)) = &loop_expr.body[0].node else {
+            return Err(vec![CompileError::new(
+                "expected break with value inside loop expression".to_string(),
+                loop_expr.body[0].span,
+            )]);
+        };
+        assert!(matches!(value.node, Expr::Literal(Literal::Int(_))));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_rfc028_operator_spellings() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def ops(a: Any, b: Any, c: Any) -> None:
+  mat = a @ b
+  piped = a |> b <| c
+  bits = a & b | c ^ a << b >> c
+  inv = ~a
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+
+        let Statement::Assignment(mat) = &function.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected mat assignment".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        assert!(matches!(mat.value.node, Expr::Binary(_, BinaryOp::MatMul, _)));
+
+        let Statement::Assignment(piped) = &function.body[1].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected piped assignment".to_string(),
+                function.body[1].span,
+            )]);
+        };
+        let Expr::Binary(left, BinaryOp::PipeBackward, _) = &piped.value.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected pipe-backward expression".to_string(),
+                piped.value.span,
+            )]);
+        };
+        assert!(matches!(left.node, Expr::Binary(_, BinaryOp::PipeForward, _)));
+
+        let Statement::Assignment(bits) = &function.body[2].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected bits assignment".to_string(),
+                function.body[2].span,
+            )]);
+        };
+        let Expr::Binary(_, BinaryOp::BitOr, right) = &bits.value.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected bit-or expression".to_string(),
+                bits.value.span,
+            )]);
+        };
+        assert!(matches!(right.node, Expr::Binary(_, BinaryOp::BitXor, _)));
+
+        let Statement::Assignment(inv) = &function.body[3].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected inv assignment".to_string(),
+                function.body[3].span,
+            )]);
+        };
+        assert!(matches!(inv.value.node, Expr::Unary(UnaryOp::Invert, _)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_rfc028_compound_assignment_spellings() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def update(x: Any, y: Any) -> None:
+  x @= y
+  x &= y
+  x |= y
+  x ^= y
+  x <<= y
+  x >>= y
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let expected = [
+            CompoundOp::MatMul,
+            CompoundOp::BitAnd,
+            CompoundOp::BitOr,
+            CompoundOp::BitXor,
+            CompoundOp::Shl,
+            CompoundOp::Shr,
+        ];
+        for (stmt, op) in function.body.iter().zip(expected) {
+            assert!(
+                matches!(&stmt.node, Statement::CompoundAssignment(assign) if assign.op == op),
+                "expected compound assignment {op:?}, got {:?}",
+                stmt.node
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_matmul_preserves_decorator_and_rust_import_at() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+from rust::libm @ "0.2" import sqrt
+
+@derive(Clone)
+class Tensor:
+  def apply(self, other: Tensor) -> Tensor:
+    return self @ other
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[1])?;
+        assert_eq!(class.decorators.len(), 1);
+        let Some(body) = class.methods[0].node.body.as_ref() else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected concrete method body".to_string(),
+                class.methods[0].span,
+            )]);
+        };
+        let Statement::Return(Some(expr)) = &body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected return statement".to_string(),
+                body[0].span,
+            )]);
+        };
+        assert!(matches!(expr.node, Expr::Binary(_, BinaryOp::MatMul, _)));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_top_level_alias_declarations() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def avg(x: int) -> int:
+  return x
+
+mean = avg
+pub average = alias avg
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Alias(mean) = &program.declarations[1].node else {
+            panic!("expected bare alias, got {:?}", program.declarations[1].node);
+        };
+        assert_eq!(mean.name, "mean");
+        assert_eq!(mean.target.segments, vec!["avg"]);
+        assert!(!mean.explicit_marker);
+
+        let Declaration::Alias(average) = &program.declarations[2].node else {
+            panic!("expected explicit public alias, got {:?}", program.declarations[2].node);
+        };
+        assert_eq!(average.name, "average");
+        assert_eq!(average.target.segments, vec!["avg"]);
+        assert!(average.explicit_marker);
+        assert_eq!(average.visibility, Visibility::Public);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_method_alias_declarations() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+model Stats:
+  value: int
+  mean = alias avg
+
+  def avg(self) -> int:
+    return self.value
+
+trait Named:
+  display = name
+  def name(self) -> str
+"#;
+        let program = parse_str(source)?;
+        let model = require_model_decl(&program.declarations[0])?;
+        assert_eq!(model.method_aliases.len(), 1);
+        assert_eq!(model.method_aliases[0].node.name, "mean");
+        assert_eq!(model.method_aliases[0].node.target, "avg");
+        assert!(model.method_aliases[0].node.explicit_marker);
+
+        let tr = require_trait_decl(&program.declarations[1])?;
+        assert_eq!(tr.method_aliases.len(), 1);
+        assert_eq!(tr.method_aliases[0].node.name, "display");
+        assert_eq!(tr.method_aliases[0].node.target, "name");
+        assert!(!tr.method_aliases[0].node.explicit_marker);
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_top_level_partial_declarations() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+BronzeReader = partial readers.TableReader(layer="bronze", format="delta")
+pub JsonRoute = partial web::route(method="GET", content_type="json")
+"#;
+        let program = parse_str(source)?;
+        let Declaration::Partial(bronze) = &program.declarations[0].node else {
+            panic!("expected partial declaration, got {:?}", program.declarations[0].node);
+        };
+        assert_eq!(bronze.name, "BronzeReader");
+        assert_eq!(bronze.target.segments, vec!["readers", "TableReader"]);
+        assert_eq!(bronze.args.len(), 2);
+        assert_eq!(bronze.args[0].name, "layer");
+        assert!(matches!(bronze.args[0].value.node, Expr::Literal(Literal::String(ref value)) if value == "bronze"));
+
+        let Declaration::Partial(route) = &program.declarations[1].node else {
+            panic!("expected public partial declaration, got {:?}", program.declarations[1].node);
+        };
+        assert_eq!(route.visibility, Visibility::Public);
+        assert_eq!(route.name, "JsonRoute");
+        assert_eq!(route.target.segments, vec!["web", "route"]);
+        assert_eq!(route.args[1].name, "content_type");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_method_partial_declarations() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+model Cell:
+  alive: bool
+  set_alive = partial set_state(state=true)
+
+  def set_state(mut self, state: bool) -> None:
+    self.alive = state
+
+class Reader:
+  json = partial open(format="json")
+  def open(self, format: str) -> None:
+    pass
+
+type UserId = newtype int:
+  one = partial from_underlying(value=1)
+
+  def from_underlying(value: int) -> UserId:
+    return UserId(value)
+
+trait Named:
+  display = partial name(prefix="name")
+  def name(self, prefix: str) -> str
+"#;
+        let program = parse_str(source)?;
+        let model = require_model_decl(&program.declarations[0])?;
+        assert_eq!(model.method_partials.len(), 1);
+        assert_eq!(model.method_partials[0].node.name, "set_alive");
+        assert_eq!(model.method_partials[0].node.target, "set_state");
+        assert_eq!(model.method_partials[0].node.args[0].name, "state");
+
+        let class = require_class_decl(&program.declarations[1])?;
+        assert_eq!(class.method_partials.len(), 1);
+        assert_eq!(class.method_partials[0].node.name, "json");
+
+        let newtype = require_newtype_decl(&program.declarations[2])?;
+        assert_eq!(newtype.method_partials.len(), 1);
+        assert_eq!(newtype.method_partials[0].node.target, "from_underlying");
+
+        let tr = require_trait_decl(&program.declarations[3])?;
+        assert_eq!(tr.method_partials.len(), 1);
+        assert_eq!(tr.method_partials[0].node.name, "display");
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_local_partial_expression_preserves_callable_target() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def reader_for(layer: str) -> Reader:
+  return partial make_factory().reader(layer=layer, options={"format": "delta"})
+"#;
+        let program = parse_str(source)?;
+        let func = require_function_decl(&program.declarations[0])?;
+        let Statement::Return(Some(expr)) = &func.body[0].node else {
+            panic!("expected return partial expression");
+        };
+        let Expr::Partial(partial) = &expr.node else {
+            panic!("expected partial expression, got {:?}", expr.node);
+        };
+        assert_eq!(partial.args.len(), 2);
+        assert_eq!(partial.args[0].name, "layer");
+        assert!(matches!(partial.args[1].value.node, Expr::Dict(_)));
+        assert!(matches!(partial.target.node, Expr::Field(_, ref name) if name == "reader"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_partial_rejects_positional_presets() {
+        let err = parse_str_err(
+            r#"
+Bad = partial Target(1)
+"#,
+            "partial positional preset",
+        );
+        assert!(
+            err.iter()
+                .any(|err| err.message.contains("Partial presets only support keyword arguments")),
+            "expected keyword-only partial preset diagnostic, got {err:?}"
+        );
     }
 }

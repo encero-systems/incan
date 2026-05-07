@@ -33,6 +33,34 @@ def main() -> None:
     run(Command.List)       # outputs: list
 ```
 
+## Put enum-owned behavior on the enum
+
+If a helper describes the enum itself, put it inside the enum body after the variants:
+
+```incan
+enum Command:
+    Add(int)
+    Remove(int)
+    List
+
+    def label(self) -> str:
+        match self:
+            Command.Add(_) => return "add"
+            Command.Remove(_) => return "remove"
+            Command.List => return "list"
+
+    def default() -> Self:
+        return Command.List
+```
+
+Call instance methods on values and associated functions on the enum type:
+
+```incan
+def main() -> None:
+    cmd = Command.default()
+    println(cmd.label())  # outputs: list
+```
+
 ## Why this matters
 
 Unlike a stringly-typed “command name”, enums:
@@ -45,6 +73,7 @@ Unlike a stringly-typed “command name”, enums:
 
 1. Add a `Clear` variant and update the `match` accordingly.
 2. Add a `Rename(str)` variant and print the new name.
+3. Add a `label(self) -> str` method so callers do not need a separate helper.
 
 ??? example "One possible solution"
 
@@ -56,13 +85,21 @@ Unlike a stringly-typed “command name”, enums:
         Clear
         List
 
+        def label(self) -> str:
+            match self:
+                Command.Add(_) => return "add"
+                Command.Remove(_) => return "remove"
+                Command.Rename(_) => return "rename"
+                Command.Clear => return "clear"
+                Command.List => return "list"
+
     def run(cmd: Command) -> None:
         match cmd:
-            Add(x) => println(f"add {x}")
-            Remove(x) => println(f"remove {x}")
-            Rename(name) => println(f"rename {name}")
-            Clear => println("clear")
-            List => println("list")
+            Command.Add(x) => println(f"add {x}")
+            Command.Remove(x) => println(f"remove {x}")
+            Command.Rename(name) => println(f"rename {name}")
+            Command.Clear => println("clear")
+            Command.List => println("list")
     ```
 
 ## Where to learn more
@@ -74,6 +111,3 @@ Unlike a stringly-typed “command name”, enums:
 Back: [8. Collections and iteration](08_collections_and_iteration.md)
 
 Next chapter: [10. Models vs classes](10_models_vs_classes.md)
-
-
-

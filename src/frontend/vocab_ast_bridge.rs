@@ -279,7 +279,7 @@ pub fn internal_statement_to_public(stmt: &ast::Statement) -> Result<incan_vocab
             value: internal_expr_to_public(&assign.value.node)?,
         }),
         ast::Statement::If(if_stmt) => Ok(incan_vocab::IncanStatement::If {
-            condition: internal_expr_to_public(&if_stmt.condition.node)?,
+            condition: internal_condition_expr_to_public(&if_stmt.condition)?,
             then_body: internal_statements_to_public(&if_stmt.then_body)?,
             else_body: if_stmt
                 .else_body
@@ -289,14 +289,21 @@ pub fn internal_statement_to_public(stmt: &ast::Statement) -> Result<incan_vocab
                 .unwrap_or_default(),
         }),
         ast::Statement::While(while_stmt) => Ok(incan_vocab::IncanStatement::While {
-            condition: internal_expr_to_public(&while_stmt.condition.node)?,
+            condition: internal_condition_expr_to_public(&while_stmt.condition)?,
             body: internal_statements_to_public(&while_stmt.body)?,
         }),
-        ast::Statement::For(for_stmt) => Ok(incan_vocab::IncanStatement::For {
-            binding: for_stmt.var.clone(),
-            iter: internal_expr_to_public(&for_stmt.iter.node)?,
-            body: internal_statements_to_public(&for_stmt.body)?,
-        }),
+        ast::Statement::For(for_stmt) => {
+            let ast::Pattern::Binding(binding) = &for_stmt.pattern.node else {
+                return Err(VocabAstBridgeError::UnsupportedInternalStatement(
+                    "tuple-pattern for statements are not yet supported by public vocab AST bridge",
+                ));
+            };
+            Ok(incan_vocab::IncanStatement::For {
+                binding: binding.clone(),
+                iter: internal_expr_to_public(&for_stmt.iter.node)?,
+                body: internal_statements_to_public(&for_stmt.body)?,
+            })
+        }
         ast::Statement::VocabBlock(_) => Err(VocabAstBridgeError::UnsupportedInternalStatement(
             "nested vocab blocks must be bridged through VocabBodyItem::Declaration",
         )),
@@ -367,7 +374,10 @@ pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Resul
             then_body,
             else_body,
         } => Ok(ast::Statement::If(ast::IfStmt {
-            condition: ast::Spanned::new(public_expr_to_internal(condition)?, ast::Span::default()),
+            condition: ast::Condition::Expr(ast::Spanned::new(
+                public_expr_to_internal(condition)?,
+                ast::Span::default(),
+            )),
             then_body: public_statements_to_internal(then_body)?,
             elif_branches: Vec::new(),
             else_body: if else_body.is_empty() {
@@ -377,11 +387,14 @@ pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Resul
             },
         })),
         incan_vocab::IncanStatement::While { condition, body } => Ok(ast::Statement::While(ast::WhileStmt {
-            condition: ast::Spanned::new(public_expr_to_internal(condition)?, ast::Span::default()),
+            condition: ast::Condition::Expr(ast::Spanned::new(
+                public_expr_to_internal(condition)?,
+                ast::Span::default(),
+            )),
             body: public_statements_to_internal(body)?,
         })),
         incan_vocab::IncanStatement::For { binding, iter, body } => Ok(ast::Statement::For(ast::ForStmt {
-            var: binding.clone(),
+            pattern: ast::Spanned::new(ast::Pattern::Binding(binding.clone()), ast::Span::default()),
             iter: ast::Spanned::new(public_expr_to_internal(iter)?, ast::Span::default()),
             body: public_statements_to_internal(body)?,
         })),
@@ -399,6 +412,17 @@ pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Resul
 /// currently represented in the internal bridge mapping.
 pub fn public_expression_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, VocabAstBridgeError> {
     public_expr_to_internal(expr)
+}
+
+fn internal_condition_expr_to_public(
+    condition: &ast::Condition,
+) -> Result<incan_vocab::IncanExpr, VocabAstBridgeError> {
+    match condition {
+        ast::Condition::Expr(expr) => internal_expr_to_public(&expr.node),
+        ast::Condition::Let { .. } => Err(VocabAstBridgeError::UnsupportedInternalStatement(
+            "`if let` / `while let` conditions are not yet supported by the public vocab AST bridge",
+        )),
+    }
 }
 
 /// Convert a list of internal spanned statements to public statements.
@@ -427,7 +451,7 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
     match expr {
         ast::Expr::Ident(name) => Ok(incan_vocab::IncanExpr::Name(name.clone())),
         ast::Expr::Literal(ast::Literal::String(value)) => Ok(incan_vocab::IncanExpr::Str(value.clone())),
-        ast::Expr::Literal(ast::Literal::Int(value)) => Ok(incan_vocab::IncanExpr::Int(*value)),
+        ast::Expr::Literal(ast::Literal::Int(il)) => Ok(incan_vocab::IncanExpr::Int(il.value)),
         ast::Expr::Literal(ast::Literal::Bool(value)) => Ok(incan_vocab::IncanExpr::Bool(*value)),
         ast::Expr::Tuple(values) => values
             .iter()
@@ -436,16 +460,30 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
             .map(incan_vocab::IncanExpr::Tuple),
         ast::Expr::List(values) => values
             .iter()
-            .map(|value| internal_expr_to_public(&value.node))
+            .map(|entry| match entry {
+                ast::ListEntry::Element(value) => internal_expr_to_public(&value.node),
+                ast::ListEntry::Spread(_) => Err(VocabAstBridgeError::UnsupportedInternalExpression(
+                    "list spread entries are not supported by public vocab AST bridge",
+                )),
+            })
             .collect::<Result<Vec<_>, _>>()
             .map(incan_vocab::IncanExpr::List),
         ast::Expr::Dict(entries) => {
             let mut mapped = Vec::with_capacity(entries.len());
-            for (key, value) in entries {
-                mapped.push((
-                    internal_expr_to_public(&key.node)?,
-                    internal_expr_to_public(&value.node)?,
-                ));
+            for entry in entries {
+                match entry {
+                    ast::DictEntry::Pair(key, value) => {
+                        mapped.push((
+                            internal_expr_to_public(&key.node)?,
+                            internal_expr_to_public(&value.node)?,
+                        ));
+                    }
+                    ast::DictEntry::Spread(_) => {
+                        return Err(VocabAstBridgeError::UnsupportedInternalExpression(
+                            "dict spread entries are not supported by public vocab AST bridge",
+                        ));
+                    }
+                }
             }
             Ok(incan_vocab::IncanExpr::Dict(mapped))
         }
@@ -453,6 +491,7 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
             match op {
                 ast::UnaryOp::Neg => incan_vocab::IncanUnaryOp::Neg,
                 ast::UnaryOp::Not => incan_vocab::IncanUnaryOp::Not,
+                ast::UnaryOp::Invert => incan_vocab::IncanUnaryOp::Invert,
             },
             Box::new(internal_expr_to_public(&value.node)?),
         )),
@@ -461,17 +500,18 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
             map_internal_binary_op(*op)?,
             Box::new(internal_expr_to_public(&right.node)?),
         )),
-        ast::Expr::Call(callee, args) => {
-            let mut mapped_args = Vec::new();
-            for arg in args {
-                let value = match arg {
-                    ast::CallArg::Positional(expr) | ast::CallArg::Named(_, expr) => expr,
-                };
-                mapped_args.push(internal_expr_to_public(&value.node)?);
-            }
+        ast::Expr::Call(callee, _type_args, args) => Ok(incan_vocab::IncanExpr::Call {
+            callee: Box::new(internal_expr_to_public(&callee.node)?),
+            args: internal_call_args_to_public(args)?,
+        }),
+        ast::Expr::MethodCall(base, method, _type_args, args) => {
+            let callee = incan_vocab::IncanExpr::Field {
+                object: Box::new(internal_expr_to_public(&base.node)?),
+                field: method.clone(),
+            };
             Ok(incan_vocab::IncanExpr::Call {
-                callee: Box::new(internal_expr_to_public(&callee.node)?),
-                args: mapped_args,
+                callee: Box::new(callee),
+                args: internal_call_args_to_public(args)?,
             })
         }
         ast::Expr::Field(object, field) => match &object.node {
@@ -487,10 +527,98 @@ fn internal_expr_to_public(expr: &ast::Expr) -> Result<incan_vocab::IncanExpr, V
                 field: field.clone(),
             }),
         },
+        ast::Expr::Surface(surface) => internal_surface_expr_to_public(surface),
         _ => Err(VocabAstBridgeError::UnsupportedInternalExpression(
             "expression form is not yet supported by public vocab AST bridge",
         )),
     }
+}
+
+/// Convert internal call arguments to public positional argument payloads.
+fn internal_call_args_to_public(args: &[ast::CallArg]) -> Result<Vec<incan_vocab::IncanExpr>, VocabAstBridgeError> {
+    let mut mapped_args = Vec::with_capacity(args.len());
+    for arg in args {
+        let value = match arg {
+            ast::CallArg::Positional(expr)
+            | ast::CallArg::Named(_, expr)
+            | ast::CallArg::PositionalUnpack(expr)
+            | ast::CallArg::KeywordUnpack(expr) => expr,
+        };
+        mapped_args.push(internal_expr_to_public(&value.node)?);
+    }
+    Ok(mapped_args)
+}
+
+/// Convert a compiler surface expression artifact into the public vocab AST.
+fn internal_surface_expr_to_public(surface: &ast::SurfaceExpr) -> Result<incan_vocab::IncanExpr, VocabAstBridgeError> {
+    let incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+        dependency_key,
+        descriptor_key,
+    } = &surface.key
+    else {
+        return Err(VocabAstBridgeError::UnsupportedInternalExpression(
+            "surface expression is not yet supported by public vocab AST bridge",
+        ));
+    };
+
+    let payload = match &surface.payload {
+        ast::SurfaceExprPayload::LeadingDotPath {
+            segments,
+            receiver,
+            owner,
+        } => incan_vocab::IncanScopedSurfacePayload::LeadingDotPath {
+            segments: segments.clone(),
+            receiver: receiver.clone(),
+            owner: incan_vocab::IncanScopedSurfaceOwner {
+                declaration: owner.declaration.clone(),
+                clause: owner.clause.clone(),
+                call: owner.call.clone(),
+            },
+        },
+        ast::SurfaceExprPayload::ScopedGlyph {
+            glyph,
+            left,
+            right,
+            owner,
+        } => incan_vocab::IncanScopedSurfacePayload::ScopedGlyph {
+            glyph: glyph.clone(),
+            left: Box::new(internal_expr_to_public(&left.node)?),
+            right: Box::new(internal_expr_to_public(&right.node)?),
+            owner: incan_vocab::IncanScopedSurfaceOwner {
+                declaration: owner.declaration.clone(),
+                clause: owner.clause.clone(),
+                call: owner.call.clone(),
+            },
+        },
+        ast::SurfaceExprPayload::ScopedSymbolCall { symbol, args, owner } => {
+            return Ok(incan_vocab::IncanExpr::ScopedSymbolCall(
+                incan_vocab::IncanScopedSymbolCall {
+                    dependency_key: dependency_key.clone(),
+                    descriptor_key: descriptor_key.clone(),
+                    symbol: symbol.clone(),
+                    args: internal_call_args_to_public(args)?,
+                    owner: incan_vocab::IncanScopedSurfaceOwner {
+                        declaration: owner.declaration.clone(),
+                        clause: owner.clause.clone(),
+                        call: owner.call.clone(),
+                    },
+                },
+            ));
+        }
+        ast::SurfaceExprPayload::PrefixUnary(_) => {
+            return Err(VocabAstBridgeError::UnsupportedInternalExpression(
+                "soft-keyword surface expression is not yet supported by public vocab AST bridge",
+            ));
+        }
+    };
+
+    Ok(incan_vocab::IncanExpr::ScopedSurface(
+        incan_vocab::IncanScopedSurfaceExpr {
+            dependency_key: dependency_key.clone(),
+            descriptor_key: descriptor_key.clone(),
+            payload,
+        },
+    ))
 }
 
 /// Convert one public `incan_vocab::IncanExpr` to internal compiler expression AST.
@@ -506,7 +634,9 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
     match expr {
         incan_vocab::IncanExpr::Name(name) => Ok(ast::Expr::Ident(name.clone())),
         incan_vocab::IncanExpr::Str(value) => Ok(ast::Expr::Literal(ast::Literal::String(value.clone()))),
-        incan_vocab::IncanExpr::Int(value) => Ok(ast::Expr::Literal(ast::Literal::Int(*value))),
+        incan_vocab::IncanExpr::Int(value) => Ok(ast::Expr::Literal(ast::Literal::Int(ast::IntLiteral::synthetic(
+            *value,
+        )))),
         incan_vocab::IncanExpr::Bool(value) => Ok(ast::Expr::Literal(ast::Literal::Bool(*value))),
         incan_vocab::IncanExpr::CurrentField(field) => Ok(ast::Expr::Field(
             Box::new(ast::Spanned::new(
@@ -529,13 +659,16 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
             .map(ast::Expr::Tuple),
         incan_vocab::IncanExpr::List(values) => values
             .iter()
-            .map(|value| public_expr_to_internal(value).map(|node| ast::Spanned::new(node, ast::Span::default())))
+            .map(|value| {
+                public_expr_to_internal(value)
+                    .map(|node| ast::ListEntry::Element(ast::Spanned::new(node, ast::Span::default())))
+            })
             .collect::<Result<Vec<_>, _>>()
             .map(ast::Expr::List),
         incan_vocab::IncanExpr::Dict(entries) => {
             let mut mapped = Vec::with_capacity(entries.len());
             for (key, value) in entries {
-                mapped.push((
+                mapped.push(ast::DictEntry::Pair(
                     ast::Spanned::new(public_expr_to_internal(key)?, ast::Span::default()),
                     ast::Spanned::new(public_expr_to_internal(value)?, ast::Span::default()),
                 ));
@@ -546,6 +679,7 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
             match op {
                 incan_vocab::IncanUnaryOp::Neg => ast::UnaryOp::Neg,
                 incan_vocab::IncanUnaryOp::Not => ast::UnaryOp::Not,
+                incan_vocab::IncanUnaryOp::Invert => ast::UnaryOp::Invert,
                 _ => {
                     return Err(VocabAstBridgeError::UnsupportedPublicExpression(
                         "unary operator is not currently bridgeable",
@@ -572,6 +706,7 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
                     public_expr_to_internal(callee)?,
                     ast::Span::default(),
                 )),
+                Vec::new(),
                 mapped,
             ))
         }
@@ -582,10 +717,86 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
             )),
             field.clone(),
         )),
+        incan_vocab::IncanExpr::ScopedSurface(surface) => public_scoped_surface_expr_to_internal(surface),
+        incan_vocab::IncanExpr::ScopedSymbolCall(call) => public_scoped_symbol_call_to_internal(call),
         _ => Err(VocabAstBridgeError::UnsupportedPublicExpression(
             "expression form is not yet supported by internal AST bridge",
         )),
     }
+}
+
+/// Convert a public scoped-surface expression back into the compiler AST.
+fn public_scoped_surface_expr_to_internal(
+    surface: &incan_vocab::IncanScopedSurfaceExpr,
+) -> Result<ast::Expr, VocabAstBridgeError> {
+    let key = incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+        dependency_key: surface.dependency_key.clone(),
+        descriptor_key: surface.descriptor_key.clone(),
+    };
+    let payload = match &surface.payload {
+        incan_vocab::IncanScopedSurfacePayload::LeadingDotPath {
+            segments,
+            receiver,
+            owner,
+        } => ast::SurfaceExprPayload::LeadingDotPath {
+            segments: segments.clone(),
+            receiver: receiver.clone(),
+            owner: ast::ScopedSurfaceOwner {
+                declaration: owner.declaration.clone(),
+                clause: owner.clause.clone(),
+                call: owner.call.clone(),
+            },
+        },
+        incan_vocab::IncanScopedSurfacePayload::ScopedGlyph {
+            glyph,
+            left,
+            right,
+            owner,
+        } => ast::SurfaceExprPayload::ScopedGlyph {
+            glyph: glyph.clone(),
+            left: Box::new(ast::Spanned::new(public_expr_to_internal(left)?, ast::Span::default())),
+            right: Box::new(ast::Spanned::new(public_expr_to_internal(right)?, ast::Span::default())),
+            owner: ast::ScopedSurfaceOwner {
+                declaration: owner.declaration.clone(),
+                clause: owner.clause.clone(),
+                call: owner.call.clone(),
+            },
+        },
+        _ => {
+            return Err(VocabAstBridgeError::UnsupportedPublicExpression(
+                "scoped surface payload is not yet supported by internal AST bridge",
+            ));
+        }
+    };
+    Ok(ast::Expr::Surface(Box::new(ast::SurfaceExpr { key, payload })))
+}
+
+/// Convert a public scoped-symbol call back into the compiler AST.
+fn public_scoped_symbol_call_to_internal(
+    call: &incan_vocab::IncanScopedSymbolCall,
+) -> Result<ast::Expr, VocabAstBridgeError> {
+    let key = incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+        dependency_key: call.dependency_key.clone(),
+        descriptor_key: call.descriptor_key.clone(),
+    };
+    let args = call
+        .args
+        .iter()
+        .map(|arg| {
+            public_expr_to_internal(arg)
+                .map(|node| ast::CallArg::Positional(ast::Spanned::new(node, ast::Span::default())))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let payload = ast::SurfaceExprPayload::ScopedSymbolCall {
+        symbol: call.symbol.clone(),
+        args,
+        owner: ast::ScopedSurfaceOwner {
+            declaration: call.owner.declaration.clone(),
+            clause: call.owner.clause.clone(),
+            call: call.owner.call.clone(),
+        },
+    };
+    Ok(ast::Expr::Surface(Box::new(ast::SurfaceExpr { key, payload })))
 }
 
 /// Convert one internal decorator to the public decorator DTO.
@@ -636,7 +847,7 @@ fn public_decorator_arg_value_from_internal_expr(
 ) -> Result<incan_vocab::DecoratorArgValue, VocabAstBridgeError> {
     match expr {
         ast::Expr::Literal(ast::Literal::String(value)) => Ok(incan_vocab::DecoratorArgValue::Str(value.clone())),
-        ast::Expr::Literal(ast::Literal::Int(value)) => Ok(incan_vocab::DecoratorArgValue::Int(*value)),
+        ast::Expr::Literal(ast::Literal::Int(il)) => Ok(incan_vocab::DecoratorArgValue::Int(il.value)),
         ast::Expr::Literal(ast::Literal::Bool(value)) => Ok(incan_vocab::DecoratorArgValue::Bool(*value)),
         _ => Ok(incan_vocab::DecoratorArgValue::Expr(internal_expr_to_public(expr)?)),
     }
@@ -657,6 +868,17 @@ fn map_internal_binary_op(op: ast::BinaryOp) -> Result<incan_vocab::IncanBinaryO
         ast::BinaryOp::Sub => Ok(incan_vocab::IncanBinaryOp::Sub),
         ast::BinaryOp::Mul => Ok(incan_vocab::IncanBinaryOp::Mul),
         ast::BinaryOp::Div => Ok(incan_vocab::IncanBinaryOp::Div),
+        ast::BinaryOp::FloorDiv => Ok(incan_vocab::IncanBinaryOp::FloorDiv),
+        ast::BinaryOp::Mod => Ok(incan_vocab::IncanBinaryOp::Mod),
+        ast::BinaryOp::Pow => Ok(incan_vocab::IncanBinaryOp::Pow),
+        ast::BinaryOp::MatMul => Ok(incan_vocab::IncanBinaryOp::MatMul),
+        ast::BinaryOp::PipeForward => Ok(incan_vocab::IncanBinaryOp::PipeForward),
+        ast::BinaryOp::PipeBackward => Ok(incan_vocab::IncanBinaryOp::PipeBackward),
+        ast::BinaryOp::BitAnd => Ok(incan_vocab::IncanBinaryOp::BitAnd),
+        ast::BinaryOp::BitOr => Ok(incan_vocab::IncanBinaryOp::BitOr),
+        ast::BinaryOp::BitXor => Ok(incan_vocab::IncanBinaryOp::BitXor),
+        ast::BinaryOp::Shl => Ok(incan_vocab::IncanBinaryOp::Shl),
+        ast::BinaryOp::Shr => Ok(incan_vocab::IncanBinaryOp::Shr),
         ast::BinaryOp::Eq => Ok(incan_vocab::IncanBinaryOp::Eq),
         ast::BinaryOp::NotEq => Ok(incan_vocab::IncanBinaryOp::NotEq),
         ast::BinaryOp::Lt => Ok(incan_vocab::IncanBinaryOp::Lt),
@@ -686,6 +908,17 @@ fn map_public_binary_op(op: incan_vocab::IncanBinaryOp) -> Result<ast::BinaryOp,
         incan_vocab::IncanBinaryOp::Sub => Ok(ast::BinaryOp::Sub),
         incan_vocab::IncanBinaryOp::Mul => Ok(ast::BinaryOp::Mul),
         incan_vocab::IncanBinaryOp::Div => Ok(ast::BinaryOp::Div),
+        incan_vocab::IncanBinaryOp::FloorDiv => Ok(ast::BinaryOp::FloorDiv),
+        incan_vocab::IncanBinaryOp::Mod => Ok(ast::BinaryOp::Mod),
+        incan_vocab::IncanBinaryOp::Pow => Ok(ast::BinaryOp::Pow),
+        incan_vocab::IncanBinaryOp::MatMul => Ok(ast::BinaryOp::MatMul),
+        incan_vocab::IncanBinaryOp::PipeForward => Ok(ast::BinaryOp::PipeForward),
+        incan_vocab::IncanBinaryOp::PipeBackward => Ok(ast::BinaryOp::PipeBackward),
+        incan_vocab::IncanBinaryOp::BitAnd => Ok(ast::BinaryOp::BitAnd),
+        incan_vocab::IncanBinaryOp::BitOr => Ok(ast::BinaryOp::BitOr),
+        incan_vocab::IncanBinaryOp::BitXor => Ok(ast::BinaryOp::BitXor),
+        incan_vocab::IncanBinaryOp::Shl => Ok(ast::BinaryOp::Shl),
+        incan_vocab::IncanBinaryOp::Shr => Ok(ast::BinaryOp::Shr),
         incan_vocab::IncanBinaryOp::Eq => Ok(ast::BinaryOp::Eq),
         incan_vocab::IncanBinaryOp::NotEq => Ok(ast::BinaryOp::NotEq),
         incan_vocab::IncanBinaryOp::Lt => Ok(ast::BinaryOp::Lt),
@@ -799,6 +1032,148 @@ mod tests {
         let relation_internal = public_expression_to_internal(&relation)?;
         let relation_roundtrip = internal_expr_to_public(&relation_internal)?;
         assert_eq!(relation_roundtrip, relation);
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_method_calls_as_public_field_callee_calls() -> Result<(), Box<dyn std::error::Error>> {
+        let call = ast::Expr::MethodCall(
+            Box::new(ast::Spanned::new(
+                ast::Expr::Ident("orders".to_string()),
+                ast::Span::default(),
+            )),
+            "filter".to_string(),
+            Vec::new(),
+            vec![ast::CallArg::Positional(ast::Spanned::new(
+                ast::Expr::Ident("predicate".to_string()),
+                ast::Span::default(),
+            ))],
+        );
+
+        let public = internal_expr_to_public(&call)?;
+        assert!(matches!(
+            &public,
+            incan_vocab::IncanExpr::Call { callee, args }
+                if matches!(
+                    callee.as_ref(),
+                    incan_vocab::IncanExpr::Field { object, field }
+                        if matches!(object.as_ref(), incan_vocab::IncanExpr::Name(name) if name == "orders")
+                            && field == "filter"
+                ) && args == &vec![incan_vocab::IncanExpr::Name("predicate".to_string())]
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_rfc028_operator_enums_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let left = ast::Spanned::new(ast::Expr::Ident("left".to_string()), ast::Span::default());
+        let right = ast::Spanned::new(ast::Expr::Ident("right".to_string()), ast::Span::default());
+        let cases = [
+            (ast::BinaryOp::FloorDiv, incan_vocab::IncanBinaryOp::FloorDiv),
+            (ast::BinaryOp::Mod, incan_vocab::IncanBinaryOp::Mod),
+            (ast::BinaryOp::Pow, incan_vocab::IncanBinaryOp::Pow),
+            (ast::BinaryOp::MatMul, incan_vocab::IncanBinaryOp::MatMul),
+            (ast::BinaryOp::PipeForward, incan_vocab::IncanBinaryOp::PipeForward),
+            (ast::BinaryOp::PipeBackward, incan_vocab::IncanBinaryOp::PipeBackward),
+            (ast::BinaryOp::BitAnd, incan_vocab::IncanBinaryOp::BitAnd),
+            (ast::BinaryOp::BitOr, incan_vocab::IncanBinaryOp::BitOr),
+            (ast::BinaryOp::BitXor, incan_vocab::IncanBinaryOp::BitXor),
+            (ast::BinaryOp::Shl, incan_vocab::IncanBinaryOp::Shl),
+            (ast::BinaryOp::Shr, incan_vocab::IncanBinaryOp::Shr),
+        ];
+
+        for (internal_op, public_op) in cases {
+            let internal = ast::Expr::Binary(Box::new(left.clone()), internal_op, Box::new(right.clone()));
+            let public = internal_expr_to_public(&internal)?;
+            assert!(
+                matches!(&public, incan_vocab::IncanExpr::Binary(_, op, _) if *op == public_op),
+                "expected public operator {public_op:?}, got {public:?}"
+            );
+            assert_eq!(public_expression_to_internal(&public)?, internal);
+        }
+
+        let internal = ast::Expr::Unary(
+            ast::UnaryOp::Invert,
+            Box::new(ast::Spanned::new(
+                ast::Expr::Ident("value".to_string()),
+                ast::Span::default(),
+            )),
+        );
+        let public = internal_expr_to_public(&internal)?;
+        assert!(matches!(
+            &public,
+            incan_vocab::IncanExpr::Unary(incan_vocab::IncanUnaryOp::Invert, _)
+        ));
+        assert_eq!(public_expression_to_internal(&public)?, internal);
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_scoped_surface_expression_artifacts_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let scoped = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
+            key: incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+                dependency_key: "querykit".to_string(),
+                descriptor_key: "query.field".to_string(),
+            },
+            payload: ast::SurfaceExprPayload::LeadingDotPath {
+                segments: vec!["order".to_string(), "amount".to_string()],
+                receiver: incan_vocab::ScopedSurfaceReceiver::OwningDeclaration,
+                owner: ast::ScopedSurfaceOwner {
+                    declaration: "query".to_string(),
+                    clause: None,
+                    call: None,
+                },
+            },
+        }));
+
+        let public = internal_expr_to_public(&scoped)?;
+        assert!(matches!(
+            &public,
+            incan_vocab::IncanExpr::ScopedSurface(surface)
+                if surface.dependency_key == "querykit"
+                    && surface.descriptor_key == "query.field"
+                    && matches!(
+                        &surface.payload,
+                        incan_vocab::IncanScopedSurfacePayload::LeadingDotPath { segments, owner, .. }
+                            if segments == &["order".to_string(), "amount".to_string()]
+                                && owner.declaration == "query"
+                    )
+        ));
+        let round_trip = public_expression_to_internal(&public)?;
+        assert_eq!(round_trip, scoped);
+
+        let scoped_symbol = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
+            key: incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+                dependency_key: "querykit".to_string(),
+                descriptor_key: "query.sum".to_string(),
+            },
+            payload: ast::SurfaceExprPayload::ScopedSymbolCall {
+                symbol: "sum".to_string(),
+                args: vec![ast::CallArg::Positional(ast::Spanned::new(
+                    ast::Expr::Ident("amount".to_string()),
+                    ast::Span::default(),
+                ))],
+                owner: ast::ScopedSurfaceOwner {
+                    declaration: "query".to_string(),
+                    clause: Some("SELECT".to_string()),
+                    call: None,
+                },
+            },
+        }));
+
+        let public = internal_expr_to_public(&scoped_symbol)?;
+        assert!(matches!(
+            &public,
+            incan_vocab::IncanExpr::ScopedSymbolCall(call)
+                if call.dependency_key == "querykit"
+                    && call.descriptor_key == "query.sum"
+                    && call.symbol == "sum"
+                    && call.args.len() == 1
+                    && call.owner.declaration == "query"
+                    && call.owner.clause.as_deref() == Some("SELECT")
+        ));
+        let round_trip = public_expression_to_internal(&public)?;
+        assert_eq!(round_trip, scoped_symbol);
         Ok(())
     }
 }

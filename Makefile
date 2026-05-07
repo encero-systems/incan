@@ -2,11 +2,26 @@
 # =====================================
 
 NEXTEST := $(shell command -v cargo-nextest 2>/dev/null)
+TEST_VERBOSE ?= 0
 
 ifeq ($(strip $(NEXTEST)),)
+ifeq ($(TEST_VERBOSE),1)
 TEST_CMD = cargo test --all --verbose
 else
+TEST_CMD = cargo test --all
+endif
+else
 TEST_CMD = cargo nextest run --all --status-level all
+endif
+
+# After `make build` / `make build-fast`, symlink ~/.cargo/bin/incan → target/debug/incan so `incan` on PATH (IDE run,
+# other repos) matches this checkout. When `incan-lsp` was built (`make build` uses --features lsp), also symlink
+# ~/.cargo/bin/incan-lsp so the editor LSP matches without `cargo install`. Off when CI is set; opt out with
+# INCAN_SKIP_CARGO_BIN_LINK=1.
+ifneq ($(CI),)
+INCAN_LINK_CARGO_BIN ?= 0
+else
+INCAN_LINK_CARGO_BIN ?= 1
 endif
 
 .PHONY: help
@@ -36,10 +51,29 @@ help: build-quiet  ## Display this help message
 # Build
 # =============================================================================
 
-.PHONY: build  ## build - Debug build (fast compile)
+.PHONY: _incan_link_debug_to_cargo_bin
+_incan_link_debug_to_cargo_bin:
+	@if [ "$(INCAN_LINK_CARGO_BIN)" != "1" ] || [ "$(INCAN_SKIP_CARGO_BIN_LINK)" = "1" ]; then exit 0; fi
+	@if [ ! -f "$(CURDIR)/target/debug/incan" ]; then echo "incan: expected $(CURDIR)/target/debug/incan after build"; exit 1; fi
+	@mkdir -p "$(HOME)/.cargo/bin"
+	@ln -sf "$(CURDIR)/target/debug/incan" "$(HOME)/.cargo/bin/incan"
+	@echo "\033[32m✓ Linked ~/.cargo/bin/incan -> $(CURDIR)/target/debug/incan\033[0m"
+	@if [ -f "$(CURDIR)/target/debug/incan-lsp" ]; then \
+		ln -sf "$(CURDIR)/target/debug/incan-lsp" "$(HOME)/.cargo/bin/incan-lsp"; \
+		echo "\033[32m✓ Linked ~/.cargo/bin/incan-lsp -> $(CURDIR)/target/debug/incan-lsp\033[0m"; \
+	fi
+
+.PHONY: build  ## build - Debug build (compiler + LSP); links ~/.cargo/bin/incan + incan-lsp locally
 build:
 	@echo "\033[1mBuilding (debug)...\033[0m"
+	@cargo build --features lsp
+	@$(MAKE) _incan_link_debug_to_cargo_bin
+
+.PHONY: build-fast  ## build - Debug build (compiler only); links ~/.cargo/bin/incan locally
+build-fast:
+	@echo "\033[1mBuilding compiler only (debug)...\033[0m"
 	@cargo build
+	@$(MAKE) _incan_link_debug_to_cargo_bin
 
 .PHONY: build-quiet
 build-quiet:
@@ -104,6 +138,24 @@ fmt-check-ci:
 lint-fast-ci:
 	@cargo clippy --workspace --all-features -- -D warnings
 
+.PHONY: rustdoc-gate  ## quality - Require rustdoc on changed Rust functions/methods
+rustdoc-gate:
+	@echo "\033[1mChecking rustdoc coverage for changed Rust functions/methods...\033[0m"
+	@python3 scripts/check_changed_rustdocs.py
+
+.PHONY: rustdoc-gate-ci
+rustdoc-gate-ci:
+	@python3 scripts/check_changed_rustdocs.py
+
+.PHONY: cargo-deny  ## quality - Run cargo-deny policy checks
+cargo-deny:
+	@echo "\033[1mRunning cargo-deny...\033[0m"
+	@cargo deny check
+
+.PHONY: cargo-deny-ci
+cargo-deny-ci:
+	@cargo deny check
+
 .PHONY: check-fast-ci
 check-fast-ci:
 	@cargo check --workspace --all-features
@@ -117,39 +169,58 @@ udeps:
 	@echo "\033[1mChecking for unused dependencies...\033[0m"
 	@cargo +nightly udeps --quiet 2>/dev/null || echo "\033[33m⚠ cargo-udeps skipped (requires cargo-udeps + nightly rustc 1.85+. Run `rustup update nightly` if needed.)\033[0m"
 
-.PHONY: pre-commit  ## quality - Fast local gate: fmt-check + cargo check with phase timing
-pre-commit:
+.PHONY: pre-commit-fast  ## quality - Fast local gate: fmt-check + cargo check with phase timing
+pre-commit-fast:
 	@set -e; \
 	start=$$(date +%s); \
 	printf "\033[1mChecking formatting...\033[0m "; \
 	$(MAKE) -s fmt-check-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t1=$$(date +%s); \
+	printf "\033[1mChecking rustdoc coverage...\033[0m "; \
+	$(MAKE) -s rustdoc-gate-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t2=$$(date +%s); \
 	echo "\033[1mRunning cargo check (fast gate)...\033[0m"; \
 	$(MAKE) -s check-fast-ci; \
 	echo "\033[32mDONE\033[0m"; \
-	t2=$$(date +%s); \
+	t3=$$(date +%s); \
 	echo "\033[32m✓ Pre-commit checks passed (fast)\033[0m"; \
-	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, check=$$((t2-t1))s, total=$$((t2-start))s"
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, check=$$((t3-t2))s, total=$$((t3-start))s"
 
-.PHONY: pre-commit-full  ## quality - Full local gate: fmt-check + tests + clippy with phase timing
-pre-commit-full:
+.PHONY: pre-commit-full-gate  ## quality - Full local gate core: fmt-check + tests + clippy + cargo-deny with phase timing
+pre-commit-full-gate:
 	@set -e; \
 	start=$$(date +%s); \
 	printf "\033[1mChecking formatting...\033[0m "; \
 	$(MAKE) -s fmt-check-ci; \
 	echo "\033[32mDONE\033[0m"; \
 	t1=$$(date +%s); \
+	printf "\033[1mChecking rustdoc coverage...\033[0m "; \
+	$(MAKE) -s rustdoc-gate-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t2=$$(date +%s); \
 	echo "\033[1mRunning tests...\033[0m"; \
 	$(TEST_CMD); \
 	echo "\033[32mDONE\033[0m"; \
-	t2=$$(date +%s); \
+	t3=$$(date +%s); \
 	echo "\033[1mRunning clippy...\033[0m"; \
 	$(MAKE) -s lint-fast-ci; \
 	echo "\033[32mDONE\033[0m"; \
-	t3=$$(date +%s); \
+	t4=$$(date +%s); \
+	echo "\033[1mRunning cargo-deny...\033[0m"; \
+	$(MAKE) -s cargo-deny-ci; \
+	echo "\033[32mDONE\033[0m"; \
+	t5=$$(date +%s); \
 	echo "\033[32m✓ Pre-commit checks passed (full)\033[0m"; \
-	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, tests=$$((t2-t1))s, lint=$$((t3-t2))s, total=$$((t3-start))s"
+	echo "\033[36mPhase timing:\033[0m fmt-check=$$((t1-start))s, rustdoc=$$((t2-t1))s, tests=$$((t3-t2))s, lint=$$((t4-t3))s, deny=$$((t5-t4))s, total=$$((t5-start))s"
+
+.PHONY: pre-commit  ## quality - Full local gate: pre-commit-full-gate + smoke-test-fast
+pre-commit:
+	@echo "\033[1mRunning pre-commit (full local gate)...\033[0m"
+	@$(MAKE) pre-commit-full-gate
+	@$(MAKE) smoke-test-fast
+	@echo "\033[32m✓ Pre-commit passed\033[0m"
 
 .PHONY: ci-full  ## quality - Full CI check: fmt, lint, udeps, test, and release build
 ci-full: fmt lint udeps
@@ -168,10 +239,16 @@ test:
 	@echo "\033[1mRunning tests...\033[0m"
 	@$(TEST_CMD)
 
+.PHONY: test-rust-inspect  ## test - Run focused rust-inspect regression tests
+test-rust-inspect:
+	@echo "\033[1mRunning rust-inspect focused tests...\033[0m"
+	@cargo test --lib --features rust_inspect frontend::typechecker::tests::test_rust_inspect_unavailable_stays_permissive_for_method_calls
+	@cargo test --lib --features rust_inspect frontend::typechecker::tests::test_rusttype_return_coercion_recorded_for_generic_newtype_method_call
+
 .PHONY: examples  ## test - Smoke test examples (check all, run entrypoints with timeout)
 examples: release
 	@echo "\033[1mRunning examples...\033[0m"
-	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-5} bash scripts/run_examples.sh
+	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-30} bash scripts/run_examples.sh
 
 .PHONY: benchmarks  ## test - Run benchmark suite (requires hyperfine)
 benchmarks: release
@@ -188,22 +265,59 @@ benchmarks-incan: release
 	@echo "\033[1mChecking benchmarks (Incan build only)...\033[0m"
 	@INCAN_NO_BANNER=1 bash benchmarks/check_incan.sh
 
-.PHONY: smoke-test-core
-smoke-test-core:
+.PHONY: smoke-test-release
+smoke-test-release:
 	@$(MAKE) release
+
+.PHONY: smoke-test-require-release-bin
+smoke-test-require-release-bin:
+	@if [ ! -x "$(CURDIR)/target/release/incan" ]; then \
+		echo "incan: expected $(CURDIR)/target/release/incan; run make smoke-test-release first"; \
+		exit 1; \
+	fi
+
+.PHONY: smoke-test-canary
+smoke-test-canary:
+	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mRunning Incan assertion canary...\033[0m"
 	@INCAN_NO_BANNER=1 ./target/release/incan test tests/fixtures/test_assert_canary.incn
 	@echo "\033[32m✓ Incan assertion canary passed\033[0m"
+
+.PHONY: smoke-test-web-example
+smoke-test-web-example:
+	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mBuilding web example (build-only)...\033[0m"
 	@INCAN_NO_BANNER=1 ./target/release/incan build examples/web/hello_web.incn
 	@echo "\033[32m✓ Web example built\033[0m"
+
+.PHONY: smoke-test-nested-project-example
+smoke-test-nested-project-example:
+	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mBuilding nested_project example (build-only)...\033[0m"
 	@INCAN_NO_BANNER=1 ./target/release/incan build examples/advanced/nested_project/src/main.incn
 	@echo "\033[32m✓ Nested project example built\033[0m"
+
+.PHONY: smoke-test-examples
+smoke-test-examples:
+	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mRunning examples...\033[0m"
-	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-5} bash scripts/run_examples.sh
+	@INCAN_NO_BANNER=1 INCAN_EXAMPLES_TIMEOUT=$${INCAN_EXAMPLES_TIMEOUT:-30} bash scripts/run_examples.sh
+
+.PHONY: smoke-test-benchmarks-incan
+smoke-test-benchmarks-incan:
+	@$(MAKE) -s smoke-test-require-release-bin
 	@echo "\033[1mChecking benchmarks (Incan build only)...\033[0m"
 	@INCAN_NO_BANNER=1 bash benchmarks/check_incan.sh
+
+.PHONY: smoke-test-core
+smoke-test-core:
+	@$(MAKE) smoke-test-release
+	@$(MAKE) test-rust-inspect
+	@$(MAKE) smoke-test-canary
+	@$(MAKE) smoke-test-web-example
+	@$(MAKE) smoke-test-nested-project-example
+	@$(MAKE) smoke-test-examples
+	@$(MAKE) smoke-test-benchmarks-incan
 
 .PHONY: smoke-test  ## test - Full smoke test: tests + release canary + examples + benchmarks-incan
 smoke-test:
@@ -218,10 +332,9 @@ smoke-test-fast:
 	@$(MAKE) smoke-test-core
 	@echo "\033[32m✓ Smoke-test-fast passed\033[0m"
 
-.PHONY: verify  ## test - Recommended local gate: pre-commit-full + smoke-test-fast
+.PHONY: verify  ## test - Compatibility alias to pre-commit
 verify:
-	@$(MAKE) pre-commit-full
-	@$(MAKE) smoke-test-fast
+	@$(MAKE) pre-commit
 
 .PHONY: test-verbose  ## test - Run tests with output
 test-verbose:

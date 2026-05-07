@@ -279,6 +279,8 @@ pub mod list_methods {
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub enum ListMethodId {
         Append,
+        Extend,
+        Clone,
         Pop,
         Contains,
         Swap,
@@ -302,10 +304,26 @@ pub mod list_methods {
             Since(0, 1),
         ),
         info(
+            ListMethodId::Extend,
+            "extend",
+            &[],
+            "Append all elements from another list.",
+            RFC::_009,
+            Since(0, 2),
+        ),
+        info(
+            ListMethodId::Clone,
+            "clone",
+            &[],
+            "Clone the list container and each element.",
+            RFC::_009,
+            Since(0, 3),
+        ),
+        info(
             ListMethodId::Pop,
             "pop",
             &[],
-            "Remove and return the last element.",
+            "Remove and return the last element. On an empty list, panics with `IndexError: pop from empty list` (Python-compatible).",
             RFC::_009,
             Since(0, 1),
         ),
@@ -1054,6 +1072,116 @@ pub mod option_methods {
         introduced_in_rfc: RfcId,
         since: Since,
     ) -> OptionMethodInfo {
+        LangItemInfo {
+            id,
+            canonical,
+            aliases,
+            description,
+            introduced_in_rfc,
+            since,
+            stability: Stability::Stable,
+            examples: &[],
+        }
+    }
+}
+
+pub mod result_methods {
+    //! Result method surface vocabulary.
+
+    use super::LangItemInfo;
+    use crate::lang::registry::{RFC, RfcId, Since, Stability};
+
+    /// Stable identifier for an RFC 070 `Result[T, E]` combinator.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum ResultMethodId {
+        Map,
+        MapErr,
+        AndThen,
+        OrElse,
+        Inspect,
+        InspectErr,
+    }
+
+    pub type ResultMethodInfo = LangItemInfo<ResultMethodId>;
+
+    pub const RESULT_METHODS: &[ResultMethodInfo] = &[
+        info(
+            ResultMethodId::Map,
+            "map",
+            &[],
+            "Transform an Ok payload while preserving Err.",
+            RFC::_070,
+            Since(0, 3),
+        ),
+        info(
+            ResultMethodId::MapErr,
+            "map_err",
+            &[],
+            "Transform an Err payload while preserving Ok.",
+            RFC::_070,
+            Since(0, 3),
+        ),
+        info(
+            ResultMethodId::AndThen,
+            "and_then",
+            &[],
+            "Chain a Result-returning operation from an Ok payload.",
+            RFC::_070,
+            Since(0, 3),
+        ),
+        info(
+            ResultMethodId::OrElse,
+            "or_else",
+            &[],
+            "Recover or remap through a Result-returning operation from an Err payload.",
+            RFC::_070,
+            Since(0, 3),
+        ),
+        info(
+            ResultMethodId::Inspect,
+            "inspect",
+            &[],
+            "Observe an Ok payload by implicit borrow while preserving the original Result.",
+            RFC::_070,
+            Since(0, 3),
+        ),
+        info(
+            ResultMethodId::InspectErr,
+            "inspect_err",
+            &[],
+            "Observe an Err payload by implicit borrow while preserving the original Result.",
+            RFC::_070,
+            Since(0, 3),
+        ),
+    ];
+
+    /// Resolve a result method spelling to its stable id.
+    pub fn from_str(name: &str) -> Option<ResultMethodId> {
+        super::from_str_impl(RESULT_METHODS, name)
+    }
+
+    /// Return the canonical spelling for a result method.
+    pub fn as_str(id: ResultMethodId) -> &'static str {
+        info_for(id).canonical
+    }
+
+    /// Return the full metadata entry for a result method.
+    ///
+    /// ## Panics
+    /// - If the registry is missing an entry for `id` (this indicates a programming error).
+    pub fn info_for(id: ResultMethodId) -> &'static ResultMethodInfo {
+        super::info_for_impl(RESULT_METHODS, id, "result method info missing")
+    }
+
+    /// Construct result method metadata for the static registry.
+    const fn info(
+        id: ResultMethodId,
+        canonical: &'static str,
+        aliases: &'static [&'static str],
+        description: &'static str,
+        introduced_in_rfc: RfcId,
+        since: Since,
+    ) -> ResultMethodInfo {
         LangItemInfo {
             id,
             canonical,

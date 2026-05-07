@@ -1,0 +1,114 @@
+"""
+Result combinator helpers.
+
+These helpers provide the authored `std.result` form of the `Result[T, E]` combinator surface. Method calls such as
+`value.map(f)` use the same behavior; direct imports are useful when function-shaped APIs read better than methods.
+
+Example:
+
+```incan
+from std.result import map
+
+doubled = map(Ok(2), double)
+```
+"""
+
+
+pub def map[T, E, U](result: Result[T, E], f: Callable[T, U]) -> Result[U, E]:
+    """
+    Transform an `Ok(T)` payload.
+
+    Args:
+        result: Result to inspect.
+        f: Function called with the `Ok(T)` payload.
+
+    Returns:
+        `Ok(f(value))` when `result` is `Ok(value)`, otherwise the original `Err(E)`.
+    """
+    match result:
+        Ok(value) => return Ok(f(value))
+        Err(error) => return Err(error)
+
+
+pub def map_err[T, E, F](result: Result[T, E], f: Callable[E, F]) -> Result[T, F]:
+    """
+    Transform an `Err(E)` payload.
+
+    Args:
+        result: Result to inspect.
+        f: Function called with the `Err(E)` payload.
+
+    Returns:
+        `Err(f(error))` when `result` is `Err(error)`, otherwise the original `Ok(T)`.
+    """
+    match result:
+        Ok(value) => return Ok(value)
+        Err(error) => return Err(f(error))
+
+
+pub def and_then[T, E, U](result: Result[T, E], f: Callable[T, Result[U, E]]) -> Result[U, E]:
+    """
+    Chain a fallible operation after an `Ok(T)` payload.
+
+    Args:
+        result: Result to inspect.
+        f: Function called with the `Ok(T)` payload. It must return a `Result[U, E]`.
+
+    Returns:
+        The `Result[U, E]` returned by `f` when `result` is `Ok(value)`, otherwise the original `Err(E)`.
+    """
+    match result:
+        Ok(value) => return f(value)
+        Err(error) => return Err(error)
+
+
+pub def or_else[T, E, F](result: Result[T, E], f: Callable[E, Result[T, F]]) -> Result[T, F]:
+    """
+    Recover from an `Err(E)` payload with a fallible operation.
+
+    Args:
+        result: Result to inspect.
+        f: Function called with the `Err(E)` payload. It must return a `Result[T, F]`.
+
+    Returns:
+        The `Result[T, F]` returned by `f` when `result` is `Err(error)`, otherwise the original `Ok(T)`.
+    """
+    match result:
+        Ok(value) => return Ok(value)
+        Err(error) => return f(error)
+
+
+pub def inspect[T, E](result: Result[T, E], f: Callable[T, None]) -> Result[T, E]:
+    """
+    Observe an `Ok(T)` payload while preserving the original result.
+
+    Args:
+        result: Result to inspect.
+        f: Function called with an implicit borrow of the `Ok(T)` payload.
+
+    Returns:
+        The original `Result[T, E]` after calling `f` for the `Ok(T)` branch.
+    """
+    match result:
+        Ok(value) =>
+            f(value)
+            return Ok(value)
+        Err(error) => return Err(error)
+
+
+pub def inspect_err[T, E](result: Result[T, E], f: Callable[E, None]) -> Result[T, E]:
+    """
+    Observe an `Err(E)` payload while preserving the original result.
+
+    Args:
+        result: Result to inspect.
+        f: Function called with an implicit borrow of the `Err(E)` payload.
+
+    Returns:
+        The original `Result[T, E]` after calling `f` for the `Err(E)` branch.
+    """
+    match result:
+        Ok(value) => return Ok(value)
+        Err(error) =>
+            f(error)
+            return Err(error)

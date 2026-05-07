@@ -1,0 +1,23 @@
+def match_index(xs: list[str], y: int) -> int:
+    mut idx = 0
+    while idx < len(xs):
+        if len(xs[idx]) == y:
+            return idx
+        idx = idx + 1
+    return -1
+
+
+def helper_loop(xs: list[str], ys: list[int]) -> list[int]:
+    mut out: list[int] = []
+    for y in ys:
+        out.append(match_index(xs, y))
+    return out
+
+
+def helper_list(xs: list[str], ys: list[int]) -> list[int]:
+    return [match_index(xs, y) for y in ys]
+
+
+def main() -> None:
+    helper_loop(["a", "bb", "ccc"], [1, 2])
+    helper_list(["a", "bb", "ccc"], [1, 2])

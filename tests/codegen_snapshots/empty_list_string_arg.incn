@@ -1,0 +1,5 @@
+def count_names(names: List[str]) -> int:
+  return len(names)
+
+def main() -> int:
+  return count_names([])

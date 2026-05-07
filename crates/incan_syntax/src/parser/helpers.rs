@@ -279,6 +279,42 @@ impl<'a> Parser<'a> {
         while self.match_token(&TokenKind::Newline) {}
     }
 
+    /// Expect a suite body after a header newline, allowing blank physical lines before the required indent.
+    ///
+    /// This keeps the parser tolerant of source that the formatter will normalize, such as:
+    /// `elif cond:` followed by one blank line before the first body statement.
+    ///
+    /// Any pending blank-line intent carried out of a previously closed inner block is cleared here. That carry-over
+    /// belongs to the next statement in the enclosing block, not to the first statement inside a newly opened suite.
+    fn expect_suite_indent(&mut self, msg: &str) -> Result<&Token, CompileError> {
+        self.pending_dedent_blank_lines = 0;
+        self.skip_newlines();
+        self.expect(&TokenKind::Indent, msg)
+    }
+
+    /// Consume `Newline` tokens between statements in an indented block (or before the first statement).
+    ///
+    /// Returns how many **extra** blank lines to preserve before the next statement when formatting:
+    /// - One newline (end of previous line only) → `0`
+    /// - Two or more newlines → `1` (at least one empty line; further empties are collapsed)
+    fn consume_inter_statement_blank_prefix(&mut self) -> u8 {
+        let pending_blank_lines = std::mem::take(&mut self.pending_dedent_blank_lines);
+        let previous_was_dedent = self
+            .pos
+            .checked_sub(1)
+            .and_then(|idx| self.tokens.get(idx))
+            .is_some_and(|token| matches!(token.kind, TokenKind::Dedent));
+        let mut count = 0u8;
+        while self.match_token(&TokenKind::Newline) {
+            count = count.saturating_add(1);
+        }
+        if pending_blank_lines > 0 || count >= 2 || (previous_was_dedent && count >= 1) {
+            1
+        } else {
+            0
+        }
+    }
+
     /// Skip stray DEDENT tokens at the current position.
     ///
     /// These should not normally appear at module level, but can show up after error recovery.
@@ -299,6 +335,7 @@ impl<'a> Parser<'a> {
                 || self.check_keyword(KeywordId::Enum)
                 || self.check_keyword(KeywordId::Type)
                 || self.check_keyword(KeywordId::Const)
+                || self.check_keyword(KeywordId::Static)
                 || self.check_keyword(KeywordId::Import)
             {
                 return;
@@ -334,10 +371,27 @@ impl<'a> Parser<'a> {
             || self.current_surface_keyword(KeywordSurfaceKind::PrefixExpression).is_some()
             || self.check_keyword(KeywordId::Match)
             || self.check_keyword(KeywordId::If)
+            || self.check_keyword(KeywordId::Loop)
             || self.check_punct(PunctuationId::LParen)
             || self.check_punct(PunctuationId::LBracket)
             || self.check_punct(PunctuationId::LBrace)
             || self.check_op(OperatorId::Minus)
+    }
+
+    /// After consuming `Indent` into a `model` / `class` / `enum` body, optionally parse a leading `"""..."""`.
+    ///
+    /// Matches the newtype-body pattern: skip leading newlines, consume one string literal if present, then optional
+    /// newline and further skipped newlines before fields, variants, or methods.
+    fn optional_leading_block_docstring(&mut self) -> Option<String> {
+        let mut docstring = None;
+        self.skip_newlines();
+        if let TokenKind::String(s) = &self.peek().kind {
+            docstring = Some(s.clone());
+            self.advance();
+            self.match_token(&TokenKind::Newline);
+            self.skip_newlines();
+        }
+        docstring
     }
 
 }

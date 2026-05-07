@@ -1,0 +1,2 @@
+pub def studiokit_name() -> str:
+    return "studiokit"

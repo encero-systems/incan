@@ -31,6 +31,7 @@ pub enum CollectionTypeId {
     FrozenList,
     FrozenDict,
     FrozenSet,
+    Generator,
 }
 
 /// Metadata for a collection/generic-base builtin type.
@@ -120,6 +121,14 @@ pub const COLLECTION_TYPES: &[CollectionTypeInfo] = &[
         RFC::_009,
         Since(0, 1),
     ),
+    info(
+        CollectionTypeId::Generator,
+        "Generator",
+        &["generator"],
+        "Lazy resumable producer type.",
+        RFC::_006,
+        Since(0, 3),
+    ),
 ];
 
 /// Resolve a type name to a [`CollectionTypeId`].
@@ -163,15 +172,23 @@ pub fn as_str(id: CollectionTypeId) -> &'static str {
 /// - `id`: Collection type identifier.
 ///
 /// ## Returns
-/// - The associated [`CollectionTypeInfo`] from [`COLLECTION_TYPES`].
+/// - The associated [`CollectionTypeInfo`] copied from [`COLLECTION_TYPES`].
 ///
-/// ## Panics
-/// - If the registry is missing an entry for `id` (this indicates a programming error).
-pub fn info_for(id: CollectionTypeId) -> &'static CollectionTypeInfo {
-    COLLECTION_TYPES
-        .iter()
-        .find(|t| t.id == id)
-        .expect("INVARIANT: collection type info missing")
+/// The lookup is exhaustive over the closed enum, so adding a collection type requires updating this match at compile
+/// time.
+pub fn info_for(id: CollectionTypeId) -> CollectionTypeInfo {
+    match id {
+        CollectionTypeId::List => COLLECTION_TYPES[0],
+        CollectionTypeId::Dict => COLLECTION_TYPES[1],
+        CollectionTypeId::Set => COLLECTION_TYPES[2],
+        CollectionTypeId::Tuple => COLLECTION_TYPES[3],
+        CollectionTypeId::Option => COLLECTION_TYPES[4],
+        CollectionTypeId::Result => COLLECTION_TYPES[5],
+        CollectionTypeId::FrozenList => COLLECTION_TYPES[6],
+        CollectionTypeId::FrozenDict => COLLECTION_TYPES[7],
+        CollectionTypeId::FrozenSet => COLLECTION_TYPES[8],
+        CollectionTypeId::Generator => COLLECTION_TYPES[9],
+    }
 }
 
 const fn info(

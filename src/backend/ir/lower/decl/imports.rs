@@ -3,13 +3,16 @@
 use super::super::super::decl::IrDeclKind;
 use super::super::AstLowering;
 use crate::frontend::ast;
+use crate::frontend::module::canonicalize_source_module_segments;
 
 impl AstLowering {
     /// Lower an import declaration.
     pub(in crate::backend::ir::lower) fn lower_import(&self, i: &ast::ImportDecl) -> IrDeclKind {
         let (path, ast_items) = match &i.kind {
-            ast::ImportKind::Module(p) => (p.segments.clone(), vec![]),
-            ast::ImportKind::From { module, items } => (module.segments.clone(), items.clone()),
+            ast::ImportKind::Module(p) => (canonicalize_source_module_segments(&p.segments), vec![]),
+            ast::ImportKind::From { module, items } => {
+                (canonicalize_source_module_segments(&module.segments), items.clone())
+            }
             ast::ImportKind::PubLibrary { library } => (vec![library.clone()], vec![]),
             ast::ImportKind::PubFrom { library, items } => (vec![library.clone()], items.clone()),
             ast::ImportKind::RustCrate { crate_name, path, .. } => {
@@ -63,13 +66,24 @@ impl AstLowering {
         // Convert AST import items to IR import items
         let ir_items: Vec<super::super::super::decl::IrImportItem> = ast_items
             .iter()
-            .map(|item| super::super::super::decl::IrImportItem {
-                name: item.name.clone(),
-                alias: item.alias.clone(),
+            .map(|item| {
+                let binding_name = item.alias.as_ref().unwrap_or(&item.name);
+                let rust_trait_methods = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.rust_trait_import_methods.get(binding_name))
+                    .map(|methods| methods.iter().cloned().collect())
+                    .unwrap_or_default();
+                super::super::super::decl::IrImportItem {
+                    name: item.name.clone(),
+                    alias: item.alias.clone(),
+                    rust_trait_methods,
+                }
             })
             .collect();
 
         IrDeclKind::Import {
+            visibility: Self::map_visibility(i.visibility),
             origin,
             qualifier,
             path,

@@ -75,6 +75,26 @@ pub fn empty_index_not_allowed(span: Span) -> CompileError {
     CompileError::syntax("Empty index is not allowed".to_string(), span)
 }
 
+// -- Collection literal spread markers ---------------------------------------
+
+/// Report `**expr` in a list literal, where only positional `*expr` spread is valid.
+pub fn invalid_list_spread_marker(span: Span) -> CompileError {
+    CompileError::syntax("Invalid list spread marker `**`".to_string(), span)
+        .with_hint("Use `*expr` to spread a list inside a list literal")
+}
+
+/// Report `*expr` in a dictionary literal, where mapping spread must use `**expr`.
+pub fn invalid_dict_spread_marker(span: Span) -> CompileError {
+    CompileError::syntax("Invalid dictionary spread marker `*`".to_string(), span)
+        .with_hint("Use `**expr` to spread a dictionary inside a dictionary literal")
+}
+
+/// Report attempted set literal spread, which RFC 038 intentionally leaves out of scope.
+pub fn set_literal_spread_not_supported(span: Span) -> CompileError {
+    CompileError::syntax("Set literal spread is not supported".to_string(), span)
+        .with_hint("Use a list or dictionary literal spread, or build the set with methods")
+}
+
 // -- Imports & decorators ----------------------------------------------------
 
 pub fn pub_modifier_not_allowed_on_import(span: Span) -> CompileError {
@@ -82,15 +102,15 @@ pub fn pub_modifier_not_allowed_on_import(span: Span) -> CompileError {
         "The 'pub' modifier is only supported on `from ... import ...` re-exports".to_string(),
         span,
     )
-    .with_hint("Use `pub from module import Name` in `src/lib.incn`, or remove `pub`")
+    .with_hint("Use `pub from module import Name` in `src/`, or remove `pub`")
 }
 
-pub fn pub_reexport_only_allowed_in_library_entrypoint(span: Span) -> CompileError {
+pub fn pub_reexport_only_allowed_in_src_modules(span: Span) -> CompileError {
     CompileError::syntax(
-        "`pub from ... import ...` is only valid in `src/lib.incn`".to_string(),
+        "`pub from ... import ...` is only valid in modules under `src/`".to_string(),
         span,
     )
-    .with_hint("Move this re-export to `src/lib.incn`, or remove `pub` for an internal import")
+    .with_hint("Move this re-export into `src/`, or remove `pub` for an internal import")
 }
 
 pub fn decorator_path_expected(span: Span) -> CompileError {
@@ -210,15 +230,60 @@ pub fn enum_variant_type_annotations(span: Span) -> CompileError {
 
 // -- Method & field declarations ---------------------------------------------
 
+/// Report a method declaration that omitted the colon required before a concrete method body.
 pub fn method_decl_expected_body(span: Span) -> CompileError {
+    CompileError::syntax("Expected ':' after method return type".to_string(), span)
+}
+
+pub fn static_only_allowed_at_module_scope(span: Span) -> CompileError {
     CompileError::syntax(
-        "Expected ':' after return type or newline for abstract method".to_string(),
+        "`static` declarations are only allowed at module scope".to_string(),
         span,
     )
+    .with_hint("Move this declaration to the top level of the module")
+}
+
+pub fn static_missing_type_annotation(name: &str, span: Span) -> CompileError {
+    CompileError::syntax(format!("Static '{}' requires an explicit type annotation", name), span)
+        .with_hint(format!("Declare it as `static {}: Type = ...`", name))
+}
+
+pub fn static_missing_initializer(name: &str, span: Span) -> CompileError {
+    CompileError::syntax(format!("Static '{}' requires an initializer", name), span)
+        .with_hint(format!("Declare it as `static {}: Type = value`", name))
 }
 
 pub fn decorators_on_fields_not_supported(span: Span) -> CompileError {
     CompileError::syntax("Decorators on fields are not supported".to_string(), span)
+}
+
+/// Report decorators on a computed property declaration.
+pub fn decorators_on_properties_not_supported(span: Span) -> CompileError {
+    CompileError::syntax("Decorators on properties are not supported".to_string(), span)
+        .with_hint("Remove the decorator or use a `def` method")
+}
+
+/// Report declaration modifiers such as `async` or `static` before a computed property.
+pub fn property_modifiers_not_supported(span: Span) -> CompileError {
+    CompileError::syntax(
+        "Declaration modifiers are not supported on properties".to_string(),
+        span,
+    )
+    .with_hint("Declare the property as `property name -> Type:`")
+}
+
+/// Report a parameter list on a computed property declaration.
+pub fn property_parameters_not_supported(span: Span) -> CompileError {
+    CompileError::syntax("Computed properties do not accept parameter lists".to_string(), span)
+        .with_hint("Declare the property as `property name -> Type:`")
+}
+
+/// Report a concrete computed property declaration that is missing its body marker.
+pub fn property_decl_expected_body(span: Span) -> CompileError {
+    CompileError::syntax(
+        "Expected ':' after property return type or ': ...' for abstract property".to_string(),
+        span,
+    )
 }
 
 pub fn unknown_field_metadata_key(key: &str, span: Span) -> CompileError {

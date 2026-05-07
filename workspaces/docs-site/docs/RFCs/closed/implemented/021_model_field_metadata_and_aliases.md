@@ -4,7 +4,7 @@
 
 **Status:** Implemented  
 **Author(s):** Danny Meijer (@danny-meijer)  
-**Issue:** `https://github.com/dannys-code-corner/incan/issues/94`  
+**Issue:** [#94](https://github.com/dannys-code-corner/incan/issues/94)
 **Related:** RFC 005 (Rust interop), RFC 017 (constrained types)
 
 ## Summary

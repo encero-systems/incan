@@ -20,7 +20,9 @@
 //! ```
 //!
 //! ## See also
-//! - `cargo run -p incan_core --bin generate_lang_reference` to generate Markdown reference tables.
+//! - `cargo run -p incan_core --bin generate_lang_reference` writes
+//!   `workspaces/docs-site/docs/language/reference/language.md` from these registries. Do not edit that Markdown by
+//!   hand; change the tables here and re-run the binary.
 
 pub mod builtins;
 pub mod conventions;
