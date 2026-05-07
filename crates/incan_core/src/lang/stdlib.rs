@@ -486,7 +486,12 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "datetime"])));
         assert!(is_known_stdlib_module(&segs(&["std", "datetime", "runtime"])));
         assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil"])));
-        assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil", "intervals"])));
+        assert!(is_known_stdlib_module(&segs(&[
+            "std",
+            "datetime",
+            "civil",
+            "intervals"
+        ])));
         assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil", "naive"])));
         assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil", "offset"])));
         assert!(is_known_stdlib_module(&segs(&["std", "graph"])));
@@ -689,9 +694,6 @@ mod tests {
         );
         assert_eq!(datetime_ns.map(|ns| ns.feature), Some(None));
         assert_eq!(datetime_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
-        assert_eq!(
-            datetime_ns.map(|ns| ns.submodules.contains(&"civil.naive")),
-            Some(true)
-        );
+        assert_eq!(datetime_ns.map(|ns| ns.submodules.contains(&"civil.naive")), Some(true));
     }
 }

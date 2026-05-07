@@ -1,0 +1,86 @@
+name: Install Incan
+description: Build the Incan compiler from this repository and add the resulting binary to PATH.
+inputs:
+  toolchain:
+    description: Rust toolchain used to build Incan.
+    required: false
+    default: stable
+  profile:
+    description: Cargo profile for the compiler build. Supported values are release and debug.
+    required: false
+    default: release
+  cache:
+    description: Restore and save Cargo build artifacts with Swatinem/rust-cache.
+    required: false
+    default: 'true'
+  cache-shared-key:
+    description: Shared cache key used by Swatinem/rust-cache.
+    required: false
+    default: incan-install
+outputs:
+  binary-path:
+    description: Absolute path to the installed incan binary.
+    value: ${{ steps.expose.outputs.binary-path }}
+  binary-dir:
+    description: Directory added to PATH.
+    value: ${{ steps.expose.outputs.binary-dir }}
+runs:
+  using: composite
+  steps:
+    - name: Locate Incan source
+      shell: bash
+      run: |
+        set -euo pipefail
+        repo_root="$(cd "${GITHUB_ACTION_PATH}/../../.." && pwd)"
+        echo "INCAN_ACTION_REPO_ROOT=${repo_root}" >> "${GITHUB_ENV}"
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@master
+      with:
+        toolchain: ${{ inputs.toolchain }}
+
+    - name: Cache Incan build artifacts
+      if: ${{ inputs.cache == 'true' }}
+      uses: Swatinem/rust-cache@v2
+      with:
+        shared-key: ${{ inputs.cache-shared-key }}
+        workspaces: ${{ env.INCAN_ACTION_REPO_ROOT }} -> target
+
+    - name: Build Incan compiler
+      shell: bash
+      env:
+        PROFILE: ${{ inputs.profile }}
+      run: |
+        set -euo pipefail
+        cd "${INCAN_ACTION_REPO_ROOT}"
+
+        case "${PROFILE}" in
+          release)
+            cargo build --locked --bin incan --release
+            ;;
+          debug)
+            cargo build --locked --bin incan
+            ;;
+          *)
+            echo "Unsupported Incan build profile: ${PROFILE}" >&2
+            echo "Use profile=release or profile=debug." >&2
+            exit 2
+            ;;
+        esac
+
+    - name: Expose Incan binary
+      id: expose
+      shell: bash
+      env:
+        PROFILE: ${{ inputs.profile }}
+      run: |
+        set -euo pipefail
+        if [ "${PROFILE}" = "debug" ]; then
+          binary_dir="${INCAN_ACTION_REPO_ROOT}/target/debug"
+        else
+          binary_dir="${INCAN_ACTION_REPO_ROOT}/target/release"
+        fi
+
+        echo "${binary_dir}" >> "${GITHUB_PATH}"
+        echo "binary-dir=${binary_dir}" >> "${GITHUB_OUTPUT}"
+        echo "binary-path=${binary_dir}/incan" >> "${GITHUB_OUTPUT}"
