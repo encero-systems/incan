@@ -10,7 +10,7 @@ It re-exports:
 - task helpers such as `spawn`, `spawn_blocking`, `yield_now`, `JoinHandle`, and `TaskJoinError`
 - channel helpers and error types
 - synchronization primitives (`Mutex`, `RwLock`, `Semaphore`, `Barrier`) and `SemaphoreAcquireError`
-- `select_timeout`
+- `RaceArm`, `arm`, `race`, and `race_timeout`
 
 Example:
     from std.async.prelude import *
@@ -43,5 +43,5 @@ from std.async.sync import RwLock, RwLockReadGuard, RwLockWriteGuard
 from std.async.sync import Semaphore, SemaphorePermit, SemaphoreAcquireError
 from std.async.sync import Barrier
 
-# Select
-from std.async.select import select_timeout
+# Race
+from std.async.race import RaceArm, arm, race, race_timeout

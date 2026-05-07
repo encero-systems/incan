@@ -59,6 +59,9 @@ fn for_body_needs_mut_iteration(pattern: &Pattern, body: &[IrStmt]) -> bool {
                     || value.as_ref().is_some_and(|v| expr_contains_mutation(v, var))
             }
             IrExprKind::Loop { body } => body.iter().any(|stmt| stmt_mutates_var(stmt, var)),
+            IrExprKind::Race { arms, .. } => arms
+                .iter()
+                .any(|arm| expr_contains_mutation(&arm.awaitable, var) || expr_contains_mutation(&arm.body, var)),
             _ => false,
         }
     }
@@ -152,6 +155,12 @@ fn expr_mutates_storage_binding(expr: &super::super::expr::IrExpr, names: &mut H
             }
             if let Some(value) = value {
                 expr_mutates_storage_binding(value, names);
+            }
+        }
+        IrExprKind::Race { arms, .. } => {
+            for arm in arms {
+                expr_mutates_storage_binding(&arm.awaitable, names);
+                expr_mutates_storage_binding(&arm.body, names);
             }
         }
         IrExprKind::Call { func, args, .. } => {
@@ -727,6 +736,11 @@ fn expr_uses_binding_name(expr: &super::super::expr::IrExpr, binding_name: &str)
         IrExprKind::Match { scrutinee, arms } => {
             expr_uses_binding_name(scrutinee, binding_name)
                 || arms.iter().any(|arm| match_arm_uses_binding_name(arm, binding_name))
+        }
+        IrExprKind::Race { arms, binding } => {
+            arms.iter()
+                .any(|arm| expr_uses_binding_name(&arm.awaitable, binding_name))
+                || binding != binding_name && arms.iter().any(|arm| expr_uses_binding_name(&arm.body, binding_name))
         }
         IrExprKind::Closure { params, body, captures } => {
             captures.iter().any(|capture| capture == binding_name)

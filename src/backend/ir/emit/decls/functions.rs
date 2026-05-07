@@ -244,6 +244,12 @@ impl<'a> IrEmitter<'a> {
                     Self::rewrite_borrowed_param_types_in_expr(&mut arm.body, borrowed);
                 }
             }
+            IrExprKind::Race { arms, .. } => {
+                for arm in arms {
+                    Self::rewrite_borrowed_param_types_in_expr(&mut arm.awaitable, borrowed);
+                    Self::rewrite_borrowed_param_types_in_expr(&mut arm.body, borrowed);
+                }
+            }
             IrExprKind::Closure { body, .. } => Self::rewrite_borrowed_param_types_in_expr(body, borrowed),
             IrExprKind::Block { stmts, value } => {
                 for stmt in stmts {
@@ -1435,6 +1441,14 @@ impl<'a> IrEmitter<'a> {
                 Self::collect_expr_used_names(scrutinee, param_names, shadowed_names, used_names);
                 for arm in arms {
                     Self::collect_match_arm_used_names(arm, param_names, shadowed_names, used_names);
+                }
+            }
+            IrExprKind::Race { binding, arms } => {
+                for arm in arms {
+                    Self::collect_expr_used_names(&arm.awaitable, param_names, shadowed_names, used_names);
+                    let mut arm_shadowed = shadowed_names.clone();
+                    arm_shadowed.insert(binding.clone());
+                    Self::collect_expr_used_names(&arm.body, param_names, &arm_shadowed, used_names);
                 }
             }
             IrExprKind::Closure { params, body, captures } => {

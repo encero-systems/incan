@@ -221,6 +221,9 @@ impl Formatter {
                     self.writer.write(" ");
                     self.format_expr(&inner.node);
                 }
+                (_, SurfaceExprPayload::RaceFor(race)) => {
+                    self.format_race_for_expr(race);
+                }
                 (SurfaceFeatureKey::ScopedDslSurface { .. }, SurfaceExprPayload::LeadingDotPath { segments, .. }) => {
                     for segment in segments {
                         self.writer.write(".");
@@ -409,6 +412,38 @@ impl Formatter {
                 self.format_expr(&end.node);
             }
         }
+    }
+
+    /// Format an import-activated `race for value:` expression block.
+    fn format_race_for_expr(&mut self, race: &RaceForExpr) {
+        self.writer.write("race for ");
+        self.writer.write(&race.binding);
+        self.writer.writeln(":");
+        self.writer.indent();
+        for arm in &race.arms {
+            self.writer.write("await ");
+            self.format_expr(&arm.awaitable.node);
+            self.writer.write(" =>");
+            match &arm.body {
+                RaceForBody::Expr(expr) => {
+                    self.writer.write(" ");
+                    self.format_expr(&expr.node);
+                    self.writer.newline();
+                }
+                RaceForBody::Block(stmts) => {
+                    self.writer.newline();
+                    self.writer.indent();
+                    for stmt in stmts {
+                        self.format_statement(stmt);
+                    }
+                    if stmts.is_empty() {
+                        self.writer.writeln("pass");
+                    }
+                    self.writer.dedent();
+                }
+            }
+        }
+        self.writer.dedent();
     }
 
     /// Write comprehension clauses in canonical source order.

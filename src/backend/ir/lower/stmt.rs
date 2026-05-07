@@ -2077,6 +2077,19 @@ impl AstLowering {
             }
             ast::Expr::Surface(surface_expr) => match &surface_expr.payload {
                 ast::SurfaceExprPayload::PrefixUnary(inner) => self.count_expr_ident_reads(&inner.node, counts),
+                ast::SurfaceExprPayload::RaceFor(race) => {
+                    for arm in &race.arms {
+                        self.count_expr_ident_reads(&arm.awaitable.node, counts);
+                        match &arm.body {
+                            ast::RaceForBody::Expr(expr) => self.count_expr_ident_reads(&expr.node, counts),
+                            ast::RaceForBody::Block(stmts) => {
+                                for stmt in stmts {
+                                    self.count_statement_ident_reads(&stmt.node, counts);
+                                }
+                            }
+                        }
+                    }
+                }
                 ast::SurfaceExprPayload::LeadingDotPath { .. } => {}
                 ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                     self.count_expr_ident_reads(&left.node, counts);

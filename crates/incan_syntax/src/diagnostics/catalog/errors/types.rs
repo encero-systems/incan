@@ -842,6 +842,19 @@ pub fn missing_trait_method(trait_name: &str, method: &str, span: Span) -> Compi
     .with_note("All required trait methods must be implemented")
 }
 
+/// Report an `Awaitable[T]` adoption with no compiler-known await realization path.
+pub fn invalid_awaitable_adoption(type_name: &str, expected_output: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Type '{}' adopts Awaitable[{}] but has no valid await realization",
+            type_name, expected_output
+        ),
+        span,
+    )
+    .with_hint("Wrap a known awaitable field such as JoinHandle[T] or Awaitable[T], or use a Rust-backed future type")
+    .with_note("Awaitable adoption must map to a compiler-known await output type")
+}
+
 /// Report a concrete type that has not implemented a required trait property.
 pub fn missing_trait_property(trait_name: &str, property: &str, span: Span) -> CompileError {
     CompileError::type_error(

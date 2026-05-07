@@ -551,6 +551,10 @@ fn internal_call_args_to_public(args: &[ast::CallArg]) -> Result<Vec<incan_vocab
 
 /// Convert a compiler surface expression artifact into the public vocab AST.
 fn internal_surface_expr_to_public(surface: &ast::SurfaceExpr) -> Result<incan_vocab::IncanExpr, VocabAstBridgeError> {
+    if let ast::SurfaceExprPayload::RaceFor(race) = &surface.payload {
+        return Ok(incan_vocab::IncanExpr::RaceFor(internal_race_for_to_public(race)?));
+    }
+
     let incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
         dependency_key,
         descriptor_key,
@@ -610,6 +614,7 @@ fn internal_surface_expr_to_public(surface: &ast::SurfaceExpr) -> Result<incan_v
                 "soft-keyword surface expression is not yet supported by public vocab AST bridge",
             ));
         }
+        ast::SurfaceExprPayload::RaceFor(_) => unreachable!("race surface expressions return before scoped conversion"),
     };
 
     Ok(incan_vocab::IncanExpr::ScopedSurface(
@@ -619,6 +624,32 @@ fn internal_surface_expr_to_public(surface: &ast::SurfaceExpr) -> Result<incan_v
             payload,
         },
     ))
+}
+
+/// Convert one internal race expression into the public vocab AST.
+fn internal_race_for_to_public(race: &ast::RaceForExpr) -> Result<incan_vocab::IncanRaceForExpr, VocabAstBridgeError> {
+    let arms = race
+        .arms
+        .iter()
+        .map(|arm| {
+            let body = match &arm.body {
+                ast::RaceForBody::Expr(expr) => {
+                    incan_vocab::IncanRaceForBody::Expr(Box::new(internal_expr_to_public(&expr.node)?))
+                }
+                ast::RaceForBody::Block(statements) => {
+                    incan_vocab::IncanRaceForBody::Block(internal_statements_to_public(statements)?)
+                }
+            };
+            Ok(incan_vocab::IncanRaceForArm {
+                awaitable: internal_expr_to_public(&arm.awaitable.node)?,
+                body,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(incan_vocab::IncanRaceForExpr {
+        binding: race.binding.clone(),
+        arms,
+    })
 }
 
 /// Convert one public `incan_vocab::IncanExpr` to internal compiler expression AST.
@@ -717,12 +748,50 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
             )),
             field.clone(),
         )),
+        incan_vocab::IncanExpr::RaceFor(race) => public_race_for_to_internal(race),
         incan_vocab::IncanExpr::ScopedSurface(surface) => public_scoped_surface_expr_to_internal(surface),
         incan_vocab::IncanExpr::ScopedSymbolCall(call) => public_scoped_symbol_call_to_internal(call),
         _ => Err(VocabAstBridgeError::UnsupportedPublicExpression(
             "expression form is not yet supported by internal AST bridge",
         )),
     }
+}
+
+/// Convert one public race expression back into the compiler AST.
+fn public_race_for_to_internal(race: &incan_vocab::IncanRaceForExpr) -> Result<ast::Expr, VocabAstBridgeError> {
+    let arms = race
+        .arms
+        .iter()
+        .map(|arm| {
+            let body = match &arm.body {
+                incan_vocab::IncanRaceForBody::Expr(expr) => {
+                    ast::RaceForBody::Expr(ast::Spanned::new(public_expr_to_internal(expr)?, ast::Span::default()))
+                }
+                incan_vocab::IncanRaceForBody::Block(statements) => {
+                    ast::RaceForBody::Block(public_statements_to_internal(statements)?)
+                }
+                _ => {
+                    return Err(VocabAstBridgeError::UnsupportedPublicExpression(
+                        "race arm body form is not supported by internal AST bridge",
+                    ));
+                }
+            };
+            Ok(ast::RaceForArm {
+                awaitable: ast::Spanned::new(public_expr_to_internal(&arm.awaitable)?, ast::Span::default()),
+                body,
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ast::Expr::Surface(Box::new(ast::SurfaceExpr {
+        key: incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+            dependency_key: "std.async".to_string(),
+            descriptor_key: "race_for".to_string(),
+        },
+        payload: ast::SurfaceExprPayload::RaceFor(Box::new(ast::RaceForExpr {
+            binding: race.binding.clone(),
+            arms,
+        })),
+    })))
 }
 
 /// Convert a public scoped-surface expression back into the compiler AST.
@@ -1174,6 +1243,50 @@ mod tests {
         ));
         let round_trip = public_expression_to_internal(&public)?;
         assert_eq!(round_trip, scoped_symbol);
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_race_for_expression_artifacts_round_trip() -> Result<(), Box<dyn std::error::Error>> {
+        let race = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
+            key: incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+                dependency_key: "std.async".to_string(),
+                descriptor_key: "race_for".to_string(),
+            },
+            payload: ast::SurfaceExprPayload::RaceFor(Box::new(ast::RaceForExpr {
+                binding: "value".to_string(),
+                arms: vec![
+                    ast::RaceForArm {
+                        awaitable: ast::Spanned::new(ast::Expr::Ident("fast".to_string()), ast::Span::default()),
+                        body: ast::RaceForBody::Expr(ast::Spanned::new(
+                            ast::Expr::Ident("value".to_string()),
+                            ast::Span::default(),
+                        )),
+                    },
+                    ast::RaceForArm {
+                        awaitable: ast::Spanned::new(ast::Expr::Ident("slow".to_string()), ast::Span::default()),
+                        body: ast::RaceForBody::Block(vec![ast::Spanned::new(
+                            ast::Statement::Return(Some(ast::Spanned::new(
+                                ast::Expr::Ident("value".to_string()),
+                                ast::Span::default(),
+                            ))),
+                            ast::Span::default(),
+                        )]),
+                    },
+                ],
+            })),
+        }));
+
+        let public = internal_expr_to_public(&race)?;
+        assert!(matches!(
+            &public,
+            incan_vocab::IncanExpr::RaceFor(race)
+                if race.binding == "value"
+                    && race.arms.len() == 2
+                    && matches!(&race.arms[0].body, incan_vocab::IncanRaceForBody::Expr(_))
+                    && matches!(&race.arms[1].body, incan_vocab::IncanRaceForBody::Block(_))
+        ));
+        assert_eq!(public_expression_to_internal(&public)?, race);
         Ok(())
     }
 }

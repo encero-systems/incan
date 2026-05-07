@@ -957,6 +957,12 @@ fn collect_backend_clone_bounds_in_expr(
                 collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
             }
         }
+        IrExprKind::Race { arms, .. } => {
+            for arm in arms {
+                collect_backend_clone_bounds_in_expr(&arm.awaitable, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(&arm.body, type_param_names, self_clone_params, clone_params);
+            }
+        }
         IrExprKind::Match { scrutinee, arms } => {
             collect_backend_clone_bounds_for_value_use(
                 scrutinee,
@@ -1643,6 +1649,13 @@ fn scan_expr_for_bounds(
             scan_expr_for_bounds(inner, type_params, params, bounds_map);
         }
 
+        IrExprKind::Race { arms, .. } => {
+            for arm in arms {
+                scan_expr_for_bounds(&arm.awaitable, type_params, params, bounds_map);
+                scan_expr_for_bounds(&arm.body, type_params, params, bounds_map);
+            }
+        }
+
         // ---- Slice: recurse ----
         IrExprKind::Slice {
             target,
@@ -2271,6 +2284,12 @@ fn collect_calls_in_expr(
         IrExprKind::Loop { body } => {
             for stmt in body {
                 recurse_stmt(stmt, result);
+            }
+        }
+        IrExprKind::Race { arms, .. } => {
+            for arm in arms {
+                recurse_expr(&arm.awaitable, result);
+                recurse_expr(&arm.body, result);
             }
         }
         IrExprKind::InteropCoerce { expr, .. } => {

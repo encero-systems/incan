@@ -130,6 +130,8 @@ pub struct SurfaceExpr {
 pub enum SurfaceExprPayload {
     /// Prefix unary keyword expression: `kw expr`.
     PrefixUnary(Box<Spanned<Expr>>),
+    /// Import-activated `std.async` race block: `race for value: ...`.
+    RaceFor(Box<RaceForExpr>),
     /// DSL-owned leading-dot path with an implicit receiver: `.field` or `.relation.field`.
     LeadingDotPath {
         segments: Vec<Ident>,
@@ -149,6 +151,27 @@ pub enum SurfaceExprPayload {
         args: Vec<CallArg>,
         owner: ScopedSurfaceOwner,
     },
+}
+
+/// Expression-position `race for value:` surface syntax.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RaceForExpr {
+    pub binding: Ident,
+    pub arms: Vec<RaceForArm>,
+}
+
+/// One `await expr => body` arm in a race expression.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RaceForArm {
+    pub awaitable: Spanned<Expr>,
+    pub body: RaceForBody,
+}
+
+/// Body form for a race arm.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RaceForBody {
+    Expr(Spanned<Expr>),
+    Block(Vec<Spanned<Statement>>),
 }
 
 /// Source DSL context that accepted a scoped surface expression.

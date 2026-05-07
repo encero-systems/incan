@@ -993,6 +993,32 @@ def test_session_backend_datafusion__session_write_csv_routes_through_execution_
     }
 
     #[test]
+    fn test_format_source_race_for_expression_round_trip() -> Result<(), FormatError> {
+        let source = r#"import std.async
+
+async def run() -> int:
+    return race for value:
+        await fast() => value
+        await slow() =>
+            return value
+"#;
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert!(
+            formatted.contains("race for value:"),
+            "expected formatter to preserve race header; got: {formatted}"
+        );
+        assert!(
+            formatted.contains("await fast() => value"),
+            "expected formatter to preserve inline race arm; got: {formatted}"
+        );
+        assert!(
+            formatted.contains("await slow() =>\n            return value"),
+            "expected formatter to preserve block race arm; got: {formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_union_annotations_round_trip_as_canonical_generic() -> Result<(), FormatError> {
         let source = r#"def parse(values: List[int | str], maybe: int | str | None) -> int | str:
     return values[0]

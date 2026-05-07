@@ -11,6 +11,7 @@ This page explains the idea with one concrete example. For the authoritative ref
 - [Stdlib traits: collection protocols](../reference/stdlib_traits/collection_protocols.md)
 - [Stdlib traits: indexing and slicing](../reference/stdlib_traits/indexing_and_slicing.md)
 - [Stdlib traits: callable objects](../reference/stdlib_traits/callable.md)
+- [Stdlib traits: awaitable values](../reference/stdlib_traits/awaitable.md)
 - [Stdlib traits: operators](../reference/stdlib_traits/operators.md)
 - [Stdlib traits: conversions](../reference/stdlib_traits/conversions.md)
 
@@ -118,6 +119,7 @@ That’s why the stdlib defines traits for:
 - collection protocols (`len`, iteration, membership, truthiness)
 - indexing and slicing (`[]`, `a:b:c`)
 - callability (`obj()`)
+- awaitability (`await obj`)
 - operators (`+`, `-`, `*`, `/`, etc.)
 - conversions (`from`, `into`, `try_from`, `try_into`)
 

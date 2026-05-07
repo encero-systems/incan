@@ -1,6 +1,6 @@
 # RFC 039: `race` for awaitable concurrency
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-03-07
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -13,7 +13,7 @@
 - **Issue:** [#173](https://github.com/dannys-code-corner/incan/issues/173)
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -132,7 +132,7 @@ That difference matters enough that reusing `match` would blur semantics rather 
 - Making `race` an always-on core keyword.
 - Replacing `await` with a library function. `await` remains a core language feature.
 - Exposing Rust's `Future<Output = T>` syntax directly in user-facing Incan.
-- Designing a full async trait system, async closures RFC, or effect system.
+- Designing async closures, a full effect system, or unrelated async trait features beyond the `Awaitable[T]` implementation contract required by this RFC.
 - Adding Go-style channel `select` as a separate feature in this RFC.
 - Adding `default` arms, guarded arms, or fairness controls in this RFC.
 
@@ -334,17 +334,25 @@ This RFC introduces an Incan-facing protocol:
 
 ```incan
 trait Awaitable[T]:
-    # builtin protocol used by `await`
+    # compiler-known protocol used by `await`
 ```
 
-This is a language hook. Like the operator protocols of RFC 028, it is specified in Incan terms first and mapped to backend constructs second.
+This is a language hook. Like the operator protocols of RFC 028, it is specified in Incan terms first and mapped to backend constructs second. Unlike the narrower draft version of this RFC, `Awaitable[T]` is a real protocol surface that user-defined types may satisfy, not merely a compiler-private predicate.
 
 The user-facing rule is:
 
 - `await expr` is valid only if `expr` has some type `F` such that `F with Awaitable[T]` for some `T`
 - the result type of `await expr` is `T`
 
-Backends may realize this however they need to. On Rust, that will likely mean a representation equivalent to `Future<Output = T>`, but that is backend guidance, not the language model.
+Backends may realize this however they need to. On Rust, that will usually mean a representation equivalent to `Future<Output = T>`, but that is backend guidance, not the language model.
+
+User implementability is still checked, not declarative-only. A type must not be able to write `with Awaitable[T]` and then fail during lowering because the compiler has no await realization for it. Satisfying `Awaitable[T]` therefore requires one of these implementation paths:
+
+- a Rust-backed future-like value with metadata that maps to a future output type
+- a stdlib runtime bridge type such as a task handle whose awaited output is known to the compiler
+- an Incan wrapper type that delegates its awaitability to a field or method whose await realization is itself known
+
+The protocol is ambitious enough for generic Incan APIs to name awaitability directly, but narrow enough that this RFC does not invent unrelated async closures, effects, or arbitrary polling APIs.
 
 ### Bound syntax
 
@@ -429,9 +437,9 @@ The exact internal representation is an implementation detail. The important con
 
 ### Transitional implementation note
 
-If RFC 038 is not available at initial implementation time, fixed-arity helpers such as `race2` and `race3` are acceptable as a stepping stone.
+If an implementation detail temporarily needs fixed-arity internal helpers such as `race2` and `race3`, those helpers must remain compiler/runtime plumbing rather than the taught public surface.
 
-They are not the desired long-term public architecture.
+They are not the desired public architecture. The public stdlib shape introduced by this RFC is `std.async.race`, not a ladder of fixed-arity variants.
 
 ### Type checking rules
 
@@ -534,7 +542,9 @@ Reasons:
 - Go-style `select` is channel-oriented, while this RFC is about arbitrary awaitables
 - `race` describes the behavior directly and keeps expectations cleaner
 
-This does not rule out a future channel-specialized construct if that later proves worthwhile.
+Existing `std.async.select` surface is replaced by `std.async.race` as part of this RFC. Because Incan is still in its beta-era language-design phase, this RFC does not require compatibility exports or deprecated aliases for `std.async.select`; keeping both names would create legacy before there is a strong user-compatibility reason to preserve it.
+
+This does not rule out a future channel-specialized construct if that later proves worthwhile, but it should not use `select` as a compatibility name for this first-completion awaitable feature.
 
 ## Why not `async match`
 
@@ -648,16 +658,126 @@ These costs are acceptable because they buy a much cleaner async story for the s
 
 - **Core async model** — `Awaitable[T]` is the builtin protocol behind `await`; `await expr` must verify that the awaited expression satisfies `Awaitable[T]` and that the result type follows.
 - **Vocabulary activation** — `race for value:` is import-activated syntax through `std.async`, following RFC 027's vocabulary model; expression-position block forms may require a small RFC 027 extension.
-- **Stdlib (`std.async`)** — the module owns the helper surface (`RaceArm[R]`, `arm(awaitable, on_win)`, and `race(*arms: RaceArm[R])`); the older `select` placeholder story should converge on `race`.
-- **Compilation handoff** — implementations must preserve the contract that `race` maps onto the `std.async` helper model; transitional fixed-arity helpers (`race2`, `race3`) are acceptable until RFC 038 variadics land.
+- **Stdlib (`std.async`)** — the module owns the helper surface (`RaceArm[R]`, `arm(awaitable, on_win)`, and `race(*arms: RaceArm[R])`); the older `select` placeholder surface is removed and replaced by `race`.
+- **Compilation handoff** — implementations must preserve the contract that `race` maps onto the `std.async` helper model; fixed-arity helpers (`race2`, `race3`) may exist only as internal compiler/runtime plumbing if the implementation needs them.
 - **Backend realization** — backends may realize `Awaitable[T]` and `std.async.race(...)` using native async primitives; for Rust that likely means future semantics plus a `tokio::select!`-like strategy, but that is backend guidance, not the normative language definition.
 
-## Unresolved questions
+## Implementation Plan
 
-1. Should `Awaitable[T]` be user-implementable under this RFC, or compiler-recognized only?
-2. Should `std.async.select` be renamed to `std.async.race`, with compatibility exports left behind?
-3. Does RFC 027 need a dedicated expression-block surface kind for `race for value:`?
-4. Should a later version add a more general pattern-binding `race` form, or is `race for value:` plus ordinary `match` sufficient?
-5. Should a later version add `default` arms, guard expressions, or unbiased scheduling options?
+### Phase 1: RFC lifecycle and design lock
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Move this RFC from `Draft` to `In Progress`.
+- Record the settled design decisions for `Awaitable[T]`, `std.async.race`, expression-position vocabulary, pattern binding, and deferred branch controls.
+- Use the active development version from repository metadata as the implementation baseline.
+
+### Phase 2: Core async model and trait metadata
+
+- Add `Awaitable[T]` to the canonical language trait registry and stdlib protocol surface.
+- Teach generic bound checking that `F with Awaitable[T]` is a real awaitability contract.
+- Define compiler-known await realization paths for Rust-backed futures, stdlib task handles, and Incan wrapper types that delegate to a known awaitable member.
+- Update `await` typechecking so it validates awaitability and returns the protocol output type instead of relying on narrow shape-specific special cases.
+
+### Phase 3: Expression-position vocabulary
+
+- Extend RFC 027 vocabulary support so import-activated syntax can produce expression-position block forms.
+- Parse `race for value:` as an expression that is active only after importing `std.async`.
+- Keep the binder arm-local and reject non-`await` race arms for this RFC.
+- Add parser, formatter, AST bridge, LSP, and desugaring tests for expression-position vocabulary.
+
+### Phase 4: `std.async.race` stdlib and runtime surface
+
+- Replace `std.async.select` with `std.async.race` in stdlib source, runtime exports, prelude exports, docs, and tests.
+- Add the public helper surface: `RaceArm[R]`, `arm(awaitable, on_win)`, and `race(*arms: RaceArm[R])`.
+- Keep any fixed-arity helpers internal if needed by the runtime/backend implementation.
+- Ensure `select_timeout` is removed or renamed rather than kept as a compatibility alias.
+
+### Phase 5: Typechecking, lowering, and emission
+
+- Typecheck each race arm awaited expression as `Awaitable[T_arm]`.
+- Typecheck each arm body with the arm-local binder type `T_arm`.
+- Compute a common result type `R`, including union result support where RFC 029 permits it.
+- Lower `race for value:` to the stdlib helper model or an equivalent internal representation that preserves the helper-shaped public contract.
+- Emit Rust that polls all arm awaitables concurrently, evaluates the winning body, drops losing awaitables, and preserves deterministic source-order tie-breaking.
+
+### Phase 6: Docs, versioning, and verification
+
+- Update authored async docs and stdlib reference pages so users learn `Awaitable[T]` and `race`.
+- Update release notes for the active development line.
+- Bump the active `0.3.0-dev.N` version by one dev increment.
+- Run targeted parser/typechecker/codegen/runtime tests, docs checks, and the repository pre-commit gate.
+
+## Implementation log
+
+### Spec / design
+
+- [x] Resolve design questions and move RFC 039 to `In Progress`.
+- [x] Add `Awaitable[T]` to canonical language trait and stdlib protocol documentation.
+- [x] Document that `Awaitable[T]` is user-facing and user-implementable only through checked await realization paths.
+- [x] Document wholesale `std.async.select` replacement by `std.async.race`.
+
+### Core async model / typechecker
+
+- [x] Register `Awaitable[T]` in core trait metadata.
+- [x] Model awaitability output types for Rust-backed futures, `JoinHandle[T]`, and wrapper delegation.
+- [x] Enforce `await expr` against `Awaitable[T]`.
+- [x] Enforce generic bounds that mention `Awaitable[T]`.
+- [x] Add diagnostics for declared `Awaitable[T]` implementations that have no valid await realization.
+
+### Vocabulary / parser / AST
+
+- [x] Add expression-position vocabulary block support.
+- [x] Parse `race for value:` under `std.async` activation.
+- [x] Keep `race` usable as an identifier when `std.async` is not imported.
+- [x] Add formatter support for `race for value:` expressions.
+- [x] Update public vocab AST bridge support for expression-position race blocks.
+- [x] Update LSP syntax/semantic handling for import-activated `race`.
+
+### Stdlib / runtime
+
+- [x] Replace `std.async.select` with `std.async.race`.
+- [x] Add `RaceArm[R]`.
+- [x] Add `arm(awaitable, on_win)`.
+- [x] Add `race(*arms: RaceArm[R])`.
+- [x] Remove or rename `select_timeout`; do not keep a compatibility alias by default.
+- [x] Update `std.async.prelude` exports.
+- [x] Update runtime module exports and Rust-backed helper tests.
+
+### Lowering / IR / emission
+
+- [x] Lower `race for value:` to the `std.async.race` helper model or equivalent internal representation.
+- [x] Preserve arm-local binder types through lowering.
+- [x] Emit deterministic source-order tie-breaking.
+- [x] Ensure losing awaitables are dropped/cancelled after the winner is selected.
+- [x] Reject guards, default arms, fairness controls, and pattern-binding arms with clear diagnostics if parsed or encountered.
+
+### Tests
+
+- [x] Parser test for active `race for value:`.
+- [x] Parser test proving inactive `race` remains an identifier.
+- [x] Formatter round-trip test for race expressions.
+- [x] Typechecker test for valid homogeneous race result.
+- [x] Typechecker test for valid union race result.
+- [x] Typechecker test for invalid non-awaitable arm.
+- [x] Typechecker test for invalid non-async context.
+- [x] Codegen snapshot test for race expression lowering/emission.
+- [x] Runtime/integration test proving first-completion wins.
+- [x] Runtime/integration test proving deterministic source-order tie-breaking when both arms are ready.
+- [x] Stdlib compile test for `std.async.race`.
+- [x] Negative import test proving `std.async.select` is gone.
+
+### Docs / release / version
+
+- [x] Update async programming guide.
+- [x] Update stdlib async reference.
+- [x] Update import/module reference.
+- [x] Update language keyword/builtin surface reference.
+- [x] Add active development release-note entry.
+- [x] Bump active development version from `0.3.0-dev.41` to `0.3.0-dev.42`.
+
+## Design Decisions
+
+1. `Awaitable[T]` is a real user-facing protocol, not a compiler-private predicate. User-defined types may satisfy it only through checked await realization paths: Rust-backed future metadata, stdlib task-handle semantics, or an Incan wrapper that delegates to a known awaitable member.
+2. `std.async.select` is replaced wholesale by `std.async.race`. This RFC does not preserve `std.async.select` compatibility exports by default because the language is still in its beta-era design phase and should avoid creating legacy aliases before there is a real compatibility need.
+3. RFC 027 vocabulary support must grow expression-position block forms because `race for value:` is an expression.
+4. This RFC keeps `race for value:` plus ordinary `match` as the value-inspection model. More general pattern-binding race arms are deferred to a future RFC.
+5. Default arms, guards, and fairness controls are deferred. Rust backends may have native support for those controls, but the Incan surface in this RFC remains deterministic first-completion race with source-order tie-breaking.

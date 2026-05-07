@@ -368,6 +368,13 @@ impl TypeChecker {
         bound: &crate::frontend::symbols::TypeBoundInfo,
         bindings: &std::collections::HashMap<String, ResolvedType>,
     ) -> bool {
+        if bound.name == builtin_traits::as_str(TraitId::Awaitable) {
+            let expected_output = bound
+                .type_args
+                .first()
+                .map(|arg| substitute_resolved_type(arg, bindings));
+            return self.type_satisfies_awaitable_bound(ty, expected_output.as_ref());
+        }
         if bound.type_args.is_empty() {
             return self.type_satisfies_explicit_bound(ty, &bound.name);
         }
@@ -387,6 +394,9 @@ impl TypeChecker {
 
     /// Best-effort check whether a concrete type satisfies an explicit generic bound.
     fn type_satisfies_explicit_bound(&self, ty: &ResolvedType, bound: &str) -> bool {
+        if bound == builtin_traits::as_str(TraitId::Awaitable) {
+            return self.type_satisfies_awaitable_bound(ty, None);
+        }
         // `std.rust` markers (`Send`, `Sync`, …) are enforced when lowering to Rust, not here.
         if is_rust_capability_bound(bound) {
             return true;
@@ -618,6 +628,7 @@ impl TypeChecker {
                 .all(|(actual, expected)| self.types_compatible(actual, expected))
     }
 
+    /// Return whether a primitive type satisfies a builtin trait bound.
     fn primitive_type_satisfies_bound(&self, ty: &ResolvedType, bound: &str) -> bool {
         if bound == derives::as_str(DeriveId::Copy) {
             return self.is_copy_type(ty);
@@ -646,6 +657,7 @@ impl TypeChecker {
                     | ResolvedType::FrozenBytes
                     | ResolvedType::Unit
             ),
+            Some(TraitId::Awaitable) => self.type_satisfies_awaitable_bound(ty, None),
             Some(TraitId::Eq | TraitId::Ord | TraitId::Hash) => matches!(
                 ty,
                 ResolvedType::Int
@@ -722,6 +734,21 @@ impl TypeChecker {
             }
             _ => false,
         }
+    }
+
+    /// Return whether `ty` is one of the checked await-realization paths for `Awaitable[T]`.
+    fn type_satisfies_awaitable_bound(&self, ty: &ResolvedType, expected_output: Option<&ResolvedType>) -> bool {
+        let Some(output_ty) = self.awaitable_output_type_for_known_type(ty) else {
+            return false;
+        };
+        expected_output.is_none_or(|expected| {
+            matches!(output_ty, ResolvedType::Unknown) || self.types_compatible(&output_ty, expected)
+        })
+    }
+
+    /// Resolve the output type for known awaitable carrier types.
+    fn awaitable_output_type_for_known_type(&self, ty: &ResolvedType) -> Option<ResolvedType> {
+        self.await_output_type_from_type(ty)
     }
 
     /// Return whether a named user type explicitly satisfies a generic trait bound.

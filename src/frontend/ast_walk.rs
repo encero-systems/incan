@@ -344,6 +344,13 @@ where
         Expr::Range { start, end, .. } => expr_has(&start.node, pred) || expr_has(&end.node, pred),
         Expr::Surface(surface_expr) => match &surface_expr.payload {
             crate::frontend::ast::SurfaceExprPayload::PrefixUnary(expr) => expr_has(&expr.node, pred),
+            crate::frontend::ast::SurfaceExprPayload::RaceFor(race) => race.arms.iter().any(|arm| {
+                expr_has(&arm.awaitable.node, pred)
+                    || match &arm.body {
+                        crate::frontend::ast::RaceForBody::Expr(expr) => expr_has(&expr.node, pred),
+                        crate::frontend::ast::RaceForBody::Block(stmts) => any_expr_in_body_impl(stmts, pred),
+                    }
+            }),
             crate::frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => false,
             crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                 expr_has(&left.node, pred) || expr_has(&right.node, pred)

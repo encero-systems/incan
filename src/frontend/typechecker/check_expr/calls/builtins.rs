@@ -456,15 +456,16 @@ impl TypeChecker {
                     }
                     Some(ResolvedType::Unit)
                 }
-                SurfaceFnId::Timeout | SurfaceFnId::TimeoutMs | SurfaceFnId::SelectTimeout => {
+                SurfaceFnId::Timeout | SurfaceFnId::TimeoutMs | SurfaceFnId::RaceTimeout => {
                     if let Some(arg) = args.first() {
                         let arg_expr = Self::call_arg_expr(arg);
                         let arg_ty = self.check_expr(arg_expr);
-                        let (expected_name, expected_ty) = if fid == SurfaceFnId::Timeout {
-                            ("float", ResolvedType::Float)
-                        } else {
-                            ("int", ResolvedType::Int)
-                        };
+                        let (expected_name, expected_ty) =
+                            if matches!(fid, SurfaceFnId::Timeout | SurfaceFnId::RaceTimeout) {
+                                ("float", ResolvedType::Float)
+                            } else {
+                                ("int", ResolvedType::Int)
+                            };
                         if !self.types_compatible(&arg_ty, &expected_ty) {
                             self.errors
                                 .push(errors::type_mismatch(expected_name, &arg_ty.to_string(), arg_expr.span));

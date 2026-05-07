@@ -7,12 +7,12 @@ See the module source files for authoritative behavior:
 - `crates/incan_stdlib/stdlib/async/task.incn`
 - `crates/incan_stdlib/stdlib/async/channel.incn`
 - `crates/incan_stdlib/stdlib/async/sync.incn`
-- `crates/incan_stdlib/stdlib/async/select.incn`
+- `crates/incan_stdlib/stdlib/async/race.incn`
 - `crates/incan_stdlib/stdlib/async/prelude.incn`
 
 ## Interop notes
 
-`std.async.time` and `std.async.select` use direct Rust interop calls (for example `tokio::time`) for their timer-related
+`std.async.time` and `std.async.race` use direct Rust interop calls (for example `tokio::time`) for their timer-related
 operations rather than wrapping stdlib-runtime helper functions. The public signatures listed below remain unchanged.
 `std.async.task`, `std.async.channel`, `std.async.sync`, and `std.async.prelude` still retain wrapper-style surfaces where behavior
 depends on native Rust adapter contracts.
@@ -55,19 +55,27 @@ from std.async.time import sleep, timeout, timeout_join, TimeoutError, TimeoutJo
 | `TimeoutError`       | Error type returned by canceling timeout helpers when the deadline expires.                       |
 | `Duration`           | Simple duration value object exposed as a convenience type.                                       |
 
-## Module: `std.async.select`
+## Module: `std.async.race`
 
 Import with:
 
 ```incan
-from std.async.select import select_timeout
+from std.async.race import RaceArm, arm, race, race_timeout
 ```
 
 **Functions**:
 
-| Function                                                                       | Returns     | Cancellation contract                                                                                                    |
-| ------------------------------------------------------------------------------ | ----------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `select_timeout[T, TaskFuture](seconds: float, task: TaskFuture) -> Option[T]` | `Option[T]` | Cancels the supplied future when the deadline wins; cancelling the `select_timeout` wait also drops the supplied future. |
+| Function                                                                     | Returns     | Cancellation contract                                                                                                                                                 |
+| ---------------------------------------------------------------------------- | ----------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `arm[T, R, TaskFuture, OnWin](awaitable: TaskFuture, on_win: OnWin) -> RaceArm[R]` | `RaceArm[R]` | Packages one branch. `on_win` runs only if this branch wins.                                                                                                           |
+| `race[R](*arms: RaceArm[R]) -> R`                                             | `R`         | Polls all arms concurrently; drops losing arms when the first arm completes. Ready ties are resolved by source order.                                                  |
+| `race_timeout[T, TaskFuture](seconds: float, task: TaskFuture) -> Option[T]` | `Option[T]` | Cancels the supplied future when the deadline wins; cancelling the `race_timeout` wait also drops the supplied future.                                                  |
+
+**Types**:
+
+| Name         | Description                                    |
+| ------------ | ---------------------------------------------- |
+| `RaceArm[R]` | A packaged awaitable branch for `race(*arms)`. |
 
 ## Module: `std.async.task`
 
@@ -135,4 +143,4 @@ Cancellation contracts:
 - `task`: `spawn`, `spawn_blocking`, `yield_now`, `JoinHandle`, `TaskJoinError`
 - `channel`: `channel`, `unbounded_channel`, `oneshot`, `Sender`, `Receiver`, `OneshotSender`, `OneshotReceiver`, `SendError`, `RecvError`
 - `sync`: `Mutex`, `MutexGuard`, `RwLock`, `RwLockReadGuard`, `RwLockWriteGuard`, `Semaphore`, `SemaphorePermit`, `SemaphoreAcquireError`, `Barrier`
-- `select`: `select_timeout`
+- `race`: `RaceArm`, `arm`, `race`, `race_timeout`

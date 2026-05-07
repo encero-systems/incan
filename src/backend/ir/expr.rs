@@ -287,6 +287,12 @@ pub enum IrExprKind {
     // Await expression (async)
     Await(Box<IrExpr>),
 
+    // Race expression (`race for value:`)
+    Race {
+        binding: String,
+        arms: Vec<RaceArm>,
+    },
+
     // Try/Propogate expression (i.e. the Rust-like `?` operator)
     Try(Box<IrExpr>),
 
@@ -349,6 +355,13 @@ pub enum NumericResizePolicy {
 pub enum IrGeneratorClause {
     For { pattern: Pattern, iterable: Box<IrExpr> },
     If(IrExpr),
+}
+
+/// One lowered arm in an async race expression.
+#[derive(Debug, Clone)]
+pub struct RaceArm {
+    pub awaitable: IrExpr,
+    pub body: IrExpr,
 }
 
 /// One lowered entry in a list literal.

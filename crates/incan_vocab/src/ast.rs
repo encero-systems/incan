@@ -329,8 +329,42 @@ pub enum IncanExpr {
     ScopedSymbolCall(IncanScopedSymbolCall),
     /// Field access.
     Field { object: Box<IncanExpr>, field: String },
+    /// Import-activated `std.async` race block.
+    RaceFor(IncanRaceForExpr),
     /// DSL-owned scoped surface expression accepted by the compiler.
     ScopedSurface(IncanScopedSurfaceExpr),
+}
+
+/// Public desugarer-facing representation of an accepted `race for value:` expression.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct IncanRaceForExpr {
+    /// Arm-local binding name that receives the awaited winner payload.
+    pub binding: String,
+    /// Race arms in source order.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub arms: Vec<IncanRaceForArm>,
+}
+
+/// One public `race for value:` arm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct IncanRaceForArm {
+    /// Awaitable expression for this arm.
+    pub awaitable: IncanExpr,
+    /// Winner body for this arm.
+    pub body: IncanRaceForBody,
+}
+
+/// Body form for a public race arm.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+pub enum IncanRaceForBody {
+    /// Single expression result.
+    Expr(Box<IncanExpr>),
+    /// Block body, with the compiler deciding whether the trailing expression is the result.
+    Block(Vec<IncanStatement>),
 }
 
 /// Public desugarer-facing representation of an accepted scoped-surface expression.

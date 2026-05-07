@@ -378,6 +378,13 @@ impl<'a> Parser<'a> {
             || self.check_op(OperatorId::Minus)
     }
 
+    /// Return whether the current token starts an import-activated `race for` expression.
+    fn is_active_race_for_expr(&self) -> bool {
+        self.std_async_vocab_active
+            && matches!(&self.peek().kind, TokenKind::Ident(name) if name == "race")
+            && self.peek_next().kind == TokenKind::Keyword(KeywordId::For)
+    }
+
     /// After consuming `Indent` into a `model` / `class` / `enum` body, optionally parse a leading `"""..."""`.
     ///
     /// Matches the newtype-body pattern: skip leading newlines, consume one string literal if present, then optional

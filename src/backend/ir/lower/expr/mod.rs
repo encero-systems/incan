@@ -14,7 +14,7 @@ mod patterns;
 use super::super::TypedExpr;
 use super::super::expr::{
     BuiltinFn, CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry,
-    IrMethodDispatch, MethodCallArgPolicy, MethodKind, NumericResizePolicy, UnaryOp, VarAccess, VarRefKind,
+    IrMethodDispatch, MethodCallArgPolicy, MethodKind, NumericResizePolicy, RaceArm, UnaryOp, VarAccess, VarRefKind,
 };
 use super::super::types::IrType;
 use super::AstLowering;
@@ -25,10 +25,148 @@ use incan_core::interop::RustCollectionFamily;
 use incan_core::lang::magic_methods::{self, MagicMethodId};
 use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::result_methods::ResultMethodId;
+use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId, TASK_JOIN_ERROR_TYPE_NAME};
+use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
+    /// Lower `race for value:` to the IR race expression used by Rust emission.
+    fn lower_race_for_expr(
+        &mut self,
+        race: &ast::RaceForExpr,
+        expr_span: ast::Span,
+    ) -> Result<TypedExpr, LoweringError> {
+        let result_ty = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(expr_span))
+            .map(|ty| self.lower_resolved_type(ty))
+            .unwrap_or(IrType::Unknown);
+
+        let mut arms = Vec::with_capacity(race.arms.len());
+        for arm in &race.arms {
+            let awaitable = self.lower_awaitable_operand(&arm.awaitable)?;
+            let binding_ty = Self::race_binding_type_for_awaitable(&awaitable);
+
+            self.push_scope();
+            self.define_local_binding(race.binding.clone(), binding_ty, false);
+            let body_result = self.lower_race_arm_body(&arm.body);
+            self.pop_scope();
+
+            arms.push(RaceArm {
+                awaitable,
+                body: body_result?,
+            });
+        }
+
+        Ok(TypedExpr::new(
+            IrExprKind::Race {
+                binding: race.binding.clone(),
+                arms,
+            },
+            result_ty,
+        ))
+    }
+
+    /// Lower one race arm body with the arm-local winner binding already in scope.
+    fn lower_race_arm_body(&mut self, body: &ast::RaceForBody) -> Result<TypedExpr, LoweringError> {
+        match body {
+            ast::RaceForBody::Expr(expr) => self.lower_expr_spanned(expr),
+            ast::RaceForBody::Block(stmts) => self.lower_race_arm_block_body(stmts),
+        }
+    }
+
+    /// Lower an await operand, applying typechecker-proven wrapper delegation when a concrete `Awaitable[T]` wrapper
+    /// delegates to one awaitable field.
+    fn lower_awaitable_operand(&mut self, operand: &Spanned<ast::Expr>) -> Result<TypedExpr, LoweringError> {
+        let lowered = self.lower_expr_spanned(operand)?;
+        let Some(field) = self.awaitable_delegation_field_for_span(operand.span) else {
+            return Ok(lowered);
+        };
+        Ok(TypedExpr::new(
+            IrExprKind::Field {
+                object: Box::new(lowered),
+                field,
+            },
+            IrType::Unknown,
+        ))
+    }
+
+    /// Return the delegated field name for an expression whose resolved type is a wrapper `Awaitable[T]`.
+    fn awaitable_delegation_field_for_span(&self, span: ast::Span) -> Option<String> {
+        let type_info = self.type_info.as_ref()?;
+        let expr_ty = type_info.expr_type(span)?;
+        let type_name = match expr_ty {
+            crate::frontend::symbols::ResolvedType::Named(name)
+            | crate::frontend::symbols::ResolvedType::Generic(name, _) => name,
+            crate::frontend::symbols::ResolvedType::Ref(inner)
+            | crate::frontend::symbols::ResolvedType::RefMut(inner) => match inner.as_ref() {
+                crate::frontend::symbols::ResolvedType::Named(name)
+                | crate::frontend::symbols::ResolvedType::Generic(name, _) => name,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        type_info.awaitable_delegation_fields.get(type_name).cloned()
+    }
+
+    /// Lower a block race arm, treating a trailing expression statement as the arm value.
+    fn lower_race_arm_block_body(&mut self, stmts: &[Spanned<ast::Statement>]) -> Result<TypedExpr, LoweringError> {
+        let Some((last, prefix)) = stmts.split_last() else {
+            return Ok(TypedExpr::new(
+                IrExprKind::Block {
+                    stmts: Vec::new(),
+                    value: None,
+                },
+                IrType::Unit,
+            ));
+        };
+
+        let lowered_stmts = self.lower_statements(prefix)?;
+        if let ast::Statement::Expr(expr) = &last.node {
+            let value = self.lower_expr_spanned(expr)?;
+            let ty = value.ty.clone();
+            Ok(TypedExpr::new(
+                IrExprKind::Block {
+                    stmts: lowered_stmts,
+                    value: Some(Box::new(value)),
+                },
+                ty,
+            ))
+        } else {
+            let mut lowered_stmts = lowered_stmts;
+            lowered_stmts.push(self.lower_statement(&last.node, last.span)?);
+            Ok(TypedExpr::new(
+                IrExprKind::Block {
+                    stmts: lowered_stmts,
+                    value: None,
+                },
+                IrType::Unit,
+            ))
+        }
+    }
+
+    /// Infer the arm-local winner binding type from a lowered awaitable expression.
+    fn race_binding_type_for_awaitable(awaitable: &TypedExpr) -> IrType {
+        match &awaitable.ty {
+            IrType::NamedGeneric(name, args)
+                if surface_types::from_str(name.as_str()) == Some(SurfaceTypeId::JoinHandle) && args.len() == 1 =>
+            {
+                IrType::Result(
+                    Box::new(args[0].clone()),
+                    Box::new(IrType::Struct(TASK_JOIN_ERROR_TYPE_NAME.to_string())),
+                )
+            }
+            IrType::NamedGeneric(name, args)
+                if builtin_traits::from_str(name.as_str()) == Some(TraitId::Awaitable) && args.len() == 1 =>
+            {
+                args[0].clone()
+            }
+            _ => awaitable.ty.clone(),
+        }
+    }
+
     /// Lower `list.repeat(...)` arguments in canonical helper-parameter order.
     ///
     /// The surface helper accepts named arguments, but `BuiltinFn::ListRepeat` stores arguments positionally for
@@ -788,13 +926,17 @@ impl AstLowering {
                         // Preserve explicit grouping: `await (x?)` should keep the grouped `Try` operand shape
                         // instead of applying await/try normalization for the unparenthesized `await x()?` case.
                         let parenthesized_operand = matches!(&inner.node, ast::Expr::Paren(_));
-                        let lowered_inner = self.lower_expr_spanned(inner)?;
+                        let lowered_inner = self.lower_awaitable_operand(inner)?;
                         if parenthesized_operand {
                             let ty = lowered_inner.ty.clone();
                             (IrExprKind::Await(Box::new(lowered_inner)), ty)
                         } else {
                             super::super::surface_semantics::lower_await_expression(lowered_inner)
                         }
+                    }
+                    (SurfaceExprLoweringAction::RaceFor, ast::SurfaceExprPayload::RaceFor(race)) => {
+                        let lowered = self.lower_race_for_expr(race, expr_span)?;
+                        (lowered.kind, lowered.ty)
                     }
                     _ => {
                         return Err(LoweringError {

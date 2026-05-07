@@ -249,7 +249,7 @@ fn derives_spellings_unique_and_resolvable() {
 fn traits_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "trait",
-        expected_len: 18,
+        expected_len: 19,
         items: traits::TRAITS,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,
@@ -305,7 +305,7 @@ fn surface_functions_spellings_unique_and_resolvable() {
 fn surface_types_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "surface type",
-        expected_len: 22,
+        expected_len: 23,
         items: surface_types::SURFACE_TYPES,
         id_of: |info| info.item.id,
         canonical_of: |info| info.item.canonical,

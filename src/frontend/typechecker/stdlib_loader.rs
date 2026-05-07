@@ -1021,7 +1021,7 @@ fn imported_runtime_function_info(name: &str) -> Option<FunctionInfo> {
             ResolvedType::Unknown,
             true,
         ),
-        SurfaceFnId::SelectTimeout => (
+        SurfaceFnId::RaceTimeout => (
             vec![
                 CallableParam::named("seconds", ResolvedType::Float, ast::ParamKind::Normal),
                 CallableParam::named("task", ResolvedType::Unknown, ast::ParamKind::Normal),
@@ -1605,15 +1605,22 @@ pub type File = rusttype RustFile:
     }
 
     #[test]
-    fn test_load_async_select_module_only_exports_supported_surface() -> Result<(), Box<dyn std::error::Error>> {
-        let path = vec!["std".to_string(), "async".to_string(), "select".to_string()];
+    fn test_load_async_race_module_exports_public_race_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "async".to_string(), "race".to_string()];
         let module = load_stdlib_module_data(&path);
-        let fns = module.ok_or("failed to load stdlib/async/select.incn")?.functions;
+        let module = module.ok_or("failed to load stdlib/async/race.incn")?;
+        let fns = module.functions;
 
-        assert!(fns.iter().any(|(name, _)| name == "select_timeout"));
-        assert!(!fns.iter().any(|(name, _)| name == "select2"));
-        assert!(!fns.iter().any(|(name, _)| name == "race"));
+        let exported_names: Vec<&str> = fns.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(exported_names, vec!["arm", "race", "race_timeout"]);
+        assert!(module.types.iter().any(|(name, _)| name == "RaceArm"));
         Ok(())
+    }
+
+    #[test]
+    fn test_load_async_select_module_is_removed() {
+        let path = vec!["std".to_string(), "async".to_string(), "select".to_string()];
+        assert!(load_stdlib_module_data(&path).is_none());
     }
 
     // ---- Phase 6: Derive trait extraction tests ----

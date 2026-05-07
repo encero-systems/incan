@@ -101,6 +101,7 @@ Detailed pages:
 - [Collection protocols](stdlib_traits/collection_protocols.md)
 - [Indexing and slicing](stdlib_traits/indexing_and_slicing.md)
 - [Callable objects](stdlib_traits/callable.md)
+- [Awaitable values](stdlib_traits/awaitable.md)
 - [Operator traits](stdlib_traits/operators.md)
 - [Conversion traits](stdlib_traits/conversions.md)
 

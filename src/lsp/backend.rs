@@ -36,7 +36,7 @@ use crate::frontend::api_metadata::{
 };
 use crate::frontend::ast::{
     CallArg, Condition, Declaration, DictEntry, Expr, ListEntry, MatchBody, MethodDecl, Param, ParamKind, Program,
-    Span, Spanned, Statement, SurfaceExprPayload, Type, TypeParam,
+    RaceForBody, Span, Spanned, Statement, SurfaceExprPayload, Type, TypeParam,
 };
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, materialize_contract_models, read_model_bundles_from_json, read_project_model_bundles,
@@ -3325,6 +3325,17 @@ fn scoped_symbol_in_expr<'a>(
             SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
                 scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found);
             }
+            SurfaceExprPayload::RaceFor(race) => {
+                for arm in &race.arms {
+                    scoped_symbol_in_expr(&arm.awaitable, ident, symbol_span, surfaces, found);
+                    match &arm.body {
+                        RaceForBody::Expr(expr) => scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found),
+                        RaceForBody::Block(statements) => {
+                            scoped_symbol_in_statements(statements, ident, symbol_span, surfaces, found);
+                        }
+                    }
+                }
+            }
             SurfaceExprPayload::LeadingDotPath { .. } => {}
         },
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
@@ -3830,6 +3841,17 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
             }
             SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
                 scoped_symbol_context_in_call_args(args, offset, context);
+            }
+            SurfaceExprPayload::RaceFor(race) => {
+                for arm in &race.arms {
+                    scoped_symbol_context_in_expr(&arm.awaitable, offset, context);
+                    match &arm.body {
+                        RaceForBody::Expr(expr) => scoped_symbol_context_in_expr(expr, offset, context),
+                        RaceForBody::Block(statements) => {
+                            scoped_symbol_context_in_statements(statements, offset, context);
+                        }
+                    }
+                }
             }
             SurfaceExprPayload::LeadingDotPath { .. } => {}
         },

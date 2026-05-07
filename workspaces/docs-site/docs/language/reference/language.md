@@ -100,7 +100,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 |---|---|---|---|
 | `std.web` | `web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.macros`, `std.web.prelude` | - |
 | `std.testing` | - | - | - |
-| `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.select`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
+| `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.race`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.serde` | `json` | `std.serde.json` | - |
 | `std.reflection` | - | - | - |
 | `std.result` | - | - | - |
@@ -505,7 +505,7 @@ and `@requires` keep their existing special behavior.
 | SleepMs | `sleep_ms` |  | Sleep for N milliseconds. | RFC 000 | 0.1 | Stable |
 | Timeout | `timeout` |  | Run an async operation with a timeout. | RFC 000 | 0.1 | Stable |
 | TimeoutMs | `timeout_ms` |  | Run an async operation with a timeout in milliseconds. | RFC 000 | 0.1 | Stable |
-| SelectTimeout | `select_timeout` |  | Select between futures with a timeout. | RFC 000 | 0.1 | Stable |
+| RaceTimeout | `race_timeout` |  | Race async work against a timeout. | RFC 000 | 0.1 | Stable |
 | YieldNow | `yield_now` |  | Yield execution back to the async scheduler. | RFC 000 | 0.1 | Stable |
 | Spawn | `spawn` |  | Spawn an async task. | RFC 000 | 0.1 | Stable |
 | SpawnBlocking | `spawn_blocking` |  | Spawn a blocking task on a dedicated thread pool. | RFC 004 | 0.1 | Stable |

@@ -874,6 +874,12 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_expr(&arm.body);
                 }
             }
+            IrExprKind::Race { arms, .. } => {
+                for arm in arms {
+                    self.scan_expr(&arm.awaitable);
+                    self.scan_expr(&arm.body);
+                }
+            }
             IrExprKind::Closure { params, body, captures } => {
                 for (_, ty) in params {
                     self.scan_type(ty);
@@ -1331,6 +1337,12 @@ impl<'a> IrEmitter<'a> {
                     if let Some(guard) = &arm.guard {
                         Self::collect_union_types_from_expr(guard, out);
                     }
+                    Self::collect_union_types_from_expr(&arm.body, out);
+                }
+            }
+            IrExprKind::Race { arms, .. } => {
+                for arm in arms {
+                    Self::collect_union_types_from_expr(&arm.awaitable, out);
                     Self::collect_union_types_from_expr(&arm.body, out);
                 }
             }

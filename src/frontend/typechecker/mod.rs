@@ -1013,7 +1013,7 @@ impl TypeChecker {
     ///
     /// Explicit `with Trait[...]` arguments are authoritative. The older positional mapping remains as a fallback for
     /// nullary adoption metadata and derives.
-    fn instantiated_trait_args_for_type(
+    pub(crate) fn instantiated_trait_args_for_type(
         &self,
         type_name: &str,
         concrete_type_args: &[ResolvedType],
@@ -1565,6 +1565,25 @@ impl TypeChecker {
                 SurfaceExprPayload::PrefixUnary(expr) => {
                     self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
                 }
+                SurfaceExprPayload::RaceFor(race) => {
+                    for arm in &race.arms {
+                        self.collect_static_dependencies_from_expr(&arm.awaitable.node, deps, visiting_functions);
+                        match &arm.body {
+                            RaceForBody::Expr(expr) => {
+                                self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
+                            }
+                            RaceForBody::Block(stmts) => {
+                                for stmt in stmts {
+                                    self.collect_static_dependencies_from_statement(
+                                        &stmt.node,
+                                        deps,
+                                        visiting_functions,
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
                 SurfaceExprPayload::LeadingDotPath { .. } => {}
                 SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                     self.collect_static_dependencies_from_expr(&left.node, deps, visiting_functions);
@@ -1845,6 +1864,31 @@ impl TypeChecker {
             Expr::Surface(surface) => match &surface.payload {
                 SurfaceExprPayload::PrefixUnary(inner) => {
                     self.collect_static_initializer_static_writes_from_expr(inner, current_static, visiting_functions);
+                }
+                SurfaceExprPayload::RaceFor(race) => {
+                    for arm in &race.arms {
+                        self.collect_static_initializer_static_writes_from_expr(
+                            &arm.awaitable,
+                            current_static,
+                            visiting_functions,
+                        );
+                        match &arm.body {
+                            RaceForBody::Expr(expr) => self.collect_static_initializer_static_writes_from_expr(
+                                expr,
+                                current_static,
+                                visiting_functions,
+                            ),
+                            RaceForBody::Block(stmts) => {
+                                for stmt in stmts {
+                                    self.collect_static_initializer_static_writes_from_stmt(
+                                        stmt,
+                                        current_static,
+                                        visiting_functions,
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
                 SurfaceExprPayload::LeadingDotPath { .. } => {}
                 SurfaceExprPayload::ScopedGlyph { left, right, .. } => {

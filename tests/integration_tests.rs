@@ -2082,6 +2082,14 @@ mod codegen_tests {
     use std::process::Command;
     use std::time::{SystemTime, UNIX_EPOCH};
 
+    fn run_incan_source(source: &str) -> std::process::Output {
+        Command::new(incan_debug_binary())
+            .args(["run", "-c", source])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+            .unwrap_or_else(|e| panic!("failed to run incan source: {e}"))
+    }
+
     fn rustc_compile_ok(source: &str) -> Result<(), String> {
         let mut dir = std::env::temp_dir();
         let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
@@ -5284,6 +5292,76 @@ def main() -> None:
             stdout.contains('3'),
             "mixed numeric output missing expected result; stdout={}",
             stdout
+        );
+    }
+
+    #[test]
+    fn test_std_async_race_helper_first_completion_runs() {
+        let output = run_incan_source(
+            r#"
+from std.async.race import arm, race
+from std.async.time import sleep
+
+def label(value: int) -> str:
+    return f"win:{value}"
+
+async def fast() -> int:
+    return 1
+
+async def slow() -> int:
+    await sleep(0.01)
+    return 2
+
+async def main() -> None:
+    println(await race(arm(slow(), label), arm(fast(), label)))
+"#,
+        );
+        assert!(
+            output.status.success(),
+            "std.async.race first-completion run failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        assert_eq!(
+            stdout.lines().last().map(str::trim),
+            Some("win:1"),
+            "unexpected stdout:\n{stdout}"
+        );
+    }
+
+    #[test]
+    fn test_std_async_race_helper_ready_tie_uses_source_order() {
+        let output = run_incan_source(
+            r#"
+from std.async.race import arm, race
+
+def label(value: int) -> str:
+    return f"win:{value}"
+
+async def first() -> int:
+    return 1
+
+async def second() -> int:
+    return 2
+
+async def main() -> None:
+    println(await race(arm(first(), label), arm(second(), label)))
+"#,
+        );
+        assert!(
+            output.status.success(),
+            "std.async.race ready-tie run failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        assert_eq!(
+            stdout.lines().last().map(str::trim),
+            Some("win:1"),
+            "unexpected stdout:\n{stdout}"
         );
     }
 

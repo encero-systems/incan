@@ -62,6 +62,11 @@ pub struct TypeCheckInfo {
     pub rusttype_canonical_rust_paths: HashMap<String, String>,
     /// Map from expression span (start,end) -> resolved type.
     pub expr_types: HashMap<(usize, usize), ResolvedType>,
+    /// Type names that implement `Awaitable[T]` by delegating to one concrete awaitable field.
+    ///
+    /// Lowering consumes this so `await wrapper` and `race for` arms can emit `wrapper.<field>.await` instead of
+    /// trying to await the wrapper struct itself.
+    pub awaitable_delegation_fields: HashMap<String, String>,
     /// RFC 046 computed property reads keyed by the full field-access expression span.
     ///
     /// Lowering/emission can use this to distinguish `obj.field` storage reads from `obj.property` getter calls while

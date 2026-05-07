@@ -399,6 +399,7 @@ impl TypeChecker {
 
         match (action, &expr.payload) {
             (SurfaceExprTypeCheck::AwaitCheck, SurfaceExprPayload::PrefixUnary(inner)) => self.check_await(inner, span),
+            (SurfaceExprTypeCheck::RaceForCheck, SurfaceExprPayload::RaceFor(race)) => self.check_race_for(race, span),
             _ => ResolvedType::Unknown,
         }
     }

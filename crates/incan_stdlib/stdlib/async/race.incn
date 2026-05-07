@@ -1,0 +1,73 @@
+"""
+Async race helpers.
+
+`arm(awaitable, on_win)` packages one awaitable and a callback into a `RaceArm[R]`.
+`race(*arms)` awaits all arms concurrently and returns the winning callback result.
+`race_timeout(seconds, task)` returns `Some(value)` when the task finishes before the timeout and `None` when the
+deadline expires first.
+
+Cancellation contract:
+
+- `race()` drops every losing arm when the first arm completes.
+- If more than one arm is ready in the same poll, the earlier source arm wins.
+- `race_timeout()` cancels the supplied future when the deadline wins.
+- Cancelling `race_timeout()` before it resolves also drops the supplied future.
+- Use `std.async.task.spawn()` first when work must be durable once spawned instead of cancelled by timeout.
+
+Example:
+    result = await race(
+        arm(fetch_primary(), (value) => value),
+        arm(fetch_cache(), (value) => value),
+    )
+
+    match await race_timeout(0.5, fetch_user()):
+        Some(user) => println(user.name)
+        None => println("timed out")
+"""
+
+import std.async
+from rust::incan_stdlib::async::time import clamp_seconds
+from rust::incan_stdlib::async::task import RuntimeFuture
+from rust::incan_stdlib::async::race import RaceArm as RawRaceArm, RuntimeRaceCallback
+from rust::incan_stdlib::async::race import arm as rust_arm
+from rust::incan_stdlib::async::race import race as rust_race
+from rust::tokio::time import timeout as tokio_timeout
+
+
+pub type RaceArm[R] = rusttype RawRaceArm[R]:
+    """A single awaitable branch packaged for `race(*arms)`."""
+
+
+pub def arm[T with Send, R with (Send, Static), TaskFuture with RuntimeFuture[T], OnWin with RuntimeRaceCallback[T, R]](
+    awaitable: TaskFuture,
+    on_win: OnWin,
+) -> RaceArm[R]:
+    """
+    Package one awaitable branch for `race()`.
+
+    `on_win` receives the awaited value only when this branch wins. Losing branches are dropped without running their
+    callbacks.
+    """
+    return rust_arm(awaitable, on_win)
+
+
+pub async def race[R with (Send, Static)](*arms: RaceArm[R]) -> R:
+    """
+    Return the first completed race arm result.
+
+    Arms are polled concurrently. If multiple arms are ready in the same poll, the earlier source arm wins.
+    """
+    return await rust_race(arms)
+
+
+pub async def race_timeout[T with (Send, Static), TaskFuture with RuntimeFuture[T]](seconds: float, task: TaskFuture) -> Option[T]:
+    """
+    Returns `Some(value)` when `task` completes before the timeout.
+    Returns `None` when the timeout expires first.
+
+    If the timeout wins, the supplied future is cancelled by being dropped. Spawn the work first when the operation must
+    continue after the timeout path returns.
+    """
+    match await tokio_timeout(clamp_seconds(seconds), task):
+        Ok(value) => return Some(value)
+        Err(_err) => return None

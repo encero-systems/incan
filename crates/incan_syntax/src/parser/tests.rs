@@ -5183,6 +5183,145 @@ def run() -> int:
     }
 
     #[test]
+    fn test_parse_race_for_expression_requires_std_async_activation() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+def run() -> int:
+  race = 1
+  return race
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let Statement::Assignment(assign) = &function.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected assignment".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        assert_eq!(assign.name, "race");
+        let Statement::Return(Some(expr)) = &function.body[1].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected return statement".to_string(),
+                function.body[1].span,
+            )]);
+        };
+        assert!(matches!(&expr.node, Expr::Ident(name) if name == "race"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_active_race_for_expression_surface_shape() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+import std.async
+
+async def run() -> int:
+  return race for value:
+    await fast() => value
+    await slow() =>
+      return value
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[1])?;
+        let Statement::Return(Some(expr)) = &function.body[0].node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected return statement".to_string(),
+                function.body[0].span,
+            )]);
+        };
+        let Expr::Surface(surface) = &expr.node else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected surface expression".to_string(),
+                expr.span,
+            )]);
+        };
+        let SurfaceExprPayload::RaceFor(race) = &surface.payload else {
+            return Err(vec![CompileError::new(
+                "parser test internal error: expected race-for payload".to_string(),
+                expr.span,
+            )]);
+        };
+
+        assert_eq!(race.binding, "value");
+        assert_eq!(race.arms.len(), 2);
+        assert!(matches!(&race.arms[0].awaitable.node, Expr::Call(callee, _, _) if matches!(&callee.node, Expr::Ident(name) if name == "fast")));
+        assert!(matches!(&race.arms[0].body, RaceForBody::Expr(body) if matches!(&body.node, Expr::Ident(name) if name == "value")));
+        assert!(matches!(&race.arms[1].awaitable.node, Expr::Call(callee, _, _) if matches!(&callee.node, Expr::Ident(name) if name == "slow")));
+        assert!(matches!(&race.arms[1].body, RaceForBody::Block(stmts) if matches!(&stmts[0].node, Statement::Return(Some(value)) if matches!(&value.node, Expr::Ident(name) if name == "value"))));
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_race_for_rejects_pattern_binding_header() {
+        let source = r#"
+import std.async
+
+async def run() -> int:
+  return race for (value):
+    await fast() => value
+"#;
+        let errors = parse_str(source).expect_err("pattern race header should fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Pattern-binding race headers are not supported")),
+            "expected pattern-binding diagnostic, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_race_for_rejects_default_arm() {
+        let source = r#"
+import std.async
+
+async def run() -> int:
+  return race for value:
+    default => value
+"#;
+        let errors = parse_str(source).expect_err("default race arm should fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Default race arms are not supported")),
+            "expected default-arm diagnostic, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_race_for_rejects_guard_arm() {
+        let source = r#"
+import std.async
+
+async def run() -> int:
+  return race for value:
+    await fast() if value > 0 => value
+"#;
+        let errors = parse_str(source).expect_err("guarded race arm should fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Race arm guards are not supported")),
+            "expected guard diagnostic, got: {errors:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_race_for_rejects_fairness_control() {
+        let source = r#"
+import std.async
+
+async def run() -> int:
+  return race for value:
+    fair await fast() => value
+"#;
+        let errors = parse_str(source).expect_err("fairness-controlled race arm should fail");
+        assert!(
+            errors
+                .iter()
+                .any(|error| error.message.contains("Race fairness controls are not supported")),
+            "expected fairness diagnostic, got: {errors:?}"
+        );
+    }
+
+    #[test]
     fn test_parse_rfc028_operator_spellings() -> Result<(), Vec<CompileError>> {
         let source = r#"
 def ops(a: Any, b: Any, c: Any) -> None:
