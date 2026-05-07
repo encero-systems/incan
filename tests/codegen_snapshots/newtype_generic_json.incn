@@ -2,6 +2,7 @@
 
 # Import Axum's Json type
 from rust::axum @ "0.8" import Json as AxumJson
+from std.serde import json
 
 # Generic newtype wrapper
 type Json[T] = newtype AxumJson[T]:
@@ -9,7 +10,7 @@ type Json[T] = newtype AxumJson[T]:
         return "custom"
 
 # Example usage
-@derive(Serialize)
+@derive(json)
 model User:
     id: int
     name: str

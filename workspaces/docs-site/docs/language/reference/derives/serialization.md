@@ -33,11 +33,13 @@ one side of the protocol.
 
 ## Serialize
 
-- **Derive**: `@derive(Serialize)` or `@derive(json)`
+- **Derive**: `@derive(json)` for both JSON directions, or `@derive(Serialize)` after importing `Serialize` directly
 - **API**: `json_stringify(value) -> str`
 - **Trait import**: `from std.serde.json import Serialize` + `with Serialize` gives a default `.to_json()` implementation
 
 ```incan
+from std.serde.json import Serialize
+
 @derive(Serialize)
 model User:
     name: str
@@ -63,11 +65,13 @@ def main() -> None:
 
 ## Deserialize
 
-- **Derive**: `@derive(Deserialize)` or `@derive(json)`
+- **Derive**: `@derive(json)` for both JSON directions, or `@derive(Deserialize)` after importing `Deserialize` directly
 - **API**: `T.from_json(input: str) -> Result[T, str]`
-- **Trait import**: `with Deserialize` still requires either `@derive(Deserialize)` or an explicit `from_json()` implementation
+- **Trait import**: `with Deserialize` still requires either an imported `@derive(Deserialize)` or an explicit `from_json()` implementation
 
 ```incan
+from std.serde.json import Deserialize
+
 @derive(Deserialize)
 model User:
     name: str
@@ -85,28 +89,32 @@ If your JSON schema uses keys that are not valid Incan identifiers (or are keywo
 `model` field alias and choose a schema-safe canonical field name (e.g. `type_`).
 
 ```incan
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 model Account:
     type_ as "type": str
 ```
 
-When `Serialize`/`Deserialize` is derived, the alias is used as the JSON key (`"type"`). The canonical identifier
+When `json` is derived, the alias is used as the JSON key (`"type"`). The canonical identifier
 (`type_`) remains the stable field name in code. See [Models: Using aliases in code](../../explanation/models_and_classes/models.md#using-aliases-in-code).
 
 `class` does not support field metadata/aliases, so class JSON keys always match the canonical field names.
 
 ## Enums
 
-Ordinary enums support `Serialize` and `Deserialize` just like models:
+Ordinary enums support `@derive(json)` just like models:
 
 ```incan
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 enum Status:
     Pending
     Active
     Completed
 
-@derive(Serialize, Deserialize)
+@derive(json)
 enum ApiResponse:
     Success(str)
     Error(int, str)
@@ -115,12 +123,14 @@ enum ApiResponse:
 Value enums serialize and deserialize through their declared raw value rather than the variant name:
 
 ```incan
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 enum Environment(str):
     Development = "development"
     Production = "production"
 
-@derive(Serialize, Deserialize)
+@derive(json)
 enum HttpStatus(int):
     Ok = 200
     NotFound = 404
@@ -129,17 +139,19 @@ enum HttpStatus(int):
 `Environment.Production` serializes as `"production"` and deserializes only from known raw values. `HttpStatus.NotFound`
 serializes as `404`.
 
-When a model references an enum in its fields, the compiler automatically propagates `Serialize`/`Deserialize` derives
+When a model references an enum in its fields, the compiler automatically propagates JSON serde derives
 to the enum:
 
 ```incan
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 enum Priority:
     Low
     Medium
     High
 
-@derive(Serialize, Deserialize)
+@derive(json)
 model Task:
     name: str
     priority: Priority  # Priority automatically gets serde derives
@@ -149,13 +161,15 @@ model Task:
 
 ## Newtypes
 
-Newtypes also support `Serialize` and `Deserialize`:
+Newtypes also support `@derive(json)`:
 
 ```incan
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 newtype UserId(int)
 
-@derive(Serialize, Deserialize)
+@derive(json)
 newtype Email(str)
 ```
 

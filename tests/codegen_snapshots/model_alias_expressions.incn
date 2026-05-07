@@ -1,6 +1,8 @@
 """RFC 021: Test alias-aware expression lowering end-to-end"""
 
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 model Account:
     type_ [alias="type", description="Account type"]: str
     class_ [alias="class"]: str

@@ -240,6 +240,8 @@ Panics at runtime with `KeyError: 'b' not found in dict`.
 #### `JsonDecodeError`
 
 ```incan
+from std.serde.json import Deserialize
+
 @derive(Deserialize)
 model User:
     name: str

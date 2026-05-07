@@ -7660,12 +7660,13 @@ def foo() -> int:
 fn test_web_wrapper_value_and_deref_access() {
     let source = r#"
 from std.web import Json, Query
+from std.serde import json
 
-@derive(Deserialize)
+@derive(json)
 model SearchParams:
   q: str
 
-@derive(Deserialize)
+@derive(json)
 model CreateUser:
   name: str
 
@@ -7686,12 +7687,14 @@ def use_body(body: Json[CreateUser]) -> str:
 fn test_web_wrapper_invalid_constructor_args() {
     let source = r#"
 from std.web import Json, Query
+from std.serde import json
+from std.serde.json import Serialize
 
 @derive(Serialize)
 model User:
   name: str
 
-@derive(Deserialize)
+@derive(json)
 model SearchParams:
   q: str
 
@@ -10568,6 +10571,35 @@ model Payload with Serialize:
 
 def encode(payload: Payload) -> str:
   return payload.to_json()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_bare_serde_derive_without_import_is_rejected() {
+    let source = r#"
+@derive(Serialize)
+model Payload:
+  value: int
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("bare Serialize derive should require an imported std.serde.json trait or Rust derive");
+    };
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Unknown derive 'Serialize'")),
+        "Expected unknown derive diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rust_imported_serde_derive_still_typechecks() {
+    let source = r#"
+from rust::serde @ "1.0" import Deserialize
+
+@derive(Deserialize)
+model Payload:
+  value: int
 "#;
     assert_check_ok(source);
 }

@@ -14,6 +14,9 @@ use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::trait_bounds;
 use incan_core::lang::types::numerics::{self, NumericTypeId};
 
+const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
+const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
+
 impl AstLowering {
     // ========================================================================
     // RFC 023: Type parameter lowering with trait bounds
@@ -231,7 +234,7 @@ impl AstLowering {
 
     /// Extract derives from decorators.
     ///
-    /// Parses `@derive(Serialize, Deserialize)` decorators and returns the list of derive names.
+    /// Parses `@derive(...)` decorators and returns the Rust derive names or paths they require.
     /// Also adds prerequisite derives (e.g., Eq requires PartialEq).
     pub(in crate::backend::ir::lower) fn extract_derives(
         &mut self,
@@ -242,13 +245,18 @@ impl AstLowering {
 
         for decorator in decorators {
             if decorators::from_str(decorator.node.name.as_str()) == Some(DecoratorId::Derive) {
-                // Extract derive arguments: @derive(Serialize, Deserialize)
+                // Extract derive arguments: @derive(Debug), @derive(json), @derive(Custom)
                 for arg in &decorator.node.args {
                     if let ast::DecoratorArg::Positional(expr) = arg {
                         // Handle simple identifier expressions
                         if let ast::Expr::Ident(name) = &expr.node {
                             if derives::from_str(name).is_some() {
                                 Self::push_unique(&mut derives, name.clone());
+                                continue;
+                            }
+
+                            if let Some(rust_path) = self.rust_import_aliases.get(name) {
+                                Self::push_rust_derive_path(&mut derives, rust_path.join("::"));
                                 continue;
                             }
 
@@ -426,14 +434,9 @@ impl AstLowering {
         }
     }
 
-    /// Add a Rust derive path, normalizing serde derive paths to the existing derive registry names.
+    /// Add a Rust derive path, preserving serde derives as explicit Rust paths.
     fn push_rust_derive_path(derives: &mut Vec<String>, path: String) {
-        let value = match path.as_str() {
-            "serde::Serialize" => derives::as_str(DeriveId::Serialize).to_string(),
-            "serde::Deserialize" => derives::as_str(DeriveId::Deserialize).to_string(),
-            _ => path,
-        };
-        Self::push_unique(derives, value);
+        Self::push_unique(derives, path);
     }
 
     /// Forward explicit `with Serialize` / `with Deserialize` adoption into Rust derive emission.
@@ -449,16 +452,19 @@ impl AstLowering {
             derives.iter().any(|d| d == name)
         }
 
-        let serialize = derives::as_str(DeriveId::Serialize);
-        let deserialize = derives::as_str(DeriveId::Deserialize);
-
         for bound in trait_bounds {
             match bound.node.name.as_str() {
-                name if name == serialize && !has(derives, serialize) => derives.push(serialize.to_string()),
-                name if name == deserialize && !has(derives, deserialize) => derives.push(deserialize.to_string()),
-                name if name.ends_with(".Serialize") && !has(derives, serialize) => derives.push(serialize.to_string()),
-                name if name.ends_with(".Deserialize") && !has(derives, deserialize) => {
-                    derives.push(deserialize.to_string());
+                "Serialize" if !has(derives, SERDE_SERIALIZE_DERIVE) => {
+                    derives.push(SERDE_SERIALIZE_DERIVE.to_string());
+                }
+                "Deserialize" if !has(derives, SERDE_DESERIALIZE_DERIVE) => {
+                    derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
+                }
+                name if name.ends_with(".Serialize") && !has(derives, SERDE_SERIALIZE_DERIVE) => {
+                    derives.push(SERDE_SERIALIZE_DERIVE.to_string());
+                }
+                name if name.ends_with(".Deserialize") && !has(derives, SERDE_DESERIALIZE_DERIVE) => {
+                    derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
                 }
                 _ => {}
             }

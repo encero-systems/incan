@@ -324,60 +324,6 @@ pub(super) fn collect_properties(
         .collect()
 }
 
-/// Inject to_json/from_json methods based on Serialize/Deserialize derives.
-pub(super) fn inject_json_methods(
-    methods: &mut HashMap<String, MethodInfo>,
-    overloads: &mut HashMap<String, Vec<MethodInfo>>,
-    type_name: &str,
-    derives: &[String],
-) {
-    if derives
-        .iter()
-        .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Serialize))
-    {
-        insert_injected_method(
-            methods,
-            overloads,
-            "to_json",
-            MethodInfo {
-                type_params: Vec::new(),
-                type_param_bounds: HashMap::new(),
-                type_param_bound_details: HashMap::new(),
-                receiver: Some(Receiver::Immutable),
-                params: vec![],
-                return_type: ResolvedType::Str,
-                is_async: false,
-                has_body: true,
-                alias_of: None,
-            },
-        );
-    }
-    if derives
-        .iter()
-        .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Deserialize))
-    {
-        insert_injected_method(
-            methods,
-            overloads,
-            "from_json",
-            MethodInfo {
-                type_params: Vec::new(),
-                type_param_bounds: HashMap::new(),
-                type_param_bound_details: HashMap::new(),
-                receiver: None, // Static method
-                params: vec![CallableParam::named("json_str", ResolvedType::Str, ParamKind::Normal)],
-                return_type: ResolvedType::Generic(
-                    "Result".to_string(),
-                    vec![ResolvedType::Named(type_name.to_string()), ResolvedType::Str],
-                ),
-                is_async: false,
-                has_body: true,
-                alias_of: None,
-            },
-        );
-    }
-}
-
 /// Inject a `TypeName.new(...) -> Result[TypeName, E]` constructor for `@derive(Validate)` models.
 ///
 /// This is a *typechecker-only* method injection to allow `User.new(...)` calls to typecheck even though the backend

@@ -283,9 +283,9 @@ pub(crate) fn collect_project_requirements(
         }
     }
 
-    // Legacy serde-driven surfaces (`@derive(Serialize/Deserialize)`, `to_json`, `json_stringify`) can still be used
-    // without importing `std.serde.*`. Keep this as an explicit compatibility fallback, but treat import/provider
-    // manifests as the primary source of dependency and feature requirements.
+    // The legacy bare `json_stringify` builtin can still be used without importing `std.serde.*`. Keep this as an
+    // explicit compatibility fallback, but treat import/provider manifests as the primary source of dependency and
+    // feature requirements.
     let needs_legacy_serde_runtime = modules.iter().any(|module| detect_serde_non_import_usage(&module.ast));
     if needs_legacy_serde_runtime {
         stdlib_namespaces.insert("serde".to_string());
@@ -346,7 +346,8 @@ pub(crate) fn collect_project_requirements(
         }
     }
 
-    if needs_legacy_serde_runtime {
+    let needs_serde_runtime = needs_legacy_serde_runtime || stdlib_namespaces.contains("serde");
+    if needs_serde_runtime {
         let serde = DependencySpec {
             crate_name: "serde".to_string(),
             version: Some("1.0".to_string()),
@@ -360,7 +361,7 @@ pub(crate) fn collect_project_requirements(
         merge_requirement_dependency(
             &mut requirements.dependencies,
             serde,
-            "legacy serde usage in source".to_string(),
+            "std.serde usage in source".to_string(),
         )?;
 
         let serde_json = DependencySpec {
@@ -376,7 +377,7 @@ pub(crate) fn collect_project_requirements(
         merge_requirement_dependency(
             &mut requirements.dependencies,
             serde_json,
-            "legacy serde usage in source".to_string(),
+            "std.serde usage in source".to_string(),
         )?;
     }
 
@@ -1843,7 +1844,9 @@ from std.math import sqrt
     fn collect_project_requirements_adds_serde_runtime_deps_from_derives() -> Result<(), Box<dyn std::error::Error>> {
         let module = parsed_module_for_test(
             r#"
-@derive(Serialize)
+from std.serde import json
+
+@derive(json)
 model User:
     name: str
 "#,

@@ -9,31 +9,7 @@
 //! This module collects import aliases and resolves decorator paths via the same
 //! “segments + alias prefix” approach as the frontend.
 
-use crate::frontend::ast::{self, Declaration, ImportKind, Program};
-use crate::frontend::decorator_resolution;
-use incan_core::lang::decorators::{self, DecoratorId};
-
-/// Collect import aliases from the program.
-pub(super) fn collect_import_aliases(program: &Program) -> std::collections::HashMap<String, Vec<String>> {
-    decorator_resolution::collect_import_aliases(program)
-}
-
-/// Resolve a decorator path to a module path.
-fn resolve_decorator_path(
-    dec: &ast::Decorator,
-    aliases: &std::collections::HashMap<String, Vec<String>>,
-) -> Vec<String> {
-    decorator_resolution::resolve_decorator_path(dec, aliases)
-}
-
-/// Resolve a decorator path to a decorator id.
-pub(super) fn resolve_decorator_id(
-    dec: &ast::Decorator,
-    aliases: &std::collections::HashMap<String, Vec<String>>,
-) -> Option<DecoratorId> {
-    let resolved = resolve_decorator_path(dec, aliases);
-    decorators::from_segments(&resolved)
-}
+use crate::frontend::ast::{Declaration, ImportKind, Program};
 
 /// Check if the program imports from `std.<module>` (or any submodule).
 ///

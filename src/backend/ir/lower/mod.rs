@@ -118,6 +118,8 @@ pub struct AstLowering {
     pub(super) non_linear_context_depth: usize,
     /// Import alias map for decorator/derive passthrough resolution.
     pub(super) import_aliases: HashMap<String, Vec<String>>,
+    /// Direct Rust import aliases mapped to Rust path segments.
+    pub(super) rust_import_aliases: HashMap<String, Vec<String>>,
     /// Function-typed parameters for the currently lowered callable body.
     pub(super) callable_param_scopes: Vec<HashSet<String>>,
     /// Module-level symbol aliases mapped from alias name to canonical target name.
@@ -204,6 +206,7 @@ impl AstLowering {
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,
             import_aliases: HashMap::new(),
+            rust_import_aliases: HashMap::new(),
             callable_param_scopes: Vec::new(),
             symbol_aliases: HashMap::new(),
             stdlib_cache: StdlibAstCache::new(),
@@ -529,6 +532,7 @@ impl AstLowering {
         let mut ir_program = IrProgram::new();
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
+        self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
         self.alias_imported_dependency_trait_decls();
         self.symbol_aliases = program
             .declarations
@@ -1015,9 +1019,8 @@ impl AstLowering {
                 }
             }
         }
-        // Propagate Serialize/Deserialize derives from structs to their field types (enums).
-        // This allows users to only annotate the top-level model with @derive(Serialize, Deserialize) and have it
-        // automatically apply to nested user-defined enums.
+        // Propagate serde derives from structs to their field types (enums). This allows users to only annotate the
+        // top-level model with @derive(json) and have it automatically apply to nested user-defined enums.
         Self::propagate_serde_derives(&mut ir_program);
 
         if errors.is_empty() {
@@ -1166,19 +1169,18 @@ impl AstLowering {
         }
     }
 
-    /// Propagate Serialize/Deserialize derives from structs to enum/newtype field types.
+    /// Propagate serde Rust derives from structs to enum/newtype field types.
     ///
-    /// When a struct has Serialize or Deserialize derives and contains fields of enum types, those enums also need the
-    /// same derives for the generated Rust code to compile. This function automatically adds those derives to avoid
-    /// requiring users to manually annotate every nested enum.
+    /// When a struct has `serde::Serialize` or `serde::Deserialize` derives and contains fields of enum types, those
+    /// enums also need the same derives for the generated Rust code to compile. This function automatically adds those
+    /// derives to avoid requiring users to manually annotate every nested enum.
     fn propagate_serde_derives(ir_program: &mut IrProgram) {
         use super::decl::IrDeclKind;
-        use incan_core::lang::derives::{self, DeriveId};
 
-        let serialize = derives::as_str(DeriveId::Serialize);
-        let deserialize = derives::as_str(DeriveId::Deserialize);
+        const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
+        const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
 
-        // Collect enum/newtype names that need Serialize/Deserialize
+        // Collect enum/newtype names that need serde derives.
         let mut enums_need_serialize: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut enums_need_deserialize: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut structs_need_serialize: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1198,11 +1200,11 @@ impl AstLowering {
             }
         }
 
-        // First pass: find all structs with Serialize/Deserialize and collect their enum/newtype field types
+        // First pass: find all structs with serde derives and collect their enum/newtype field types.
         for decl in &ir_program.declarations {
             if let IrDeclKind::Struct(s) = &decl.kind {
-                let has_serialize = s.derives.iter().any(|d| d == serialize);
-                let has_deserialize = s.derives.iter().any(|d| d == deserialize);
+                let has_serialize = s.derives.iter().any(|d| d == SERDE_SERIALIZE_DERIVE);
+                let has_deserialize = s.derives.iter().any(|d| d == SERDE_DESERIALIZE_DERIVE);
 
                 if has_serialize {
                     for field in &s.fields {
@@ -1236,24 +1238,27 @@ impl AstLowering {
             }
         }
 
-        // Second pass: add Serialize/Deserialize to enums/newtypes that need them
+        // Second pass: add serde derives to enums/newtypes that need them.
         for decl in &mut ir_program.declarations {
             if let IrDeclKind::Enum(e) = &mut decl.kind {
-                if enums_need_serialize.contains(&e.name) && !e.derives.iter().any(|d| d == serialize) {
-                    e.derives.push(serialize.to_string());
+                if enums_need_serialize.contains(&e.name) && !e.derives.iter().any(|d| d == SERDE_SERIALIZE_DERIVE) {
+                    e.derives.push(SERDE_SERIALIZE_DERIVE.to_string());
                 }
-                if enums_need_deserialize.contains(&e.name) && !e.derives.iter().any(|d| d == deserialize) {
-                    e.derives.push(deserialize.to_string());
+                if enums_need_deserialize.contains(&e.name) && !e.derives.iter().any(|d| d == SERDE_DESERIALIZE_DERIVE)
+                {
+                    e.derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
                 }
             }
             if let IrDeclKind::Struct(s) = &mut decl.kind
                 && newtype_names.contains(&s.name)
             {
-                if structs_need_serialize.contains(&s.name) && !s.derives.iter().any(|d| d == serialize) {
-                    s.derives.push(serialize.to_string());
+                if structs_need_serialize.contains(&s.name) && !s.derives.iter().any(|d| d == SERDE_SERIALIZE_DERIVE) {
+                    s.derives.push(SERDE_SERIALIZE_DERIVE.to_string());
                 }
-                if structs_need_deserialize.contains(&s.name) && !s.derives.iter().any(|d| d == deserialize) {
-                    s.derives.push(deserialize.to_string());
+                if structs_need_deserialize.contains(&s.name)
+                    && !s.derives.iter().any(|d| d == SERDE_DESERIALIZE_DERIVE)
+                {
+                    s.derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
                 }
             }
         }
@@ -1320,7 +1325,6 @@ mod tests {
     use crate::backend::ir::expr::{CollectionMethodKind, IrExprKind, MethodKind, StringMethodKind, UnaryOp};
     use crate::backend::ir::stmt::IrStmtKind;
     use crate::frontend::{lexer, parser};
-    use incan_core::lang::derives::{self, DeriveId};
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
         match result {
@@ -1639,6 +1643,8 @@ def test() -> int:
     fn test_serde_propagation_respects_derives_and_containers() {
         let ir = must_ok(lower_source(
             r#"
+from std.serde.json import Serialize
+
 @derive(Serialize)
 model Payload:
   tags: set[Tag]
@@ -1652,8 +1658,8 @@ type UserId = newtype int
 "#,
         ));
 
-        let serialize = derives::as_str(DeriveId::Serialize).to_string();
-        let deserialize = derives::as_str(DeriveId::Deserialize).to_string();
+        let serialize = "serde::Serialize".to_string();
+        let deserialize = "serde::Deserialize".to_string();
 
         let mut tag_derives: Option<Vec<String>> = None;
         let mut user_id_derives: Option<Vec<String>> = None;

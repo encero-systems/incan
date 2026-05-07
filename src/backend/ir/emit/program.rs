@@ -1719,6 +1719,28 @@ impl<'a> IrEmitter<'a> {
             let std_namespace = Self::rust_ident(incan_core::lang::stdlib::INCAN_STD_NAMESPACE);
             items.push(quote! { use crate::#std_namespace::traits::error::Error; });
         }
+        let needs_json_serialize_trait_scope = emitted_declarations.iter().any(|decl| {
+            matches!(
+                &decl.kind,
+                IrDeclKind::Impl(impl_block)
+                    if impl_block.trait_name.as_deref() == Some("json.Serialize")
+                        || impl_block.trait_name.as_deref() == Some("std.serde.json.Serialize")
+            )
+        });
+        let needs_json_deserialize_trait_scope = emitted_declarations.iter().any(|decl| {
+            matches!(
+                &decl.kind,
+                IrDeclKind::Impl(impl_block)
+                    if impl_block.trait_name.as_deref() == Some("json.Deserialize")
+                        || impl_block.trait_name.as_deref() == Some("std.serde.json.Deserialize")
+            )
+        });
+        match (needs_json_serialize_trait_scope, needs_json_deserialize_trait_scope) {
+            (true, true) => items.push(quote! { use json::{Deserialize as _, Serialize as _}; }),
+            (true, false) => items.push(quote! { use json::Serialize as _; }),
+            (false, true) => items.push(quote! { use json::Deserialize as _; }),
+            (false, false) => {}
+        }
 
         let mut explicit_methods_by_type: HashMap<String, HashSet<String>> = HashMap::new();
         for decl in &emitted_declarations {

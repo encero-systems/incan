@@ -336,6 +336,13 @@ impl TypeChecker {
 
         if self
             .lookup_symbol(name)
+            .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::RustItem(_)))
+        {
+            return;
+        }
+
+        if self
+            .lookup_symbol(name)
             .is_some_and(|symbol| matches!(symbol.kind, SymbolKind::Module(_)))
             && let Some(module_path) = self.module_path_for_imported_name(name)
         {

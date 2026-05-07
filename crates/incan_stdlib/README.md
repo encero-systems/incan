@@ -40,7 +40,7 @@ pub trait FromJson: for<'de> Deserialize<'de> {
 }
 ```
 
-**Used by**: Models with `@derive(Serialize, Deserialize)` decorators
+**Used by**: Models that derive `std.serde.json`
 
 ### The Prelude
 
@@ -62,7 +62,7 @@ This brings in:
 
 Enables JSON serialization support. Adds dependencies on `serde` and `serde_json`.
 
-**Enabled when**: Your Incan code uses `@derive(Serialize, Deserialize)`
+**Enabled when**: Your Incan code imports and derives `std.serde.json`
 
 ## Architecture Notes
 

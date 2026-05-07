@@ -7,7 +7,7 @@
 //!
 //! - [`mutation_scan`] — parameter mutation analysis for `mut`/`&mut` emission
 //! - [`functions`] — function, method, trait, and `@rust.extern` delegation emission
-//! - [`impls`] — impl block emission (serde, `@derive(Validate)`, reflection)
+//! - [`impls`] — impl block emission (`@derive(Validate)`, trait impls, reflection)
 //! - [`structures`] — struct and enum emission
 //!
 //! ## See also
@@ -23,7 +23,6 @@ mod structures;
 use proc_macro2::{Literal, TokenStream};
 use quote::{format_ident, quote};
 
-use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::stdlib;
 
 use super::super::decl::{IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier};
@@ -243,23 +242,6 @@ impl<'a> IrEmitter<'a> {
         alias: &Option<String>,
         items: &[super::super::decl::IrImportItem],
     ) -> Result<TokenStream, EmitError> {
-        // Skip redundant external serde imports when derive emission already uses fully qualified `serde::...` paths.
-        //
-        // Do not skip `std.serde.json` imports here: explicit trait adoption (`with Serialize`) needs the Incan stdlib
-        // trait in scope as a distinct item from Rust's `serde::Serialize`.
-        if *self.needs_serde.borrow() {
-            let is_serde_trait = items.iter().any(|item| {
-                matches!(
-                    derives::from_str(item.name.as_str()),
-                    Some(DeriveId::Serialize | DeriveId::Deserialize)
-                )
-            });
-            let is_serde_import_path = path.len() == 1 && path[0] == "serde";
-            if is_serde_trait && is_serde_import_path {
-                return Ok(quote! {});
-            }
-        }
-
         // Typechecker-only namespaces (e.g. `std.rust`) have no corresponding Rust module.
         // Capability bounds are folded into generic type parameter bounds by the lowering layer.
         if stdlib::is_typechecker_only_stdlib(path) {

@@ -98,6 +98,50 @@ pub fn collect_import_aliases(program: &Program) -> HashMap<String, Vec<String>>
     aliases
 }
 
+/// Collect aliases for direct Rust imports.
+///
+/// This intentionally stays separate from [`collect_import_aliases`] because `rust::...` imports are not Incan module
+/// paths. Lowering uses this for Rust derive macro passthrough such as
+/// `from rust::serde @ "1.0" import Deserialize` → `serde::Deserialize`.
+pub fn collect_rust_import_aliases(program: &Program) -> HashMap<String, Vec<String>> {
+    let mut aliases = HashMap::new();
+    for decl in &program.declarations {
+        let Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+
+        match &import.kind {
+            ImportKind::RustCrate { crate_name, path, .. } => {
+                let mut resolved = vec![crate_name.clone()];
+                resolved.extend(path.iter().cloned());
+                let name = import
+                    .alias
+                    .as_ref()
+                    .cloned()
+                    .or_else(|| path.last().cloned())
+                    .unwrap_or_else(|| crate_name.clone());
+                aliases.insert(name, resolved);
+            }
+            ImportKind::RustFrom {
+                crate_name,
+                path,
+                items,
+                ..
+            } => {
+                for item in items {
+                    let name = item.alias.as_ref().cloned().unwrap_or_else(|| item.name.clone());
+                    let mut resolved = vec![crate_name.clone()];
+                    resolved.extend(path.iter().cloned());
+                    resolved.push(item.name.clone());
+                    aliases.insert(name, resolved);
+                }
+            }
+            _ => {}
+        }
+    }
+    aliases
+}
+
 /// Resolve a decorator path to a module path.
 ///
 /// Rules:

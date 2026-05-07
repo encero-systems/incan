@@ -1,7 +1,6 @@
 //! Impl block emission.
 //!
-//! Handles `emit_impl` (including serde convenience methods, `@derive(Validate)`, trait impls, and `__fields__`
-//! reflection).
+//! Handles `emit_impl` (including `@derive(Validate)`, trait impls, and `__fields__` reflection).
 
 use proc_macro2::{Literal, TokenStream};
 use quote::{format_ident, quote};
@@ -86,48 +85,6 @@ impl<'a> IrEmitter<'a> {
             && let Some(fields_method) = self.emit_fields_method(&impl_block.target_type)?
         {
             regular_methods.push(fields_method);
-        }
-
-        // serde-derived convenience methods (legacy behavior)
-        if impl_block.trait_name.is_none()
-            && let Some(derives) = self.struct_derives.get(&impl_block.target_type)
-        {
-            let has_serialize = derives
-                .iter()
-                .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Serialize));
-            let has_deserialize = derives
-                .iter()
-                .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Deserialize));
-
-            if has_serialize
-                && self.should_emit_method(
-                    &impl_block.target_type,
-                    "to_json",
-                    &super::super::super::decl::Visibility::Private,
-                )
-            {
-                regular_methods.push(quote! {
-                    /// Serialize this model to a JSON string
-                    pub fn to_json(&self) -> String {
-                        incan_stdlib::json::__private::stringify_or_raise(self, stringify!(#target_type))
-                    }
-                });
-            }
-            if has_deserialize
-                && self.should_emit_method(
-                    &impl_block.target_type,
-                    "from_json",
-                    &super::super::super::decl::Visibility::Private,
-                )
-            {
-                regular_methods.push(quote! {
-                    /// Deserialize a JSON string into this model
-                    pub fn from_json(json_str: String) -> Result<Self, String> {
-                        serde_json::from_str(&json_str)
-                            .map_err(|e| incan_stdlib::errors::json_decode_error_string(e))
-                    }
-                });
-            }
         }
 
         // @derive(Validate): generate `TypeName::new(...) -> Result[TypeName, E]` that calls `validate()`.
