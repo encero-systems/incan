@@ -18,6 +18,22 @@ If none is provided, ask the user what they want to work on.
 
 ---
 
+## Git commits — maintainer only
+
+**Do not commit unless the user explicitly asks you to** (e.g. “commit this”, “make a commit”, “git commit with message …”). The maintainer is the only person who commits code to this repository by default.
+
+Agents must **not** run, on their own initiative:
+
+- `git commit` (any variant)
+- `git merge` / `git rebase` / `git cherry-pick` when the result would create or rewrite commits the user did not ask for
+- `git push` (unless the user explicitly asked to push)
+
+**Do** create branches, apply edits, run tests, and leave the working tree ready for the user to review and commit. If finishing a task, summarize what changed and suggest a commit message **as text**; the user runs `git commit` when they are ready.
+
+This policy applies whenever this skill is used (and is the default for Incan work even without `/start-work`).
+
+---
+
 ## Workflow
 
 ### Step 1: Fetch issue/RFC context
@@ -85,17 +101,23 @@ If the branch already exists locally or on the remote, ask the user whether to:
 
 ### Step 4: Check learnings
 
-Read `.cursor/agents/learnings.md` and check whether any section is relevant to the task. Specifically:
+Read `.agents/learnings.md` and check whether any section is relevant to the task. Specifically:
 
-- If the task involves **field metadata, aliases, or model features** -> read the RFC 021 section
-- If the task involves **Rust interop, `import rust.*`, or extern functions** -> read the RFC 005 section
-- If the task involves **stdlib, soft keywords, or `std.*` imports** -> read the RFC 022 section
-- If the task involves **imports, parser bracket handling, or formatter** -> read the Issue #116 section
-- If the task involves **generics, trait bounds, or extern diagnostics** -> read the RFC 023 section
+- If the task involves **lowering, emission, or codegen regressions** -> read `General pipeline pitfalls` and `Testing strategy`
+- If the task involves **Rust interop, `import rust.*`, `rusttype`, or extern functions** -> read `RFC 041 (first-class Rust interop) implementation notes` and `Generic bounds and extern functions`
+- If the task involves **stdlib, soft keywords, or `std.*` imports** -> read `Stdlib and registry patterns`
+- If the task involves **imports, parser bracket handling, warnings, or formatter** -> read `Parser and lexer patterns` and `Wiring: CLI and LSP`
+- If the task involves **docs, release notes, or RFC movement/renames** -> read `Docs and RFC tooling`
 
 If a relevant section exists, summarize the key takeaways for the user.
 
-### Step 5: Check for related RFCs
+### Step 5: Check for parallel work opportunities
+
+If the task clearly decomposes into independent slices and the user explicitly wants delegation or parallel work, stop after gathering context and hand off to `orchestrate-parallel-work`.
+
+Do not improvise ad hoc multi-agent coordination inside this skill. This skill is for task setup, not swarm orchestration.
+
+### Step 6: Check for related RFCs
 
 If the task references an RFC:
 
@@ -103,7 +125,7 @@ If the task references an RFC:
 - Check its status (Draft / Planned / In Progress / Done)
 - If the RFC has a Progress Checklist, summarize what's done and what remains
 
-### Step 6: Report to the user
+### Step 7: Report to the user
 
 Provide a concise summary:
 
@@ -120,6 +142,8 @@ Provide a concise summary:
 
 ### Next steps
 <Suggested first actions based on the issue/RFC>
+
+**Proposed commit message**: `<one line; include in this same summary for the maintainer to use when they commit>`
 ```
 
 ---
@@ -127,5 +151,5 @@ Provide a concise summary:
 ## Edge cases
 
 - **No GitHub CLI (`gh`)**: Fall back to reading the RFC file directly. Note that the issue could not be fetched and ask the user for context.
-- **Dirty working tree**: Warn the user about uncommitted changes before switching branches. Ask whether to stash, commit, or abort.
+- **Dirty working tree**: Warn the user about uncommitted changes before switching branches. Ask whether to stash, commit themselves, or abort — do not commit on their behalf unless they explicitly asked you to commit.
 - **Branch already exists with divergent history**: Always ask before overwriting.

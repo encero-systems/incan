@@ -24,7 +24,7 @@ Do **not** add:
 
 ### Step 1: Identify the right section
 
-Read `.cursor/agents/learnings.md` and determine which existing section the learning belongs in:
+Read `.agents/learnings.md` and determine which existing section the learning belongs in:
 
 | Section | Add here if the learning is about... |
 | --- | --- |
@@ -34,6 +34,7 @@ Read `.cursor/agents/learnings.md` and determine which existing section the lear
 | Stdlib and registry patterns | `STDLIB_NAMESPACES`, stub vs wiring, runtime facades |
 | Wiring: CLI and LSP | Warning surfacing, feature gates, command coverage |
 | Generic bounds and extern functions | Bounds storage, extern diagnostics, shared helpers |
+| Docs and RFC tooling | RFC graph maintenance, docs generators, index/reference regeneration |
 
 If no existing section fits, create a new one with a descriptive heading.
 
@@ -53,7 +54,7 @@ Guidelines:
 
 ### Step 3: Append to the file
 
-Add the bullet to the appropriate section in `.cursor/agents/learnings.md`. Maintain alphabetical or logical ordering within the section.
+Add the bullet to the appropriate section in `.agents/learnings.md`. Maintain alphabetical or logical ordering within the section.
 
 ### Step 4: Verify
 
