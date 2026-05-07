@@ -1451,6 +1451,12 @@ impl TypeChecker {
                 self.collect_static_dependencies_from_expr(&object.node, deps, visiting_functions);
                 self.collect_static_dependencies_from_call_args(args, deps, visiting_functions);
             }
+            Expr::Partial(partial) => {
+                self.collect_static_dependencies_from_expr(&partial.target.node, deps, visiting_functions);
+                for arg in &partial.args {
+                    self.collect_static_dependencies_from_expr(&arg.value.node, deps, visiting_functions);
+                }
+            }
             Expr::Match(scrutinee, arms) => {
                 self.collect_static_dependencies_from_expr(&scrutinee.node, deps, visiting_functions);
                 for arm in arms {
@@ -1564,6 +1570,9 @@ impl TypeChecker {
                     self.collect_static_dependencies_from_expr(&left.node, deps, visiting_functions);
                     self.collect_static_dependencies_from_expr(&right.node, deps, visiting_functions);
                 }
+                SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                    self.collect_static_dependencies_from_call_args(args, deps, visiting_functions);
+                }
             },
         }
     }
@@ -1626,6 +1635,20 @@ impl TypeChecker {
             Expr::MethodCall(object, _, _type_args, args) => {
                 self.collect_static_initializer_static_writes_from_expr(object, current_static, visiting_functions);
                 self.collect_static_initializer_static_writes_from_call_args(args, current_static, visiting_functions);
+            }
+            Expr::Partial(partial) => {
+                self.collect_static_initializer_static_writes_from_expr(
+                    &partial.target,
+                    current_static,
+                    visiting_functions,
+                );
+                for arg in &partial.args {
+                    self.collect_static_initializer_static_writes_from_expr(
+                        &arg.value,
+                        current_static,
+                        visiting_functions,
+                    );
+                }
             }
             Expr::Index(object, index) => {
                 self.collect_static_initializer_static_writes_from_expr(object, current_static, visiting_functions);
@@ -1827,6 +1850,13 @@ impl TypeChecker {
                 SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                     self.collect_static_initializer_static_writes_from_expr(left, current_static, visiting_functions);
                     self.collect_static_initializer_static_writes_from_expr(right, current_static, visiting_functions);
+                }
+                SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                    self.collect_static_initializer_static_writes_from_call_args(
+                        args,
+                        current_static,
+                        visiting_functions,
+                    );
                 }
             },
         }
@@ -2381,10 +2411,12 @@ impl TypeChecker {
         ))
     }
 
-    /// Validate alias relationships that need declaration-level context before symbol collection flattens aliases.
+    /// Validate alias and partial relationships that need declaration-level context before symbol collection flattens
+    /// aliases and projected callable presets.
     fn validate_alias_declarations(&mut self, program: &Program) {
         let mut public_decls = HashMap::new();
         let mut alias_targets = HashMap::new();
+        let mut partial_targets = HashMap::new();
         let mut newtype_names = HashSet::new();
         let mut newtype_underlyings = HashMap::new();
 
@@ -2416,11 +2448,36 @@ impl TypeChecker {
                         }
                     }
                 }
+                Declaration::Partial(partial) => {
+                    if let [target] = partial.target.segments.as_slice() {
+                        partial_targets.insert(partial.name.clone(), (target.clone(), decl.span));
+                        if matches!(partial.visibility, Visibility::Public)
+                            && public_decls.get(target).is_some_and(|is_public| !*is_public)
+                        {
+                            self.errors.push(CompileError::type_error(
+                                format!(
+                                    "Public partial '{}' targets private symbol '{}'",
+                                    partial.name,
+                                    partial.target.segments.join(".")
+                                ),
+                                decl.span,
+                            ));
+                        }
+                    }
+                    if matches!(partial.visibility, Visibility::Public) {
+                        self.validate_public_partial_presets_do_not_reference_private_symbols(
+                            &partial.name,
+                            &partial.args,
+                            &public_decls,
+                        );
+                    }
+                }
                 Declaration::Model(model) => {
                     self.validate_member_name_collisions(
                         &model.name,
                         &model.fields,
                         &model.method_aliases,
+                        &model.method_partials,
                         &model.properties,
                         &model.methods,
                     );
@@ -2429,13 +2486,21 @@ impl TypeChecker {
                         &model.method_aliases,
                         &model.properties,
                         &model.methods,
-                    )
+                    );
+                    self.validate_method_partial_declarations(
+                        &model.name,
+                        &model.method_aliases,
+                        &model.method_partials,
+                        &model.properties,
+                        &model.methods,
+                    );
                 }
                 Declaration::Class(class) => {
                     self.validate_member_name_collisions(
                         &class.name,
                         &class.fields,
                         &class.method_aliases,
+                        &class.method_partials,
                         &class.properties,
                         &class.methods,
                     );
@@ -2444,20 +2509,42 @@ impl TypeChecker {
                         &class.method_aliases,
                         &class.properties,
                         &class.methods,
-                    )
+                    );
+                    self.validate_method_partial_declarations(
+                        &class.name,
+                        &class.method_aliases,
+                        &class.method_partials,
+                        &class.properties,
+                        &class.methods,
+                    );
                 }
                 Declaration::Trait(tr) => {
                     self.validate_member_name_collisions(
                         &tr.name,
                         &[],
                         &tr.method_aliases,
+                        &tr.method_partials,
                         &tr.properties,
                         &tr.methods,
                     );
                     self.validate_method_alias_declarations(&tr.name, &tr.method_aliases, &tr.properties, &tr.methods);
+                    self.validate_method_partial_declarations(
+                        &tr.name,
+                        &tr.method_aliases,
+                        &tr.method_partials,
+                        &tr.properties,
+                        &tr.methods,
+                    );
                 }
                 Declaration::Newtype(nt) => {
                     self.validate_method_alias_declarations(&nt.name, &nt.method_aliases, &[], &nt.methods);
+                    self.validate_method_partial_declarations(
+                        &nt.name,
+                        &nt.method_aliases,
+                        &nt.method_partials,
+                        &[],
+                        &nt.methods,
+                    );
                     if let Type::Simple(target) = &nt.underlying.node {
                         newtype_underlyings.insert(nt.name.clone(), (target.clone(), nt.underlying.span));
                     }
@@ -2467,6 +2554,7 @@ impl TypeChecker {
         }
 
         self.validate_top_level_alias_cycles(&alias_targets);
+        self.validate_top_level_partial_cycles(&alias_targets, &partial_targets);
         self.validate_newtype_underlying_cycles(&newtype_underlyings, &newtype_names);
     }
 
@@ -2490,6 +2578,121 @@ impl TypeChecker {
                 path.push(current);
                 current = target.clone();
             }
+        }
+    }
+
+    /// Reject direct and indirect cycles in top-level partial declarations, including cycles that route through
+    /// aliases.
+    fn validate_top_level_partial_cycles(
+        &mut self,
+        alias_targets: &HashMap<String, (String, Span)>,
+        partial_targets: &HashMap<String, (String, Span)>,
+    ) {
+        let mut edges: HashMap<String, (String, Span)> = alias_targets.clone();
+        edges.extend(partial_targets.clone());
+
+        let mut reported = HashSet::new();
+        for (name, (_, span)) in partial_targets {
+            let mut path = Vec::new();
+            let mut current = name.clone();
+            while let Some((target, _)) = edges.get(&current) {
+                if let Some(cycle_start) = path.iter().position(|seen| seen == &current) {
+                    let mut cycle = path[cycle_start..].to_vec();
+                    cycle.push(current.clone());
+                    let key = cycle.join(" -> ");
+                    if cycle.iter().any(|segment| partial_targets.contains_key(segment)) && reported.insert(key.clone())
+                    {
+                        self.errors.push(CompileError::type_error(
+                            format!("Partial cycle detected: {key}"),
+                            *span,
+                        ));
+                    }
+                    break;
+                }
+                path.push(current);
+                current = target.clone();
+            }
+        }
+    }
+
+    /// Public partial provenance must remain checkable for consumers without private module state.
+    fn validate_public_partial_presets_do_not_reference_private_symbols(
+        &mut self,
+        partial_name: &str,
+        args: &[PartialArg],
+        public_decls: &HashMap<String, bool>,
+    ) {
+        for arg in args {
+            self.validate_public_partial_preset_expr(partial_name, &arg.name, &arg.value, public_decls);
+        }
+    }
+
+    /// Recursively reject private roots used by public partial preset values.
+    fn validate_public_partial_preset_expr(
+        &mut self,
+        partial_name: &str,
+        preset_name: &str,
+        expr: &Spanned<Expr>,
+        public_decls: &HashMap<String, bool>,
+    ) {
+        if let Some(root) = preset_private_root(expr, public_decls) {
+            self.errors.push(CompileError::type_error(
+                format!("Public partial '{partial_name}' preset '{preset_name}' references private symbol '{root}'"),
+                expr.span,
+            ));
+        }
+
+        match &expr.node {
+            Expr::Paren(inner) => {
+                self.validate_public_partial_preset_expr(partial_name, preset_name, inner, public_decls)
+            }
+            Expr::List(entries) => {
+                for entry in entries {
+                    match entry {
+                        ListEntry::Element(value) | ListEntry::Spread(value) => {
+                            self.validate_public_partial_preset_expr(partial_name, preset_name, value, public_decls);
+                        }
+                    }
+                }
+            }
+            Expr::Dict(entries) => {
+                for entry in entries {
+                    match entry {
+                        DictEntry::Pair(key, value) => {
+                            self.validate_public_partial_preset_expr(partial_name, preset_name, key, public_decls);
+                            self.validate_public_partial_preset_expr(partial_name, preset_name, value, public_decls);
+                        }
+                        DictEntry::Spread(value) => {
+                            self.validate_public_partial_preset_expr(partial_name, preset_name, value, public_decls);
+                        }
+                    }
+                }
+            }
+            Expr::Call(_, _, args) => {
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(value)
+                        | CallArg::Named(_, value)
+                        | CallArg::PositionalUnpack(value)
+                        | CallArg::KeywordUnpack(value) => {
+                            self.validate_public_partial_preset_expr(partial_name, preset_name, value, public_decls)
+                        }
+                    }
+                }
+            }
+            Expr::Constructor(_, args) => {
+                for arg in args {
+                    match arg {
+                        CallArg::Positional(value)
+                        | CallArg::Named(_, value)
+                        | CallArg::PositionalUnpack(value)
+                        | CallArg::KeywordUnpack(value) => {
+                            self.validate_public_partial_preset_expr(partial_name, preset_name, value, public_decls)
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
@@ -2566,6 +2769,7 @@ impl TypeChecker {
         owner: &str,
         fields: &[Spanned<FieldDecl>],
         aliases: &[Spanned<MethodAliasDecl>],
+        partials: &[Spanned<MethodPartialDecl>],
         properties: &[Spanned<PropertyDecl>],
         methods: &[Spanned<MethodDecl>],
     ) {
@@ -2576,6 +2780,10 @@ impl TypeChecker {
         for alias in aliases {
             seen.entry(alias.node.name.as_str())
                 .or_insert(("method alias", alias.span));
+        }
+        for partial in partials {
+            seen.entry(partial.node.name.as_str())
+                .or_insert(("method partial", partial.span));
         }
         let mut method_seen: HashMap<&str, Span> = HashMap::new();
         for method in methods {
@@ -2641,6 +2849,45 @@ impl TypeChecker {
         }
     }
 
+    /// Validate same-type method partial names and targets before collection turns them into method metadata.
+    fn validate_method_partial_declarations(
+        &mut self,
+        owner: &str,
+        aliases: &[Spanned<MethodAliasDecl>],
+        partials: &[Spanned<MethodPartialDecl>],
+        properties: &[Spanned<PropertyDecl>],
+        methods: &[Spanned<MethodDecl>],
+    ) {
+        let method_names: HashSet<&str> = methods.iter().map(|method| method.node.name.as_str()).collect();
+        let alias_names: HashSet<&str> = aliases.iter().map(|alias| alias.node.name.as_str()).collect();
+        let property_names: HashSet<&str> = properties.iter().map(|property| property.node.name.as_str()).collect();
+        let mut partial_names = HashSet::new();
+
+        for partial in partials {
+            if !partial_names.insert(partial.node.name.as_str())
+                || method_names.contains(partial.node.name.as_str())
+                || alias_names.contains(partial.node.name.as_str())
+                || property_names.contains(partial.node.name.as_str())
+            {
+                self.errors.push(CompileError::type_error(
+                    format!("Duplicate method partial '{}.{}'", owner, partial.node.name),
+                    partial.span,
+                ));
+            }
+            if !method_names.contains(partial.node.target.as_str())
+                && !alias_names.contains(partial.node.target.as_str())
+            {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Method partial '{}.{}' targets unknown method '{}'",
+                        owner, partial.node.name, partial.node.target
+                    ),
+                    partial.span,
+                ));
+            }
+        }
+    }
+
     /// Check a program and return errors if any.
     ///
     /// Runs the two-pass type-checking algorithm:
@@ -2687,14 +2934,20 @@ impl TypeChecker {
             self.resolve_pending_trait_supertraits();
         }
 
-        // First pass: collect concrete declarations, then aliases after their possible targets are available.
+        // First pass: collect concrete declarations, then aliases and partials after their possible targets are
+        // available.
         for decl in &program.declarations {
-            if !matches!(decl.node, Declaration::Alias(_)) {
+            if !matches!(decl.node, Declaration::Alias(_) | Declaration::Partial(_)) {
                 self.collect_declaration(decl);
             }
         }
         for decl in &program.declarations {
             if matches!(decl.node, Declaration::Alias(_)) {
+                self.collect_declaration(decl);
+            }
+        }
+        for decl in &program.declarations {
+            if matches!(decl.node, Declaration::Partial(_)) {
                 self.collect_declaration(decl);
             }
         }
@@ -2744,12 +2997,17 @@ impl TypeChecker {
     pub fn import_module(&mut self, module_ast: &Program, _module_name: &str) {
         // Collect only public declarations from the imported module.
         for decl in &module_ast.declarations {
-            if is_public_decl(decl) && !matches!(decl.node, Declaration::Alias(_)) {
+            if is_public_decl(decl) && !matches!(decl.node, Declaration::Alias(_) | Declaration::Partial(_)) {
                 self.collect_declaration(decl);
             }
         }
         for decl in &module_ast.declarations {
             if is_public_decl(decl) && matches!(decl.node, Declaration::Alias(_)) {
+                self.collect_declaration(decl);
+            }
+        }
+        for decl in &module_ast.declarations {
+            if is_public_decl(decl) && matches!(decl.node, Declaration::Partial(_)) {
                 self.collect_declaration(decl);
             }
         }
@@ -2762,12 +3020,17 @@ impl TypeChecker {
     /// without enforcing `pub` visibility (e.g. codegen-only validation for dependencies).
     pub fn import_module_all(&mut self, module_ast: &Program, _module_name: &str) {
         for decl in &module_ast.declarations {
-            if !matches!(decl.node, Declaration::Alias(_)) {
+            if !matches!(decl.node, Declaration::Alias(_) | Declaration::Partial(_)) {
                 self.collect_declaration(decl);
             }
         }
         for decl in &module_ast.declarations {
             if matches!(decl.node, Declaration::Alias(_)) {
+                self.collect_declaration(decl);
+            }
+        }
+        for decl in &module_ast.declarations {
+            if matches!(decl.node, Declaration::Partial(_)) {
                 self.collect_declaration(decl);
             }
         }
@@ -3540,6 +3803,7 @@ fn is_public_decl(decl: &Spanned<Declaration>) -> bool {
         Declaration::Newtype(n) => matches!(n.visibility, Visibility::Public),
         Declaration::Trait(t) => matches!(t.visibility, Visibility::Public),
         Declaration::Function(f) => matches!(f.visibility, Visibility::Public),
+        Declaration::Partial(partial) => matches!(partial.visibility, Visibility::Public),
         Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => false,
     }
 }
@@ -3557,7 +3821,26 @@ fn declaration_name(decl: &Spanned<Declaration>) -> Option<&str> {
         Declaration::Newtype(n) => Some(n.name.as_str()),
         Declaration::Trait(t) => Some(t.name.as_str()),
         Declaration::Function(f) => Some(f.name.as_str()),
+        Declaration::Partial(partial) => Some(partial.name.as_str()),
         Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => None,
+    }
+}
+
+/// Return the private top-level root named by a declaration-safe preset expression, if any.
+fn preset_private_root(expr: &Spanned<Expr>, public_decls: &HashMap<String, bool>) -> Option<String> {
+    match &expr.node {
+        Expr::Ident(name) => public_decls
+            .get(name)
+            .is_some_and(|is_public| !*is_public)
+            .then(|| name.clone()),
+        Expr::Field(base, _) => preset_private_root(base, public_decls),
+        Expr::Paren(inner) => preset_private_root(inner, public_decls),
+        Expr::Call(callee, _, _) => preset_private_root(callee, public_decls),
+        Expr::Constructor(name, _) => public_decls
+            .get(name)
+            .is_some_and(|is_public| !*is_public)
+            .then(|| name.clone()),
+        _ => None,
     }
 }
 

@@ -9,7 +9,9 @@ on how models behave once you've chosen them.
 ## Quick start
 
 ```incan
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 model Account:
     type_ [description="Account tier"] as "type": str  # (1)
     is_admin: bool = false  # (2)
@@ -86,7 +88,9 @@ Models support per-field metadata for schema/wire formats:
 - **sugar**: `name as "wire"` is equivalent to `name [alias="wire"]`
 
 ```incan
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 model Account:
     type_ [description="Account tier"] as "type": str
 ```
@@ -124,7 +128,9 @@ So non-identifier aliases can't be written in code. In those cases, use the **ca
 alias for wire mapping and reflection.
 
 ```incan
-@derive(Deserialize, Serialize)
+from std.serde import json
+
+@derive(json)
 model WeirdWireKeys:
     one [alias="1"]: int
 
@@ -230,7 +236,7 @@ See: [Classes: Static methods](classes.md#static-methods-staticmethod) for full 
 
 ## Serialization
 
-With `@derive(Serialize)` / `@derive(Deserialize)`, a model serializes/deserializes as a JSON object.
+With `@derive(json)`, a model serializes/deserializes as a JSON object.
 
 If a field has an alias, that alias is used as the JSON key (wire name). This lets you keep schema-safe canonical field
 names in code while still matching external payloads.

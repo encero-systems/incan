@@ -36,6 +36,16 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
+        if let Some(name) = Self::explicit_builtin_member_name(callee) {
+            let result = self.check_explicit_builtin_call(name, args, span);
+            if !type_args.is_empty() {
+                self.errors
+                    .push(errors::explicit_call_site_type_args_not_supported(span));
+                return ResolvedType::Unknown;
+            }
+            return result;
+        }
+
         // Special-case: Enum variant constructor syntax `Enum.Variant(...)`.
         // If callee is a field access where the base resolves to a known enum type
         // and the field name matches a variant, treat this as a constructor and

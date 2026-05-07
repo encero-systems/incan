@@ -1,6 +1,6 @@
 # RFC 084: RHS partial callable presets
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-04-29
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -14,7 +14,7 @@
 - **Issue:** [#453](https://github.com/dannys-code-corner/incan/issues/453)
 - **RFC PR:** —
 - **Written against:** v0.3
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -66,12 +66,13 @@ RFC 036 also identifies partial application as a missing piece for decorator erg
 - Allow public top-level partial declarations with `pub Name = partial Target(...)`.
 - Allow local partial expressions inside executable code.
 - Allow model, class, newtype, and function constructor/callable presets when the target callable surface is statically known.
-- Allow same-type method partial declarations inside method-bearing type bodies.
+- Allow same-type method partial declarations inside concrete method-bearing type bodies and traits.
 - Support keyword presets that remain overrideable by later keyword arguments at call sites.
 - Limit partial presets in this RFC to named arguments only.
 - Preserve the target callable's return type, async calling convention, relevant generic constraints, default metadata, and documentation provenance where applicable.
+- Make partial-provided defaults display no differently from ordinary callable defaults in hover, completion details, signature help, checked API metadata, and generated docs; defaulted parameters must be visually distinct in a consistent way across normal defaults and partial-projected defaults.
 - Preserve partial metadata in library manifests, checked API metadata, generated docs, and editor tooling.
-- Keep module top level declaration-only by restricting top-level partial targets and preset values.
+- Keep module top level declaration-only by restricting top-level partial targets and preset values while still admitting declaration-safe collection and model literals.
 
 ## Non-Goals
 
@@ -226,13 +227,13 @@ class Cell:
 
 The method partial `set_alive` targets `Cell.set_state`, keeps the same receiver kind, and presets the `state` parameter by name.
 
-Method partials are valid in concrete method-bearing type bodies: classes, models, and newtypes. Trait method partials are deferred because they can imply generated default methods over abstract requirements, which needs a separate trait-surface rule.
+Method partials are valid in concrete method-bearing type bodies: classes, models, and newtypes. Method partials are also valid in traits. A trait method partial defines a default method on the trait surface whose body is equivalent to forwarding to another same-trait method with the preset keyword arguments applied. The generated default method typechecks against the trait's `Self` surface, must obey the same `@requires(...)`, supertrait, override, collision, and ambiguity rules as ordinary trait default methods, and must lower through the existing trait-default-method expansion path for each concrete adopter.
 
 ### Preset mapping
 
 The compiler maps a partial call template onto the target callable's parameter list.
 
-Each preset fills a target parameter by name. Parameters not filled by a preset remain parameters of the generated callable. Required target parameters remain required. Optional target parameters remain optional. Keyword-preset parameters become optional override parameters on the generated callable when the target supports named calls.
+Each preset fills a target parameter by name. Parameters not filled by a preset remain parameters of the generated callable. Required target parameters remain required. Optional target parameters remain optional. Keyword-preset parameters become optional override parameters on the generated callable when the target supports named calls. Tooling and documentation must display these parameters the same way they display ordinary defaulted parameters. A partial-provided default is not a special display category; it is a defaulted callable parameter with partial provenance attached elsewhere.
 
 For example:
 
@@ -253,11 +254,13 @@ At module top level, preset expressions must be statically safe. The statically 
 
 - scalar literals;
 - string literals;
+- collection literals whose elements, keys, and values are recursively statically safe preset expressions;
+- model literals whose model type is statically known and whose field values are recursively statically safe preset expressions;
 - enum variant paths when the variant is a compile-time value and requires no construction arguments;
 - const identifiers or qualified const paths whose values are themselves accepted as statically safe presets;
-- aliases to statically safe consts or enum variants.
+- aliases to statically safe consts, enum variants, collection literals, or model literals.
 
-Top-level preset expressions must not include function calls, constructor calls, closures, comprehensions, local bindings, field access on runtime values, mutation, I/O, async operations, or any expression that requires module initialization order.
+Top-level preset expressions must not include function calls, constructor calls, closures, comprehensions, local bindings, field access on runtime values, mutation, I/O, async operations, or any expression that requires module initialization order. A declaration-safe model literal is not a constructor call for this rule: it is accepted only when it can be checked and serialized as compile-time preset metadata without running user code, defaults, validation hooks, or conversion logic.
 
 Inside executable code, preset expressions evaluate left-to-right under normal expression rules when the partial expression is evaluated.
 
@@ -477,15 +480,103 @@ Manifest and checked API metadata should grow explicit partial entries rather th
 - **LSP / Tooling**: should surface hover, completion, go-to-definition, signature help, rename behavior, and diagnostics using both the partial name and canonical target where useful.
 - **Docs**: should document public partials as callable presets with projected signatures and target/preset provenance.
 
+## Implementation Plan
+
+### Phase 1: Syntax, AST, and formatting
+
+- Add parser and AST support for module-level partial declarations, same-type method partial declarations, trait method partial declarations, and local partial expressions.
+- Preserve target path, preset keyword arguments, visibility, spans, and partial provenance in the AST.
+- Extend formatter support for `Name = partial Target(...)` and local `partial Target(...)`, including stable formatting for collection and model literal preset values.
+
+### Phase 2: Typechecker and projected callable surfaces
+
+- Resolve partial targets across functions, constructors, aliases, partials, methods, trait methods, imports, and forward declarations.
+- Project callable signatures so preset keyword arguments become ordinary defaulted override parameters while unfilled required parameters stay required.
+- Validate statically safe top-level preset expressions, including recursively safe collection and model literals.
+- Detect duplicate fills, unknown preset keywords, unsupported targets, empty templates, public/private export leaks, cycles, rest/keyword-capture exclusions, trait partial collisions, and ambiguous trait partial inheritance.
+
+### Phase 3: Lowering and emission
+
+- Lower top-level partial declarations and method partials into callable wrapper metadata without running target calls at module initialization.
+- Lower local partial expressions into callable values with runtime capture semantics.
+- Emit wrappers, closures, or backend-native callable values that call the target exactly once and merge preset and call-site keyword arguments correctly.
+- Reuse existing trait-default-method expansion for trait method partials so adopter-specific `Self`, `@requires(...)`, and supertrait behavior remains consistent.
+
+### Phase 4: Manifests, checked API metadata, and LSP/tooling
+
+- Represent public partials distinctly in library manifests and checked API metadata, including target provenance, preset metadata, projected signatures, visibility, and docs provenance.
+- Add or improve LSP signature help and hover/completion rendering so ordinary default parameters and partial-projected default parameters are visually distinct in the same consistent way.
+- Support go-to-definition, rename, completion, and diagnostics for partial names, targets, and preset arguments where existing LSP architecture supports the behavior.
+
+### Phase 5: Docs, tests, and release integration
+
+- Add parser, formatter, typechecker, lowering, codegen, trait-default, manifest, checked API, LSP, and integration tests for the accepted surface.
+- Update authored language docs for callable presets and default-display behavior.
+- Add release notes and bump the active development version.
+
+## Progress Checklist
+
+### Spec / design
+
+- [x] Resolve projected default display: partial-projected defaults use the same visual model as ordinary defaults.
+- [x] Resolve top-level preset coverage: declaration-safe collection and model literals are in scope.
+- [x] Resolve trait method partials: same-trait method partials are in scope and behave as generated trait default methods.
+
+### Parser / AST / formatter
+
+- [x] Parser: parse module-level partial declarations.
+- [x] Parser: parse local partial expressions.
+- [x] Parser: parse concrete method and trait method partial declarations.
+- [x] AST: represent partial declarations, method partials, and partial expressions with spans and preset metadata.
+- [x] Formatter: round-trip partial declarations and partial expressions.
+- [x] Formatter: preserve stable formatting for declaration-safe collection and model literal preset values.
+
+### Typechecker
+
+- [x] Resolve supported top-level partial targets and aliases.
+- [x] Resolve constructor partials for models, classes, and newtypes.
+- [x] Resolve concrete method partials and trait method partials.
+- [x] Project callable signatures with preset keywords as ordinary defaulted override parameters.
+- [x] Validate declaration-safe top-level preset expressions, including collection and model literals.
+- [x] Reject unsupported targets, empty templates, duplicate fills, unknown keywords, cycles, visibility leaks, positional partials, and rest/keyword-capture targets.
+- [x] Diagnose trait partial collisions, override conflicts, and ambiguous inherited partials.
+
+### Lowering / IR / emission
+
+- [x] IR: preserve projected callable metadata for partial defaults and calls.
+- [x] Lower top-level partial declarations without introducing top-level execution.
+- [x] Lower local partial expressions with callable default metadata for runtime calls.
+- [x] Emit callable wrappers or callable values that merge preset and call-site keyword arguments correctly.
+- [x] Reuse trait-default-method expansion for trait method partials.
+
+### Manifests / checked API / tooling
+
+- [x] Library manifests: export public partials with target provenance, preset metadata, projected signatures, and visibility.
+- [x] Checked API metadata: represent partials distinctly from aliases and hand-written functions.
+- [x] LSP: improve ordinary default-argument display where needed.
+- [x] LSP: add signature help coverage for callable signatures and defaulted parameters.
+- [x] LSP: partial hover, completion, go-to-definition, document symbols, and diagnostics use the partial name, target, preset arguments, and projected default display where the current LSP architecture supports the behavior. Rename remains outside the current advertised LSP capability set.
+- [x] Generated docs: render partials as callable presets with projected signatures and provenance.
+
+### Tests
+
+- [x] Parser and formatter tests for all partial syntactic forms.
+- [x] Typechecker valid and invalid tests for target resolution, projection, diagnostics, and statically safe presets.
+- [x] Trait method partial tests for default expansion, adopter behavior, collisions, overrides, and ambiguity.
+- [x] Codegen snapshot tests for top-level partial declarations and local partial expressions.
+- [x] Integration tests for callable behavior, keyword override behavior, constructor presets, trait partials, and manifest consumers.
+- [x] LSP/unit tests for ordinary defaults and partial-projected default display.
+
+### Docs / release
+
+- [x] Update authored language reference/explanation docs for callable presets.
+- [x] Update tooling docs if signature help/default display behavior changes.
+- [x] Add release notes entry for RFC 084.
+- [x] Bump the active `0.3.0-dev.N` version.
+
 ## Design Decisions
 
 - Keyword presets remain overrideable by later keyword arguments at the call site. This matches the configuration-specialization use case where a partial supplies a named default rather than permanently freezing that parameter.
-
-## Unresolved questions
-
-- What exact projected signature should tooling display for keyword-preset parameters: hidden required-only signature, optional override parameters, or a split display that separates required inputs from preset overrides?
-- Should top-level statically safe preset expressions include collection literals and model literals once const-evaluation rules are strong enough, or should this RFC stay limited to declaration-safe values such as literals, enum variants, and consts?
-- Should same-type method partials be allowed in traits once generated default-method semantics are specified?
-
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Partial-projected defaults use the same display and signature model as ordinary callable defaults. The default source is partial metadata; the displayed callable surface should not invent a separate partial-only calling convention.
+- Top-level statically safe preset expressions include declaration-safe collection and model literals, provided every nested value is recursively statically safe and no constructor/default/validation/runtime code executes during module initialization.
+- Trait method partials are in scope. A same-trait method partial is a generated trait default method that forwards to another same-trait method with preset keyword arguments, subject to existing trait default, `@requires(...)`, supertrait, override, collision, and ambiguity rules.

@@ -52,6 +52,7 @@ impl<'a> Parser<'a> {
         let mut docstring = None;
         let mut rebindings = Vec::new();
         let mut method_aliases = Vec::new();
+        let mut method_partials = Vec::new();
         let mut interop_edges = Vec::new();
         let mut seen_interop_block = false;
 
@@ -95,6 +96,12 @@ impl<'a> Parser<'a> {
                     continue;
                 }
 
+                if self.starts_method_partial_decl() {
+                    method_partials.push(self.method_partial_decl()?);
+                    self.skip_newlines();
+                    continue;
+                }
+
                 if self.check(&TokenKind::Ident(String::new()))
                     && self.peek_next().kind.is_operator(OperatorId::Eq)
                 {
@@ -115,7 +122,7 @@ impl<'a> Parser<'a> {
                 }
 
                 let method_decorators = self.decorators()?;
-                methods.push(self.method_decl(method_decorators)?);
+                methods.push(self.method_decl(method_decorators, false)?);
                 self.skip_newlines();
             }
 
@@ -135,6 +142,7 @@ impl<'a> Parser<'a> {
             docstring,
             rebindings,
             method_aliases,
+            method_partials,
             interop_edges,
             methods,
         })

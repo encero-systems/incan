@@ -234,7 +234,7 @@ fn types_spellings_unique_and_resolvable() {
 fn derives_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "derive",
-        expected_len: 13,
+        expected_len: 11,
         items: derives::DERIVES,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,
@@ -262,7 +262,7 @@ fn traits_spellings_unique_and_resolvable() {
 fn magic_methods_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "magic method",
-        expected_len: 5,
+        expected_len: 7,
         items: magic_methods::MAGIC_METHODS,
         id_of: |info| info.id,
         canonical_of: |info| info.canonical,

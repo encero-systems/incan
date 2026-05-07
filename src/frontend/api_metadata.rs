@@ -17,13 +17,15 @@ use crate::frontend::decorator_resolution;
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_exports::{
     CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind, CheckedField, CheckedFunctionExport,
-    CheckedMethod, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedTraitExport,
-    CheckedTypeAliasExport, CheckedTypeBound, CheckedTypeParam, collect_checked_public_exports,
+    CheckedMethod, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedPartialExport,
+    CheckedPartialTargetKind, CheckedPresetValue, CheckedTraitExport, CheckedTypeAliasExport, CheckedTypeBound,
+    CheckedTypeParam, collect_checked_public_exports,
 };
 use crate::frontend::typechecker::{ConstValue, TypeChecker};
 use crate::library_manifest::{
-    EnumValueExport, EnumValueTypeExport, FieldExport, ParamExport, ParamKindExport, ReceiverExport, TypeAliasExport,
-    TypeBoundExport, TypeParamExport, TypeRef, type_ref_from_resolved,
+    EnumValueExport, EnumValueTypeExport, FieldExport, ParamExport, ParamKindExport, PartialPresetExport,
+    PartialTargetKindExport, PresetDictEntryExport, PresetModelFieldExport, PresetValueExport, ReceiverExport,
+    TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef, type_ref_from_resolved,
 };
 
 pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 1;
@@ -75,6 +77,7 @@ pub enum ApiDeclaration {
     Const(ApiConst),
     Static(ApiStatic),
     Alias(ApiAlias),
+    Partial(ApiPartial),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -198,6 +201,19 @@ pub struct ApiAlias {
     pub name: String,
     pub anchor: SourceAnchor,
     pub target_path: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiPartial {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub target_path: Vec<String>,
+    pub target_kind: PartialTargetKindExport,
+    pub presets: Vec<PartialPresetExport>,
+    pub type_params: Vec<TypeParamExport>,
+    pub params: Vec<ParamExport>,
+    pub return_type: TypeRef,
+    pub is_async: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -422,6 +438,11 @@ pub fn collect_checked_api_metadata(
                     target_path: alias.target.segments.clone(),
                 }));
             }
+            Declaration::Partial(partial) if public(partial.visibility) => {
+                if let Some(CheckedExportKind::Partial(export)) = checked_kind(&checked_by_name, &partial.name) {
+                    declarations.push(ApiDeclaration::Partial(api_partial(export, decl.span, &module_path)));
+                }
+            }
             Declaration::Import(import) if public(import.visibility) => {
                 declarations.extend(
                     api_aliases(import, decl.span, &module_path)
@@ -446,6 +467,75 @@ fn checked_kind<'a>(exports: &'a HashMap<String, CheckedNamedExport>, name: &str
 
 fn public(visibility: Visibility) -> bool {
     matches!(visibility, Visibility::Public)
+}
+
+/// Convert checked partial export metadata into the checked API package shape.
+fn api_partial(export: &CheckedPartialExport, span: Span, module_path: &[String]) -> ApiPartial {
+    ApiPartial {
+        name: export.name.clone(),
+        anchor: anchor(module_path, &export.name, span),
+        target_path: export.target_path.clone(),
+        target_kind: api_partial_target_kind(export.target_kind),
+        presets: export
+            .presets
+            .iter()
+            .map(|preset| PartialPresetExport {
+                name: preset.name.clone(),
+                ty: type_ref_from_resolved(&preset.ty),
+                value: api_preset_value(&preset.value),
+            })
+            .collect(),
+        type_params: type_params(&export.type_params),
+        params: params(&export.params),
+        return_type: type_ref_from_resolved(&export.return_type),
+        is_async: export.is_async,
+    }
+}
+
+/// Convert frontend partial target kind metadata into manifest/API vocabulary.
+fn api_partial_target_kind(kind: CheckedPartialTargetKind) -> PartialTargetKindExport {
+    match kind {
+        CheckedPartialTargetKind::Function => PartialTargetKindExport::Function,
+        CheckedPartialTargetKind::ModelConstructor => PartialTargetKindExport::ModelConstructor,
+        CheckedPartialTargetKind::ClassConstructor => PartialTargetKindExport::ClassConstructor,
+        CheckedPartialTargetKind::NewtypeConstructor => PartialTargetKindExport::NewtypeConstructor,
+        CheckedPartialTargetKind::Partial => PartialTargetKindExport::Partial,
+        CheckedPartialTargetKind::Unknown => PartialTargetKindExport::Unknown,
+    }
+}
+
+/// Convert checked preset values into the serialized API metadata representation.
+fn api_preset_value(value: &CheckedPresetValue) -> PresetValueExport {
+    match value {
+        CheckedPresetValue::Int(value) => PresetValueExport::Int(*value),
+        CheckedPresetValue::Float(value) => PresetValueExport::Float(value.to_string()),
+        CheckedPresetValue::Bool(value) => PresetValueExport::Bool(*value),
+        CheckedPresetValue::String(value) => PresetValueExport::String(value.clone()),
+        CheckedPresetValue::Bytes(value) => PresetValueExport::Bytes(value.clone()),
+        CheckedPresetValue::None => PresetValueExport::None,
+        CheckedPresetValue::List(values) => PresetValueExport::List(values.iter().map(api_preset_value).collect()),
+        CheckedPresetValue::Dict(entries) => PresetValueExport::Dict(
+            entries
+                .iter()
+                .map(|(key, value)| PresetDictEntryExport {
+                    key: api_preset_value(key),
+                    value: api_preset_value(value),
+                })
+                .collect(),
+        ),
+        CheckedPresetValue::ConstRef(path) => PresetValueExport::ConstRef(path.clone()),
+        CheckedPresetValue::ModelLiteral { name, fields } => PresetValueExport::ModelLiteral {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(field, value)| PresetModelFieldExport {
+                    name: field.clone(),
+                    value: api_preset_value(value),
+                })
+                .collect(),
+        },
+        CheckedPresetValue::Unsupported => PresetValueExport::Unsupported,
+    }
 }
 
 fn api_function(
@@ -1789,6 +1879,49 @@ pub from crate.widgets import Widget as PublicWidget
         assert_eq!(
             alias.target_path,
             vec!["crate".to_string(), "widgets".to_string(), "Widget".to_string()]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_extracts_public_partial_callable_preset() -> Result<(), String> {
+        let source = r#"
+pub def route(method: str, path: str = "/") -> str:
+    return path
+
+pub get = partial route(method="GET")
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let partial = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Partial(partial) => Some(partial),
+                _ => None,
+            })
+            .ok_or_else(|| "expected partial metadata".to_string())?;
+
+        assert_eq!(partial.name, "get");
+        assert_eq!(partial.anchor.id, "demo::get");
+        assert_eq!(partial.target_path, vec!["route".to_string()]);
+        assert_eq!(partial.target_kind, PartialTargetKindExport::Function);
+        assert_eq!(partial.presets.len(), 1);
+        assert_eq!(partial.presets[0].name, "method");
+        assert_eq!(
+            partial
+                .params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["method", "path"]
+        );
+        assert!(
+            partial.params[0].has_default,
+            "partial-projected callable params should preserve ordinary default display metadata"
+        );
+        assert!(
+            partial.params[1].has_default,
+            "ordinary target defaults should remain visually distinct on partial metadata"
         );
         Ok(())
     }

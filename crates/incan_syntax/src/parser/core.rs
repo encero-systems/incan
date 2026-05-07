@@ -9,6 +9,7 @@
 type FieldsAndMethods = (
     Vec<Spanned<FieldDecl>>,
     Vec<Spanned<MethodAliasDecl>>,
+    Vec<Spanned<MethodPartialDecl>>,
     Vec<Spanned<PropertyDecl>>,
     Vec<Spanned<MethodDecl>>,
 );
@@ -36,6 +37,12 @@ struct ActiveScopedSurfaceDescriptor {
 }
 
 #[derive(Debug, Clone)]
+struct ActiveScopedSymbolDescriptor {
+    dependency_key: String,
+    descriptor: incan_vocab::ScopedSymbolDescriptor,
+}
+
+#[derive(Debug, Clone)]
 struct ScopedCallArgumentContext {
     call: String,
 }
@@ -59,6 +66,7 @@ pub struct Parser<'a> {
     library_imported_vocab: ImportedLibraryVocab,
     library_imported_dsl_surfaces: ImportedLibraryDslSurfaces,
     active_scoped_surface_descriptors: Vec<ActiveScopedSurfaceDescriptor>,
+    active_scoped_symbol_descriptors: Vec<ActiveScopedSymbolDescriptor>,
     scoped_call_argument_stack: Vec<ScopedCallArgumentContext>,
     /// Blank-line intent consumed by an inner block immediately before its `Dedent`.
     ///
@@ -115,6 +123,7 @@ impl<'a> Parser<'a> {
             library_imported_vocab: library_imported_vocab.cloned().unwrap_or_default(),
             library_imported_dsl_surfaces: library_imported_dsl_surfaces.cloned().unwrap_or_default(),
             active_scoped_surface_descriptors: Vec::new(),
+            active_scoped_symbol_descriptors: Vec::new(),
             scoped_call_argument_stack: Vec::new(),
             pending_dedent_blank_lines: 0,
         }
@@ -301,6 +310,16 @@ impl<'a> Parser<'a> {
                         .iter()
                         .cloned()
                         .map(|descriptor| ActiveScopedSurfaceDescriptor {
+                            dependency_key: library.to_string(),
+                            descriptor,
+                        }),
+                );
+                self.active_scoped_symbol_descriptors.extend(
+                    surface
+                        .scoped_symbols
+                        .iter()
+                        .cloned()
+                        .map(|descriptor| ActiveScopedSymbolDescriptor {
                             dependency_key: library.to_string(),
                             descriptor,
                         }),

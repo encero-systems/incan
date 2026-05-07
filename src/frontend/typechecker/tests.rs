@@ -2,7 +2,9 @@
 
 use super::*;
 use crate::frontend::ast::TypeConstraintKey;
-use crate::frontend::library_exports::collect_checked_public_exports;
+use crate::frontend::library_exports::{
+    CheckedExportKind, CheckedPartialTargetKind, CheckedPresetValue, collect_checked_public_exports,
+};
 use crate::frontend::library_manifest_index::{
     LibraryArtifactMetadata, LibraryManifestFailureKind, LibraryManifestIndex, LibraryManifestIndexEntry,
     LibraryManifestLoadFailure,
@@ -12,7 +14,8 @@ use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
     ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport, FunctionExport,
     LibraryContractMetadata, LibraryExports, LibraryManifest, MethodExport, ModelExport, ParamExport, ParamKindExport,
-    ReceiverExport, StaticExport, TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
+    PartialExport, PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport, StaticExport,
+    TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
@@ -68,6 +71,21 @@ fn has_unknown_symbol_error(errors: &[CompileError], symbol: &str) -> bool {
     errors.iter().any(|err| err.message.contains(&needle))
 }
 
+#[test]
+fn test_ellipsis_abstract_method_outside_trait_is_type_error() {
+    let source = r#"
+model User:
+  def name(self) -> str: ...
+"#;
+    let errs = check_str_err(source, "abstract concrete method should fail typechecking");
+    assert!(
+        errs.iter().any(|err| err
+            .message
+            .contains("Method 'name' must have a body outside trait declarations")),
+        "expected concrete method body diagnostic, got: {errs:?}"
+    );
+}
+
 fn check_str_with_library_index(source: &str, library_index: LibraryManifestIndex) -> Result<(), Vec<CompileError>> {
     let tokens = lexer::lex(source)?;
     let ast = parser::parse(&tokens)?;
@@ -90,6 +108,594 @@ fn clone_trait_name() -> String {
 
 fn none_constructor_name() -> String {
     surface_constructors::as_str(ConstructorId::None).to_string()
+}
+
+#[test]
+fn test_partial_function_presets_project_as_defaults() {
+    let source = r#"
+def route(method: str, path: str, content_type: str = "text") -> str:
+  return method
+
+get = partial route(method="GET")
+
+def use() -> str:
+  a = get(path="/health")
+  b = get(method="POST", path="/submit")
+  return b
+"#;
+    let ast = parse_program(source, "partial function defaults");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+    let sym = checker
+        .lookup_symbol("get")
+        .unwrap_or_else(|| panic!("missing projected partial symbol"));
+    let SymbolKind::Function(info) = &sym.kind else {
+        panic!("expected function symbol for partial, got {:?}", sym.kind);
+    };
+    let method = info.params.iter().find(|param| param.name() == Some("method")).unwrap();
+    let path = info.params.iter().find(|param| param.name() == Some("path")).unwrap();
+    let content_type = info
+        .params
+        .iter()
+        .find(|param| param.name() == Some("content_type"))
+        .unwrap();
+    assert!(method.has_default, "{info:?}");
+    assert!(!path.has_default, "{info:?}");
+    assert!(content_type.has_default, "{info:?}");
+}
+
+#[test]
+fn test_public_partial_exports_projected_defaults() {
+    let source = r#"
+pub def route(method: str, path: str, content_type: str = "text") -> str:
+  return method
+
+pub get = partial route(method="GET")
+"#;
+    let ast = parse_program(source, "partial public export");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let get = exports
+        .iter()
+        .find_map(|export| match &export.kind {
+            CheckedExportKind::Partial(partial) if partial.name == "get" => Some(partial),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing public partial export: {exports:?}"));
+    assert_eq!(get.target_path, vec!["route"]);
+    assert_eq!(get.target_kind, CheckedPartialTargetKind::Function);
+    assert_eq!(get.presets[0].name, "method");
+    assert_eq!(get.presets[0].value, CheckedPresetValue::String("GET".to_string()));
+    let method = get.params.iter().find(|param| param.name() == Some("method")).unwrap();
+    let path = get.params.iter().find(|param| param.name() == Some("path")).unwrap();
+    let content_type = get
+        .params
+        .iter()
+        .find(|param| param.name() == Some("content_type"))
+        .unwrap();
+    assert!(method.has_default, "{get:?}");
+    assert!(!path.has_default, "{get:?}");
+    assert!(content_type.has_default, "{get:?}");
+
+    let manifest = LibraryManifest::from_checked_exports("routes".to_string(), "0.1.0".to_string(), &exports);
+    assert_eq!(manifest.exports.partials.len(), 1);
+    assert_eq!(
+        manifest.exports.partials[0].target_kind,
+        PartialTargetKindExport::Function
+    );
+    assert_eq!(
+        manifest.exports.partials[0].presets[0].value,
+        PresetValueExport::String("GET".to_string())
+    );
+}
+
+#[test]
+fn test_public_partial_exports_declaration_safe_preset_values() {
+    let source = r#"
+pub model Profile:
+  name: str
+
+pub def configure(headers: dict[str, str], codes: list[int], profile: Profile) -> str:
+  return profile.name
+
+pub default_config = partial configure(headers={"accept": "json"}, codes=[200], profile=Profile(name="ops"))
+"#;
+    let ast = parse_program(source, "partial public preset metadata");
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let default_config = exports
+        .iter()
+        .find_map(|export| match &export.kind {
+            CheckedExportKind::Partial(partial) if partial.name == "default_config" => Some(partial),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("missing partial export: {exports:?}"));
+
+    assert!(
+        default_config
+            .presets
+            .iter()
+            .any(|preset| matches!(preset.value, CheckedPresetValue::Dict(_))),
+        "{default_config:?}"
+    );
+    assert!(
+        default_config
+            .presets
+            .iter()
+            .any(|preset| matches!(preset.value, CheckedPresetValue::List(_))),
+        "{default_config:?}"
+    );
+    assert!(
+        default_config
+            .presets
+            .iter()
+            .any(|preset| matches!(preset.value, CheckedPresetValue::ModelLiteral { .. })),
+        "{default_config:?}"
+    );
+}
+
+#[test]
+fn test_top_level_partial_rejects_runtime_preset_values() {
+    let source = r#"
+def default_method() -> str:
+  return "GET"
+
+def route(method: str, path: str) -> str:
+  return method
+
+get = partial route(method=default_method())
+"#;
+    let errors = check_str_err(source, "top-level partial runtime preset should fail");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Top-level partial preset 'method' must be declaration-safe")),
+        "expected declaration-safe preset diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_top_level_partial_invalid_diagnostics_are_complete() {
+    for (source, expected, context) in [
+        (
+            r#"
+def route(method: str) -> str:
+  return method
+
+noop = partial route()
+"#,
+            "must preset at least one keyword",
+            "empty partial should be rejected",
+        ),
+        (
+            r#"
+def route(method: str) -> str:
+  return method
+
+get = partial route(method="GET", method="POST")
+"#,
+            "repeats preset keyword 'method'",
+            "duplicate partial preset should be rejected",
+        ),
+        (
+            r#"
+def route(method: str) -> str:
+  return method
+
+get = partial route(verb="GET")
+"#,
+            "presets unknown parameter 'verb'",
+            "unknown partial preset should be rejected",
+        ),
+        (
+            r#"
+const method = "GET"
+get = partial method(value="GET")
+"#,
+            "targets unsupported symbol 'method'",
+            "unsupported partial target should be rejected",
+        ),
+        (
+            r#"
+static method: str = "GET"
+get = partial method(value="GET")
+"#,
+            "targets unsupported symbol 'method'",
+            "unsupported static partial target should be rejected",
+        ),
+        (
+            r#"
+trait Labelled:
+  def label(self) -> str: ...
+
+get = partial Labelled(value="GET")
+"#,
+            "targets unsupported symbol 'Labelled'",
+            "unsupported trait partial target should be rejected",
+        ),
+        (
+            r#"
+enum Method:
+  Get
+
+get = partial Get(value="GET")
+"#,
+            "targets unsupported symbol 'Get'",
+            "unsupported enum variant partial target should be rejected",
+        ),
+        (
+            r#"
+get = partial route(method="GET")
+"#,
+            "targets unknown callable 'route'",
+            "unknown partial target should be rejected",
+        ),
+        (
+            r#"
+def route(method: str, **labels: str) -> str:
+  return method
+
+get = partial route(labels={"accept": "json"})
+"#,
+            "cannot target callable 'route' because parameter 'labels' is a rest parameter",
+            "rest keyword partial target should be rejected",
+        ),
+        (
+            r#"
+def route(method: str, *segments: str) -> str:
+  return method
+
+get = partial route(method="GET")
+"#,
+            "cannot target callable 'route' because parameter 'segments' is a rest parameter",
+            "rest positional partial target should be rejected even when preset fills a normal parameter",
+        ),
+    ] {
+        let errors = check_str_err(source, context);
+        assert!(
+            errors.iter().any(|error| error.message.contains(expected)),
+            "expected diagnostic containing `{expected}` for {context}, got {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_top_level_partial_cycles_are_rejected() {
+    for (source, expected) in [
+        (
+            r#"
+get = partial get(method="GET")
+"#,
+            "Partial cycle detected: get -> get",
+        ),
+        (
+            r#"
+get = partial alias_get(method="GET")
+alias_get = get
+"#,
+            "Partial cycle detected: get -> alias_get -> get",
+        ),
+        (
+            r#"
+left = partial right(method="GET")
+right = partial left(method="POST")
+"#,
+            "Partial cycle detected",
+        ),
+    ] {
+        let errors = check_str_err(source, "partial cycle should fail");
+        assert!(
+            errors.iter().any(|error| error.message.contains(expected)),
+            "expected partial cycle diagnostic containing `{expected}`, got {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_public_partial_rejects_private_target_and_private_preset_values() {
+    for (source, expected) in [
+        (
+            r#"
+def route(method: str) -> str:
+  return method
+
+pub get = partial route(method="GET")
+"#,
+            "Public partial 'get' targets private symbol 'route'",
+        ),
+        (
+            r#"
+const DEFAULT_METHOD = "GET"
+
+pub def route(method: str) -> str:
+  return method
+
+pub get = partial route(method=DEFAULT_METHOD)
+"#,
+            "Public partial 'get' preset 'method' references private symbol 'DEFAULT_METHOD'",
+        ),
+        (
+            r#"
+model Profile:
+  name: str
+
+pub def configure(profile: Profile) -> str:
+  return profile.name
+
+pub default_config = partial configure(profile=Profile(name="ops"))
+"#,
+            "Public partial 'default_config' preset 'profile' references private symbol 'Profile'",
+        ),
+    ] {
+        let errors = check_str_err(source, "public partial visibility leak should fail");
+        assert!(
+            errors.iter().any(|error| error.message.contains(expected)),
+            "expected visibility diagnostic containing `{expected}`, got {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_import_module_collects_public_partial_as_callable() {
+    let library = parse_program(
+        r#"
+pub def route(method: str, path: str) -> str:
+  return path
+
+pub get = partial route(method="GET")
+"#,
+        "partial import library",
+    );
+    let consumer = parse_program(
+        r#"
+def use() -> str:
+  return get(path="/health")
+"#,
+        "partial import consumer",
+    );
+
+    let mut checker = TypeChecker::new();
+    checker.import_module(&library, "routes");
+    checker
+        .check_program(&consumer)
+        .unwrap_or_else(|errs| panic!("consumer should import public partial callable: {errs:?}"));
+}
+
+#[test]
+fn test_method_partial_presets_project_as_defaults_for_trait_and_model() {
+    let source = r#"
+trait Named:
+  def label(self, prefix: str, suffix: str = "!") -> str:
+    return prefix
+  short = partial label(prefix="name")
+
+model User with Named:
+  name: str
+  def label(self, prefix: str, suffix: str = "!") -> str:
+    return prefix
+  loud = partial label(prefix="user")
+
+def use(user: User) -> str:
+  a = user.loud()
+  b = user.loud(prefix="admin")
+  c = user.short()
+  return b
+"#;
+    check_str(source).unwrap_or_else(|errs| panic!("typecheck failed: {errs:?}"));
+}
+
+#[test]
+fn test_method_partial_preset_values_are_typechecked() {
+    let source = r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix=1)
+"#;
+    let errors = check_str_err(source, "method partial preset should be typechecked");
+    let messages: Vec<_> = errors.iter().map(|err| err.message.as_str()).collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| message.contains("Type mismatch") || message.contains("expected str")),
+        "expected type mismatch, got {messages:?}"
+    );
+}
+
+#[test]
+fn test_method_partial_name_collisions_are_rejected() {
+    for (source, expected) in [
+        (
+            r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  label = partial label(prefix="name")
+"#,
+            "Duplicate method partial 'Named.label'",
+        ),
+        (
+            r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="name")
+  short = partial label(prefix="user")
+"#,
+            "Duplicate method partial 'Named.short'",
+        ),
+        (
+            r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = label
+  short = partial label(prefix="name")
+"#,
+            "Duplicate method partial 'Named.short'",
+        ),
+    ] {
+        let errors = check_str_err(source, "method partial collision should fail");
+        assert!(
+            errors.iter().any(|error| error.message.contains(expected)),
+            "expected method partial collision diagnostic containing `{expected}`, got {errors:?}"
+        );
+    }
+}
+
+#[test]
+fn test_method_partial_can_target_same_type_method_alias() {
+    let source = r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  labelled = label
+  short = partial labelled(prefix="name")
+
+model User with Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+
+def use(user: User) -> str:
+  return user.short()
+"#;
+    check_str(source).unwrap_or_else(|errs| panic!("method partial targeting alias should typecheck: {errs:?}"));
+}
+
+#[test]
+fn test_trait_partial_override_conflict_is_rejected() {
+    let source = r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="name")
+
+model User with Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  def short(self, prefix: int) -> str:
+    return "bad"
+"#;
+    let errors = check_str_err(source, "trait partial override conflict should fail");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Trait 'Named' requires 'User'::short to match its signature")),
+        "expected trait partial override conflict, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_inherited_trait_partial_ambiguity_is_rejected() {
+    let source = r#"
+trait Left:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="left")
+
+trait Right:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="right")
+
+trait Both with Left, Right:
+  def both(self) -> str: ...
+
+model User with Both:
+  def label(self, prefix: str) -> str:
+    return prefix
+  def both(self) -> str:
+    return "both"
+"#;
+    let errors = check_str_err(source, "inherited trait partial ambiguity should fail");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Ambiguous trait method 'short'")),
+        "expected inherited trait partial ambiguity diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_subtrait_partial_override_must_match_inherited_partial_signature() {
+    let source = r#"
+trait Base:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="base")
+
+trait Child with Base:
+  def labelled(self, prefix: str, count: int) -> str:
+    return prefix
+  short = partial labelled(prefix="child")
+"#;
+    let errors = check_str_err(source, "incompatible subtrait partial override should fail");
+    assert!(
+        errors.iter().any(|error| error
+            .message
+            .contains("Trait 'Base' requires 'Child'::short to match its signature")),
+        "expected inherited partial override conflict, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_subtrait_partial_can_override_inherited_partial_with_compatible_signature() {
+    let source = r#"
+trait Base:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="base")
+
+trait Child with Base:
+  def label_child(self, prefix: str) -> str:
+    return prefix
+  short = partial label_child(prefix="child")
+
+model User with Child:
+  def label(self, prefix: str) -> str:
+    return prefix
+  def label_child(self, prefix: str) -> str:
+    return prefix
+"#;
+    check_str(source).unwrap_or_else(|errs| panic!("compatible inherited partial override should typecheck: {errs:?}"));
+}
+
+#[test]
+fn test_generic_trait_bound_partial_ambiguity_is_rejected() {
+    let source = r#"
+trait Left:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="left")
+
+trait Right:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="right")
+
+trait Both with Left, Right:
+  def both(self) -> str: ...
+
+def use[T with Both](value: T) -> str:
+  return value.short()
+"#;
+    let errors = check_str_err(source, "generic trait-bound partial ambiguity should fail");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("Ambiguous trait method 'short'")),
+        "expected generic trait-bound partial ambiguity diagnostic, got {errors:?}"
+    );
 }
 
 #[test]
@@ -677,6 +1283,31 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
+            partials: vec![PartialExport {
+                name: "make_default_widget".to_string(),
+                target_path: vec!["make_widget".to_string()],
+                target_kind: PartialTargetKindExport::Function,
+                presets: vec![PartialPresetExport {
+                    name: "name".to_string(),
+                    ty: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    value: PresetValueExport::String("default".to_string()),
+                }],
+                type_params: Vec::new(),
+                params: vec![ParamExport {
+                    name: "name".to_string(),
+                    ty: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    kind: ParamKindExport::Normal,
+                    has_default: true,
+                }],
+                return_type: TypeRef::Named {
+                    name: "Widget".to_string(),
+                },
+                is_async: false,
+            }],
             models: vec![ModelExport {
                 name: "Widget".to_string(),
                 type_params: Vec::new(),
@@ -793,6 +1424,7 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
+            partials: Vec::new(),
             models: Vec::new(),
             classes: Vec::new(),
             functions: Vec::new(),
@@ -850,6 +1482,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
+            partials: Vec::new(),
             models: vec![ModelExport {
                 name: "ImportedReading".to_string(),
                 type_params: Vec::new(),
@@ -979,6 +1612,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
         manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
         exports: LibraryExports {
             aliases: Vec::new(),
+            partials: Vec::new(),
             models: vec![ModelExport {
                 name: "SessionError".to_string(),
                 type_params: Vec::new(),
@@ -7189,6 +7823,59 @@ def foo() -> str:
     assert!(check_str(source).is_ok());
 }
 
+#[test]
+fn test_explicit_std_builtins_sum_call() {
+    let source = r#"
+def foo() -> int:
+  x = [1, 2, 3]
+  return std.builtins.sum(x)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_std_builtins_len_call() {
+    let source = r#"
+def foo() -> int:
+  names = ["a", "b"]
+  return std.builtins.len(names)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_explicit_std_builtins_unknown_member_is_rejected() {
+    let source = r#"
+def foo() -> int:
+  return std.builtins.not_real([1, 2, 3])
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("unknown std.builtins member should fail");
+    };
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Type 'std.builtins' has no method 'not_real(...)'")),
+        "Expected missing-method diagnostic; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_root_sum_shadowing_preserved_but_explicit_std_builtins_bypasses_shadow() {
+    let source = r#"
+def sum(value: str) -> str:
+  return value
+
+def root_call() -> str:
+  return sum("ok")
+
+def explicit_call() -> int:
+  x = [1, 2, 3]
+  return std.builtins.sum(x)
+"#;
+    assert_check_ok(source);
+}
+
 // ========================================
 // Tuple tests
 // ========================================
@@ -7675,12 +8362,13 @@ def foo() -> int:
 fn test_web_wrapper_value_and_deref_access() {
     let source = r#"
 from std.web import Json, Query
+from std.serde import json
 
-@derive(Deserialize)
+@derive(json)
 model SearchParams:
   q: str
 
-@derive(Deserialize)
+@derive(json)
 model CreateUser:
   name: str
 
@@ -7701,12 +8389,14 @@ def use_body(body: Json[CreateUser]) -> str:
 fn test_web_wrapper_invalid_constructor_args() {
     let source = r#"
 from std.web import Json, Query
+from std.serde import json
+from std.serde.json import Serialize
 
 @derive(Serialize)
 model User:
   name: str
 
-@derive(Deserialize)
+@derive(json)
 model SearchParams:
   q: str
 
@@ -8816,6 +9506,22 @@ def build() -> Widget:
 "#;
     let result = check_str_with_library_index(source, library_index_with_mylib_exports());
     assert!(result.is_ok(), "expected pub import to typecheck, got: {result:?}");
+}
+
+#[test]
+fn test_pub_from_import_manifest_partial_callable_typechecks() {
+    let source = r#"
+from pub::mylib import Widget, make_default_widget
+
+def build() -> Widget:
+  first = make_default_widget()
+  return make_default_widget(name="override")
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected pub-imported manifest partial callable to typecheck, got: {result:?}"
+    );
 }
 
 #[test]
@@ -10583,6 +11289,35 @@ model Payload with Serialize:
 
 def encode(payload: Payload) -> str:
   return payload.to_json()
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_bare_serde_derive_without_import_is_rejected() {
+    let source = r#"
+@derive(Serialize)
+model Payload:
+  value: int
+"#;
+    let Err(errs) = check_str(source) else {
+        panic!("bare Serialize derive should require an imported std.serde.json trait or Rust derive");
+    };
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Unknown derive 'Serialize'")),
+        "Expected unknown derive diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
+fn test_rust_imported_serde_derive_still_typechecks() {
+    let source = r#"
+from rust::serde @ "1.0" import Deserialize
+
+@derive(Deserialize)
+model Payload:
+  value: int
 "#;
     assert_check_ok(source);
 }

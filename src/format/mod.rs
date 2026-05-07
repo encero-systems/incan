@@ -415,7 +415,7 @@ mod tests {
 "#;
         let formatted = format_source(source)?;
         let expected = r#"trait OrderedCollection[T] with Collection[T], Serializable:
-    def sorted(self) -> OrderedCollection[T]: ...
+    def sorted(self) -> OrderedCollection[T]
 "#;
         assert_eq!(formatted, expected);
         Ok(())
@@ -1619,7 +1619,14 @@ enum Status(int):
 "#
         );
         let formatted = format_source(&source)?;
-        assert_eq!(formatted, source);
+        let expected = format!(
+            r#"trait Described:
+{DOC}
+
+    def tag(self) -> str
+"#
+        );
+        assert_eq!(formatted, expected);
         let prog = program_from_source(&formatted)?;
         assert_first_trait_decl_has_marker_docstring(&prog, "trait + method after format")?;
         Ok(())
@@ -2043,7 +2050,7 @@ pub def allocate_prism_store_id() -> int:
     }
 
     #[test]
-    fn test_format_trait_abstract_methods_stay_tight_before_default_method() -> Result<(), FormatError> {
+    fn test_format_trait_abstract_methods_prefer_bodyless_form_before_default_method() -> Result<(), FormatError> {
         let source = r#"trait Service:
   def connect(self) -> None: ...
   def close(self) -> None: ...
@@ -2053,8 +2060,8 @@ pub def allocate_prism_store_id() -> int:
         let result = format_source(source)?;
 
         let expected = r#"trait Service:
-    def connect(self) -> None: ...
-    def close(self) -> None: ...
+    def connect(self) -> None
+    def close(self) -> None
 
     def reset(self) -> None:
         pass
@@ -2110,7 +2117,7 @@ pub def allocate_prism_store_id() -> int:
 
     #[test]
     fn test_format_source_with_custom_config_keeps_rfc053_spacing() -> Result<(), FormatError> {
-        let source = r#"model User:
+        let source = r#"trait User:
   def connect(self) -> None: ...
   def reset(self) -> None:
     pass
@@ -2121,8 +2128,8 @@ def build_user() -> User:
         let config = FormatConfig::new().with_indent_width(2);
         let formatted = format_source_with_config(source, config)?;
 
-        let expected = r#"model User:
-  def connect(self) -> None: ...
+        let expected = r#"trait User:
+  def connect(self) -> None
 
   def reset(self) -> None:
     pass
@@ -2185,6 +2192,60 @@ from rust::libm @ "0.2" import pow as rust_pow, exp as rust_exp
                 && result.contains("pow as rust_pow,\n"),
             "expected all merged import items present in wrapped output; got: {result}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_partial_declarations_and_expression() -> Result<(), FormatError> {
+        let source = r#"pub BronzeReader = partial readers.TableReader(layer="bronze", format="delta")
+JsonRoute = partial web.route(method="GET")
+
+def reader_for(layer: str) -> Reader:
+  return partial make_factory().reader(layer=layer, options={"format": "delta"})
+"#;
+        let formatted = format_source(source)?;
+
+        let expected = r#"pub BronzeReader = partial readers.TableReader(layer="bronze", format="delta")
+JsonRoute = partial web.route(method="GET")
+
+
+def reader_for(layer: str) -> Reader:
+    return partial make_factory().reader(layer=layer, options={"format": "delta"})
+"#;
+        assert_eq!(formatted, expected);
+        assert_eq!(format_source(&formatted)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_method_and_trait_partials() -> Result<(), FormatError> {
+        let source = r#"model Cell:
+  alive: bool
+  set_alive = partial set_state(state=true)
+  def set_state(mut self, state: bool) -> None:
+    self.alive = state
+
+trait Named:
+  display = partial name(prefix="name")
+  def name(self, prefix: str) -> str
+"#;
+        let formatted = format_source(source)?;
+
+        let expected = r#"model Cell:
+    alive: bool
+    set_alive = partial set_state(state=true)
+
+    def set_state(mut self, state: bool) -> None:
+        self.alive = state
+
+
+trait Named:
+    display = partial name(prefix="name")
+
+    def name(self, prefix: str) -> str
+"#;
+        assert_eq!(formatted, expected);
+        assert_eq!(format_source(&formatted)?, expected);
         Ok(())
     }
 }

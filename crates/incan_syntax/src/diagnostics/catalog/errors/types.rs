@@ -135,6 +135,15 @@ pub fn missing_required_argument(callee: &str, name: &str, span: Span) -> Compil
     )
 }
 
+/// Report a top-level partial preset expression that would require runtime evaluation.
+pub fn unsafe_top_level_partial_preset(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Top-level partial preset '{name}' must be declaration-safe"),
+        span,
+    )
+    .with_hint("Use literals, const paths, or declaration-safe collection/model literals as top-level partial presets")
+}
+
 pub fn duplicate_rest_parameter(kind: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Only one `{kind}` rest parameter is allowed in a callable signature"),
@@ -812,6 +821,15 @@ pub fn ambiguous_trait_method_call(method: &str, span: Span) -> CompileError {
         .with_hint("Add an expected result type or make the call arguments select one trait instantiation")
 }
 
+/// Report an abstract method spelling used where a concrete type method body is required.
+pub fn concrete_method_requires_body(method: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Method '{}' must have a body outside trait declarations", method),
+        span,
+    )
+    .with_hint("Use `:` followed by an indented method body")
+}
+
 pub fn missing_trait_method(trait_name: &str, method: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Trait '{}' requires method '{}' to be implemented", trait_name, method),
@@ -999,9 +1017,6 @@ pub fn trait_not_implemented(type_name: &str, trait_name: &str, span: Span) -> C
         }
         Some(DeriveId::Default) => {
             error = error.with_hint("Add @derive(Default) to enable Type.default()");
-        }
-        Some(DeriveId::Serialize) | Some(DeriveId::Deserialize) => {
-            error = error.with_hint(format!("Add @derive({}) for JSON/serialization support", trait_name));
         }
         Some(DeriveId::Validate) => {
             error = error.with_hint("Add @derive(Validate) to enable validated construction via TypeName.new(...)");

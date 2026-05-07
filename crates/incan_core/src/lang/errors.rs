@@ -137,7 +137,9 @@ pub const EXCEPTIONS: &[ExceptionInfo] = &[
         RFC::_000,
         Since(0, 1),
         &[Example {
-            code: r#"@derive(Deserialize)
+            code: r#"from std.serde.json import Deserialize
+
+@derive(Deserialize)
 model User:
     name: str
 

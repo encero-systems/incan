@@ -26,6 +26,8 @@ Key differences:
 - Both: Can implement traits (with)
 """
 
+from std.serde import json
+
 
 # ============================================
 # MODEL: Data-first — fields are the primary concern
@@ -38,7 +40,7 @@ model Point:
 
 
 # Model with derived behaviors
-@derive(Eq, Serialize, Deserialize)
+@derive(Eq, json)
 model User:
     id: int
     name: str
@@ -46,7 +48,7 @@ model User:
 
 
 # Model representing API response
-@derive(Serialize)
+@derive(json)
 model ApiResponse:
     success: bool
     message: str

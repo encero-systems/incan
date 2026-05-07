@@ -452,7 +452,7 @@ Usage:
 incan tools metadata api [PATH] [OPTIONS]
 ```
 
-Emits checked public API metadata for an Incan source file or project directory. The command parses and type-checks the target before producing JSON, so the output describes the checked API surface rather than source text alone.
+Emits checked public API metadata for an Incan source file or project directory. The command parses and type-checks the target before producing output, so the result describes the checked API surface rather than source text alone.
 
 If `PATH` is omitted, the current directory is inspected. If `PATH` is a directory, `src/lib.incn` is preferred and `src/main.incn` is used as a fallback.
 
@@ -461,13 +461,14 @@ This command is source/project inspection, not artifact inspection. It does not 
 Options:
 
 - `--format json`: Output checked API metadata JSON (default).
+- `--format markdown`: Output a generated Markdown API reference derived from the same checked metadata.
 
 The JSON package contains:
 
 - `schema_version`: numeric schema version for the package payload
 - `package`: project name and version from `incan.toml`, when available
 - `modules`: checked metadata documents for the entry module and imported local modules
-- `declarations`: public functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, and public import aliases
+- `declarations`: public functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, public import aliases, and public partial callable presets
 - `anchor`: stable declaration ids plus source byte spans
 - `docstring`: raw declaration or method docstring text when present
 - `docstring_sections`: parsed summary, parameter, return, field, alias, and decorator sections when a docstring is present
@@ -480,6 +481,7 @@ Examples:
 ```bash
 incan tools metadata api
 incan tools metadata api src/lib.incn --format json
+incan tools metadata api src/lib.incn --format markdown
 incan tools metadata api path/to/project
 ```
 

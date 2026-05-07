@@ -193,6 +193,17 @@ set()               # Empty Set
 set(iterable)       # Convert to Set
 ```
 
+Every core builtin function is also reachable through `std.builtins.<name>`. This is an explicit escape path for code
+that needs the core builtin when an inner scope or an imported DSL gives the unqualified name a different meaning:
+
+```incan
+def total(values: list[int]) -> int:
+  return std.builtins.sum(values)
+```
+
+`std.builtins` is typechecker-only. It has no source stub or emitted runtime module, and builtin types such as `int`,
+`List[T]`, and `Result[T, E]` remain root prelude types.
+
 ## Special import: `import this`
 
 `import this` is always available and prints the Incan “Zen” design principles when imported:
@@ -223,6 +234,7 @@ import — no manual feature flags needed.
 | `std.derives.*`  | Derive helpers (`string`, `comparison`, ...)  | —                 |
 | `std.traits.*`   | Core traits (`ops`, `convert`, `error`, ...)  | —                 |
 | `std.math`       | Math constants and functions                  | —                 |
+| `std.builtins`   | Explicit core builtin-function escape path    | —                 |
 
 ### Soft keywords
 

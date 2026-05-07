@@ -20,11 +20,12 @@ For step-by-step learning and patterns, see [Tutorials](../tutorials/book/index.
 - [Newtypes](newtypes.md): nominal wrappers, validated construction, implicit coercion sites, and constraints
 - [Generators](generators.md): `Generator[T]`, `yield`, generator expressions, and helper method signatures
 - [Symbol aliases](symbol_aliases.md): top-level aliases, same-type method aliases, exports, and diagnostics
+- [Callable presets](callable_presets.md): RHS partial declarations, projected defaults, method presets, and diagnostics
 - [Glossary](glossary.md): canonical terminology used across the docs
 - [Imports and modules](imports_and_modules.md): import syntax, module paths, and module resolution rules
 - [Static storage](static_storage.md): `static`, `pub static`, initialization rules, and live shared module state
 - [std.testing](stdlib/testing.md): assertions, markers, fixtures, and parametrization
-- [Standard library reference](stdlib/index.md): signatures for `std.*` modules (`std.math`, `std.async`, `std.testing`, ...)
+- [Standard library reference](stdlib/index.md): signatures for `std.*` modules (`std.math`, `std.async`, `std.collections`, ...)
 - [Numeric semantics](numeric_semantics.md): numeric operators, promotion rules, and edge cases
 - [Strings](strings.md): string types, formatting, and string operations
 - [Union types](union_types.md): anonymous closed unions, `A | B`, narrowing, and `match` type patterns

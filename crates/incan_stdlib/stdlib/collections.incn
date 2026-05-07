@@ -1,0 +1,1778 @@
+"""
+Pure Incan extended collection types.
+
+RFC 030 defines `std.collections` as an explicit stdlib namespace for specialized containers above builtin `list`,
+`dict`, `set`, and tuple values. These containers are ordinary Incan declarations and use builtin `list` storage
+internally rather than Rust-backed dispatch.
+"""
+
+
+pub enum PriorityOrder:
+    """
+    Ordering policy for `PriorityQueue` construction.
+
+    `MinFirst` pops the smallest value first. `MaxFirst` pops the largest value first.
+    """
+
+    MinFirst
+    MaxFirst
+
+
+@derive(Clone)
+pub model _MapEntry[K with Clone, V with Clone]:
+    pub key: K
+    pub value: V
+
+
+@derive(Clone)
+pub model Deque[T with (Clone, Eq)]:
+    """
+    Double-ended queue value.
+
+    Values are stored in front-to-back order. The deque exposes both `append()` / `appendleft()` and
+    `push_back()` / `push_front()` spellings so callers can use the convention that fits their codebase.
+
+    Example:
+
+    ```incan
+    queue = Deque[int]()
+    queue.append(1)
+    queue.appendleft(0)
+    println(queue.pop())      # 1
+    println(queue.popleft())  # 0
+    ```
+    """
+
+    pub items: list[T] = []
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty deque.
+
+        Returns:
+            A deque with no values.
+        """
+        return Deque(items=[])
+
+    @staticmethod
+    def from_iter(items: list[T]) -> Self:
+        """
+        Create a deque from a list.
+
+        Args:
+            items: Values to copy into the deque from front to back.
+
+        Returns:
+            A deque containing the values in their original order.
+        """
+        mut out = Deque(items=[])
+        for item in items:
+            out.push_back(item)
+        return out
+
+    def __len__(self) -> int:
+        """
+        Return the number of values in the deque.
+
+        Returns:
+            The current length.
+        """
+        return len(self.items)
+
+    def __iter__(self) -> list[T]:
+        """
+        Iterate from front to back.
+
+        Returns:
+            A list snapshot in deque order.
+        """
+        return self.items
+
+    def __getitem__(self, index: int) -> T:
+        """
+        Return the value at an index.
+
+        Args:
+            index: Zero-based position from the front of the deque.
+
+        Returns:
+            The value at `index`.
+        """
+        return self.items[index]
+
+    def __contains__(self, value: T) -> bool:
+        """
+        Check whether a value appears in the deque.
+
+        Args:
+            value: Value to search for.
+
+        Returns:
+            `true` when an equal value is present.
+        """
+        return _contains_value(self.items, value)
+
+    def push_back(mut self, value: T) -> None:
+        """
+        Append a value at the back of the deque.
+
+        Args:
+            value: Value to add after the current back element.
+        """
+        self.items.append(value)
+
+    def append(mut self, value: T) -> None:
+        """
+        Append a value at the back of the deque.
+
+        Args:
+            value: Value to add after the current back element.
+        """
+        self.push_back(value)
+
+    def push_front(mut self, value: T) -> None:
+        """
+        Append a value at the front of the deque.
+
+        Args:
+            value: Value to add before the current front element.
+        """
+        self.items.append(value)
+        mut index = len(self.items) - 1
+        while index > 0:
+            self.items.swap(index, index - 1)
+            index -= 1
+
+    def appendleft(mut self, value: T) -> None:
+        """
+        Append a value at the front of the deque.
+
+        Args:
+            value: Value to add before the current front element.
+        """
+        self.push_front(value)
+
+    def pop_back(mut self) -> T:
+        """
+        Remove and return the back value.
+
+        Returns:
+            The value that was at the back of the deque.
+        """
+        return self.items.pop()
+
+    def pop(mut self) -> T:
+        """
+        Remove and return the back value.
+
+        Returns:
+            The value that was at the back of the deque.
+        """
+        return self.pop_back()
+
+    def pop_front(mut self) -> T:
+        """
+        Remove and return the front value.
+
+        Returns:
+            The value that was at the front of the deque.
+        """
+        value = self.items[0]
+        self.items.remove(0)
+        return value
+
+    def popleft(mut self) -> T:
+        """
+        Remove and return the front value.
+
+        Returns:
+            The value that was at the front of the deque.
+        """
+        return self.pop_front()
+
+    def clear(mut self) -> None:
+        """
+        Remove every value from the deque.
+
+        The deque remains usable after clearing.
+        """
+        while len(self.items) > 0:
+            self.items.pop()
+
+    def to_list(self) -> list[T]:
+        """
+        Return the deque as a list.
+
+        Returns:
+            A list snapshot in front-to-back order.
+        """
+        return self.items
+
+
+@derive(Clone)
+pub model Counter[T with (Clone, Eq)]:
+    """
+    Multiset-style counted collection.
+
+    `Counter` stores non-negative counts and removes entries whose count reaches zero. Iteration returns distinct
+    values in first-seen order; `elements()` expands counts back into repeated values.
+
+    Example:
+
+    ```incan
+    counts = Counter.from_iter(["a", "b", "a"])
+    println(counts["a"])        # 2
+    println(counts.total())     # 3
+    println(counts.elements())  # ["a", "a", "b"]
+    ```
+    """
+
+    pub entries: list[_MapEntry[T, int]] = []
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty counter.
+
+        Returns:
+            A counter with no counted values.
+        """
+        return Counter(entries=[])
+
+    @staticmethod
+    def from_iter(items: list[T]) -> Self:
+        """
+        Count values from a list.
+
+        Args:
+            items: Values to count.
+
+        Returns:
+            A counter containing one occurrence for each value in `items`.
+        """
+        mut out = Counter(entries=[])
+        out.update(items)
+        return out
+
+    def __len__(self) -> int:
+        """
+        Return the number of distinct counted values.
+
+        Returns:
+            The number of values with positive stored counts.
+        """
+        return len(self.entries)
+
+    def __iter__(self) -> list[T]:
+        """
+        Iterate over distinct counted values.
+
+        Returns:
+            Counted values in first-seen order.
+        """
+        return self.keys()
+
+    def __contains__(self, key: T) -> bool:
+        """
+        Check whether a value has a positive count.
+
+        Args:
+            key: Value to search for.
+
+        Returns:
+            `true` when the value is counted.
+        """
+        return self.get(key) > 0
+
+    def __getitem__(self, key: T) -> int:
+        """
+        Return the count for a value.
+
+        Args:
+            key: Value to inspect.
+
+        Returns:
+            The stored count, or zero when the value is absent.
+        """
+        return self.get(key)
+
+    def get(self, key: T) -> int:
+        """
+        Return the count for a value.
+
+        Args:
+            key: Value to inspect.
+
+        Returns:
+            The stored count, or zero when the value is absent.
+        """
+        index = self.index_of(key)
+        if index < 0:
+            return 0
+        return self.entries[index].value
+
+    def set(mut self, key: T, count: int) -> None:
+        """
+        Store a count for a value.
+
+        Args:
+            key: Value whose count should change.
+            count: New non-negative count. A zero count removes the value.
+        """
+        if count < 0:
+            _runtime_error("Counter counts must be non-negative")
+            return
+        index = self.index_of(key)
+        if count == 0:
+            if index >= 0:
+                self.entries.remove(index)
+            return
+        if index >= 0:
+            self.entries[index] = _MapEntry(key=key, value=count)
+        else:
+            self.entries.append(_MapEntry(key=key, value=count))
+
+    def increment(mut self, key: T, amount: int = 1) -> None:
+        """
+        Increase a value's count.
+
+        Args:
+            key: Value to increment.
+            amount: Non-negative amount to add.
+        """
+        if amount < 0:
+            _runtime_error("Counter.increment requires a non-negative amount")
+            return
+        self.set(key, self.get(key) + amount)
+
+    def decrement(mut self, key: T, amount: int = 1) -> None:
+        """
+        Decrease a value's count.
+
+        Args:
+            key: Value to decrement.
+            amount: Non-negative amount to subtract.
+        """
+        if amount < 0:
+            _runtime_error("Counter.decrement requires a non-negative amount")
+            return
+        current = self.get(key)
+        if amount >= current:
+            self.set(key, 0)
+        else:
+            self.set(key, current - amount)
+
+    def subtract_strict(self, other: Counter[T]) -> Result[Counter[T], str]:
+        """
+        Subtract another counter without flooring negative results.
+
+        Args:
+            other: Counter whose counts should be subtracted.
+
+        Returns:
+            `Ok(counter)` when every result count is non-negative, otherwise `Err(str)`.
+        """
+        mut out = Counter(entries=[])
+        for entry in self.entries:
+            other_count = other.get(entry.key)
+            if other_count > entry.value:
+                return Err("Counter subtraction would produce a negative count")
+            out.set(entry.key, entry.value - other_count)
+        for entry in other.entries:
+            if self.get(entry.key) == 0 and entry.value > 0:
+                return Err("Counter subtraction would produce a negative count")
+        return Ok(out)
+
+    def update(mut self, items: list[T]) -> None:
+        """
+        Add one occurrence for each value.
+
+        Args:
+            items: Values to add to the counter.
+        """
+        for item in items:
+            self.increment(item)
+
+    def subtract(mut self, items: list[T]) -> None:
+        """
+        Subtract one occurrence for each value, flooring at zero.
+
+        Args:
+            items: Values to subtract from the counter.
+        """
+        for item in items:
+            self.decrement(item)
+
+    def total(self) -> int:
+        """
+        Return the sum of all counts.
+
+        Returns:
+            The total number of counted occurrences.
+        """
+        mut total = 0
+        for entry in self.entries:
+            total += entry.value
+        return total
+
+    def keys(self) -> list[T]:
+        """
+        Return distinct counted values.
+
+        Returns:
+            Counted values in first-seen order.
+        """
+        return _entry_keys(self.entries)
+
+    def items(self) -> list[Tuple[T, int]]:
+        """
+        Return counted entries.
+
+        Returns:
+            `(value, count)` pairs in first-seen order.
+        """
+        return _entry_items(self.entries)
+
+    def elements(self) -> list[T]:
+        """
+        Expand counts into repeated values.
+
+        Returns:
+            A list containing each value repeated by its count.
+        """
+        return _counter_elements(self.entries)
+
+    def most_common(self, n: int = -1) -> list[Tuple[T, int]]:
+        """
+        Return the most common values.
+
+        Args:
+            n: Maximum number of pairs to return. A negative value returns every pair.
+
+        Returns:
+            `(value, count)` pairs sorted from highest count to lowest count.
+        """
+        return _counter_most_common(self.entries, n)
+
+    def plus(self, other: Counter[T]) -> Counter[T]:
+        """
+        Add counts from another counter.
+
+        Args:
+            other: Counter whose counts should be added.
+
+        Returns:
+            A new counter containing count-wise sums.
+        """
+        mut out = Counter(entries=[])
+        for entry in self.entries:
+            out.set(entry.key, entry.value)
+        for entry in other.entries:
+            out.increment(entry.key, entry.value)
+        return out
+
+    def minus(self, other: Counter[T]) -> Counter[T]:
+        """
+        Subtract counts from another counter.
+
+        Args:
+            other: Counter whose counts should be subtracted.
+
+        Returns:
+            A new counter containing only positive count-wise results.
+        """
+        mut out = Counter(entries=[])
+        for entry in self.entries:
+            remaining = entry.value - other.get(entry.key)
+            if remaining > 0:
+                out.set(entry.key, remaining)
+        return out
+
+    def index_of(self, key: T) -> int:
+        return _entry_index(self.entries, key)
+
+
+pub model DefaultDict[K with (Clone, Eq), V with Clone]:
+    """
+    Mapping that materializes missing keys.
+
+    A `DefaultDict` can use a stored default value or a zero-argument factory. Indexing a missing key creates and
+    stores a value; `get()` inspects only already materialized keys.
+
+    Example:
+
+    ```incan
+    counts = DefaultDict.with_default(0)
+    counts["apple"] = counts["apple"] + 1
+    println(counts["apple"])  # 1
+    ```
+    """
+
+    pub entries: list[_MapEntry[K, V]] = []
+    pub default_value: Option[V] = None
+    pub default_factory: Option[() -> V] = None
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty default dict with no configured default.
+
+        Returns:
+            A default dict that raises on missing-key materialization.
+        """
+        return DefaultDict(entries=[], default_value=None, default_factory=None)
+
+    @staticmethod
+    def with_default(value: V) -> Self:
+        """
+        Create a default dict from a stored default value.
+
+        Args:
+            value: Value copied into each newly materialized key.
+
+        Returns:
+            An empty default dict configured with `value`.
+        """
+        return DefaultDict(entries=[], default_value=Some(value), default_factory=None)
+
+    @staticmethod
+    def with_factory(factory: () -> V) -> Self:
+        """
+        Create a default dict from a default factory.
+
+        Args:
+            factory: Zero-argument function called for each newly materialized key.
+
+        Returns:
+            An empty default dict configured with `factory`.
+        """
+        return DefaultDict(entries=[], default_value=None, default_factory=Some(factory))
+
+    def __len__(self) -> int:
+        """
+        Return the number of materialized keys.
+
+        Returns:
+            The number of keys currently stored.
+        """
+        return len(self.entries)
+
+    def __iter__(self) -> list[K]:
+        """
+        Iterate over materialized keys.
+
+        Returns:
+            Keys in insertion order.
+        """
+        return self.keys()
+
+    def __contains__(self, key: K) -> bool:
+        """
+        Check whether a key is already materialized.
+
+        Args:
+            key: Key to search for.
+
+        Returns:
+            `true` when the key is currently stored.
+        """
+        return self.index_of(key) >= 0
+
+    def __getitem__(mut self, key: K) -> V:
+        """
+        Return a value, materializing the key when needed.
+
+        Args:
+            key: Key to read or create.
+
+        Returns:
+            The stored value for `key`.
+        """
+        index = self.index_of(key)
+        if index >= 0:
+            return self.entries[index].value
+        value: V = self.make_default()
+        self.entries.append(_MapEntry(key=key.clone(), value=value.clone()))
+        return self.entries[len(self.entries) - 1].value
+
+    def __setitem__(mut self, key: K, value: V) -> None:
+        """
+        Insert or replace a key.
+
+        Args:
+            key: Key to write.
+            value: Value to store.
+        """
+        self.set(key, value)
+
+    def get(self, key: K) -> Option[V]:
+        """
+        Inspect a materialized key without creating a default.
+
+        Args:
+            key: Key to look up.
+
+        Returns:
+            `Some(value)` when the key is stored; otherwise `None`.
+        """
+        index = self.index_of(key)
+        if index < 0:
+            return None
+        return Some(self.entries[index].value)
+
+    def set(mut self, key: K, value: V) -> None:
+        """
+        Insert or replace a key.
+
+        Args:
+            key: Key to write.
+            value: Value to store.
+        """
+        index = self.index_of(key)
+        if index >= 0:
+            self.entries[index] = _MapEntry(key=key, value=value)
+        else:
+            self.entries.append(_MapEntry(key=key, value=value))
+
+    def keys(self) -> list[K]:
+        """
+        Return materialized keys.
+
+        Returns:
+            Keys in insertion order.
+        """
+        return _entry_keys(self.entries)
+
+    def values(self) -> list[V]:
+        """
+        Return materialized values.
+
+        Returns:
+            Values in key insertion order.
+        """
+        return _entry_values(self.entries)
+
+    def items(self) -> list[Tuple[K, V]]:
+        """
+        Return materialized items.
+
+        Returns:
+            `(key, value)` pairs in insertion order.
+        """
+        return _entry_items(self.entries)
+
+    def make_default(self) -> V:
+        match self.default_factory:
+            Some(factory) => return factory()
+            None => pass
+        match self.default_value:
+            Some(value) => return value
+            None => return _missing_value[V]()
+
+    def index_of(self, key: K) -> int:
+        return _entry_index(self.entries, key)
+
+
+@derive(Clone)
+pub model OrderedDict[K with (Clone, Eq), V with Clone]:
+    """
+    Insertion-ordered mapping.
+
+    Updating an existing key replaces its value without moving it. Iteration, `keys()`, `values()`, and `items()` follow
+    first insertion order.
+    """
+
+    pub entries: list[_MapEntry[K, V]] = []
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty ordered dict.
+
+        Returns:
+            An ordered dict with no keys.
+        """
+        return OrderedDict(entries=[])
+
+    @staticmethod
+    def from_items(items: list[Tuple[K, V]]) -> Self:
+        """
+        Create an ordered dict from pairs.
+
+        Args:
+            items: `(key, value)` pairs to insert in order.
+
+        Returns:
+            An ordered dict containing the pairs. Later duplicate keys replace earlier values without moving the key.
+        """
+        mut out = OrderedDict(entries=[])
+        for key, value in items:
+            out.set(key, value)
+        return out
+
+    def __len__(self) -> int:
+        """
+        Return the number of keys.
+
+        Returns:
+            The number of stored keys.
+        """
+        return len(self.entries)
+
+    def __iter__(self) -> list[K]:
+        """
+        Iterate over keys.
+
+        Returns:
+            Keys in insertion order.
+        """
+        return self.keys()
+
+    def __contains__(self, key: K) -> bool:
+        """
+        Check whether a key is present.
+
+        Args:
+            key: Key to search for.
+
+        Returns:
+            `true` when the key is stored.
+        """
+        return self.index_of(key) >= 0
+
+    def __getitem__(self, key: K) -> V:
+        """
+        Return a value by key.
+
+        Args:
+            key: Key to look up.
+
+        Returns:
+            The stored value for `key`.
+        """
+        index = self.index_of(key)
+        if index < 0:
+            return _missing_value[V]()
+        return self.entries[index].value
+
+    def __setitem__(mut self, key: K, value: V) -> None:
+        """
+        Insert or replace a key.
+
+        Args:
+            key: Key to write.
+            value: Value to store.
+        """
+        self.set(key, value)
+
+    def set(mut self, key: K, value: V) -> None:
+        """
+        Insert or replace a key without moving existing keys.
+
+        Args:
+            key: Key to write.
+            value: Value to store.
+        """
+        index = self.index_of(key)
+        if index >= 0:
+            self.entries[index] = _MapEntry(key=key, value=value)
+        else:
+            self.entries.append(_MapEntry(key=key, value=value))
+
+    def get(self, key: K) -> Option[V]:
+        """
+        Look up a key without raising on absence.
+
+        Args:
+            key: Key to look up.
+
+        Returns:
+            `Some(value)` when the key is stored; otherwise `None`.
+        """
+        index = self.index_of(key)
+        if index < 0:
+            return None
+        return Some(self.entries[index].value)
+
+    def remove(mut self, key: K) -> V:
+        """
+        Remove a key and return its value.
+
+        Args:
+            key: Key to remove.
+
+        Returns:
+            The removed value.
+        """
+        index = self.index_of(key)
+        if index < 0:
+            return _missing_value[V]()
+        value = self.entries[index].value
+        self.entries.remove(index)
+        return value
+
+    def keys(self) -> list[K]:
+        """
+        Return stored keys.
+
+        Returns:
+            Keys in insertion order.
+        """
+        return _entry_keys(self.entries)
+
+    def values(self) -> list[V]:
+        """
+        Return stored values.
+
+        Returns:
+            Values in key insertion order.
+        """
+        return _entry_values(self.entries)
+
+    def items(self) -> list[Tuple[K, V]]:
+        """
+        Return stored items.
+
+        Returns:
+            `(key, value)` pairs in insertion order.
+        """
+        return _entry_items(self.entries)
+
+    def index_of(self, key: K) -> int:
+        return _entry_index(self.entries, key)
+
+
+@derive(Clone)
+pub model OrderedSet[T with (Clone, Eq)]:
+    """
+    Insertion-ordered set.
+
+    Reinserting an existing value does not duplicate or move it. Iteration follows the order in which values were first
+    added.
+    """
+
+    pub items: list[T] = []
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty ordered set.
+
+        Returns:
+            An ordered set with no values.
+        """
+        return OrderedSet(items=[])
+
+    @staticmethod
+    def from_iter(items: list[T]) -> Self:
+        """
+        Create an ordered set from a list.
+
+        Args:
+            items: Values to insert in order.
+
+        Returns:
+            An ordered set containing the first occurrence of each value.
+        """
+        mut out = OrderedSet(items=[])
+        for item in items:
+            out.add(item)
+        return out
+
+    def __len__(self) -> int:
+        """
+        Return the number of values.
+
+        Returns:
+            The number of stored values.
+        """
+        return len(self.items)
+
+    def __iter__(self) -> list[T]:
+        """
+        Iterate over stored values.
+
+        Returns:
+            Values in insertion order.
+        """
+        return self.items
+
+    def __contains__(self, value: T) -> bool:
+        """
+        Check whether a value is present.
+
+        Args:
+            value: Value to search for.
+
+        Returns:
+            `true` when the value is stored.
+        """
+        return self.contains(value)
+
+    def add(mut self, value: T) -> None:
+        """
+        Insert a value if it is absent.
+
+        Args:
+            value: Value to add.
+        """
+        if not self.contains(value):
+            self.items.append(value)
+
+    def remove(mut self, value: T) -> None:
+        """
+        Remove a value when present.
+
+        Args:
+            value: Value to remove.
+        """
+        index = self.index_of(value)
+        if index >= 0:
+            self.items.remove(index)
+
+    def contains(self, value: T) -> bool:
+        """
+        Check whether a value is present.
+
+        Args:
+            value: Value to search for.
+
+        Returns:
+            `true` when the value is stored.
+        """
+        return self.index_of(value) >= 0
+
+    def to_list(self) -> list[T]:
+        """
+        Return the set as a list.
+
+        Returns:
+            Values in insertion order.
+        """
+        return self.items
+
+    def index_of(self, value: T) -> int:
+        return _value_index(self.items, value)
+
+
+@derive(Clone)
+pub model SortedDict[K with (Clone, Ord), V with Clone]:
+    """
+    Key-sorted mapping.
+
+    Keys must implement `Ord`. Iteration, `keys()`, `values()`, and `items()` use sorted-key order rather than insertion
+    order.
+    """
+
+    pub entries: list[_MapEntry[K, V]] = []
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty sorted dict.
+
+        Returns:
+            A sorted dict with no keys.
+        """
+        return SortedDict(entries=[])
+
+    @staticmethod
+    def from_items(items: list[Tuple[K, V]]) -> Self:
+        """
+        Create a sorted dict from pairs.
+
+        Args:
+            items: `(key, value)` pairs to insert.
+
+        Returns:
+            A sorted dict containing the pairs in sorted-key order.
+        """
+        mut out = SortedDict(entries=[])
+        for key, value in items:
+            out.set(key, value)
+        return out
+
+    def __len__(self) -> int:
+        """
+        Return the number of keys.
+
+        Returns:
+            The number of stored keys.
+        """
+        return len(self.entries)
+
+    def __iter__(self) -> list[K]:
+        """
+        Iterate over keys.
+
+        Returns:
+            Keys in sorted order.
+        """
+        return self.keys()
+
+    def __contains__(self, key: K) -> bool:
+        """
+        Check whether a key is present.
+
+        Args:
+            key: Key to search for.
+
+        Returns:
+            `true` when the key is stored.
+        """
+        return self.index_of(key) >= 0
+
+    def __getitem__(self, key: K) -> V:
+        """
+        Return a value by key.
+
+        Args:
+            key: Key to look up.
+
+        Returns:
+            The stored value for `key`.
+        """
+        index = self.index_of(key)
+        if index < 0:
+            return _missing_value[V]()
+        return self.entries[index].value
+
+    def __setitem__(mut self, key: K, value: V) -> None:
+        """
+        Insert or replace a key.
+
+        Args:
+            key: Key to write.
+            value: Value to store.
+        """
+        self.set(key, value)
+
+    def set(mut self, key: K, value: V) -> None:
+        """
+        Insert or replace a key while preserving sorted-key order.
+
+        Args:
+            key: Key to write.
+            value: Value to store.
+        """
+        index = self.index_of(key)
+        if index >= 0:
+            self.entries[index] = _MapEntry(key=key, value=value)
+            return
+        self.entries.append(_MapEntry(key=key, value=value))
+        self.bubble_entry_left(len(self.entries) - 1)
+
+    def get(self, key: K) -> Option[V]:
+        """
+        Look up a key without raising on absence.
+
+        Args:
+            key: Key to look up.
+
+        Returns:
+            `Some(value)` when the key is stored; otherwise `None`.
+        """
+        index = self.index_of(key)
+        if index < 0:
+            return None
+        return Some(self.entries[index].value)
+
+    def remove(mut self, key: K) -> V:
+        """
+        Remove a key and return its value.
+
+        Args:
+            key: Key to remove.
+
+        Returns:
+            The removed value.
+        """
+        index = self.index_of(key)
+        if index < 0:
+            return _missing_value[V]()
+        value = self.entries[index].value
+        self.entries.remove(index)
+        return value
+
+    def keys(self) -> list[K]:
+        """
+        Return stored keys.
+
+        Returns:
+            Keys in sorted order.
+        """
+        return _entry_keys(self.entries)
+
+    def values(self) -> list[V]:
+        """
+        Return stored values.
+
+        Returns:
+            Values in sorted-key order.
+        """
+        return _entry_values(self.entries)
+
+    def items(self) -> list[Tuple[K, V]]:
+        """
+        Return stored items.
+
+        Returns:
+            `(key, value)` pairs in sorted-key order.
+        """
+        return _entry_items(self.entries)
+
+    def range_keys(self, start: K, end: K) -> list[K]:
+        """
+        Return keys in a half-open range.
+
+        Args:
+            start: Inclusive lower bound.
+            end: Exclusive upper bound.
+
+        Returns:
+            Keys where `start <= key < end`, in sorted order.
+        """
+        return _entry_range_keys(self.entries, start, end)
+
+    def range_items(self, start: K, end: K) -> list[Tuple[K, V]]:
+        """
+        Return items in a half-open key range.
+
+        Args:
+            start: Inclusive lower bound.
+            end: Exclusive upper bound.
+
+        Returns:
+            `(key, value)` pairs where `start <= key < end`, in sorted-key order.
+        """
+        return _entry_range_items(self.entries, start, end)
+
+    def index_of(self, key: K) -> int:
+        for index in range(len(self.entries)):
+            if self.entries[index].key == key:
+                return index
+        return -1
+
+    def bubble_entry_left(mut self, start: int) -> None:
+        mut index = start
+        while index > 0 and self.entries[index].key < self.entries[index - 1].key:
+            self.entries.swap(index, index - 1)
+            index -= 1
+
+
+@derive(Clone)
+pub model SortedSet[T with (Clone, Ord)]:
+    """
+    Value-sorted set.
+
+    Values must implement `Ord`. Iteration and `to_list()` return values in sorted order.
+    """
+
+    pub items: list[T] = []
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty sorted set.
+
+        Returns:
+            A sorted set with no values.
+        """
+        return SortedSet(items=[])
+
+    @staticmethod
+    def from_iter(items: list[T]) -> Self:
+        """
+        Create a sorted set from a list.
+
+        Args:
+            items: Values to insert.
+
+        Returns:
+            A sorted set containing unique values in sorted order.
+        """
+        mut out = SortedSet(items=[])
+        for item in items:
+            out.add(item)
+        return out
+
+    def __len__(self) -> int:
+        """
+        Return the number of values.
+
+        Returns:
+            The number of stored values.
+        """
+        return len(self.items)
+
+    def __iter__(self) -> list[T]:
+        """
+        Iterate over stored values.
+
+        Returns:
+            Values in sorted order.
+        """
+        return self.items
+
+    def __contains__(self, value: T) -> bool:
+        """
+        Check whether a value is present.
+
+        Args:
+            value: Value to search for.
+
+        Returns:
+            `true` when the value is stored.
+        """
+        return self.contains(value)
+
+    def add(mut self, value: T) -> None:
+        """
+        Insert a value if it is absent.
+
+        Args:
+            value: Value to add while preserving sorted order.
+        """
+        if self.contains(value):
+            return
+        self.items.append(value)
+        self.bubble_value_left(len(self.items) - 1)
+
+    def remove(mut self, value: T) -> None:
+        """
+        Remove a value when present.
+
+        Args:
+            value: Value to remove.
+        """
+        index = self.index_of(value)
+        if index >= 0:
+            self.items.remove(index)
+
+    def contains(self, value: T) -> bool:
+        """
+        Check whether a value is present.
+
+        Args:
+            value: Value to search for.
+
+        Returns:
+            `true` when the value is stored.
+        """
+        return self.index_of(value) >= 0
+
+    def range(self, start: T, end: T) -> list[T]:
+        """
+        Return values in a half-open range.
+
+        Args:
+            start: Inclusive lower bound.
+            end: Exclusive upper bound.
+
+        Returns:
+            Values where `start <= value < end`, in sorted order.
+        """
+        return _value_range(self.items, start, end)
+
+    def to_list(self) -> list[T]:
+        """
+        Return the set as a list.
+
+        Returns:
+            Values in sorted order.
+        """
+        return self.items
+
+    def index_of(self, value: T) -> int:
+        return _value_index(self.items, value)
+
+    def bubble_value_left(mut self, start: int) -> None:
+        mut index = start
+        while index > 0 and self.items[index] < self.items[index - 1]:
+            self.items.swap(index, index - 1)
+            index -= 1
+
+
+@derive(Clone)
+pub model ChainMap[K with (Clone, Eq), V with Clone]:
+    """
+    Layered lookup across ordered mapping layers.
+
+    Earlier layers override later layers. Writes go to the first mapping layer. Model and class values participate by
+    passing their compiler-generated `__field_items__()` snapshot as a read-only field layer.
+    """
+
+    pub layers: list[OrderedDict[K, V]] = []
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create a chain map with one empty mapping layer.
+
+        Returns:
+            A chain map ready for reads and writes.
+        """
+        return ChainMap(layers=[OrderedDict(entries=[])])
+
+    @staticmethod
+    def from_layers(layers: list[OrderedDict[K, V]]) -> Self:
+        """
+        Create a chain map from mapping layers.
+
+        Args:
+            layers: Layers ordered from highest precedence to lowest precedence.
+
+        Returns:
+            A chain map containing `layers`, or one empty layer when `layers` is empty.
+        """
+        if len(layers) == 0:
+            return ChainMap(layers=[OrderedDict(entries=[])])
+        return ChainMap(layers=layers)
+
+    @staticmethod
+    def from_field_layers(layers: list[list[Tuple[K, V]]]) -> Self:
+        """
+        Create a chain map from read-only field overlay layers.
+
+        Args:
+            layers: Field snapshots ordered from highest precedence to lowest precedence.
+
+        Returns:
+            A chain map containing each snapshot as an ordered layer.
+        """
+        return ChainMap.from_layers([OrderedDict.from_items(layer) for layer in layers])
+
+    def __len__(self) -> int:
+        """
+        Return the number of visible keys.
+
+        Returns:
+            The number of distinct keys visible through the chain.
+        """
+        return len(self.keys())
+
+    def __iter__(self) -> list[K]:
+        """
+        Iterate over visible keys.
+
+        Returns:
+            Distinct keys in first-visible-layer order.
+        """
+        return self.keys()
+
+    def __contains__(self, key: K) -> bool:
+        """
+        Check whether a key appears in any layer.
+
+        Args:
+            key: Key to search for.
+
+        Returns:
+            `true` when any layer contains the key.
+        """
+        return self.contains(key)
+
+    def __getitem__(self, key: K) -> V:
+        """
+        Return the first visible value for a key.
+
+        Args:
+            key: Key to look up across layers.
+
+        Returns:
+            The value from the highest-precedence layer containing `key`.
+        """
+        for layer in self.layers:
+            match layer.get(key):
+                Some(value) => return value
+                None => pass
+        return _missing_value[V]()
+
+    def __setitem__(mut self, key: K, value: V) -> None:
+        """
+        Write a key to the highest-precedence mapping layer.
+
+        Args:
+            key: Key to write.
+            value: Value to store.
+        """
+        self.set(key, value)
+
+    def set(mut self, key: K, value: V) -> None:
+        """
+        Write a key to the highest-precedence mapping layer.
+
+        Args:
+            key: Key to write.
+            value: Value to store.
+        """
+        if len(self.layers) == 0:
+            empty: OrderedDict[K, V] = OrderedDict(entries=[])
+            self.layers.append(empty.clone())
+        mut layer = self.layers[0]
+        layer.set(key, value)
+        self.layers[0] = layer
+
+    def push_layer(mut self, layer: OrderedDict[K, V]) -> None:
+        """
+        Add a highest-precedence layer.
+
+        Args:
+            layer: Mapping layer to place before all existing layers.
+        """
+        self.layers.append(layer)
+        mut index = len(self.layers) - 1
+        while index > 0:
+            self.layers.swap(index, index - 1)
+            index -= 1
+
+    def push_field_layer(mut self, layer: list[Tuple[K, V]]) -> None:
+        """
+        Add a highest-precedence field overlay layer.
+
+        Args:
+            layer: Field snapshot such as `value.__field_items__()`.
+        """
+        self.push_layer(OrderedDict.from_items(layer))
+
+    def pop_layer(mut self) -> OrderedDict[K, V]:
+        """
+        Remove and return the highest-precedence layer.
+
+        Returns:
+            The removed layer, or an empty ordered dict when the chain has no layers.
+        """
+        if len(self.layers) == 0:
+            return OrderedDict(entries=[])
+        layer = self.layers[0]
+        self.layers.remove(0)
+        return layer
+
+    def contains(self, key: K) -> bool:
+        """
+        Check whether a key appears in any layer.
+
+        Args:
+            key: Key to search for.
+
+        Returns:
+            `true` when any layer contains the key.
+        """
+        for layer in self.layers:
+            if key in layer:
+                return True
+        return False
+
+    def keys(self) -> list[K]:
+        """
+        Return visible keys.
+
+        Returns:
+            Distinct keys in first-visible-layer order.
+        """
+        return _chain_keys(self.layers)
+
+    def items(self) -> list[Tuple[K, V]]:
+        """
+        Return visible items.
+
+        Returns:
+            Distinct `(key, value)` pairs in first-visible-layer order.
+        """
+        return _chain_items(self.layers)
+
+
+@derive(Clone)
+pub model PriorityQueue[T with (Clone, Ord)]:
+    """
+    Priority queue with a construction-time ordering policy.
+
+    `PriorityQueue()` uses `PriorityOrder.MinFirst`. Use `max_first()` or `with_order(PriorityOrder.MaxFirst)` when the
+    largest value should be popped first.
+    """
+
+    pub items: list[T] = []
+    pub order: PriorityOrder = PriorityOrder.MinFirst
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty min-first priority queue.
+
+        Returns:
+            A priority queue that pops the smallest value first.
+        """
+        return PriorityQueue(items=[], order=PriorityOrder.MinFirst)
+
+    @staticmethod
+    def with_order(order: PriorityOrder) -> Self:
+        """
+        Create an empty priority queue with an explicit ordering policy.
+
+        Args:
+            order: Ordering policy used for future `push()` and `pop()` operations.
+
+        Returns:
+            An empty priority queue.
+        """
+        return PriorityQueue(items=[], order=order)
+
+    @staticmethod
+    def max_first() -> Self:
+        """
+        Create an empty max-first priority queue.
+
+        Returns:
+            A priority queue that pops the largest value first.
+        """
+        return PriorityQueue(items=[], order=PriorityOrder.MaxFirst)
+
+    @staticmethod
+    def from_iter(items: list[T], order: PriorityOrder = PriorityOrder.MinFirst) -> Self:
+        """
+        Create a priority queue from a list.
+
+        Args:
+            items: Values to enqueue.
+            order: Ordering policy used to arrange values.
+
+        Returns:
+            A priority queue containing `items` in pop order.
+        """
+        mut out = PriorityQueue(items=[], order=order)
+        for item in items:
+            out.push(item)
+        return out
+
+    def __len__(self) -> int:
+        """
+        Return the number of queued values.
+
+        Returns:
+            The current queue length.
+        """
+        return len(self.items)
+
+    def __iter__(self) -> list[T]:
+        """
+        Iterate over queued values without consuming the queue.
+
+        Returns:
+            Values in pop order.
+        """
+        return self.items
+
+    def push(mut self, value: T) -> None:
+        """
+        Insert a value according to the queue ordering policy.
+
+        Args:
+            value: Value to enqueue.
+        """
+        self.items.append(value)
+        self.bubble_value_left(len(self.items) - 1)
+
+    def pop(mut self) -> T:
+        """
+        Remove and return the next priority value.
+
+        Returns:
+            The smallest or largest queued value, depending on the queue order.
+        """
+        value = self.items[0]
+        self.items.remove(0)
+        return value
+
+    def peek(self) -> Option[T]:
+        """
+        Inspect the next priority value without removing it.
+
+        Returns:
+            `Some(value)` for the next value, or `None` when the queue is empty.
+        """
+        if len(self.items) == 0:
+            return None
+        return Some(self.items[0])
+
+    def is_empty(self) -> bool:
+        """
+        Check whether the queue is empty.
+
+        Returns:
+            `true` when no values are queued.
+        """
+        return len(self.items) == 0
+
+    def to_list(self) -> list[T]:
+        """
+        Return queued values as a list.
+
+        Returns:
+            Values in pop order.
+        """
+        return self.items
+
+    def bubble_value_left(mut self, start: int) -> None:
+        mut index = start
+        while index > 0 and self.higher_priority(self.items[index], self.items[index - 1]):
+            self.items.swap(index, index - 1)
+            index -= 1
+
+    def higher_priority(self, left: T, right: T) -> bool:
+        match self.order:
+            PriorityOrder.MinFirst => return left < right
+            PriorityOrder.MaxFirst => return right < left
+
+
+def _highest_count_index[T with (Clone, Eq)](entries: list[_MapEntry[T, int]]) -> int:
+    mut best_index = 0
+    mut best_count = entries[0].value
+    for index in range(len(entries)):
+        if entries[index].value > best_count:
+            best_count = entries[index].value
+            best_index = index
+    return best_index
+
+
+def _counter_elements[T with (Clone, Eq)](entries: list[_MapEntry[T, int]]) -> list[T]:
+    mut out: list[T] = []
+    for entry in entries:
+        for _ in range(entry.value):
+            out.append(entry.key)
+    return out
+
+
+def _counter_most_common[T with (Clone, Eq)](source: list[_MapEntry[T, int]], n: int) -> list[Tuple[T, int]]:
+    mut entries: list[_MapEntry[T, int]] = source
+    mut out: list[Tuple[T, int]] = []
+    while len(entries) > 0 and (n < 0 or len(out) < n):
+        mut best_index = 0
+        mut best_count = entries[0].value
+        for index in range(len(entries)):
+            if entries[index].value > best_count:
+                best_count = entries[index].value
+                best_index = index
+        best = entries[best_index]
+        entries.remove(best_index)
+        out.append((best.key, best.value))
+    return out
+
+
+def _entry_index[K with (Clone, Eq), V with Clone](entries: list[_MapEntry[K, V]], key: K) -> int:
+    for index in range(len(entries)):
+        if entries[index].key == key:
+            return index
+    return -1
+
+
+def _entry_keys[K with Clone, V with Clone](entries: list[_MapEntry[K, V]]) -> list[K]:
+    mut out: list[K] = []
+    for entry in entries:
+        out.append(entry.key)
+    return out
+
+
+def _entry_values[K with Clone, V with Clone](entries: list[_MapEntry[K, V]]) -> list[V]:
+    mut out: list[V] = []
+    for entry in entries:
+        out.append(entry.value)
+    return out
+
+
+def _entry_items[K with Clone, V with Clone](entries: list[_MapEntry[K, V]]) -> list[Tuple[K, V]]:
+    mut out: list[Tuple[K, V]] = []
+    for entry in entries:
+        out.append((entry.key, entry.value))
+    return out
+
+
+def _entry_range_keys[K with (Clone, Ord), V with Clone](entries: list[_MapEntry[K, V]], start: K, end: K) -> list[K]:
+    mut out: list[K] = []
+    for entry in entries:
+        if entry.key >= start and entry.key < end:
+            out.append(entry.key)
+    return out
+
+
+def _entry_range_items[K with (Clone, Ord), V with Clone](
+    entries: list[_MapEntry[K, V]],
+    start: K,
+    end: K,
+) -> list[Tuple[K, V]]:
+    mut out: list[Tuple[K, V]] = []
+    for entry in entries:
+        if entry.key >= start and entry.key < end:
+            out.append((entry.key, entry.value))
+    return out
+
+
+def _value_index[T with (Clone, Eq)](items: list[T], value: T) -> int:
+    for index in range(len(items)):
+        if items[index] == value:
+            return index
+    return -1
+
+
+def _contains_value[T with (Clone, Eq)](items: list[T], value: T) -> bool:
+    for item in items:
+        if item.clone() == value:
+            return True
+    return False
+
+
+def _value_range[T with (Clone, Ord)](items: list[T], start: T, end: T) -> list[T]:
+    mut out: list[T] = []
+    for item in items:
+        value: T = item.clone()
+        if value >= start and value < end:
+            out.append(value)
+    return out
+
+
+def _chain_keys[K with (Clone, Eq), V with Clone](layers: list[OrderedDict[K, V]]) -> list[K]:
+    mut out: list[K] = []
+    for layer in layers:
+        for entry in layer.entries:
+            key: K = entry.key
+            mut seen = False
+            for existing in out:
+                if existing.clone() == key:
+                    seen = True
+            if not seen:
+                out.append(key.clone())
+    return out
+
+
+def _chain_items[K with (Clone, Eq), V with Clone](layers: list[OrderedDict[K, V]]) -> list[Tuple[K, V]]:
+    mut out: list[Tuple[K, V]] = []
+    mut visible: list[K] = []
+    for layer in layers:
+        for entry in layer.entries:
+            key: K = entry.key
+            mut seen = False
+            for existing in visible:
+                if existing.clone() == key:
+                    seen = True
+            if not seen:
+                visible.append(key.clone())
+    for key in visible:
+        for layer in layers:
+            match layer.get(key):
+                Some(value) =>
+                    pair: Tuple[K, V] = (key.clone(), value.clone())
+                    out.append(pair)
+                    break
+                None => pass
+    return out
+
+
+def _missing_value[T with Clone]() -> T:
+    missing: list[T] = []
+    return missing[0]
+
+
+def _runtime_error(message: str) -> None:
+    _ = message
+    missing: list[int] = []
+    missing[0]

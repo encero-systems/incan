@@ -25,14 +25,27 @@ In other words: library authors should not need to rewrite their vocab companion
 
 ## Version tracking
 
-Current crate version: **0.2.0**.
+Current crate version: **0.3.0**.
 
 `incan_vocab` uses crate semver for the Rust API that companion crates compile against. The serialized metadata contracts are tracked separately by constants in `version.rs`:
 
 - `VOCAB_METADATA_VERSION`: current serialized vocab metadata contract version.
 - `WASM_DESUGAR_ABI_VERSION`: current compiler/desugarer request-response ABI version.
 
-Those constants do not need to change for every additive Rust API release. For example, `incan_vocab` 0.2.0 adds new author-facing scoped-surface DTOs while keeping the metadata and WASM ABI versions at `1`.
+Those constants do not need to change for every additive Rust API release. For example, `incan_vocab` 0.3.0 adds new author-facing scoped-symbol DTOs while keeping the metadata and WASM ABI versions at `1`.
+
+### What's new in 0.3.0
+
+Version 0.3.0 is the RFC 045 release. It adds the stable library-author contract for scoped DSL identifier symbols:
+
+- `DslSurface::with_scoped_symbol(...)` and `with_scoped_symbols(...)` let a library attach scoped identifier meaning to an import-activated DSL surface.
+- `ScopedSymbolDescriptor` describes identifier-call symbols such as `sum`, `count`, or DSL-specific function names without routing them through glyph/path syntax APIs.
+- `ScopedSymbolFamily` provides compiler/tooling-known categories such as function-like, aggregate-like, predicate-like, projection-like, grouping-like, ordering-like, and window-like symbols.
+- `ScopedSymbolRoleMetadata` lets DSL authors attach optional role metadata without expanding the compiler-known family enum for every domain concept.
+- `ScopedSymbolEligibility` and `ScopedSymbolPosition` describe name-resolution contexts where an unqualified identifier may receive DSL-owned meaning.
+- `ScopedSymbolMisuseScope` keeps descriptor-owned diagnostics inside active DSL contexts, preserving ordinary Incan resolution outside DSL scope.
+- `ScopedSymbolDiagnosticTemplate` lets library authors provide targeted diagnostics for DSL-internal misuse, ambiguity, or invalid call payloads.
+- `IncanExpr::ScopedSymbolCall` and `IncanScopedSymbolCall` expose accepted scoped-symbol calls to desugarers.
 
 ### What's new in 0.2.0
 
@@ -50,6 +63,7 @@ Version 0.2.0 is the RFC 040 release. It adds the stable library-author contract
 
 | Version | Compiler line                | Summary                                                                                                                      |
 | ------- | ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `0.3.0` | Incan `0.3` development line | Adds RFC 045 scoped DSL identifier symbol descriptors and scoped-symbol desugarer payloads.                                 |
 | `0.2.0` | Incan `0.3` development line | Adds RFC 040 scoped DSL surface descriptors and scoped-surface desugarer payloads.                                           |
 | `0.1.0` | Incan `0.2` development line | Initial stable companion-crate contract for import-activated vocab declarations, manifest metadata, and desugarer packaging. |
 
@@ -88,6 +102,7 @@ These are the main author-facing types:
 - `DeclarationSurface`: one top-level DSL declaration such as `query`, `step`, or `route`
 - `ClauseSurface`: one declaration-owned clause such as `FROM`, `SELECT`, or `middleware`
 - `ScopedSurfaceDescriptor`: one declaration-owned scoped glyph, binding-like glyph, or expression-form surface
+- `ScopedSymbolDescriptor`: one declaration-owned scoped identifier symbol for eligible DSL name-resolution positions
 - `LibraryManifest`: exported module metadata plus any required Cargo or stdlib requirements
 
 ### Public desugaring contract

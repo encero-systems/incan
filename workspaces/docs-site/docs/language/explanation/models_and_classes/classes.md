@@ -252,7 +252,9 @@ class AnimalService:
 A more complex example:
 
 ```incan
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 model User:
     id: int
     email: str

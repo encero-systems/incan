@@ -12,8 +12,8 @@ use serde_json::json;
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::api_metadata::{
-    CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
-    collect_checked_api_metadata, validate_checked_api_docstrings,
+    ApiDeclaration, ApiFunction, ApiPartial, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage,
+    CheckedApiPackageIdentity, collect_checked_api_metadata, validate_checked_api_docstrings,
 };
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, read_model_bundles_from_json, read_project_model_bundles,
@@ -21,7 +21,7 @@ use crate::frontend::contract_metadata::{
 use crate::frontend::diagnostics;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::typechecker;
-use crate::library_manifest::LibraryManifest;
+use crate::library_manifest::{LibraryManifest, ParamExport, ParamKindExport, TypeRef};
 use crate::manifest::ProjectManifest;
 
 use super::common::{collect_modules, imported_module_deps_for_with_index, module_key_index, resolve_project_root};
@@ -40,6 +40,8 @@ pub enum ToolsDoctorFormat {
 pub enum ToolsMetadataFormat {
     /// Stable checked API metadata JSON.
     Json,
+    /// Generated Markdown reference from checked API metadata.
+    Markdown,
 }
 
 /// Output format for `incan tools metadata model`.
@@ -70,8 +72,186 @@ pub fn tools_metadata_api(path: &Path, format: ToolsMetadataFormat) -> CliResult
                 .map_err(|error| CliError::failure(format!("failed to serialize API metadata: {error}")))?;
             println!("{output}");
         }
+        ToolsMetadataFormat::Markdown => {
+            print!("{}", render_api_metadata_markdown(&package));
+        }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Render a compact Markdown API reference from checked API metadata.
+fn render_api_metadata_markdown(package: &CheckedApiMetadataPackage) -> String {
+    let title = package
+        .package
+        .as_ref()
+        .map(|identity| identity.name.as_str())
+        .unwrap_or("Checked API");
+    let mut output = format!("# {title} API\n\n");
+    if let Some(identity) = &package.package
+        && let Some(version) = &identity.version
+    {
+        output.push_str(&format!("Version: `{version}`\n\n"));
+    }
+
+    for module in &package.modules {
+        output.push_str(&format!("## Module `{}`\n\n", module.module_path.join("::")));
+        for declaration in &module.declarations {
+            match declaration {
+                ApiDeclaration::Function(function) => render_api_function_markdown(&mut output, function),
+                ApiDeclaration::Partial(partial) => render_api_partial_markdown(&mut output, partial),
+                _ => render_api_declaration_summary_markdown(&mut output, declaration),
+            }
+        }
+    }
+    output
+}
+
+/// Render one public function declaration into the generated Markdown reference.
+fn render_api_function_markdown(output: &mut String, function: &ApiFunction) {
+    output.push_str(&format!("### `{}`\n\n", function.name));
+    output.push_str("```incan\n");
+    output.push_str(&format!(
+        "pub def {}({}) -> {}\n",
+        function.name,
+        format_api_params(&function.params),
+        format_api_type_ref(&function.return_type)
+    ));
+    output.push_str("```\n\n");
+    if let Some(docstring) = function
+        .docstring
+        .as_deref()
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+    {
+        output.push_str(docstring);
+        output.push_str("\n\n");
+    }
+}
+
+/// Render one public partial declaration into the generated Markdown reference.
+fn render_api_partial_markdown(output: &mut String, partial: &ApiPartial) {
+    output.push_str(&format!("### `{}`\n\n", partial.name));
+    output.push_str("```incan\n");
+    output.push_str(&format!(
+        "pub {} = partial {}({}) -> {}\n",
+        partial.name,
+        partial.target_path.join("::"),
+        format_api_params(&partial.params),
+        format_api_type_ref(&partial.return_type)
+    ));
+    output.push_str("```\n\n");
+    output.push_str(&format!("- Target: `{}`\n", partial.target_path.join("::")));
+    if !partial.presets.is_empty() {
+        let presets = partial
+            .presets
+            .iter()
+            .map(|preset| format!("`{}`", preset.name))
+            .collect::<Vec<_>>()
+            .join(", ");
+        output.push_str(&format!("- Presets: {presets}\n"));
+    }
+    output.push('\n');
+}
+
+/// Render a concise declaration summary for checked API declaration kinds without a specialized Markdown section.
+fn render_api_declaration_summary_markdown(output: &mut String, declaration: &ApiDeclaration) {
+    let Some((name, signature)) = api_declaration_summary_signature(declaration) else {
+        return;
+    };
+    output.push_str(&format!("### `{name}`\n\n"));
+    output.push_str("```incan\n");
+    output.push_str(&signature);
+    output.push('\n');
+    output.push_str("```\n\n");
+}
+
+/// Return a compact checked declaration signature for generated Markdown.
+fn api_declaration_summary_signature(declaration: &ApiDeclaration) -> Option<(String, String)> {
+    match declaration {
+        ApiDeclaration::Model(model) => Some((model.name.clone(), format!("pub model {}", model.name))),
+        ApiDeclaration::Class(class) => Some((class.name.clone(), format!("pub class {}", class.name))),
+        ApiDeclaration::Trait(trait_decl) => Some((trait_decl.name.clone(), format!("pub trait {}", trait_decl.name))),
+        ApiDeclaration::Enum(enum_decl) => Some((enum_decl.name.clone(), format!("pub enum {}", enum_decl.name))),
+        ApiDeclaration::Newtype(newtype) => {
+            let keyword = if newtype.is_rusttype { "rusttype" } else { "newtype" };
+            Some((
+                newtype.name.clone(),
+                format!(
+                    "pub {keyword} {} = {}",
+                    newtype.name,
+                    format_api_type_ref(&newtype.underlying)
+                ),
+            ))
+        }
+        ApiDeclaration::TypeAlias(alias) => Some((
+            alias.name.clone(),
+            format!(
+                "pub type {} = {}",
+                alias.name,
+                format_api_type_ref(&alias.type_alias.target)
+            ),
+        )),
+        ApiDeclaration::Const(konst) => Some((
+            konst.name.clone(),
+            format!("pub const {}: {}", konst.name, format_api_type_ref(&konst.ty)),
+        )),
+        ApiDeclaration::Static(static_decl) => Some((
+            static_decl.name.clone(),
+            format!(
+                "pub static {}: {}",
+                static_decl.name,
+                format_api_type_ref(&static_decl.ty)
+            ),
+        )),
+        ApiDeclaration::Alias(alias) => Some((
+            alias.name.clone(),
+            format!("pub {} = alias {}", alias.name, alias.target_path.join("::")),
+        )),
+        ApiDeclaration::Function(_) | ApiDeclaration::Partial(_) => None,
+    }
+}
+
+/// Format checked API callable parameters for generated Markdown signatures.
+fn format_api_params(params: &[ParamExport]) -> String {
+    params.iter().map(format_api_param).collect::<Vec<_>>().join(", ")
+}
+
+/// Format one checked API callable parameter for generated Markdown signatures.
+fn format_api_param(param: &ParamExport) -> String {
+    let prefix = match param.kind {
+        ParamKindExport::Normal => "",
+        ParamKindExport::RestPositional => "*",
+        ParamKindExport::RestKeyword => "**",
+    };
+    let default = if param.has_default { " = ..." } else { "" };
+    format!("{prefix}{}: {}{default}", param.name, format_api_type_ref(&param.ty))
+}
+
+/// Format a checked API type reference for generated Markdown signatures.
+fn format_api_type_ref(ty: &TypeRef) -> String {
+    match ty {
+        TypeRef::Named { name } | TypeRef::TypeParam { name } => name.clone(),
+        TypeRef::Applied { name, args } => format!(
+            "{}[{}]",
+            name,
+            args.iter().map(format_api_type_ref).collect::<Vec<_>>().join(", ")
+        ),
+        TypeRef::Function { params, return_type } => format!(
+            "Callable[[{}], {}]",
+            params.iter().map(format_api_type_ref).collect::<Vec<_>>().join(", "),
+            format_api_type_ref(return_type)
+        ),
+        TypeRef::Tuple { elements } => {
+            format!(
+                "({})",
+                elements.iter().map(format_api_type_ref).collect::<Vec<_>>().join(", ")
+            )
+        }
+        TypeRef::SelfType => "Self".to_string(),
+        TypeRef::Ref { inner } => format!("&{}", format_api_type_ref(inner)),
+        TypeRef::RustPath { path } => format!("rust::{path}"),
+        TypeRef::Unknown => "unknown".to_string(),
+    }
 }
 
 /// Emit one canonical model bundle from a project, bundle file, or `.incnlib` artifact.
@@ -1061,6 +1241,7 @@ fn display_option_path(path: &Option<PathBuf>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frontend::api_metadata::ApiDeclaration;
 
     #[test]
     fn collect_api_metadata_package_extracts_project_lib() -> Result<(), Box<dyn std::error::Error>> {
@@ -1080,8 +1261,10 @@ version = "0.1.0"
             r#"
 pub const LABEL = "demo"
 
-pub def label() -> str:
-    return LABEL
+pub def label(prefix: str, suffix: str = "/") -> str:
+    return prefix
+
+pub quick_label = partial label(prefix=LABEL)
 "#,
         )?;
 
@@ -1096,7 +1279,20 @@ pub def label() -> str:
         );
         assert_eq!(package.modules.len(), 1);
         assert_eq!(package.modules[0].module_path, vec!["lib".to_string()]);
-        assert_eq!(package.modules[0].declarations.len(), 2);
+        assert_eq!(package.modules[0].declarations.len(), 3);
+        assert!(
+            package.modules[0]
+                .declarations
+                .iter()
+                .any(|decl| matches!(decl, ApiDeclaration::Partial(partial) if partial.name == "quick_label")),
+            "expected tools metadata api to preserve public partial declarations"
+        );
+        let markdown = render_api_metadata_markdown(&package);
+        assert!(
+            markdown.contains("pub quick_label = partial label(prefix: str = ..., suffix: str = ...) -> str")
+                && markdown.contains("- Presets: `prefix`"),
+            "expected generated API Markdown to render partial signatures and provenance, got:\n{markdown}"
+        );
         Ok(())
     }
 

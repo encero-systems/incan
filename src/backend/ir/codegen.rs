@@ -40,7 +40,6 @@ use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::decorators::{self, DecoratorId};
-use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::stdlib;
 use incan_core::lang::traits::{self as core_traits, TraitId};
 
@@ -49,6 +48,9 @@ use super::scanners::{
     detect_serde_usage,
 };
 use super::{AstLowering, EmitError, EmitService, IrEmitter, LoweringErrors};
+
+const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
+const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
 
 fn collect_model_field_aliases(main: &Program, deps: &[(&str, &Program)]) -> HashMap<String, HashMap<String, String>> {
     use crate::frontend::ast::Declaration;
@@ -105,6 +107,7 @@ fn generated_module_path_for_source_import(path: &ImportPath, current_module_pat
 fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_stdlib_public_items: bool) -> bool {
     if module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "derives", "collection"])
         || module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "result"])
+        || module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "serde", "json"])
     {
         return true;
     }
@@ -345,11 +348,13 @@ fn collect_dependency_type_metadata(deps: &[(&str, &Program, Option<Vec<String>>
     }
 }
 
+/// Return whether any loaded module derives serde serialize or deserialize through resolved JSON derive imports.
 fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bool) {
     let mut has_serialize = false;
     let mut has_deserialize = false;
 
     let mut visit = |program: &Program| {
+        let import_aliases = decorator_resolution::collect_import_aliases(program);
         for decl in &program.declarations {
             let decorators = match &decl.node {
                 Declaration::Model(m) => Some(&m.decorators),
@@ -371,9 +376,31 @@ fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bo
                     let crate::frontend::ast::Expr::Ident(name) = &expr.node else {
                         continue;
                     };
-                    match derives::from_str(name.as_str()) {
-                        Some(DeriveId::Serialize) => has_serialize = true,
-                        Some(DeriveId::Deserialize) => has_deserialize = true,
+                    let resolved = import_aliases
+                        .get(name)
+                        .cloned()
+                        .unwrap_or_else(|| vec![name.to_string()]);
+                    match resolved.as_slice() {
+                        [std, serde, json] if std == "std" && serde == "serde" && json == "json" => {
+                            has_serialize = true;
+                            has_deserialize = true;
+                        }
+                        [std, serde, json, trait_name]
+                            if std == "std" && serde == "serde" && json == "json" && trait_name == "Serialize" =>
+                        {
+                            has_serialize = true;
+                        }
+                        [std, serde, json, trait_name]
+                            if std == "std" && serde == "serde" && json == "json" && trait_name == "Deserialize" =>
+                        {
+                            has_deserialize = true;
+                        }
+                        [serde, trait_name] if serde == "serde" && trait_name == "Serialize" => {
+                            has_serialize = true;
+                        }
+                        [serde, trait_name] if serde == "serde" && trait_name == "Deserialize" => {
+                            has_deserialize = true;
+                        }
                         _ => {}
                     }
                 }
@@ -386,8 +413,8 @@ fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bo
         visit(dep);
     }
 
-    // Fallback: if no explicit @derive(Serialize/Deserialize) was found but serde usage is
-    // detected (e.g. `json_stringify()` builtin), we conservatively enable Serialize only.
+    // Fallback: if no explicit serde derive was found but serde usage is detected (e.g. `json_stringify()` builtin), we
+    // conservatively enable Serialize only.
     // Deserialize is NOT enabled here because implicit serde usage (like `json_stringify`)
     // only needs serialization, not deserialization.
     if !has_serialize && !has_deserialize {
@@ -433,9 +460,6 @@ fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool,
         }
     }
 
-    let serialize = derives::as_str(DeriveId::Serialize);
-    let deserialize = derives::as_str(DeriveId::Deserialize);
-
     for decl in &mut ir_program.declarations {
         if let IrDeclKind::Struct(s) = &mut decl.kind
             && s.fields.len() == 1
@@ -447,11 +471,11 @@ fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool,
             if !is_conservative_serde_safe_newtype_inner(&s.fields[0].ty) {
                 continue;
             }
-            if add_serialize && !s.derives.iter().any(|d| d == serialize) {
-                s.derives.push(serialize.to_string());
+            if add_serialize && !s.derives.iter().any(|d| d == SERDE_SERIALIZE_DERIVE) {
+                s.derives.push(SERDE_SERIALIZE_DERIVE.to_string());
             }
-            if add_deserialize && !s.derives.iter().any(|d| d == deserialize) {
-                s.derives.push(deserialize.to_string());
+            if add_deserialize && !s.derives.iter().any(|d| d == SERDE_DESERIALIZE_DERIVE) {
+                s.derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
             }
         }
     }
@@ -538,7 +562,7 @@ pub struct IrCodegen<'a> {
     /// Stores both the flat module name (used for build graph identity) and the nested module path
     /// segments (used for correct Rust qualification in codegen).
     dependency_modules: Vec<(&'a str, &'a Program, Option<Vec<String>>)>,
-    /// Whether serde is needed (for Serialize/Deserialize derives)
+    /// Whether serde is needed for emitted Rust derives or helpers.
     // Serde still affects emitted Rust imports and derive augmentation in IR emission, so this remains an
     // emission-internal signal even after project-level requirement collection moved to provider manifests.
     needs_serde: bool,
@@ -722,7 +746,7 @@ impl<'a> IrCodegen<'a> {
         }
     }
 
-    /// Scan a program for Serialize/Deserialize derives.
+    /// Scan a program for serde-backed derives.
     ///
     /// This remains an internal compatibility hook because serde-backed derives and legacy
     /// `json_stringify` usage can still require serde emission without import-activated provider
@@ -1379,6 +1403,108 @@ mod tests {
         assert!(!code.contains("#[allow(dead_code)]"), "{code}");
         assert!(!code.contains("#[allow(unused_imports)]"), "{code}");
         assert!(!code.contains("#[allow(dead_code, unused_variables)]"), "{code}");
+    }
+
+    #[test]
+    fn partial_function_codegen_emits_wrapper_with_defaulted_preset() {
+        let code = generate(
+            r#"
+pub def route(method: str, path: str) -> str:
+  return method
+
+pub get = partial route(method="GET")
+
+pub def use() -> str:
+  return get(path="/health")
+"#,
+        );
+        assert!(code.contains("pub fn get("), "{code}");
+        assert!(code.contains("\"GET\""), "{code}");
+        assert!(code.contains("route("), "{code}");
+        assert!(
+            code.contains("get(\"GET\".to_string(), \"/health\".to_string())"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn local_partial_codegen_fills_omitted_preset_argument() {
+        let code = generate(
+            r#"
+def route(method: str, path: str) -> str:
+  return method + path
+
+pub def use() -> str:
+  get = partial route(method="GET")
+  return get(path="/health")
+"#,
+        );
+        assert!(code.contains("|method, path|"), "{code}");
+        assert!(
+            code.contains("get(\"GET\".to_string(), \"/health\".to_string())"),
+            "{code}"
+        );
+    }
+
+    #[test]
+    fn partial_model_constructor_codegen_emits_wrapper_with_defaulted_preset() {
+        let code = generate(
+            r#"
+pub model Reader:
+  layer: str
+  format: str
+
+pub BronzeReader = partial Reader(layer="bronze", format="delta")
+
+pub def use() -> Reader:
+  return BronzeReader()
+"#,
+        );
+        assert!(code.contains("pub fn BronzeReader("), "{code}");
+        assert!(code.contains("\"bronze\""), "{code}");
+        assert!(code.contains("\"delta\""), "{code}");
+        assert!(code.contains("Reader {"), "{code}");
+    }
+
+    #[test]
+    fn trait_method_partial_codegen_emits_default_method_wrapper() {
+        let code = generate(
+            r#"
+trait Named:
+  def label(self, prefix: str) -> str:
+    return prefix
+  short = partial label(prefix="name")
+
+model User with Named:
+  name: str
+
+pub def use(user: User) -> str:
+  return user.short()
+"#,
+        );
+        assert!(code.contains("fn short"), "{code}");
+        assert!(code.contains("return self.label(prefix);"), "{code}");
+        assert!(code.contains("user.short(\"name\".to_string())"), "{code}");
+    }
+
+    #[test]
+    fn method_partial_codegen_resolves_alias_target() {
+        let code = generate(
+            r#"
+model User:
+  name: str
+  def label(self, prefix: str) -> str:
+    return prefix
+  display = label
+  short = partial display(prefix="name")
+
+pub def use(user: User) -> str:
+  return user.short()
+"#,
+        );
+        assert!(code.contains("fn short"), "{code}");
+        assert!(code.contains("return self.label(&prefix);"), "{code}");
+        assert!(code.contains("user.short(\"name\".to_string())"), "{code}");
     }
 
     #[test]
@@ -2192,7 +2318,9 @@ pub model User:
     #[test]
     fn test_serde_detection() {
         let source = r#"
-@derive(Serialize, Deserialize)
+from std.serde import json
+
+@derive(json)
 model Config:
   name: str
 "#;
@@ -2202,6 +2330,8 @@ model Config:
     #[test]
     fn test_serde_detection_single_derive() {
         let source = r#"
+from std.serde.json import Serialize
+
 @derive(Serialize)
 model User:
   id: int

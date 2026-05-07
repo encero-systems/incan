@@ -39,7 +39,7 @@ use super::decl::{FunctionParam, IrDecl, IrDeclKind};
 use super::expr::{IrCallArg, IrCallArgKind, IrExprKind, VarAccess, VarRefKind};
 use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
-use super::{IrProgram, Mutability};
+use super::{FunctionSignature, IrProgram, Mutability};
 use crate::frontend::ast;
 use crate::frontend::decorator_resolution;
 use crate::frontend::symbols::NewtypePrimitiveConstraint;
@@ -74,6 +74,10 @@ pub struct AstLowering {
     pub(super) scopes: Vec<HashMap<String, IrType>>,
     /// Scope chain for local bindings that preserve RFC 052 live static semantics.
     pub(super) static_binding_scopes: Vec<std::collections::HashSet<String>>,
+    /// Scope chain for local callable signatures that carry default expressions not representable in [`IrType`].
+    pub(super) local_callable_signature_scopes: Vec<HashMap<String, Option<FunctionSignature>>>,
+    /// Callable signatures rehydrated while lowering local partial expressions, keyed by source span.
+    pub(super) partial_expr_signatures: HashMap<(usize, usize), FunctionSignature>,
     /// Track declared structs/models/classes for constructor detection
     pub(super) struct_names: HashMap<String, IrType>,
     /// Track declared enums for type resolution
@@ -118,6 +122,8 @@ pub struct AstLowering {
     pub(super) non_linear_context_depth: usize,
     /// Import alias map for decorator/derive passthrough resolution.
     pub(super) import_aliases: HashMap<String, Vec<String>>,
+    /// Direct Rust import aliases mapped to Rust path segments.
+    pub(super) rust_import_aliases: HashMap<String, Vec<String>>,
     /// Function-typed parameters for the currently lowered callable body.
     pub(super) callable_param_scopes: Vec<HashSet<String>>,
     /// Module-level symbol aliases mapped from alias name to canonical target name.
@@ -188,6 +194,8 @@ impl AstLowering {
         Self {
             scopes: vec![HashMap::new()],
             static_binding_scopes: vec![HashSet::new()],
+            local_callable_signature_scopes: vec![HashMap::new()],
+            partial_expr_signatures: HashMap::new(),
             struct_names: HashMap::new(),
             enum_names: HashMap::new(),
             mutable_vars: HashMap::new(),
@@ -204,6 +212,7 @@ impl AstLowering {
             remaining_ident_reads: Vec::new(),
             non_linear_context_depth: 0,
             import_aliases: HashMap::new(),
+            rust_import_aliases: HashMap::new(),
             callable_param_scopes: Vec::new(),
             symbol_aliases: HashMap::new(),
             stdlib_cache: StdlibAstCache::new(),
@@ -228,6 +237,250 @@ impl AstLowering {
             .collect()
     }
 
+    /// Build a keyword-to-expression map for one partial preset argument list.
+    fn partial_arg_map(args: &[ast::PartialArg]) -> HashMap<String, ast::Spanned<ast::Expr>> {
+        args.iter().map(|arg| (arg.name.clone(), arg.value.clone())).collect()
+    }
+
+    /// Construct a spanned identifier expression for synthetic wrapper bodies.
+    fn ident_expr(name: impl Into<String>, span: ast::Span) -> ast::Spanned<ast::Expr> {
+        ast::Spanned::new(ast::Expr::Ident(name.into()), span)
+    }
+
+    /// Construct a spanned simple type annotation for synthetic constructor wrappers.
+    fn simple_type(name: impl Into<String>, span: ast::Span) -> ast::Spanned<ast::Type> {
+        ast::Spanned::new(ast::Type::Simple(name.into()), span)
+    }
+
+    /// Clone target parameters and replace preset parameters with partial-provided defaults.
+    fn partial_projected_params(
+        params: &[ast::Spanned<ast::Param>],
+        presets: &HashMap<String, ast::Spanned<ast::Expr>>,
+    ) -> Vec<ast::Spanned<ast::Param>> {
+        params
+            .iter()
+            .map(|param| {
+                let mut projected = param.clone();
+                if let Some(default) = presets.get(&projected.node.name) {
+                    projected.node.default = Some(default.clone());
+                }
+                projected
+            })
+            .collect()
+    }
+
+    /// Build named forwarding arguments from a projected wrapper parameter list.
+    fn partial_forward_args(params: &[ast::Spanned<ast::Param>], span: ast::Span) -> Vec<ast::CallArg> {
+        params
+            .iter()
+            .map(|param| ast::CallArg::Named(param.node.name.clone(), Self::ident_expr(param.node.name.clone(), span)))
+            .collect()
+    }
+
+    /// Build a synthetic function declaration that forwards a top-level function partial to its target.
+    fn function_partial_wrapper(
+        partial: &ast::PartialDecl,
+        target: &ast::FunctionDecl,
+        span: ast::Span,
+    ) -> ast::FunctionDecl {
+        let presets = Self::partial_arg_map(&partial.args);
+        let params = Self::partial_projected_params(&target.params, &presets);
+        let callee = Self::ident_expr(target.name.clone(), span);
+        let call = ast::Spanned::new(
+            ast::Expr::Call(Box::new(callee), Vec::new(), Self::partial_forward_args(&params, span)),
+            span,
+        );
+        ast::FunctionDecl {
+            visibility: partial.visibility,
+            decorators: Vec::new(),
+            surface_modifiers: target.surface_modifiers.clone(),
+            name: partial.name.clone(),
+            type_params: target.type_params.clone(),
+            params,
+            return_type: target.return_type.clone(),
+            body: vec![ast::Spanned::new(ast::Statement::Return(Some(call)), span)],
+        }
+    }
+
+    /// Build a synthetic function declaration that forwards a constructor partial to its target type.
+    fn constructor_partial_wrapper(
+        partial: &ast::PartialDecl,
+        target_name: &str,
+        target_params: Vec<ast::Spanned<ast::Param>>,
+        return_type: ast::Spanned<ast::Type>,
+        span: ast::Span,
+    ) -> ast::FunctionDecl {
+        let presets = Self::partial_arg_map(&partial.args);
+        let params = Self::partial_projected_params(&target_params, &presets);
+        let callee = Self::ident_expr(target_name.to_string(), span);
+        let call = ast::Spanned::new(
+            ast::Expr::Call(Box::new(callee), Vec::new(), Self::partial_forward_args(&params, span)),
+            span,
+        );
+        ast::FunctionDecl {
+            visibility: partial.visibility,
+            decorators: Vec::new(),
+            surface_modifiers: Vec::new(),
+            name: partial.name.clone(),
+            type_params: Vec::new(),
+            params,
+            return_type,
+            body: vec![ast::Spanned::new(ast::Statement::Return(Some(call)), span)],
+        }
+    }
+
+    /// Convert model or class fields into constructor-style wrapper parameters.
+    fn model_constructor_params(fields: &[ast::Spanned<ast::FieldDecl>]) -> Vec<ast::Spanned<ast::Param>> {
+        fields
+            .iter()
+            .map(|field| {
+                ast::Spanned::new(
+                    ast::Param {
+                        is_mut: false,
+                        kind: ast::ParamKind::Normal,
+                        name: field.node.name.clone(),
+                        ty: field.node.ty.clone(),
+                        default: field.node.default.clone(),
+                    },
+                    field.span,
+                )
+            })
+            .collect()
+    }
+
+    /// Build the single `value` parameter surface for a newtype constructor partial.
+    fn newtype_constructor_params(nt: &ast::NewtypeDecl) -> Vec<ast::Spanned<ast::Param>> {
+        vec![ast::Spanned::new(
+            ast::Param {
+                is_mut: false,
+                kind: ast::ParamKind::Normal,
+                name: "value".to_string(),
+                ty: nt.underlying.clone(),
+                default: None,
+            },
+            nt.underlying.span,
+        )]
+    }
+
+    /// Resolve a top-level partial declaration to the synthetic wrapper function used by IR lowering.
+    fn partial_wrapper_function(
+        &self,
+        program: &ast::Program,
+        partial: &ast::PartialDecl,
+        span: ast::Span,
+    ) -> Result<ast::FunctionDecl, LoweringError> {
+        let [target_name] = partial.target.segments.as_slice() else {
+            return Err(LoweringError {
+                message: format!(
+                    "Partial '{}' lowers only for local callable targets in this implementation",
+                    partial.name
+                ),
+                span: span.into(),
+            });
+        };
+        for decl in &program.declarations {
+            match &decl.node {
+                ast::Declaration::Function(func) if &func.name == target_name => {
+                    return Ok(Self::function_partial_wrapper(partial, func, span));
+                }
+                ast::Declaration::Model(model) if &model.name == target_name => {
+                    return Ok(Self::constructor_partial_wrapper(
+                        partial,
+                        &model.name,
+                        Self::model_constructor_params(&model.fields),
+                        Self::simple_type(model.name.clone(), span),
+                        span,
+                    ));
+                }
+                ast::Declaration::Class(class) if &class.name == target_name => {
+                    return Ok(Self::constructor_partial_wrapper(
+                        partial,
+                        &class.name,
+                        Self::model_constructor_params(&class.fields),
+                        Self::simple_type(class.name.clone(), span),
+                        span,
+                    ));
+                }
+                ast::Declaration::Newtype(nt) if &nt.name == target_name => {
+                    return Ok(Self::constructor_partial_wrapper(
+                        partial,
+                        &nt.name,
+                        Self::newtype_constructor_params(nt),
+                        Self::simple_type(nt.name.clone(), span),
+                        span,
+                    ));
+                }
+                _ => {}
+            }
+        }
+        Err(LoweringError {
+            message: format!("Partial '{}' targets unknown callable '{}'", partial.name, target_name),
+            span: span.into(),
+        })
+    }
+
+    /// Build synthetic same-type method wrappers for method partial declarations.
+    fn method_partial_wrappers(
+        methods: &[ast::Spanned<ast::MethodDecl>],
+        aliases: &[ast::Spanned<ast::MethodAliasDecl>],
+        partials: &[ast::Spanned<ast::MethodPartialDecl>],
+        span: ast::Span,
+    ) -> Vec<ast::Spanned<ast::MethodDecl>> {
+        let mut out = Vec::new();
+        let aliases = Self::method_alias_rebindings(aliases);
+        for partial in partials {
+            let target_name = aliases
+                .get(&partial.node.target)
+                .map(String::as_str)
+                .unwrap_or(partial.node.target.as_str());
+            let Some(target) = methods
+                .iter()
+                .chain(out.iter())
+                .find(|method| method.node.name == target_name)
+            else {
+                continue;
+            };
+            let presets = Self::partial_arg_map(&partial.node.args);
+            let params = Self::partial_projected_params(&target.node.params, &presets);
+            let receiver = ast::Spanned::new(ast::Expr::SelfExpr, span);
+            let call = ast::Spanned::new(
+                ast::Expr::MethodCall(
+                    Box::new(receiver),
+                    target.node.name.clone(),
+                    Vec::new(),
+                    Self::partial_forward_args(&params, span),
+                ),
+                span,
+            );
+            out.push(ast::Spanned::new(
+                ast::MethodDecl {
+                    decorators: Vec::new(),
+                    surface_modifiers: target.node.surface_modifiers.clone(),
+                    name: partial.node.name.clone(),
+                    type_params: target.node.type_params.clone(),
+                    receiver: target.node.receiver,
+                    params,
+                    return_type: target.node.return_type.clone(),
+                    body: Some(vec![ast::Spanned::new(ast::Statement::Return(Some(call)), span)]),
+                },
+                partial.span,
+            ));
+        }
+        out
+    }
+
+    /// Return authored methods plus synthetic method partial wrappers in declaration order.
+    fn methods_with_partials(
+        methods: &[ast::Spanned<ast::MethodDecl>],
+        aliases: &[ast::Spanned<ast::MethodAliasDecl>],
+        partials: &[ast::Spanned<ast::MethodPartialDecl>],
+        span: ast::Span,
+    ) -> Vec<ast::Spanned<ast::MethodDecl>> {
+        let mut all = methods.to_vec();
+        all.extend(Self::method_partial_wrappers(methods, aliases, partials, span));
+        all
+    }
+
     /// Create a lowering context that uses typechecker output for more accurate lowering.
     pub fn new_with_type_info(type_info: TypeCheckInfo) -> Self {
         let mut s = Self::new();
@@ -250,8 +503,12 @@ impl AstLowering {
                 let ast::Declaration::Trait(tr) = &decl.node else {
                     continue;
                 };
+                let mut trait_decl = tr.clone();
+                trait_decl.methods =
+                    Self::methods_with_partials(&tr.methods, &tr.method_aliases, &tr.method_partials, decl.span);
                 for module_key in &module_keys {
-                    self.trait_decls.insert(format!("{module_key}.{}", tr.name), tr.clone());
+                    self.trait_decls
+                        .insert(format!("{module_key}.{}", tr.name), trait_decl.clone());
                 }
             }
         }
@@ -331,14 +588,18 @@ impl AstLowering {
         VarAccess::Move
     }
 
+    /// Enter a nested lowering scope for locals, live static bindings, and local callable signatures.
     pub(super) fn push_scope(&mut self) {
         self.scopes.push(HashMap::new());
         self.static_binding_scopes.push(HashSet::new());
+        self.local_callable_signature_scopes.push(HashMap::new());
     }
 
+    /// Leave the current lowering scope and discard scoped local binding metadata.
     pub(super) fn pop_scope(&mut self) {
         let _ = self.scopes.pop();
         let _ = self.static_binding_scopes.pop();
+        let _ = self.local_callable_signature_scopes.pop();
     }
 
     pub(super) fn define_local_binding(&mut self, name: String, ty: IrType, is_static_binding: bool) {
@@ -348,6 +609,77 @@ impl AstLowering {
         if is_static_binding && let Some(scope) = self.static_binding_scopes.last_mut() {
             scope.insert(name);
         }
+    }
+
+    /// Define or shadow the callable signature associated with a local binding in the current scope.
+    pub(super) fn define_local_callable_signature(&mut self, name: String, signature: Option<FunctionSignature>) {
+        if let Some(scope) = self.local_callable_signature_scopes.last_mut() {
+            scope.insert(name, signature);
+        }
+    }
+
+    /// Update the nearest existing local binding's callable signature after reassignment.
+    pub(super) fn update_local_callable_signature(&mut self, name: &str, signature: Option<FunctionSignature>) {
+        if let Some(index) = self.scopes.iter().rposition(|scope| scope.contains_key(name))
+            && let Some(scope) = self.local_callable_signature_scopes.get_mut(index)
+        {
+            scope.insert(name.to_string(), signature);
+        }
+    }
+
+    /// Look up the callable signature associated with a local binding, respecting shadowing.
+    pub(super) fn lookup_local_callable_signature(&self, name: &str) -> Option<FunctionSignature> {
+        self.local_callable_signature_scopes
+            .iter()
+            .rev()
+            .find_map(|scope| scope.get(name).map(|signature| signature.as_ref().cloned()))?
+    }
+
+    /// Return the callable signature recorded while lowering a local partial expression.
+    pub(super) fn partial_expr_signature_for_span(&self, span: ast::Span) -> Option<FunctionSignature> {
+        self.partial_expr_signatures.get(&(span.start, span.end)).cloned()
+    }
+
+    /// Rehydrate a local partial expression into an IR callable signature so default values survive calls through
+    /// function-typed locals.
+    pub(super) fn partial_expr_callable_signature(
+        &mut self,
+        partial: &ast::PartialExpr,
+        span: ast::Span,
+    ) -> Result<Option<FunctionSignature>, LoweringError> {
+        let Some(crate::frontend::symbols::ResolvedType::Function(params, ret)) =
+            self.type_info.as_ref().and_then(|info| info.expr_type(span).cloned())
+        else {
+            return Ok(None);
+        };
+
+        let mut defaults = HashMap::new();
+        for arg in &partial.args {
+            defaults.insert(arg.name.clone(), self.lower_expr_spanned(&arg.value)?);
+        }
+
+        let signature = FunctionSignature {
+            params: params
+                .iter()
+                .enumerate()
+                .map(|(idx, param)| {
+                    let base_ty = self.lower_resolved_type(&param.ty);
+                    let ty = Self::lower_param_container_type(param.kind, base_ty);
+                    FunctionParam {
+                        name: param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
+                        ty,
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: param.kind,
+                        default: param.name.as_ref().and_then(|name| defaults.get(name).cloned()),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_resolved_type(ret.as_ref()),
+        };
+        self.partial_expr_signatures
+            .insert((span.start, span.end), signature.clone());
+        Ok(Some(signature))
     }
 
     /// Replace the nearest local binding type for `name` after lowering refines it.
@@ -529,6 +861,7 @@ impl AstLowering {
         let mut ir_program = IrProgram::new();
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
+        self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
         self.alias_imported_dependency_trait_decls();
         self.symbol_aliases = program
             .declarations
@@ -553,12 +886,19 @@ impl AstLowering {
         // First pass: collect class declarations, trait decls, and newtype ctor selection.
         for decl in &program.declarations {
             if let ast::Declaration::Class(ref c) = decl.node {
-                self.class_decls.insert(c.name.clone(), c.clone());
+                let mut class_decl = c.clone();
+                class_decl.methods =
+                    Self::methods_with_partials(&c.methods, &c.method_aliases, &c.method_partials, decl.span);
+                self.class_decls.insert(c.name.clone(), class_decl);
             }
             if let ast::Declaration::Trait(ref t) = decl.node {
-                let method_names: Vec<String> = t.methods.iter().map(|m| m.node.name.clone()).collect();
+                let trait_methods =
+                    Self::methods_with_partials(&t.methods, &t.method_aliases, &t.method_partials, decl.span);
+                let method_names: Vec<String> = trait_methods.iter().map(|m| m.node.name.clone()).collect();
                 self.trait_methods.insert(t.name.clone(), method_names);
-                self.trait_decls.insert(t.name.clone(), t.clone());
+                let mut trait_decl = t.clone();
+                trait_decl.methods = trait_methods;
+                self.trait_decls.insert(t.name.clone(), trait_decl);
                 let aliases = Self::method_alias_rebindings(&t.method_aliases);
                 if !aliases.is_empty() {
                     self.type_method_rebindings.insert(t.name.clone(), aliases);
@@ -717,6 +1057,47 @@ impl AstLowering {
                 ir_program
                     .function_registry
                     .register(alias.name.clone(), signature.params, signature.return_type);
+            } else if let ast::Declaration::Partial(ref partial) = decl.node {
+                match self.partial_wrapper_function(program, partial, decl.span) {
+                    Ok(wrapper) => {
+                        let type_param_names: std::collections::HashSet<&str> =
+                            wrapper.type_params.iter().map(|tp| tp.name.as_str()).collect();
+                        let params: Vec<FunctionParam> = wrapper
+                            .params
+                            .iter()
+                            .map(|p| {
+                                let base_ty =
+                                    self.lower_type_with_type_params(&p.node.ty.node, Some(&type_param_names));
+                                let param_ty = Self::lower_param_container_type(p.node.kind, base_ty);
+                                FunctionParam {
+                                    name: p.node.name.clone(),
+                                    ty: param_ty,
+                                    mutability: if p.node.is_mut {
+                                        Mutability::Mutable
+                                    } else {
+                                        Mutability::Immutable
+                                    },
+                                    is_self: false,
+                                    kind: p.node.kind,
+                                    default: p
+                                        .node
+                                        .default
+                                        .as_ref()
+                                        .and_then(|default_expr| self.lower_expr_spanned(default_expr).ok()),
+                                }
+                            })
+                            .collect();
+                        let return_type =
+                            self.lower_type_with_type_params(&wrapper.return_type.node, Some(&type_param_names));
+                        ir_program.function_registry.register(
+                            wrapper.name.clone(),
+                            params.clone(),
+                            return_type.clone(),
+                        );
+                        self.update_root_function_binding(&wrapper.name, &params, &return_type);
+                    }
+                    Err(e) => errors.push(e),
+                }
             }
         }
 
@@ -726,6 +1107,8 @@ impl AstLowering {
             // Models always get impl blocks (for serde methods even if no user methods)
             match &decl.node {
                 ast::Declaration::Model(m) => {
+                    let model_methods =
+                        Self::methods_with_partials(&m.methods, &m.method_aliases, &m.method_partials, decl.span);
                     // Generate struct
                     match self.lower_model(m) {
                         Ok(struct_ir) => {
@@ -734,7 +1117,7 @@ impl AstLowering {
                             ir_program
                                 .declarations
                                 .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())));
-                            match self.lower_decorated_method_statics(&struct_ir.name, &m.methods) {
+                            match self.lower_decorated_method_statics(&struct_ir.name, &model_methods) {
                                 Ok(statics) => ir_program.declarations.extend(statics),
                                 Err(e) => errors.push(e),
                             }
@@ -743,7 +1126,7 @@ impl AstLowering {
                             match self.lower_model_methods(
                                 &struct_ir.name,
                                 &m.type_params,
-                                &m.methods,
+                                &model_methods,
                                 &m.properties,
                                 &m.traits,
                             ) {
@@ -763,7 +1146,7 @@ impl AstLowering {
                                         &m.type_params,
                                         &trait_name,
                                         trait_type_args,
-                                        &m.methods,
+                                        &model_methods,
                                         &m.properties,
                                     ) {
                                         Ok(trait_impl) => {
@@ -779,7 +1162,7 @@ impl AstLowering {
                                     &m.type_params,
                                     &trait_name,
                                     trait_type_args,
-                                    &m.methods,
+                                    &model_methods,
                                     &m.properties,
                                 ) {
                                     Ok(trait_impl) => {
@@ -879,6 +1262,8 @@ impl AstLowering {
                     }
                 }
                 ast::Declaration::Newtype(n) => {
+                    let newtype_methods =
+                        Self::methods_with_partials(&n.methods, &n.method_aliases, &n.method_partials, decl.span);
                     if n.is_rusttype {
                         match self.lower_declaration(&ast::Declaration::Newtype(n.clone())) {
                             Ok(ir_decl) => {
@@ -898,12 +1283,18 @@ impl AstLowering {
                                 .push(IrDecl::new(IrDeclKind::Struct(struct_ir.clone())));
 
                             // Generate impl block for newtype methods (if any).
-                            if !n.methods.is_empty() {
-                                match self.lower_decorated_method_statics(&struct_ir.name, &n.methods) {
+                            if !newtype_methods.is_empty() {
+                                match self.lower_decorated_method_statics(&struct_ir.name, &newtype_methods) {
                                     Ok(statics) => ir_program.declarations.extend(statics),
                                     Err(e) => errors.push(e),
                                 }
-                                match self.lower_model_methods(&struct_ir.name, &n.type_params, &n.methods, &[], &[]) {
+                                match self.lower_model_methods(
+                                    &struct_ir.name,
+                                    &n.type_params,
+                                    &newtype_methods,
+                                    &[],
+                                    &[],
+                                ) {
                                     Ok(impl_ir) => {
                                         ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                     }
@@ -991,6 +1382,25 @@ impl AstLowering {
                     }
                     Err(e) => errors.push(e),
                 },
+                ast::Declaration::Partial(partial) => {
+                    match self.partial_wrapper_function(program, partial, decl.span) {
+                        Ok(wrapper) => match self.lower_declaration(&ast::Declaration::Function(wrapper)) {
+                            Ok(ir_decl) => {
+                                if let IrDeclKind::Function(ref func) = ir_decl.kind {
+                                    ir_program.function_registry.register(
+                                        func.name.clone(),
+                                        func.params.clone(),
+                                        func.return_type.clone(),
+                                    );
+                                    self.update_root_function_binding(&func.name, &func.params, &func.return_type);
+                                }
+                                ir_program.declarations.push(ir_decl);
+                            }
+                            Err(e) => errors.push(e),
+                        },
+                        Err(e) => errors.push(e),
+                    }
+                }
                 _ => {
                     // Regular declaration lowering
                     match self.lower_declaration(&decl.node) {
@@ -1015,9 +1425,8 @@ impl AstLowering {
                 }
             }
         }
-        // Propagate Serialize/Deserialize derives from structs to their field types (enums).
-        // This allows users to only annotate the top-level model with @derive(Serialize, Deserialize) and have it
-        // automatically apply to nested user-defined enums.
+        // Propagate serde derives from structs to their field types (enums). This allows users to only annotate the
+        // top-level model with @derive(json) and have it automatically apply to nested user-defined enums.
         Self::propagate_serde_derives(&mut ir_program);
 
         if errors.is_empty() {
@@ -1166,19 +1575,18 @@ impl AstLowering {
         }
     }
 
-    /// Propagate Serialize/Deserialize derives from structs to enum/newtype field types.
+    /// Propagate serde Rust derives from structs to enum/newtype field types.
     ///
-    /// When a struct has Serialize or Deserialize derives and contains fields of enum types, those enums also need the
-    /// same derives for the generated Rust code to compile. This function automatically adds those derives to avoid
-    /// requiring users to manually annotate every nested enum.
+    /// When a struct has `serde::Serialize` or `serde::Deserialize` derives and contains fields of enum types, those
+    /// enums also need the same derives for the generated Rust code to compile. This function automatically adds those
+    /// derives to avoid requiring users to manually annotate every nested enum.
     fn propagate_serde_derives(ir_program: &mut IrProgram) {
         use super::decl::IrDeclKind;
-        use incan_core::lang::derives::{self, DeriveId};
 
-        let serialize = derives::as_str(DeriveId::Serialize);
-        let deserialize = derives::as_str(DeriveId::Deserialize);
+        const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
+        const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
 
-        // Collect enum/newtype names that need Serialize/Deserialize
+        // Collect enum/newtype names that need serde derives.
         let mut enums_need_serialize: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut enums_need_deserialize: std::collections::HashSet<String> = std::collections::HashSet::new();
         let mut structs_need_serialize: std::collections::HashSet<String> = std::collections::HashSet::new();
@@ -1198,11 +1606,11 @@ impl AstLowering {
             }
         }
 
-        // First pass: find all structs with Serialize/Deserialize and collect their enum/newtype field types
+        // First pass: find all structs with serde derives and collect their enum/newtype field types.
         for decl in &ir_program.declarations {
             if let IrDeclKind::Struct(s) = &decl.kind {
-                let has_serialize = s.derives.iter().any(|d| d == serialize);
-                let has_deserialize = s.derives.iter().any(|d| d == deserialize);
+                let has_serialize = s.derives.iter().any(|d| d == SERDE_SERIALIZE_DERIVE);
+                let has_deserialize = s.derives.iter().any(|d| d == SERDE_DESERIALIZE_DERIVE);
 
                 if has_serialize {
                     for field in &s.fields {
@@ -1236,24 +1644,27 @@ impl AstLowering {
             }
         }
 
-        // Second pass: add Serialize/Deserialize to enums/newtypes that need them
+        // Second pass: add serde derives to enums/newtypes that need them.
         for decl in &mut ir_program.declarations {
             if let IrDeclKind::Enum(e) = &mut decl.kind {
-                if enums_need_serialize.contains(&e.name) && !e.derives.iter().any(|d| d == serialize) {
-                    e.derives.push(serialize.to_string());
+                if enums_need_serialize.contains(&e.name) && !e.derives.iter().any(|d| d == SERDE_SERIALIZE_DERIVE) {
+                    e.derives.push(SERDE_SERIALIZE_DERIVE.to_string());
                 }
-                if enums_need_deserialize.contains(&e.name) && !e.derives.iter().any(|d| d == deserialize) {
-                    e.derives.push(deserialize.to_string());
+                if enums_need_deserialize.contains(&e.name) && !e.derives.iter().any(|d| d == SERDE_DESERIALIZE_DERIVE)
+                {
+                    e.derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
                 }
             }
             if let IrDeclKind::Struct(s) = &mut decl.kind
                 && newtype_names.contains(&s.name)
             {
-                if structs_need_serialize.contains(&s.name) && !s.derives.iter().any(|d| d == serialize) {
-                    s.derives.push(serialize.to_string());
+                if structs_need_serialize.contains(&s.name) && !s.derives.iter().any(|d| d == SERDE_SERIALIZE_DERIVE) {
+                    s.derives.push(SERDE_SERIALIZE_DERIVE.to_string());
                 }
-                if structs_need_deserialize.contains(&s.name) && !s.derives.iter().any(|d| d == deserialize) {
-                    s.derives.push(deserialize.to_string());
+                if structs_need_deserialize.contains(&s.name)
+                    && !s.derives.iter().any(|d| d == SERDE_DESERIALIZE_DERIVE)
+                {
+                    s.derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
                 }
             }
         }
@@ -1320,7 +1731,6 @@ mod tests {
     use crate::backend::ir::expr::{CollectionMethodKind, IrExprKind, MethodKind, StringMethodKind, UnaryOp};
     use crate::backend::ir::stmt::IrStmtKind;
     use crate::frontend::{lexer, parser};
-    use incan_core::lang::derives::{self, DeriveId};
 
     fn must_ok<T, E: std::fmt::Debug>(result: Result<T, E>) -> T {
         match result {
@@ -1639,6 +2049,8 @@ def test() -> int:
     fn test_serde_propagation_respects_derives_and_containers() {
         let ir = must_ok(lower_source(
             r#"
+from std.serde.json import Serialize
+
 @derive(Serialize)
 model Payload:
   tags: set[Tag]
@@ -1652,8 +2064,8 @@ type UserId = newtype int
 "#,
         ));
 
-        let serialize = derives::as_str(DeriveId::Serialize).to_string();
-        let deserialize = derives::as_str(DeriveId::Deserialize).to_string();
+        let serialize = "serde::Serialize".to_string();
+        let deserialize = "serde::Deserialize".to_string();
 
         let mut tag_derives: Option<Vec<String>> = None;
         let mut user_id_derives: Option<Vec<String>> = None;

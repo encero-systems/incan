@@ -1,6 +1,6 @@
 # RFC 044: Open-Ended Trait Methods
 
-- **Status:** Draft
+- **Status:** Implemented
 - **Created:** 2026-03-27
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -10,7 +10,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/201
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -199,9 +199,66 @@ The parser must distinguish between trait and non-trait contexts to determine if
 - **Formatter**: The formatter should handle both forms consistently (prefer no colon for new code)
 - **LSP / Tooling**: Hover and diagnostics should work for both forms
 
-## Unresolved questions
+## Implementation Plan
 
-- Should the formatter prefer one form over the other? (Recommendation: prefer no colon for new code)
-- Should lints warn about mixing both forms in the same trait? (Recommendation: no — both are valid)
+### Phase 1: RFC lifecycle and parser contract
 
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+- Resolve the RFC's settled formatter/lint recommendations into design decisions.
+- Make method parsing context-aware so body-less methods are accepted only in trait bodies.
+- Preserve `def name(...) -> T: ...` as a valid abstract trait method spelling.
+- Keep non-trait `def name(...) -> T` rejected at parse time.
+
+### Phase 2: Formatter, docs, and tooling surfaces
+
+- Format abstract trait methods without the `: ...` suffix for newly formatted code.
+- Keep default method bodies and docstring-bearing methods colon-delimited.
+- Update authored user-facing language documentation for trait method declarations.
+- Add release notes for the active development line.
+
+### Phase 3: Verification and closeout
+
+- Add focused parser tests for body-less trait methods and non-trait rejection.
+- Add formatter tests for the preferred body-less trait method style.
+- Run formatting and the repository pre-commit gate.
+- Bump the active `0.3.0-dev.N` version by one development increment.
+
+## Progress Checklist
+
+### Spec / design
+
+- [x] Resolve formatter preference: formatter output should prefer no colon for abstract trait methods.
+- [x] Resolve lint policy: no lint should warn about mixing no-colon and `: ...` abstract trait method spellings.
+
+### Parser / AST
+
+- [x] Parser: accept body-less method declarations in trait bodies.
+- [x] Parser: preserve `: ...` abstract method declarations in trait bodies.
+- [x] Parser: reject body-less method declarations in models, classes, enums, and newtypes.
+- [x] Parser: reject body-less method declarations followed by a docstring without a colon.
+
+### Formatter / LSP / Tooling
+
+- [x] Formatter: prefer `def method(...) -> T` for abstract trait methods.
+- [x] LSP/tooling: confirm existing method metadata still reports abstract methods correctly.
+
+### Typechecker / Lowering / Emission
+
+- [x] Typechecker: confirm trait obligations treat both abstract spellings identically.
+- [x] Lowering/emission: confirm no IR is generated for abstract trait requirements.
+
+### Tests
+
+- [x] Parser unit tests cover body-less trait methods and invalid non-trait body-less methods.
+- [x] Formatter tests cover the preferred no-colon abstract trait method output.
+- [x] Run targeted parser/formatter/typechecker verification.
+
+### Docs / release
+
+- [x] Update authored language docs for abstract trait method declarations.
+- [x] Add release notes entry for RFC 044.
+- [x] Bump active development version from `0.3.0-dev.40` to `0.3.0-dev.41`.
+
+## Design Decisions
+
+- Formatter output should prefer the no-colon spelling for abstract trait methods in newly formatted code.
+- Lints should not warn about mixing no-colon and `: ...` abstract trait method spellings inside the same trait because both forms are valid and semantically equivalent.

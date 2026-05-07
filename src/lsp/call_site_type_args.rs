@@ -236,6 +236,18 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
             }
             crate::frontend::ast::DictEntry::Spread(value) => call_site_type_in_expr(value, offset),
         }),
+        Expr::Partial(partial) => {
+            if let Some(hit) = call_site_type_in_expr(&partial.target, offset) {
+                return Some(hit);
+            }
+            if let Some(hit) = scan_types_in_call(&partial.type_args, offset) {
+                return Some(hit);
+            }
+            partial
+                .args
+                .iter()
+                .find_map(|arg| call_site_type_in_expr(&arg.value, offset))
+        }
         Expr::Paren(inner) => call_site_type_in_expr(inner, offset),
         Expr::Constructor(_, args) => scan_call_args(args, offset),
         Expr::FString(parts) => parts.iter().find_map(|p| {
@@ -255,6 +267,14 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
             crate::frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => None,
             crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
                 call_site_type_in_expr(left, offset).or_else(|| call_site_type_in_expr(right, offset))
+            }
+            crate::frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                args.iter().find_map(|arg| match arg {
+                    crate::frontend::ast::CallArg::Positional(expr)
+                    | crate::frontend::ast::CallArg::Named(_, expr)
+                    | crate::frontend::ast::CallArg::PositionalUnpack(expr)
+                    | crate::frontend::ast::CallArg::KeywordUnpack(expr) => call_site_type_in_expr(expr, offset),
+                })
             }
         },
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr => None,

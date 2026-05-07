@@ -41,6 +41,8 @@ pub enum Expr {
     Field(Box<Spanned<Expr>>, Ident),
     /// Method call: `x.method(args)` or `x.method[T](args)`
     MethodCall(Box<Spanned<Expr>>, Ident, Vec<Spanned<Type>>, Vec<CallArg>),
+    /// Partial callable preset expression: `partial Target(name=value)`.
+    Partial(Box<PartialExpr>),
     /// `expr?` (try/propagate)
     Try(Box<Spanned<Expr>>),
     /// Match expression
@@ -101,6 +103,21 @@ pub enum DictEntry {
     Spread(Spanned<Expr>),
 }
 
+/// A keyword preset supplied to a partial callable template.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartialArg {
+    pub name: Ident,
+    pub value: Spanned<Expr>,
+}
+
+/// Local partial callable preset expression payload.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PartialExpr {
+    pub target: Box<Spanned<Expr>>,
+    pub type_args: Vec<Spanned<Type>>,
+    pub args: Vec<PartialArg>,
+}
+
 /// Generic surface expression node emitted by parser handoff.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SurfaceExpr {
@@ -124,6 +141,12 @@ pub enum SurfaceExprPayload {
         glyph: String,
         left: Box<Spanned<Expr>>,
         right: Box<Spanned<Expr>>,
+        owner: ScopedSurfaceOwner,
+    },
+    /// DSL-owned identifier call accepted in an eligible name-resolution position.
+    ScopedSymbolCall {
+        symbol: Ident,
+        args: Vec<CallArg>,
         owner: ScopedSurfaceOwner,
     },
 }

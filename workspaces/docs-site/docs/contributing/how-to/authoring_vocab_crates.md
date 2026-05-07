@@ -85,7 +85,7 @@ path = "src/lib.rs"
 crate-type = ["rlib", "cdylib"]
 
 [dependencies]
-incan_vocab = "0.2"
+incan_vocab = "0.3"
 ```
 
 Keep the companion crate as a real Rust crate with `Cargo.toml` and `src/lib.rs`, even when the DSL description itself is quite small.
@@ -232,6 +232,58 @@ pub fn library_vocab() -> VocabRegistration {
 
 The descriptor `key` must be stable. The compiler preserves it on accepted surface artifacts and uses it for diagnostics, formatter metadata, and desugarer handoff. Expression-form descriptors such as leading-dot paths must declare receiver derivation; operator-like glyph descriptors can expose formatter hints such as `pairwise_chain()`. RFC 040 supports selected descriptor-gated non-core glyphs such as `|>`, `%>%`, `:=`, and `===`; broader language-shaped token forms remain RFC 081 work.
 
+## 5. Add scoped symbols
+
+Scoped symbols are identifier calls owned by a DSL position. They are useful when a DSL needs concise names such as `sum(...)` or `count(...)` without changing ordinary Incan resolution in the rest of the file.
+
+Inside an eligible DSL position, a matching scoped symbol descriptor is the local meaning. It wins over lexical names, imports, module names, and builtin fallback, the same way an inner variable binding wins over an outer binding. Outside the owning DSL scope, the same spelling remains an ordinary call.
+
+```incan
+from pub::querykit import querykit_name
+
+def main(values: list[int]) -> int:
+    query:
+        sum(.amount)                 # querykit's scoped symbol
+        std.builtins.sum(values)     # explicit core builtin escape
+
+    return sum(values)               # ordinary Incan call resolution
+```
+
+Register scoped symbols on the same `DslSurface` as the declaration that owns them:
+
+```rust
+use incan_vocab::{
+    ClauseSurface, DeclarationSurface, DslSurface, ScopedSymbolDescriptor,
+    ScopedSymbolDiagnosticKind, ScopedSymbolDiagnosticTemplate, ScopedSymbolMisuseScope,
+    VocabRegistration,
+};
+
+pub fn library_vocab() -> VocabRegistration {
+    VocabRegistration::new().with_surface(
+        DslSurface::on_import("querykit")
+            .with_declaration(
+                DeclarationSurface::named("query")
+                    .with_clause(ClauseSurface::expr("SELECT")),
+            )
+            .with_scoped_symbol(
+                ScopedSymbolDescriptor::aggregate("query.sum", "sum")
+                    .in_clause_body("query", "SELECT")
+                    .with_misuse_scope(ScopedSymbolMisuseScope::ActiveDsl)
+                    .with_diagnostic(
+                        ScopedSymbolDiagnosticTemplate::new(
+                            "query-sum-outside-select",
+                            ScopedSymbolDiagnosticKind::OutsideEligiblePosition,
+                            "query aggregate `sum` is only valid inside SELECT clauses",
+                        )
+                        .with_help("move `sum(...)` into a SELECT clause"),
+                    ),
+            ),
+    )
+}
+```
+
+Use `ScopedSymbolMisuseScope::ActiveDsl` only when the spelling is a strong signal of DSL intent inside the owning DSL. That gives authors targeted diagnostics for "active DSL, wrong position" while preserving ordinary Incan behavior outside the DSL scope.
+
 If your desugared output needs extra runtime requirements, declare them in `LibraryManifest`:
 
 ```rust
@@ -269,7 +321,7 @@ Then the desugarer can emit `IncanExpr::Helper("filter".to_string())`, and the c
 - each `exported_name` must point at a real public export from the library artifact
 - empty keys or export names are rejected before the `.incnlib` artifact is written
 
-## 5. Add an optional desugarer
+## 6. Add an optional desugarer
 
 Parser activation alone teaches the compiler how to recognize your DSL surface. If the DSL needs custom lowering, register a Rust desugarer from the same `library_vocab()` bundle.
 
@@ -320,7 +372,7 @@ This emits the `desugar_block` entrypoint and required `__incan_*` memory global
 
 Malformed artifact paths, invalid checksums, or missing ABI exports fail the producer build early instead of surfacing later in consumer projects.
 
-## 6. Build the library artifact
+## 7. Build the library artifact
 
 Run library mode from the Incan project root:
 
@@ -337,7 +389,7 @@ This requires `src/lib.incn`. During the build, Incan:
 
 Any serialized JSON sidecars or extraction glue are tooling details rather than part of the standard authoring workflow.
 
-## 7. Consume the DSL from another project
+## 8. Consume the DSL from another project
 
 The consumer depends on the built library artifact:
 

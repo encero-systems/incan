@@ -1233,6 +1233,18 @@ impl TypeChecker {
                         .push(errors::trait_conflict(&rest[0].0, &rest[1].0, method, ambiguity_span));
                     return None;
                 }
+                let all_identical =
+                    !exp0.has_body && rest.iter().all(|(_, e)| !e.has_body && method_infos_identical(exp0, e));
+                if !all_identical {
+                    self.errors.push(errors::supertrait_method_ambiguity(
+                        adopted_trait,
+                        method,
+                        &rest[0].0,
+                        &rest[1].0,
+                        ambiguity_span,
+                    ));
+                    return None;
+                }
                 Some(exp0.clone())
             }
         }
@@ -1249,6 +1261,7 @@ impl TypeChecker {
             .map(|entry| entry.info)
     }
 
+    /// Resolve one method entry through a concrete trait adoption, preserving the originating trait provenance.
     pub(in crate::frontend::typechecker) fn trait_method_entry_resolved_for_adoption(
         &mut self,
         adoption: &TypeBoundInfo,
@@ -1310,6 +1323,18 @@ impl TypeChecker {
                 if !all_mutually_compat {
                     self.errors
                         .push(errors::trait_conflict(&rest[0].0, &rest[1].0, method, ambiguity_span));
+                    return None;
+                }
+                let all_identical =
+                    !exp0.has_body && rest.iter().all(|(_, e)| !e.has_body && method_infos_identical(exp0, e));
+                if !all_identical {
+                    self.errors.push(errors::supertrait_method_ambiguity(
+                        &adoption.name,
+                        method,
+                        &rest[0].0,
+                        &rest[1].0,
+                        ambiguity_span,
+                    ));
                     return None;
                 }
                 Some(TraitMethodEntry {
@@ -1681,6 +1706,93 @@ impl TypeChecker {
         }
     }
 
+    /// If a concrete type overrides a trait default method, the override must remain signature-compatible.
+    fn enforce_trait_default_method_overrides(
+        &mut self,
+        type_name: &str,
+        trait_name: &str,
+        trait_info: &TraitInfo,
+        trait_args: Option<&[ResolvedType]>,
+        adoption_span: Span,
+        method_overloads: &HashMap<String, Vec<MethodInfo>>,
+    ) {
+        let adoption = ResolvedTraitAdoption {
+            name: trait_name.to_string(),
+            info: trait_info.clone(),
+            args: trait_args.map(|args| args.to_vec()).unwrap_or_default(),
+            span: adoption_span,
+        };
+        for entry in self.trait_method_entries_for_adoption(&adoption) {
+            if !entry.info.has_body {
+                continue;
+            }
+            let Some(found_group) = method_overloads.get(&entry.method_name) else {
+                continue;
+            };
+            if !found_group
+                .iter()
+                .any(|found| self.method_sigs_compatible(&entry.info, found))
+            {
+                let expected_sig = self.method_sig_string_named(&entry.method_name, &entry.info);
+                let found_sig = found_group
+                    .first()
+                    .map(|found| self.method_sig_string_named(&entry.method_name, found))
+                    .unwrap_or_else(|| "<missing>".to_string());
+                self.errors.push(errors::trait_method_signature_mismatch(
+                    &entry.origin_trait,
+                    type_name,
+                    &entry.method_name,
+                    &expected_sig,
+                    &found_sig,
+                    adoption_span,
+                ));
+            }
+        }
+    }
+
+    /// If a trait method partial explicitly overrides an inherited trait method, its projected signature must remain
+    /// compatible with the inherited surface it shadows.
+    fn validate_trait_partial_inherited_overrides(
+        &mut self,
+        trait_name: &str,
+        partials: &[Spanned<MethodPartialDecl>],
+    ) {
+        if partials.is_empty() {
+            return;
+        }
+        let Some(trait_info) = self.lookup_trait_info(trait_name).cloned() else {
+            return;
+        };
+        for partial in partials {
+            let Some(found) = trait_info.methods.get(&partial.node.name).cloned() else {
+                continue;
+            };
+            for (origin_trait, supertrait_args) in self.semantic_supertrait_closure(trait_name) {
+                let Some(supertrait_info) = self.lookup_semantic_trait_info(origin_trait.as_str()) else {
+                    continue;
+                };
+                let Some(expected) = supertrait_info.methods.get(&partial.node.name) else {
+                    continue;
+                };
+                let subst = type_param_subst_map(&supertrait_info.type_params, &supertrait_args);
+                let expected = substitute_method_info(expected, &subst);
+                if self.method_sigs_compatible(&expected, &found) {
+                    continue;
+                }
+                let expected_sig = self.method_sig_string_named(&partial.node.name, &expected);
+                let found_sig = self.method_sig_string_named(&partial.node.name, &found);
+                self.errors.push(errors::trait_method_signature_mismatch(
+                    &origin_trait,
+                    trait_name,
+                    &partial.node.name,
+                    &expected_sig,
+                    &found_sig,
+                    partial.span,
+                ));
+            }
+        }
+    }
+
     /// Render trait type arguments into a stable diagnostic and duplicate-detection key.
     fn trait_args_key(args: &[ResolvedType]) -> String {
         args.iter()
@@ -1843,13 +1955,171 @@ impl TypeChecker {
             Declaration::Model(model) => self.check_model(model),
             Declaration::Class(class) => self.check_class(class),
             Declaration::Trait(tr) => self.check_trait(tr),
-            Declaration::Alias(_) => {}     // Alias targets are validated during collection.
+            Declaration::Alias(_) => {} // Alias targets are validated during collection.
+            Declaration::Partial(partial) => self.check_partial_decl(partial),
             Declaration::TypeAlias(_) => {} // Type aliases are transparent; no body to check
             Declaration::Newtype(nt) => self.check_newtype(nt),
             Declaration::Enum(en) => self.check_enum(en),
             Declaration::Function(func) => self.check_function(func),
             Declaration::TestModule(test_module) => self.check_test_module(test_module),
             Declaration::Docstring(_) => {} // Docstrings don't need checking
+        }
+    }
+
+    /// Validate preset expressions for a collected top-level partial declaration.
+    fn check_partial_decl(&mut self, partial: &PartialDecl) {
+        let Some(sym) = self.lookup_symbol(&partial.name).cloned() else {
+            for arg in &partial.args {
+                self.validate_top_level_partial_preset(arg);
+                self.check_expr(&arg.value);
+            }
+            return;
+        };
+        let SymbolKind::Function(info) = sym.kind else {
+            for arg in &partial.args {
+                self.validate_top_level_partial_preset(arg);
+                self.check_expr(&arg.value);
+            }
+            return;
+        };
+        for arg in &partial.args {
+            self.validate_top_level_partial_preset(arg);
+            let actual = self.check_expr(&arg.value);
+            if let Some(param) = info.params.iter().find(|param| param.name() == Some(arg.name.as_str()))
+                && !self.types_compatible(&actual, &param.ty)
+            {
+                self.errors.push(errors::type_mismatch(
+                    &param.ty.to_string(),
+                    &actual.to_string(),
+                    arg.value.span,
+                ));
+            }
+        }
+    }
+
+    /// Emit the RFC 084 declaration-safety diagnostic for one module-level partial preset.
+    fn validate_top_level_partial_preset(&mut self, arg: &PartialArg) {
+        if !self.is_declaration_safe_partial_preset(&arg.value) {
+            self.errors
+                .push(errors::unsafe_top_level_partial_preset(&arg.name, arg.value.span));
+        }
+    }
+
+    /// Return whether a module-level partial preset can be represented without executing user code.
+    fn is_declaration_safe_partial_preset(&self, expr: &Spanned<Expr>) -> bool {
+        match &expr.node {
+            Expr::Literal(_) => true,
+            Expr::Ident(_) | Expr::Field(_, _) => self.is_declaration_safe_const_or_variant_path(expr),
+            Expr::Paren(inner) => self.is_declaration_safe_partial_preset(inner),
+            Expr::List(entries) => entries.iter().all(|entry| match entry {
+                ListEntry::Element(value) => self.is_declaration_safe_partial_preset(value),
+                ListEntry::Spread(_) => false,
+            }),
+            Expr::Dict(entries) => entries.iter().all(|entry| match entry {
+                DictEntry::Pair(key, value) => {
+                    self.is_declaration_safe_partial_preset(key) && self.is_declaration_safe_partial_preset(value)
+                }
+                DictEntry::Spread(_) => false,
+            }),
+            Expr::Call(callee, type_args, args) => {
+                type_args.is_empty()
+                    && self.is_model_literal_callee(callee)
+                    && args.iter().all(|arg| match arg {
+                        CallArg::Named(_, value) => self.is_declaration_safe_partial_preset(value),
+                        CallArg::Positional(_) | CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => false,
+                    })
+            }
+            Expr::Constructor(name, args) => {
+                self.is_model_literal_name(name)
+                    && args.iter().all(|arg| match arg {
+                        CallArg::Named(_, value) => self.is_declaration_safe_partial_preset(value),
+                        CallArg::Positional(_) | CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => false,
+                    })
+            }
+            _ => false,
+        }
+    }
+
+    /// Return whether a call-like preset target names a model literal constructor.
+    fn is_model_literal_callee(&self, callee: &Spanned<Expr>) -> bool {
+        match &callee.node {
+            Expr::Ident(name) => self.is_model_literal_name(name),
+            _ => false,
+        }
+    }
+
+    /// Return whether a name resolves to a model type that can be serialized as preset metadata.
+    fn is_model_literal_name(&self, name: &str) -> bool {
+        self.lookup_symbol(name)
+            .is_some_and(|sym| matches!(sym.kind, SymbolKind::Type(TypeInfo::Model(_))))
+    }
+
+    /// Return whether a top-level partial preset path names a const or a zero-argument enum variant.
+    fn is_declaration_safe_const_or_variant_path(&self, expr: &Spanned<Expr>) -> bool {
+        match &expr.node {
+            Expr::Ident(name) => {
+                self.const_decls.contains_key(name)
+                    || self
+                        .lookup_symbol(name)
+                        .is_some_and(|sym| matches!(sym.kind, SymbolKind::Variant(_)))
+            }
+            Expr::Field(base, member) => {
+                if let Expr::Ident(type_name) = &base.node
+                    && let Some(symbol) = self.lookup_symbol(type_name)
+                    && let SymbolKind::Type(TypeInfo::Enum(info)) = &symbol.kind
+                {
+                    return info.variants.iter().any(|variant| variant == member);
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Validate preset expressions for same-type method partial declarations.
+    fn check_method_partials(&mut self, owner: &str, partials: &[Spanned<MethodPartialDecl>]) {
+        for partial in partials {
+            let Some(target) = self.method_info_for_owner(owner, &partial.node.target).cloned() else {
+                for arg in &partial.node.args {
+                    self.check_expr(&arg.value);
+                }
+                continue;
+            };
+
+            for arg in &partial.node.args {
+                let expected = target
+                    .params
+                    .iter()
+                    .find(|param| param.name() == Some(arg.name.as_str()))
+                    .map(|param| param.ty.clone());
+                let actual = match expected.as_ref() {
+                    Some(expected_ty) => self.check_expr_with_expected(&arg.value, Some(expected_ty)),
+                    None => self.check_expr(&arg.value),
+                };
+                if let Some(expected_ty) = expected
+                    && !self.types_compatible(&actual, &expected_ty)
+                {
+                    self.errors.push(errors::type_mismatch(
+                        &expected_ty.to_string(),
+                        &actual.to_string(),
+                        arg.value.span,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Return collected method metadata for an owner type or trait surface.
+    fn method_info_for_owner(&self, owner: &str, method: &str) -> Option<&MethodInfo> {
+        if let Some(info) = self.lookup_trait_info(owner) {
+            return info.methods.get(method);
+        }
+        match self.lookup_type_info(owner)? {
+            TypeInfo::Model(info) => info.methods.get(method),
+            TypeInfo::Class(info) => info.methods.get(method),
+            TypeInfo::Newtype(info) => info.methods.get(method),
+            TypeInfo::Enum(info) => info.methods.get(method),
+            TypeInfo::Builtin | TypeInfo::TypeAlias => None,
         }
     }
 
@@ -2068,6 +2338,7 @@ impl TypeChecker {
         for method in &model.methods {
             self.check_method_with_owner_type_params(&method.node, &model.name, &model.type_params);
         }
+        self.check_method_partials(&model.name, &model.method_partials);
         for property in &model.properties {
             self.check_property(&property.node, &model.name);
         }
@@ -2179,6 +2450,14 @@ impl TypeChecker {
 
         if let Some(mi) = model_info {
             self.enforce_trait_abstract_methods(
+                &model.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &mi.method_overloads,
+            );
+            self.enforce_trait_default_method_overrides(
                 &model.name,
                 trait_name,
                 &trait_info,
@@ -2316,6 +2595,7 @@ impl TypeChecker {
         for method in &class.methods {
             self.check_method_with_owner_type_params(&method.node, &class.name, &class.type_params);
         }
+        self.check_method_partials(&class.name, &class.method_partials);
         for property in &class.properties {
             self.check_property(&property.node, &class.name);
         }
@@ -2382,6 +2662,14 @@ impl TypeChecker {
                 adoption_span,
                 &ci.method_overloads,
             );
+            self.enforce_trait_default_method_overrides(
+                &class.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &ci.method_overloads,
+            );
             self.enforce_trait_abstract_properties(
                 &class.name,
                 trait_name,
@@ -2428,6 +2716,7 @@ impl TypeChecker {
         self.current_trait_requires = Some(requires_map);
         self.current_trait_properties = self.lookup_trait_info(&tr.name).map(|info| info.properties.clone());
         self.current_trait_name = Some(tr.name.clone());
+        self.validate_trait_partial_inherited_overrides(&tr.name, &tr.method_partials);
 
         for method in &tr.methods {
             self.validate_decorators_allowing_user_defined(&method.node.decorators);
@@ -2448,6 +2737,7 @@ impl TypeChecker {
             }
             self.apply_user_defined_method_decorators(&method.node, &tr.name);
         }
+        self.check_method_partials(&tr.name, &tr.method_partials);
         for property in &tr.properties {
             if property.node.body.is_some() {
                 self.errors.push(errors::trait_property_body_not_supported(
@@ -2551,6 +2841,7 @@ impl TypeChecker {
                 self.check_method_with_owner_type_params(&method.node, &nt.name, &nt.type_params);
             }
         }
+        self.check_method_partials(&nt.name, &nt.method_partials);
     }
 
     /// Validate the canonical RFC 017 `from_underlying` hook when a newtype declares one.
@@ -2747,6 +3038,14 @@ impl TypeChecker {
 
         if let Some(info) = enum_info {
             self.enforce_trait_abstract_methods(
+                &en.name,
+                trait_name,
+                &trait_info,
+                trait_args,
+                adoption_span,
+                &info.method_overloads,
+            );
+            self.enforce_trait_default_method_overrides(
                 &en.name,
                 trait_name,
                 &trait_info,
@@ -3284,6 +3583,14 @@ impl TypeChecker {
     /// Validate a model, class, enum, or newtype method body using the concrete nominal owner as `self`.
     fn check_method_with_owner_type_params(&mut self, method: &MethodDecl, owner: &str, owner_params: &[TypeParam]) {
         self.validate_decorators_allowing_user_defined(&method.decorators);
+        if method.body.is_none() {
+            self.errors.push(errors::concrete_method_requires_body(
+                &method.name,
+                method.return_type.span,
+            ));
+            self.apply_user_defined_method_decorators(method, owner);
+            return;
+        }
         let owner_type_params = self
             .lookup_type_info(owner)
             .map(|info| match info {

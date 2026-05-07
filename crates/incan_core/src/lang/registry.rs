@@ -76,6 +76,9 @@ pub const RFC_028: RfcId = "RFC 028";
 /// RFC 029 — union types and narrowing predicates.
 pub const RFC_029: RfcId = "RFC 029";
 
+/// RFC 030 — std.collections and field-overlay reflection.
+pub const RFC_030: RfcId = "RFC 030";
+
 /// RFC 040 — scoped DSL surface forms.
 pub const RFC_040: RfcId = "RFC 040";
 
@@ -140,6 +143,8 @@ impl RFC {
     pub const _028: RfcId = RFC_028;
     /// RFC 029 — union types and narrowing predicates.
     pub const _029: RfcId = RFC_029;
+    /// RFC 030 — std.collections and field-overlay reflection.
+    pub const _030: RfcId = RFC_030;
     /// RFC 040 — scoped DSL surface forms.
     pub const _040: RfcId = RFC_040;
     /// RFC 052 — module static storage.

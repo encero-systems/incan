@@ -199,6 +199,7 @@ def numbers() -> Generator[int]:
 
 ## Where to learn more
 
+- Specialized collections: [Choosing collection types](../../how-to/choosing_collections.md)
 - Strings and slicing: [Strings](../../reference/strings.md)
 - Generators: [Use generators for lazy pipelines](../../how-to/generators.md)
 - Control flow overview: [Control flow](../../explanation/control_flow.md)

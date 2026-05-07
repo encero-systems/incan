@@ -640,7 +640,7 @@ model User:
 
 
 trait Service:
-    def connect(self) -> None: ...
+    def connect(self) -> None
 
     def reset(self) -> None:
         pass
@@ -4867,6 +4867,42 @@ async def main() -> None:
             stdout.contains("field:player|wire:player|type:str|default:true"),
             "expected reflection metadata for player field; got:\n{}",
             stdout
+        );
+    }
+
+    #[test]
+    fn test_run_rfc030_std_collections_behavior() {
+        let Ok(output) = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/rfc030_std_collections_behavior.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan run rfc030_std_collections_behavior failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn test_run_rfc030_field_overlay_reflection() {
+        let Ok(output) = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/rfc030_field_overlay_reflection.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan run rfc030_field_overlay_reflection failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
         );
     }
 

@@ -79,6 +79,22 @@ impl AstLowering {
         }
     }
 
+    /// Return whether a generic type parameter should keep Rust's comparison operators instead of lowering to a
+    /// dunder-style method call.
+    ///
+    /// Generic `T with Ord`/`PartialOrd` bounds lower to Rust trait bounds such as `PartialOrd`; they do not introduce
+    /// inherent `__lt__`/`__le__` methods on `T`. Keeping the operator form lets Rust type-check the generic bound.
+    fn generic_comparison_uses_rust_operator(&self, left: &Spanned<ast::Expr>, method: &str) -> bool {
+        if !matches!(method, "__ne__" | "__lt__" | "__le__" | "__gt__" | "__ge__") {
+            return false;
+        }
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.expr_type(left.span))
+            .map(|ty| self.lower_resolved_type(ty))
+            .is_some_and(|ty| matches!(ty, IrType::Generic(_)))
+    }
+
     /// Lower a control-flow condition, rewriting validated `__bool__` hooks into direct method calls.
     pub(in crate::backend::ir::lower) fn lower_condition_expr(
         &mut self,
@@ -297,6 +313,7 @@ impl AstLowering {
                     && resolved_operator.kind == ResolvedOperatorKind::Binary
                     // `__eq__` is represented in generated Rust as `PartialEq::eq`, not as an inherent method.
                     && resolved_operator.method != magic_methods::as_str(MagicMethodId::Eq)
+                    && !self.generic_comparison_uses_rust_operator(l, &resolved_operator.method)
                 {
                     let receiver = self.lower_expr_spanned(l)?;
                     let arg_expr = self.lower_expr_spanned(r)?;
@@ -491,6 +508,19 @@ impl AstLowering {
 
             // ---- Method calls ----
             ast::Expr::MethodCall(o, m, type_args, args) => {
+                if Self::is_explicit_builtin_namespace_expr(o)
+                    && let Some(builtin) = BuiltinFn::from_name(m)
+                {
+                    let args_ir = self.lower_call_args(args)?.into_iter().map(|a| a.expr).collect();
+                    return Ok(TypedExpr::new(
+                        IrExprKind::BuiltinCall {
+                            func: builtin,
+                            args: args_ir,
+                        },
+                        IrType::Unknown,
+                    ));
+                }
+
                 if matches!(&o.node, ast::Expr::Ident(name)
                     if collection_helpers::from_parts(name, m) == Some(BuiltinCollectionHelperId::ListRepeat)
                         && collection_types::from_str(name.as_str()) == Some(CollectionTypeId::List))
@@ -1019,6 +1049,60 @@ impl AstLowering {
 
             // ---- Yield (placeholder) ----
             ast::Expr::Yield(_) => (IrExprKind::Unit, IrType::Unknown),
+            ast::Expr::Partial(partial) => {
+                let Some(crate::frontend::symbols::ResolvedType::Function(params, ret)) = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.expr_type(expr_span).cloned())
+                else {
+                    return Err(LoweringError {
+                        message: "Partial callable preset expression is missing typechecker projection metadata"
+                            .to_string(),
+                        span: expr_span.into(),
+                    });
+                };
+                let closure_params: Vec<(String, IrType)> = params
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, param)| {
+                        (
+                            param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
+                            Self::lower_param_container_type(param.kind, self.lower_resolved_type(&param.ty)),
+                        )
+                    })
+                    .collect();
+                let _signature = self.partial_expr_callable_signature(partial, expr_span)?;
+                self.push_scope();
+                for (name, ty) in &closure_params {
+                    self.define_local_binding(name.clone(), ty.clone(), false);
+                }
+                let mut forward_args = Vec::new();
+                for (name, _) in &closure_params {
+                    forward_args.push(ast::CallArg::Named(
+                        name.clone(),
+                        ast::Spanned::new(ast::Expr::Ident(name.clone()), expr_span),
+                    ));
+                }
+                let call = ast::Spanned::new(
+                    ast::Expr::Call(partial.target.clone(), partial.type_args.clone(), forward_args),
+                    expr_span,
+                );
+                let body_result = self.lower_expr_spanned(&call);
+                self.pop_scope();
+                let body = body_result?;
+                let ret_ty = self.lower_resolved_type(ret.as_ref());
+                (
+                    IrExprKind::Closure {
+                        params: closure_params.clone(),
+                        body: Box::new(body),
+                        captures: vec![],
+                    },
+                    IrType::Function {
+                        params: closure_params.into_iter().map(|(_, ty)| ty).collect(),
+                        ret: Box::new(ret_ty),
+                    },
+                )
+            }
         };
         Ok(TypedExpr::new(kind, ty))
     }

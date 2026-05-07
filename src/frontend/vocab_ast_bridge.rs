@@ -590,6 +590,21 @@ fn internal_surface_expr_to_public(surface: &ast::SurfaceExpr) -> Result<incan_v
                 call: owner.call.clone(),
             },
         },
+        ast::SurfaceExprPayload::ScopedSymbolCall { symbol, args, owner } => {
+            return Ok(incan_vocab::IncanExpr::ScopedSymbolCall(
+                incan_vocab::IncanScopedSymbolCall {
+                    dependency_key: dependency_key.clone(),
+                    descriptor_key: descriptor_key.clone(),
+                    symbol: symbol.clone(),
+                    args: internal_call_args_to_public(args)?,
+                    owner: incan_vocab::IncanScopedSurfaceOwner {
+                        declaration: owner.declaration.clone(),
+                        clause: owner.clause.clone(),
+                        call: owner.call.clone(),
+                    },
+                },
+            ));
+        }
         ast::SurfaceExprPayload::PrefixUnary(_) => {
             return Err(VocabAstBridgeError::UnsupportedInternalExpression(
                 "soft-keyword surface expression is not yet supported by public vocab AST bridge",
@@ -703,6 +718,7 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
             field.clone(),
         )),
         incan_vocab::IncanExpr::ScopedSurface(surface) => public_scoped_surface_expr_to_internal(surface),
+        incan_vocab::IncanExpr::ScopedSymbolCall(call) => public_scoped_symbol_call_to_internal(call),
         _ => Err(VocabAstBridgeError::UnsupportedPublicExpression(
             "expression form is not yet supported by internal AST bridge",
         )),
@@ -751,6 +767,34 @@ fn public_scoped_surface_expr_to_internal(
                 "scoped surface payload is not yet supported by internal AST bridge",
             ));
         }
+    };
+    Ok(ast::Expr::Surface(Box::new(ast::SurfaceExpr { key, payload })))
+}
+
+/// Convert a public scoped-symbol call back into the compiler AST.
+fn public_scoped_symbol_call_to_internal(
+    call: &incan_vocab::IncanScopedSymbolCall,
+) -> Result<ast::Expr, VocabAstBridgeError> {
+    let key = incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+        dependency_key: call.dependency_key.clone(),
+        descriptor_key: call.descriptor_key.clone(),
+    };
+    let args = call
+        .args
+        .iter()
+        .map(|arg| {
+            public_expr_to_internal(arg)
+                .map(|node| ast::CallArg::Positional(ast::Spanned::new(node, ast::Span::default())))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let payload = ast::SurfaceExprPayload::ScopedSymbolCall {
+        symbol: call.symbol.clone(),
+        args,
+        owner: ast::ScopedSurfaceOwner {
+            declaration: call.owner.declaration.clone(),
+            clause: call.owner.clause.clone(),
+            call: call.owner.call.clone(),
+        },
     };
     Ok(ast::Expr::Surface(Box::new(ast::SurfaceExpr { key, payload })))
 }
@@ -1097,6 +1141,39 @@ mod tests {
         ));
         let round_trip = public_expression_to_internal(&public)?;
         assert_eq!(round_trip, scoped);
+
+        let scoped_symbol = ast::Expr::Surface(Box::new(ast::SurfaceExpr {
+            key: incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
+                dependency_key: "querykit".to_string(),
+                descriptor_key: "query.sum".to_string(),
+            },
+            payload: ast::SurfaceExprPayload::ScopedSymbolCall {
+                symbol: "sum".to_string(),
+                args: vec![ast::CallArg::Positional(ast::Spanned::new(
+                    ast::Expr::Ident("amount".to_string()),
+                    ast::Span::default(),
+                ))],
+                owner: ast::ScopedSurfaceOwner {
+                    declaration: "query".to_string(),
+                    clause: Some("SELECT".to_string()),
+                    call: None,
+                },
+            },
+        }));
+
+        let public = internal_expr_to_public(&scoped_symbol)?;
+        assert!(matches!(
+            &public,
+            incan_vocab::IncanExpr::ScopedSymbolCall(call)
+                if call.dependency_key == "querykit"
+                    && call.descriptor_key == "query.sum"
+                    && call.symbol == "sum"
+                    && call.args.len() == 1
+                    && call.owner.declaration == "query"
+                    && call.owner.clause.as_deref() == Some("SELECT")
+        ));
+        let round_trip = public_expression_to_internal(&public)?;
+        assert_eq!(round_trip, scoped_symbol);
         Ok(())
     }
 }

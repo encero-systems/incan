@@ -40,3 +40,7 @@ Notes:
 
 - Field metadata like `[alias="..."]` and `[description="..."]` is model-only.
 - For a `class`, `FieldInfo.alias` and `FieldInfo.description` are always `None` and `FieldInfo.wire_name == FieldInfo.name`.
+
+## Compiler-generated field value views
+
+Model and class values expose `__field_value__(name: str) -> Option[T]` and `__field_items__() -> list[tuple[str, T]]` directly; no `std.reflection` import is required. `T` is the common field type when all exposed fields share one type, otherwise a union of the exposed field types. These views are read-only and use the same field ordering as `__fields__()`.

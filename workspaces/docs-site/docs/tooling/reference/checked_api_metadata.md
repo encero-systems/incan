@@ -8,6 +8,12 @@ Invoke the metadata command from a project root, project directory, or source fi
 incan tools metadata api [PATH] --format json
 ```
 
+Use `--format markdown` to render a compact generated API reference from the same checked metadata:
+
+```bash
+incan tools metadata api [PATH] --format markdown
+```
+
 When `PATH` is a directory, `src/lib.incn` is the preferred entry point and `src/main.incn` is the fallback. The command type-checks the target before writing JSON. Type errors are reported as compiler diagnostics and no metadata package is printed.
 
 ## Example
@@ -142,7 +148,7 @@ Each module document contains:
 | `module_path`    | array  | Logical module path segments                      |
 | `declarations`   | array  | Public declarations visible from that source file |
 
-`declarations` uses a `kind` discriminator. Current declaration kinds are `function`, `model`, `class`, `trait`, `enum`, `newtype`, `type_alias`, `const`, `static`, and `alias`.
+`declarations` uses a `kind` discriminator. Current declaration kinds are `function`, `model`, `class`, `trait`, `enum`, `newtype`, `type_alias`, `const`, `static`, `alias`, and `partial`.
 
 ## Declaration Facts
 
@@ -154,6 +160,7 @@ The metadata is derived from parsed and typechecked semantics. Public declaratio
 - trait requirements and checked method signatures
 - enum variants and value-enum raw values
 - public import aliases with resolved `target_path` segments
+- public partial callable presets with target provenance, preset metadata, projected callable parameters, return type, and async status
 - raw docstring text when the declaration or method has a docstring
 - parsed docstring sections in `docstring_sections`, including summary, parameters, returns, fields, aliases, and decorators
 - decorator metadata with resolved decorator paths
@@ -162,6 +169,21 @@ The metadata is derived from parsed and typechecked semantics. Public declaratio
 Types use the same structural `TypeRef` encoding as library manifest exports. For example, a non-generic type is encoded as `{"Named": {"name": "str"}}`, while a generic application is encoded as `{"Applied": {"name": "List", "args": [...]}}`.
 
 When decorator processing exposes a public function as a callable-valued binding, metadata follows that checked binding. In that case, function metadata reports the callable binding's parameters and return type rather than the original source signature. Existing decorator metadata remains attached separately through `decorators`, so consumers that inspect marker decorators, safe decorator arguments, or docstring `Decorators:` sections can keep using that lane without inferring binding types from it.
+
+Public partial declarations use `kind: "partial"`. A partial declaration remains distinct from a hand-written function or alias:
+
+| Field         | Type   | Meaning                                                 |
+| ------------- | ------ | ------------------------------------------------------- |
+| `name`        | string | Exported partial name                                   |
+| `target_path` | array  | Resolved target path segments                           |
+| `target_kind` | string | Target category, such as `function`, `constructor`, or `partial` |
+| `presets`     | array  | Preset names, checked types, and safe preset values      |
+| `type_params` | array  | Remaining callable type parameters                      |
+| `params`      | array  | Projected callable parameters                           |
+| `return_type` | object | Checked callable return type                            |
+| `is_async`    | bool   | Whether the projected callable is async                 |
+
+Preset parameters are represented as ordinary defaulted parameters in `params`: `has_default: true` is the visual and semantic signal consumers should use for signature display. The `presets` array preserves provenance for tools that need to explain where the default came from.
 
 ## Safe Values
 
@@ -204,7 +226,7 @@ Docstring validation is strict for mechanically checkable drift. If an `Args:` o
 
 ## Editor Previews
 
-The language server uses the same checked metadata extractor for hover previews after a document type-checks successfully. Hovering a public declaration, a checked public method, a public model/class field, or a public enum variant can show the checked signature, raw docstring text, field alias/description metadata, value-enum backing and raw-value metadata, derives, trait adoption, and safe const values. If a decorated function's checked binding is callable-valued, its hover uses the same callable signature exposed by checked API metadata.
+The language server uses the same checked metadata extractor for hover previews after a document type-checks successfully. Hovering a public declaration, a checked public method, a public model/class field, or a public enum variant can show the checked signature, raw docstring text, field alias/description metadata, value-enum backing and raw-value metadata, derives, trait adoption, and safe const values. Public partial hover shows the projected callable signature plus target and preset provenance. If a decorated function's checked binding is callable-valued, its hover uses the same callable signature exposed by checked API metadata.
 
 The LSP exposes these facts through `textDocument/hover`. Use `incan tools metadata api` when an integration needs the full JSON package.
 
@@ -212,7 +234,7 @@ If a document has parse or type errors, the LSP keeps reporting diagnostics and 
 
 ## Artifact and Model Boundaries
 
-`incan tools metadata api` inspects source files or a project directory and emits JSON. It does not build the project, emit generated Rust, or read a `.incnlib` artifact. Use `incan build --lib` for library artifact emission and `incan tools metadata model` for model bundle inspection.
+`incan tools metadata api` inspects source files or a project directory and emits JSON or generated Markdown. It does not build the project, emit generated Rust, or read a `.incnlib` artifact. Use `incan build --lib` for library artifact emission and `incan tools metadata model` for model bundle inspection.
 
 The metadata JSON describes public declarations from checked Incan source and materialized contract models visible to the checked program. Model bundle schema, emit, materialization, and artifact inspection are documented separately in [Checked contract metadata](contract_metadata.md).
 

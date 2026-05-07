@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 
 use crate::frontend::ast::{
-    AliasDecl, ClassDecl, Declaration, EnumDecl, FunctionDecl, ModelDecl, NewtypeDecl, Program, TraitBound, TraitDecl,
-    TypeAliasDecl, TypeParam, Visibility,
+    AliasDecl, ClassDecl, Declaration, DictEntry, EnumDecl, Expr, FunctionDecl, ListEntry, Literal, ModelDecl,
+    NewtypeDecl, PartialDecl, Program, TraitBound, TraitDecl, TypeAliasDecl, TypeParam, Visibility,
 };
 use crate::frontend::symbols::{
     CallableParam, ClassInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, SymbolKind,
@@ -55,6 +55,53 @@ pub struct CheckedFunctionExport {
     pub params: Vec<CallableParam>,
     pub return_type: ResolvedType,
     pub is_async: bool,
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedPartialExport {
+    pub name: String,
+    pub target_path: Vec<String>,
+    pub target_kind: CheckedPartialTargetKind,
+    pub presets: Vec<CheckedPartialPreset>,
+    pub type_params: Vec<CheckedTypeParam>,
+    pub params: Vec<CallableParam>,
+    pub return_type: ResolvedType,
+    pub is_async: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckedPartialTargetKind {
+    Function,
+    ModelConstructor,
+    ClassConstructor,
+    NewtypeConstructor,
+    Partial,
+    Unknown,
+}
+
+#[derive(Debug, Clone)]
+pub struct CheckedPartialPreset {
+    pub name: String,
+    pub ty: ResolvedType,
+    pub value: CheckedPresetValue,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CheckedPresetValue {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+    Bytes(Vec<u8>),
+    None,
+    List(Vec<CheckedPresetValue>),
+    Dict(Vec<(CheckedPresetValue, CheckedPresetValue)>),
+    ConstRef(Vec<String>),
+    ModelLiteral {
+        name: String,
+        fields: Vec<(String, CheckedPresetValue)>,
+    },
+    Unsupported,
 }
 
 #[derive(Debug, Clone)]
@@ -148,6 +195,7 @@ pub struct CheckedStaticExport {
 #[derive(Debug, Clone)]
 pub enum CheckedExportKind {
     Function(CheckedFunctionExport),
+    Partial(CheckedPartialExport),
     Alias(CheckedAliasExport),
     TypeAlias(CheckedTypeAliasExport),
     Model(CheckedModelExport),
@@ -246,6 +294,14 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                     exports.push(export);
                 }
             }
+            Declaration::Partial(partial) if matches!(partial.visibility, Visibility::Public) => {
+                if let Some(export) = checked_partial_export(partial, checker) {
+                    exports.push(CheckedNamedExport {
+                        name: export.name.clone(),
+                        kind: CheckedExportKind::Partial(export),
+                    });
+                }
+            }
             _ => {}
         }
     }
@@ -264,6 +320,161 @@ fn checked_alias_export(alias: &AliasDecl, checker: &TypeChecker) -> Option<Chec
             target_path: alias.target.segments.clone(),
         }),
     })
+}
+
+/// Build checked export metadata for a public partial callable preset.
+fn checked_partial_export(partial: &PartialDecl, checker: &TypeChecker) -> Option<CheckedPartialExport> {
+    let symbol = checker.lookup_symbol(partial.name.as_str())?;
+    let SymbolKind::Function(info) = &symbol.kind else {
+        return None;
+    };
+    let presets = partial
+        .args
+        .iter()
+        .map(|arg| CheckedPartialPreset {
+            name: arg.name.clone(),
+            ty: info
+                .params
+                .iter()
+                .find(|param| param.name() == Some(arg.name.as_str()))
+                .map(|param| param.ty.clone())
+                .unwrap_or(ResolvedType::Unknown),
+            value: checked_preset_value(&arg.value.node),
+        })
+        .collect();
+    Some(CheckedPartialExport {
+        name: partial.name.clone(),
+        target_path: partial.target.segments.clone(),
+        target_kind: checked_partial_target_kind(partial, checker),
+        presets,
+        type_params: info
+            .type_params
+            .iter()
+            .map(|name| CheckedTypeParam {
+                name: name.clone(),
+                bounds: info
+                    .type_param_bound_details
+                    .get(name)
+                    .map_or_else(Vec::new, |bounds| map_type_bound_infos(bounds)),
+            })
+            .collect(),
+        params: info.params.clone(),
+        return_type: info.return_type.clone(),
+        is_async: info.is_async,
+    })
+}
+
+/// Classify the direct target kind for manifest/API partial provenance.
+fn checked_partial_target_kind(partial: &PartialDecl, checker: &TypeChecker) -> CheckedPartialTargetKind {
+    let [target] = partial.target.segments.as_slice() else {
+        return CheckedPartialTargetKind::Unknown;
+    };
+    match checker.lookup_symbol(target).map(|symbol| &symbol.kind) {
+        Some(SymbolKind::Function(_)) => CheckedPartialTargetKind::Function,
+        Some(SymbolKind::Type(TypeInfo::Model(_))) => CheckedPartialTargetKind::ModelConstructor,
+        Some(SymbolKind::Type(TypeInfo::Class(_))) => CheckedPartialTargetKind::ClassConstructor,
+        Some(SymbolKind::Type(TypeInfo::Newtype(_))) => CheckedPartialTargetKind::NewtypeConstructor,
+        Some(SymbolKind::Type(_) | SymbolKind::Trait(_) | SymbolKind::Variable(_) | SymbolKind::Static(_))
+        | Some(SymbolKind::Field(_))
+        | Some(SymbolKind::Property(_))
+        | Some(SymbolKind::Module(_))
+        | Some(SymbolKind::Variant(_))
+        | Some(SymbolKind::RustItem(_))
+        | None => CheckedPartialTargetKind::Unknown,
+    }
+}
+
+/// Convert a preset expression into the metadata-safe subset used by public partial provenance.
+fn checked_preset_value(expr: &Expr) -> CheckedPresetValue {
+    match expr {
+        Expr::Literal(literal) => checked_preset_literal(literal),
+        Expr::Ident(name) => CheckedPresetValue::ConstRef(vec![name.clone()]),
+        Expr::Field(base, field) => {
+            let mut path = checked_preset_path(&base.node);
+            if path.is_empty() {
+                CheckedPresetValue::Unsupported
+            } else {
+                path.push(field.clone());
+                CheckedPresetValue::ConstRef(path)
+            }
+        }
+        Expr::List(entries) => CheckedPresetValue::List(
+            entries
+                .iter()
+                .map(|entry| match entry {
+                    ListEntry::Element(value) => checked_preset_value(&value.node),
+                    ListEntry::Spread(_) => CheckedPresetValue::Unsupported,
+                })
+                .collect(),
+        ),
+        Expr::Dict(entries) => {
+            let pairs = entries
+                .iter()
+                .map(|entry| match entry {
+                    DictEntry::Pair(key, value) => (checked_preset_value(&key.node), checked_preset_value(&value.node)),
+                    DictEntry::Spread(_) => (CheckedPresetValue::Unsupported, CheckedPresetValue::Unsupported),
+                })
+                .collect();
+            CheckedPresetValue::Dict(pairs)
+        }
+        Expr::Call(callee, _type_args, args) => {
+            let path = checked_preset_path(&callee.node);
+            let [name] = path.as_slice() else {
+                return CheckedPresetValue::Unsupported;
+            };
+            let mut fields = Vec::new();
+            for arg in args {
+                let crate::frontend::ast::CallArg::Named(field, value) = arg else {
+                    return CheckedPresetValue::Unsupported;
+                };
+                fields.push((field.clone(), checked_preset_value(&value.node)));
+            }
+            CheckedPresetValue::ModelLiteral {
+                name: name.clone(),
+                fields,
+            }
+        }
+        Expr::Constructor(name, args) => {
+            let mut fields = Vec::new();
+            for arg in args {
+                let crate::frontend::ast::CallArg::Named(field, value) = arg else {
+                    return CheckedPresetValue::Unsupported;
+                };
+                fields.push((field.clone(), checked_preset_value(&value.node)));
+            }
+            CheckedPresetValue::ModelLiteral {
+                name: name.clone(),
+                fields,
+            }
+        }
+        _ => CheckedPresetValue::Unsupported,
+    }
+}
+
+/// Convert a literal preset expression into checked partial export metadata.
+fn checked_preset_literal(literal: &Literal) -> CheckedPresetValue {
+    match literal {
+        Literal::Int(value) => CheckedPresetValue::Int(value.value),
+        Literal::Float(value) => CheckedPresetValue::Float(value.value),
+        Literal::Decimal(value) => CheckedPresetValue::String(value.repr.clone()),
+        Literal::String(value) => CheckedPresetValue::String(value.clone()),
+        Literal::Bytes(value) => CheckedPresetValue::Bytes(value.clone()),
+        Literal::Bool(value) => CheckedPresetValue::Bool(*value),
+        Literal::None => CheckedPresetValue::None,
+    }
+}
+
+/// Extract a dotted constant/model path from a metadata-safe preset expression.
+fn checked_preset_path(expr: &Expr) -> Vec<String> {
+    match expr {
+        Expr::Ident(name) => vec![name.clone()],
+        Expr::Field(base, field) => {
+            let mut path = checked_preset_path(&base.node);
+            path.push(field.clone());
+            path
+        }
+        _ => Vec::new(),
+    }
 }
 
 /// Build checked export metadata for a function or callable-valued decorated function binding.

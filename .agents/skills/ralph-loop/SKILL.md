@@ -342,12 +342,13 @@ If the user says "greenlight for PR", "green light for PR", or otherwise approve
 
 - run a final scope check against the governing RFC and issue
 - if the implemented branch covers the full RFC scope, use `bump-rfc` to move the RFC from `In Progress` to `Implemented`
-- ensure every `Progress Checklist` item is checked before the bump; if an item is incomplete, do not claim full RFC scope
+- ensure every `Progress Checklist` item is checked before the bump; unchecked items are scope failures, not residual PR risks
+- if any checklist item is incomplete, set the orchestrator state to `replan_required`, update the relevant slice/task state, and continue the Plan -> Do -> Check -> Act loop instead of publishing
 - ensure the PR body includes a closing keyword for the RFC issue, such as `Closes #NNN`
 - rebuild docs after moving the RFC into `closed/implemented/`
 - report any reason the RFC cannot be bumped before asking for human review
 
-Do not leave a fully implemented RFC in `In Progress` while presenting the PR as review-ready. If the branch implements only part of the RFC, say that directly and leave the RFC active.
+Do not leave a fully implemented RFC in `In Progress` while presenting the PR as review-ready. Do not use `Refs #NNN` as an escape hatch for RFC-driven Ralph-loop work unless the user explicitly changed the scope to a partial implementation. If the branch implements only part of the RFC, say that directly, leave the RFC active, and do not present the PR as a full-RFC closeout.
 
 Only run the actual commit / push / PR creation flow if the user explicitly asked for those actions.
 
@@ -418,7 +419,9 @@ Do not recurse `ralph-loop` indefinitely. A child loop is a phase owner, not ano
 - [ ] User-visible behavior changes updated authored user docs, not only RFCs/release notes
 - [ ] Active dev version was re-checked and bumped by one dev increment at minimum for implementation work
 - [ ] Child loops did not draft PRs or final commit artifacts of their own
+- [ ] Every RFC `Progress Checklist` item was checked or the orchestrator stayed in `replan_required`
 - [ ] Final gate passed or remaining failures were reported concretely
 - [ ] If the implementation satisfies the full RFC, `bump-rfc` moved it to `Implemented` before the PR was presented as review-ready
+- [ ] Full-RFC PR bodies use a closing keyword such as `Closes #NNN`; partial-scope PRs explain the remaining RFC scope instead
 - [ ] Commit/PR artifacts were drafted
 - [ ] No commit/push/PR action was taken without explicit user permission

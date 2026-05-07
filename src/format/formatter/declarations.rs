@@ -55,6 +55,19 @@ impl Formatter {
         }
     }
 
+    /// Format same-type method partials in their declaration form.
+    fn format_method_partials(&mut self, partials: &[Spanned<MethodPartialDecl>]) {
+        for partial in partials {
+            self.writer.write(&partial.node.name);
+            self.writer.write(" = partial ");
+            self.writer.write(&partial.node.target);
+            self.writer.write("(");
+            self.format_partial_args(&partial.node.args);
+            self.writer.write(")");
+            self.writer.newline();
+        }
+    }
+
     /// Format one top-level or inline-test declaration.
     pub(super) fn format_declaration(&mut self, decl: &Declaration) {
         match decl {
@@ -65,6 +78,7 @@ impl Formatter {
             Declaration::Class(class) => self.format_class(class),
             Declaration::Trait(tr) => self.format_trait(tr),
             Declaration::Alias(alias) => self.format_alias(alias),
+            Declaration::Partial(partial) => self.format_partial(partial),
             Declaration::TypeAlias(alias) => self.format_type_alias(alias),
             Declaration::Newtype(nt) => self.format_newtype(nt),
             Declaration::Enum(en) => self.format_enum(en),
@@ -357,6 +371,7 @@ impl Formatter {
             self.format_docstring(docstring);
             if !model.fields.is_empty()
                 || !model.method_aliases.is_empty()
+                || !model.method_partials.is_empty()
                 || !model.properties.is_empty()
                 || !model.methods.is_empty()
             {
@@ -369,16 +384,21 @@ impl Formatter {
             self.format_field(&field.node);
         }
         self.format_method_aliases(&model.method_aliases);
-        if !model.method_aliases.is_empty() && (!model.properties.is_empty() || !model.methods.is_empty()) {
+        self.format_method_partials(&model.method_partials);
+        if (!model.method_aliases.is_empty() || !model.method_partials.is_empty())
+            && (!model.properties.is_empty() || !model.methods.is_empty())
+        {
             self.writer.newline();
         }
 
-        let seen_before_properties = has_fields || !model.method_aliases.is_empty();
+        let seen_before_properties =
+            has_fields || !model.method_aliases.is_empty() || !model.method_partials.is_empty();
         self.format_properties_with_spacing(&model.properties, seen_before_properties);
         self.format_methods_with_spacing(&model.methods, seen_before_properties || !model.properties.is_empty());
 
         if model.fields.is_empty()
             && model.method_aliases.is_empty()
+            && model.method_partials.is_empty()
             && model.properties.is_empty()
             && model.methods.is_empty()
         {
@@ -434,6 +454,7 @@ impl Formatter {
             self.format_docstring(docstring);
             if !class.fields.is_empty()
                 || !class.method_aliases.is_empty()
+                || !class.method_partials.is_empty()
                 || !class.properties.is_empty()
                 || !class.methods.is_empty()
             {
@@ -446,16 +467,21 @@ impl Formatter {
             self.format_field(&field.node);
         }
         self.format_method_aliases(&class.method_aliases);
-        if !class.method_aliases.is_empty() && (!class.properties.is_empty() || !class.methods.is_empty()) {
+        self.format_method_partials(&class.method_partials);
+        if (!class.method_aliases.is_empty() || !class.method_partials.is_empty())
+            && (!class.properties.is_empty() || !class.methods.is_empty())
+        {
             self.writer.newline();
         }
 
-        let seen_before_properties = has_fields || !class.method_aliases.is_empty();
+        let seen_before_properties =
+            has_fields || !class.method_aliases.is_empty() || !class.method_partials.is_empty();
         self.format_properties_with_spacing(&class.properties, seen_before_properties);
         self.format_methods_with_spacing(&class.methods, seen_before_properties || !class.properties.is_empty());
 
         if class.fields.is_empty()
             && class.method_aliases.is_empty()
+            && class.method_partials.is_empty()
             && class.properties.is_empty()
             && class.methods.is_empty()
         {
@@ -492,20 +518,32 @@ impl Formatter {
 
         if let Some(docstring) = &tr.docstring {
             self.format_docstring(docstring);
-            if !tr.method_aliases.is_empty() || !tr.properties.is_empty() || !tr.methods.is_empty() {
+            if !tr.method_aliases.is_empty()
+                || !tr.method_partials.is_empty()
+                || !tr.properties.is_empty()
+                || !tr.methods.is_empty()
+            {
                 self.writer.newline();
             }
         }
 
         self.format_method_aliases(&tr.method_aliases);
-        if !tr.method_aliases.is_empty() && (!tr.properties.is_empty() || !tr.methods.is_empty()) {
+        self.format_method_partials(&tr.method_partials);
+        if (!tr.method_aliases.is_empty() || !tr.method_partials.is_empty())
+            && (!tr.properties.is_empty() || !tr.methods.is_empty())
+        {
             self.writer.newline();
         }
 
-        self.format_properties_with_spacing(&tr.properties, !tr.method_aliases.is_empty());
-        self.format_methods_with_spacing(&tr.methods, !tr.method_aliases.is_empty() || !tr.properties.is_empty());
+        let seen_before_properties = !tr.method_aliases.is_empty() || !tr.method_partials.is_empty();
+        self.format_properties_with_spacing(&tr.properties, seen_before_properties);
+        self.format_methods_with_spacing(&tr.methods, seen_before_properties || !tr.properties.is_empty());
 
-        if tr.method_aliases.is_empty() && tr.properties.is_empty() && tr.methods.is_empty() {
+        if tr.method_aliases.is_empty()
+            && tr.method_partials.is_empty()
+            && tr.properties.is_empty()
+            && tr.methods.is_empty()
+        {
             if tr.docstring.is_some() {
                 self.writer.newline();
             }
@@ -608,6 +646,18 @@ impl Formatter {
         self.writer.newline();
     }
 
+    /// Format a module-level partial callable preset declaration.
+    fn format_partial(&mut self, partial: &PartialDecl) {
+        self.write_visibility(partial.visibility);
+        self.writer.write(&partial.name);
+        self.writer.write(" = partial ");
+        self.writer.write(&partial.target.segments.join("."));
+        self.writer.write("(");
+        self.format_partial_args(&partial.args);
+        self.writer.write(")");
+        self.writer.newline();
+    }
+
     fn format_type_alias(&mut self, alias: &TypeAliasDecl) {
         self.write_visibility(alias.visibility);
         self.writer.write("type ");
@@ -640,6 +690,7 @@ impl Formatter {
         let has_body = nt.docstring.is_some()
             || !nt.rebindings.is_empty()
             || !nt.method_aliases.is_empty()
+            || !nt.method_partials.is_empty()
             || !nt.interop_edges.is_empty()
             || !nt.methods.is_empty();
         if !has_body {
@@ -654,6 +705,7 @@ impl Formatter {
             self.format_docstring(docstring);
             if !nt.rebindings.is_empty()
                 || !nt.method_aliases.is_empty()
+                || !nt.method_partials.is_empty()
                 || !nt.interop_edges.is_empty()
                 || !nt.methods.is_empty()
             {
@@ -668,7 +720,8 @@ impl Formatter {
             self.writer.newline();
         }
         self.format_method_aliases(&nt.method_aliases);
-        if (!nt.rebindings.is_empty() || !nt.method_aliases.is_empty())
+        self.format_method_partials(&nt.method_partials);
+        if (!nt.rebindings.is_empty() || !nt.method_aliases.is_empty() || !nt.method_partials.is_empty())
             && (!nt.interop_edges.is_empty() || !nt.methods.is_empty())
         {
             self.writer.newline();
@@ -699,7 +752,10 @@ impl Formatter {
 
         self.format_methods_with_spacing(
             &nt.methods,
-            !nt.rebindings.is_empty() || !nt.method_aliases.is_empty() || !nt.interop_edges.is_empty(),
+            !nt.rebindings.is_empty()
+                || !nt.method_aliases.is_empty()
+                || !nt.method_partials.is_empty()
+                || !nt.interop_edges.is_empty(),
         );
 
         self.writer.dedent();
@@ -784,7 +840,6 @@ impl Formatter {
         self.format_type(&method.return_type.node);
 
         if method.body.is_none() {
-            self.writer.write(": ...");
             if self.writer.line_length_exceeded() {
                 self.writer.restore(checkpoint);
                 self.write_method_prefix(method);
@@ -792,7 +847,6 @@ impl Formatter {
                 self.format_params_multiline(method.receiver.as_ref(), &method.params);
                 self.writer.write(") -> ");
                 self.format_type(&method.return_type.node);
-                self.writer.write(": ...");
             }
             self.writer.newline();
             return;

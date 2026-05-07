@@ -89,7 +89,7 @@ let parsed = ApiResponse::from_json(&json)?;
 }
 ```
 
-**Incan equivalent**: `@derive(Serialize, Deserialize)` (JSON methods added automatically)
+**Incan equivalent**: `from std.serde import json` plus `@derive(json)`
 
 ### `#[derive(IncanReflect)]`
 

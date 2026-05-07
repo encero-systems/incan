@@ -43,8 +43,12 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parse a method declaration.
-    fn method_decl(&mut self, decorators: Vec<Spanned<Decorator>>) -> Result<Spanned<MethodDecl>, CompileError> {
+    /// Parse a method declaration, optionally allowing abstract body-less methods in trait contexts.
+    fn method_decl(
+        &mut self,
+        decorators: Vec<Spanned<Decorator>>,
+        allow_abstract: bool,
+    ) -> Result<Spanned<MethodDecl>, CompileError> {
         let start = self.current_span().start;
         let mut surface_modifiers = Vec::new();
         while let Some(id) = self.match_surface_keyword(KeywordSurfaceKind::DeclarationModifier) {
@@ -68,9 +72,11 @@ impl<'a> Parser<'a> {
         self.expect_punct(PunctuationId::Arrow, "Expected '->' before return type")?;
         let return_type = self.type_expr()?;
 
-        // Check for abstract method (no body), ellipsis, or block
+        // Check for abstract method (no body), ellipsis, or block.
         let body = if self.check(&TokenKind::Newline) {
-            // Abstract method with just newline (trait definition)
+            if !allow_abstract {
+                return Err(errors::method_decl_expected_body(self.current_span()));
+            }
             None
         } else if self.match_punct(PunctuationId::Colon) {
             if self.match_punct(PunctuationId::Ellipsis) {

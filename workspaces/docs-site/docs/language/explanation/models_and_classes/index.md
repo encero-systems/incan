@@ -13,7 +13,9 @@ If you're unsure which one to pick:
 - Start with a `model` when you're defining **data you store or exchange** (payloads, configs, schema-shaped data).
 
   ```incan hl_lines="2"
-  @derive(Serialize, Deserialize)
+  from std.serde import json
+
+  @derive(json)
   model User:
       id: int
       email: str

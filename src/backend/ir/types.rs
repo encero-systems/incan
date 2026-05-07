@@ -108,6 +108,28 @@ pub enum IrType {
 }
 
 impl IrType {
+    /// Return whether this type mentions an unbound generic type parameter.
+    pub fn contains_generic_parameter(&self) -> bool {
+        match self {
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner) => inner.contains_generic_parameter(),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                key.contains_generic_parameter() || value.contains_generic_parameter()
+            }
+            IrType::Tuple(items) | IrType::NamedGeneric(_, items) => {
+                items.iter().any(IrType::contains_generic_parameter)
+            }
+            IrType::Function { params, ret } => {
+                params.iter().any(IrType::contains_generic_parameter) || ret.contains_generic_parameter()
+            }
+            IrType::Generic(_) => true,
+            _ => false,
+        }
+    }
+
     /// Check if this type is Copy in Rust
     ///
     /// Returns true for primitive types (unit, bool, int, float) and string references

@@ -11,8 +11,9 @@ use crate::frontend::api_metadata::CheckedApiMetadataPackage;
 use crate::frontend::contract_metadata::ContractMetadataPackage as ModelContractMetadataPackage;
 use crate::frontend::library_exports::{
     CheckedAliasExport, CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind,
-    CheckedFunctionExport, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedStaticExport,
-    CheckedTraitExport, CheckedTypeAliasExport, CheckedTypeBound, CheckedTypeParam,
+    CheckedFunctionExport, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedPartialExport,
+    CheckedPartialTargetKind, CheckedPresetValue, CheckedStaticExport, CheckedTraitExport, CheckedTypeAliasExport,
+    CheckedTypeBound, CheckedTypeParam,
 };
 use crate::frontend::symbols::{CallableParam, ValueEnumBacking, ValueEnumValue};
 
@@ -65,6 +66,7 @@ pub struct LibraryManifest {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct LibraryExports {
     pub aliases: Vec<AliasExport>,
+    pub partials: Vec<PartialExport>,
     pub models: Vec<ModelExport>,
     pub classes: Vec<ClassExport>,
     pub functions: Vec<FunctionExport>,
@@ -81,6 +83,73 @@ pub struct LibraryExports {
 pub struct AliasExport {
     pub name: String,
     pub target_path: Vec<String>,
+}
+
+/// Exported partial callable preset metadata.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PartialExport {
+    pub name: String,
+    pub target_path: Vec<String>,
+    pub target_kind: PartialTargetKindExport,
+    pub presets: Vec<PartialPresetExport>,
+    pub type_params: Vec<TypeParamExport>,
+    pub params: Vec<ParamExport>,
+    pub return_type: TypeRef,
+    pub is_async: bool,
+}
+
+/// Semantic kind of the callable target projected by a public partial.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PartialTargetKindExport {
+    Function,
+    ModelConstructor,
+    ClassConstructor,
+    NewtypeConstructor,
+    Partial,
+    Unknown,
+}
+
+/// One preset keyword published by a partial callable preset.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PartialPresetExport {
+    pub name: String,
+    pub ty: TypeRef,
+    pub value: PresetValueExport,
+}
+
+/// Metadata-safe preset expression value.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum PresetValueExport {
+    Int(i64),
+    Float(String),
+    Bool(bool),
+    String(String),
+    Bytes(Vec<u8>),
+    None,
+    List(Vec<PresetValueExport>),
+    Dict(Vec<PresetDictEntryExport>),
+    ConstRef(Vec<String>),
+    ModelLiteral {
+        name: String,
+        fields: Vec<PresetModelFieldExport>,
+    },
+    Unsupported,
+}
+
+/// One metadata-safe dict preset entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresetDictEntryExport {
+    pub key: PresetValueExport,
+    pub value: PresetValueExport,
+}
+
+/// One metadata-safe model-literal preset field.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PresetModelFieldExport {
+    pub name: String,
+    pub value: PresetValueExport,
 }
 
 /// RFC 048 metadata persisted into `.incnlib`.
@@ -474,6 +543,9 @@ impl LibraryExports {
                 CheckedExportKind::Function(function_export) => {
                     model.functions.push(function_export_from_checked(function_export));
                 }
+                CheckedExportKind::Partial(partial_export) => {
+                    model.partials.push(partial_export_from_checked(partial_export));
+                }
                 CheckedExportKind::Alias(alias_export) => {
                     model.aliases.push(alias_export_from_checked(alias_export));
                 }
@@ -514,6 +586,7 @@ impl LibraryExports {
     fn sort_deterministically(&mut self) {
         self.models.sort_by(|left, right| left.name.cmp(&right.name));
         self.aliases.sort_by(|left, right| left.name.cmp(&right.name));
+        self.partials.sort_by(|left, right| left.name.cmp(&right.name));
         self.classes.sort_by(|left, right| left.name.cmp(&right.name));
         self.functions.sort_by(|left, right| left.name.cmp(&right.name));
         self.traits.sort_by(|left, right| left.name.cmp(&right.name));
@@ -530,6 +603,76 @@ fn alias_export_from_checked(export: &CheckedAliasExport) -> AliasExport {
     AliasExport {
         name: export.name.clone(),
         target_path: export.target_path.clone(),
+    }
+}
+
+/// Convert checked partial metadata into manifest partial export metadata.
+fn partial_export_from_checked(export: &CheckedPartialExport) -> PartialExport {
+    PartialExport {
+        name: export.name.clone(),
+        target_path: export.target_path.clone(),
+        target_kind: partial_target_kind_from_checked(export.target_kind),
+        presets: export
+            .presets
+            .iter()
+            .map(|preset| PartialPresetExport {
+                name: preset.name.clone(),
+                ty: type_ref_from_resolved(&preset.ty),
+                value: preset_value_from_checked(&preset.value),
+            })
+            .collect(),
+        type_params: export.type_params.iter().map(type_param_from_checked).collect(),
+        params: params_from_checked(&export.params),
+        return_type: type_ref_from_resolved(&export.return_type),
+        is_async: export.is_async,
+    }
+}
+
+/// Convert checked partial target kinds into the manifest vocabulary.
+fn partial_target_kind_from_checked(kind: CheckedPartialTargetKind) -> PartialTargetKindExport {
+    match kind {
+        CheckedPartialTargetKind::Function => PartialTargetKindExport::Function,
+        CheckedPartialTargetKind::ModelConstructor => PartialTargetKindExport::ModelConstructor,
+        CheckedPartialTargetKind::ClassConstructor => PartialTargetKindExport::ClassConstructor,
+        CheckedPartialTargetKind::NewtypeConstructor => PartialTargetKindExport::NewtypeConstructor,
+        CheckedPartialTargetKind::Partial => PartialTargetKindExport::Partial,
+        CheckedPartialTargetKind::Unknown => PartialTargetKindExport::Unknown,
+    }
+}
+
+/// Convert checked preset values into the manifest value vocabulary.
+fn preset_value_from_checked(value: &CheckedPresetValue) -> PresetValueExport {
+    match value {
+        CheckedPresetValue::Int(value) => PresetValueExport::Int(*value),
+        CheckedPresetValue::Float(value) => PresetValueExport::Float(value.to_string()),
+        CheckedPresetValue::Bool(value) => PresetValueExport::Bool(*value),
+        CheckedPresetValue::String(value) => PresetValueExport::String(value.clone()),
+        CheckedPresetValue::Bytes(value) => PresetValueExport::Bytes(value.clone()),
+        CheckedPresetValue::None => PresetValueExport::None,
+        CheckedPresetValue::List(values) => {
+            PresetValueExport::List(values.iter().map(preset_value_from_checked).collect())
+        }
+        CheckedPresetValue::Dict(entries) => PresetValueExport::Dict(
+            entries
+                .iter()
+                .map(|(key, value)| PresetDictEntryExport {
+                    key: preset_value_from_checked(key),
+                    value: preset_value_from_checked(value),
+                })
+                .collect(),
+        ),
+        CheckedPresetValue::ConstRef(path) => PresetValueExport::ConstRef(path.clone()),
+        CheckedPresetValue::ModelLiteral { name, fields } => PresetValueExport::ModelLiteral {
+            name: name.clone(),
+            fields: fields
+                .iter()
+                .map(|(field, value)| PresetModelFieldExport {
+                    name: field.clone(),
+                    value: preset_value_from_checked(value),
+                })
+                .collect(),
+        },
+        CheckedPresetValue::Unsupported => PresetValueExport::Unsupported,
     }
 }
 

@@ -24,6 +24,7 @@ pub trait Visitor {
             Declaration::Class(c) => self.visit_class(c),
             Declaration::Trait(t) => self.visit_trait(t),
             Declaration::Alias(a) => self.visit_alias(a),
+            Declaration::Partial(p) => self.visit_partial(p),
             Declaration::TypeAlias(a) => self.visit_type_alias(a),
             Declaration::Newtype(n) => self.visit_newtype(n),
             Declaration::Enum(e) => self.visit_enum(e),
@@ -42,6 +43,8 @@ pub trait Visitor {
     fn visit_trait(&mut self, _trait: &TraitDecl) {}
     /// Visit a module-level symbol alias declaration.
     fn visit_alias(&mut self, _alias: &AliasDecl) {}
+    /// Visit a module-level partial callable preset declaration.
+    fn visit_partial(&mut self, _partial: &PartialDecl) {}
     fn visit_type_alias(&mut self, _alias: &TypeAliasDecl) {}
     fn visit_newtype(&mut self, _newtype: &NewtypeDecl) {}
     fn visit_enum(&mut self, _enum: &EnumDecl) {}

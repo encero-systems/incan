@@ -126,6 +126,12 @@ impl AstLowering {
                 name: a.name.clone(),
                 target_path: a.target.segments.clone(),
             },
+            ast::Declaration::Partial(_) => {
+                return Err(LoweringError {
+                    message: "Partial callable presets are not lowered by this syntax-only slice".to_string(),
+                    span: IrSpan::default(),
+                });
+            }
             ast::Declaration::Newtype(n) => {
                 if n.is_rusttype {
                     let interop_edges = self.lower_interop_edges(&n.interop_edges)?;

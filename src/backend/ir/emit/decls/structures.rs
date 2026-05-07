@@ -8,6 +8,9 @@ use incan_core::lang::derives::{self, DeriveId};
 use super::super::super::decl::{IrEnum, IrEnumValue, IrEnumValueType, IrStruct, VariantFields};
 use super::super::{EmitError, IrEmitter};
 
+const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
+const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
+
 impl<'a> IrEmitter<'a> {
     /// Emit a field-level expectation for private generated fields that must remain present for Incan semantics even
     /// when Rust cannot observe a read in the generated program.
@@ -35,8 +38,6 @@ impl<'a> IrEmitter<'a> {
             // `Validate` is an Incan semantic derive (not a Rust derive macro).
             .filter(|d| derives::from_str(d.as_str()) != Some(DeriveId::Validate))
             .map(|d| match derives::from_str(d.as_str()) {
-                Some(DeriveId::Serialize) => quote! { serde::Serialize },
-                Some(DeriveId::Deserialize) => quote! { serde::Deserialize },
                 _ if d == "FieldInfo" => quote! { incan_derive::FieldInfo },
                 _ if d == "IncanClass" => quote! { incan_derive::IncanClass },
                 _ if d.contains("::") => {
@@ -68,12 +69,10 @@ impl<'a> IrEmitter<'a> {
         };
         let lint_allows = self.emit_rust_lint_allows(&s.lint_allows);
 
-        let has_serde = s.derives.iter().any(|d| {
-            matches!(
-                derives::from_str(d.as_str()),
-                Some(DeriveId::Serialize) | Some(DeriveId::Deserialize)
-            )
-        });
+        let has_serde = s
+            .derives
+            .iter()
+            .any(|d| d == SERDE_SERIALIZE_DERIVE || d == SERDE_DESERIALIZE_DERIVE);
 
         let is_tuple_struct =
             !s.fields.is_empty() && s.fields.iter().all(|f| f.name.chars().all(|c| c.is_ascii_digit()));
@@ -212,14 +211,11 @@ impl<'a> IrEmitter<'a> {
                 if !is_value_enum {
                     return true;
                 }
-                !matches!(
-                    derives::from_str(d.as_str()),
-                    Some(DeriveId::Serialize | DeriveId::Deserialize | DeriveId::Display)
-                )
+                d.as_str() != SERDE_SERIALIZE_DERIVE
+                    && d.as_str() != SERDE_DESERIALIZE_DERIVE
+                    && derives::from_str(d.as_str()) != Some(DeriveId::Display)
             })
             .map(|d| match derives::from_str(d.as_str()) {
-                Some(DeriveId::Serialize) => quote! { serde::Serialize },
-                Some(DeriveId::Deserialize) => quote! { serde::Deserialize },
                 _ if d == "FieldInfo" => quote! { incan_derive::FieldInfo },
                 _ if d == "IncanClass" => quote! { incan_derive::IncanClass },
                 _ if d.contains("::") => {
@@ -337,11 +333,7 @@ impl<'a> IrEmitter<'a> {
                     serialize_arms.push(quote! { #pat => serializer.serialize_str(#raw) });
                 }
 
-                let serialize_impl = if e
-                    .derives
-                    .iter()
-                    .any(|d| derives::from_str(d) == Some(DeriveId::Serialize))
-                {
+                let serialize_impl = if e.derives.iter().any(|d| d == SERDE_SERIALIZE_DERIVE) {
                     quote! {
                         impl #generics serde::Serialize for #name #generics_bare {
                             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -358,11 +350,7 @@ impl<'a> IrEmitter<'a> {
                     quote! {}
                 };
 
-                let deserialize_impl = if e
-                    .derives
-                    .iter()
-                    .any(|d| derives::from_str(d) == Some(DeriveId::Deserialize))
-                {
+                let deserialize_impl = if e.derives.iter().any(|d| d == SERDE_DESERIALIZE_DERIVE) {
                     quote! {
                         impl<'de> serde::Deserialize<'de> for #name {
                             fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -445,11 +433,7 @@ impl<'a> IrEmitter<'a> {
                     serialize_arms.push(quote! { #pat => serializer.serialize_i64(#raw_lit) });
                 }
 
-                let serialize_impl = if e
-                    .derives
-                    .iter()
-                    .any(|d| derives::from_str(d) == Some(DeriveId::Serialize))
-                {
+                let serialize_impl = if e.derives.iter().any(|d| d == SERDE_SERIALIZE_DERIVE) {
                     quote! {
                         impl #generics serde::Serialize for #name #generics_bare {
                             fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
@@ -466,11 +450,7 @@ impl<'a> IrEmitter<'a> {
                     quote! {}
                 };
 
-                let deserialize_impl = if e
-                    .derives
-                    .iter()
-                    .any(|d| derives::from_str(d) == Some(DeriveId::Deserialize))
-                {
+                let deserialize_impl = if e.derives.iter().any(|d| d == SERDE_DESERIALIZE_DERIVE) {
                     quote! {
                         impl<'de> serde::Deserialize<'de> for #name {
                             fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
@@ -671,8 +651,8 @@ mod tests {
                 raw_value: Some(IrEnumValue::String("production".to_string())),
             }],
         );
-        enum_decl.derives.push("Serialize".to_string());
-        enum_decl.derives.push("Deserialize".to_string());
+        enum_decl.derives.push(SERDE_SERIALIZE_DERIVE.to_string());
+        enum_decl.derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
 
         let rendered = render_enum(&enum_decl)?;
 
@@ -704,8 +684,8 @@ mod tests {
                 raw_value: Some(IrEnumValue::Int(404)),
             }],
         );
-        enum_decl.derives.push("Serialize".to_string());
-        enum_decl.derives.push("Deserialize".to_string());
+        enum_decl.derives.push(SERDE_SERIALIZE_DERIVE.to_string());
+        enum_decl.derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
 
         let rendered = render_enum(&enum_decl)?;
 

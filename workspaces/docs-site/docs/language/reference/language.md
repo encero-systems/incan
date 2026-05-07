@@ -108,11 +108,13 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.traits` | - | `std.traits.convert`, `std.traits.ops`, `std.traits.error`, `std.traits.indexing`, `std.traits.callable`, `std.traits.prelude` | - |
 | `std.math` | - | - | - |
 | `std.fs` | - | `std.fs.path`, `std.fs.file`, `std.fs.metadata`, `std.fs.glob`, `std.fs.prelude` | - |
-| `std.datetime` | - | `std.datetime.runtime`, `std.datetime.civil`, `std.datetime.error`, `std.datetime.prelude` | - |
+| `std.datetime` | - | `std.datetime.runtime`, `std.datetime.civil`, `std.datetime.civil.intervals`, `std.datetime.civil.naive`, `std.datetime.civil.offset`, `std.datetime.error`, `std.datetime.prelude` | - |
 | `std.graph` | - | - | - |
+| `std.collections` | - | - | - |
 | `std.io` | - | - | - |
 | `std.tempfile` | - | - | - |
 | `std.rust` | - | - | - |
+| `std.builtins` | - | - | - |
 
 ## Builtin exceptions
 
@@ -239,6 +241,8 @@ Panics at runtime with `KeyError: 'b' not found in dict`.
 #### `JsonDecodeError`
 
 ```incan
+from std.serde.json import Deserialize
+
 @derive(Deserialize)
 model User:
     name: str
@@ -336,8 +340,6 @@ and `@requires` keep their existing special behavior.
 | Clone | `Clone` |  | Derive deep cloning. | RFC 000 | 0.1 | Stable |
 | Copy | `Copy` |  | Derive copy semantics for simple value types. | RFC 000 | 0.1 | Stable |
 | Default | `Default` |  | Derive a default value constructor. | RFC 000 | 0.1 | Stable |
-| Serialize | `Serialize` |  | Derive serialization support (e.g. JSON). | RFC 000 | 0.1 | Stable |
-| Deserialize | `Deserialize` |  | Derive deserialization support (e.g. JSON). | RFC 000 | 0.1 | Stable |
 | Validate | `Validate` |  | Enable validated construction via `TypeName.new(...)` and require a `validate(self) -> Result[Self, E]` method. | RFC 000 | 0.1 | Stable |
 
 ## Builtin traits

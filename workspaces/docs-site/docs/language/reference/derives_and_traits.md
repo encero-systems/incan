@@ -81,8 +81,7 @@ Only the items usable in `@derive(...)` are derives:
 | [Clone][derive-clone]             | `.clone()`                | —          | Auto-added              |
 | [Copy][derive-copy]               | Implicit copy             | —          | Marker trait            |
 | [Default][derive-default]         | `Type.default()`          | —          | Baseline constructor    |
-| [Serialize][derive-serialize]     | JSON stringify            | —          | `json_stringify(value)` |
-| [Deserialize][derive-deserialize] | JSON parse                | —          | `T.from_json(str)`      |
+| [json][derive-serialize]          | JSON stringify/parse      | —          | `std.serde` module      |
 | [Validate][derive-validate]       | Validated construction    | —          | Models only             |
 
 Detailed pages:
@@ -320,7 +319,7 @@ Explicit brackets are supported only for direct calls resolved as Incan function
 
 ## Traits (authoring)
 
-Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with `with TraitName`, and you may also use the trait name itself directly in annotations. Methods can be required (`...`) or have defaults.
+Traits define reusable capabilities. Traits are always abstract: you opt concrete types in with `with TraitName`, and you may also use the trait name itself directly in annotations. Required methods may be written as a signature with no body; the older `: ...` spelling remains valid for compatibility. Methods with defaults still use a colon and an indented body.
 
 Models, classes, enums, and other concrete type declarations can adopt traits. Traits may adopt other traits with the same `with` syntax to form capability hierarchies. That means a narrower trait can refine a broader one, and any concrete adopter of the narrower trait is also accepted where the broader trait is expected.
 
@@ -339,7 +338,7 @@ def main() -> None:
 
 ```incan
 trait Renderable:
-    def render(self) -> str: ...
+    def render(self) -> str
 
 enum Token with Renderable:
     Text(str)
@@ -353,10 +352,10 @@ enum Token with Renderable:
 
 ```incan
 trait Collection[T]:
-    def first(self) -> T: ...
+    def first(self) -> T
 
 trait OrderedCollection[T] with Collection[T]:
-    def sorted(self) -> Self: ...
+    def sorted(self) -> Self
 
 def first_item(values: Collection[int]) -> int:
     return values.first()
@@ -734,6 +733,8 @@ def main() -> None:
 - `value.to_json()` → `str` when the type imports and adopts `std.serde.json.Serialize`
 
 ```incan
+from std.serde.json import Serialize
+
 @derive(Serialize)
 model User:
     name: str
@@ -779,9 +780,11 @@ def encode[T with json.Serialize](value: T) -> str:
 
 - `T.from_json(input: str)` → `Result[T, str]`
 
-Note: explicit `with Deserialize` adoption still needs either `@derive(Deserialize)` or a user-defined `from_json(input)` implementation.
+Note: explicit `with Deserialize` adoption still needs either an imported `@derive(Deserialize)` or a user-defined `from_json(input)` implementation.
 
 ```incan
+from std.serde.json import Deserialize
+
 @derive(Deserialize)
 model User:
     name: str

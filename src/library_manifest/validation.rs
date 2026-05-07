@@ -13,7 +13,7 @@ use semver::Version;
 use super::wire::{RawLibraryExports, RawLibraryManifest};
 use super::{
     EnumExport, EnumValueExport, EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport,
-    ParamKindExport, VocabProviderManifest,
+    ParamKindExport, PartialExport, VocabProviderManifest,
 };
 use crate::frontend::contract_metadata::CONTRACT_METADATA_SCHEMA_VERSION;
 
@@ -47,6 +47,10 @@ fn validate_contract_metadata(raw: &RawLibraryManifest) -> Result<(), LibraryMan
 fn validate_callable_param_exports(exports: &RawLibraryExports) -> Result<(), LibraryManifestError> {
     for function in &exports.functions {
         validate_callable_params(&format!("function `{}`", function.name), &function.params)?;
+    }
+    for partial in &exports.partials {
+        validate_partial_export(partial)?;
+        validate_callable_params(&format!("partial `{}`", partial.name), &partial.params)?;
     }
     for model in &exports.models {
         for method in &model.methods {
@@ -86,6 +90,32 @@ fn validate_callable_param_exports(exports: &RawLibraryExports) -> Result<(), Li
                 &format!("newtype `{}` method `{}`", newtype.name, method.name),
                 &method.params,
             )?;
+        }
+    }
+    Ok(())
+}
+
+/// Validate one exported partial's provenance payload.
+fn validate_partial_export(partial: &PartialExport) -> Result<(), LibraryManifestError> {
+    if partial.target_path.is_empty() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "partial `{}` must declare a non-empty target path",
+            partial.name
+        )));
+    }
+    if partial.presets.is_empty() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "partial `{}` must declare at least one preset",
+            partial.name
+        )));
+    }
+    let mut seen = HashSet::new();
+    for preset in &partial.presets {
+        if !seen.insert(preset.name.as_str()) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "partial `{}` repeats preset `{}`",
+                partial.name, preset.name
+            )));
         }
     }
     Ok(())
@@ -209,6 +239,7 @@ fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), LibraryManifes
 
     validate_helper_bindings(&raw.exports, &vocab.provider_manifest)?;
     validate_scoped_surface_descriptors(raw)?;
+    validate_scoped_symbol_descriptors(raw)?;
 
     let Some(desugarer) = &vocab.desugarer_artifact else {
         return Ok(());
@@ -253,6 +284,239 @@ fn validate_vocab_payload(raw: &RawLibraryManifest) -> Result<(), LibraryManifes
         ));
     }
     validate_sha256_hex(&desugarer.sha256)
+}
+
+/// Validate RFC 045 scoped-symbol descriptors before they become compiler-facing manifest data.
+fn validate_scoped_symbol_descriptors(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
+    let Some(vocab) = &raw.vocab else {
+        return Ok(());
+    };
+
+    let mut seen_descriptor_keys = HashSet::new();
+    let mut seen_positive_positions = HashSet::new();
+
+    for surface in &vocab.dsl_surfaces {
+        let activation_key = scoped_surface_activation_key(&surface.activation);
+        let declarations: HashSet<&str> = surface
+            .declarations
+            .iter()
+            .map(|declaration| declaration.keyword.as_str())
+            .collect();
+        let clauses: HashSet<(&str, &str)> = surface
+            .declarations
+            .iter()
+            .flat_map(|declaration| {
+                declaration
+                    .clauses
+                    .iter()
+                    .map(|clause| (declaration.keyword.as_str(), clause.keyword.as_str()))
+            })
+            .collect();
+
+        for descriptor in &surface.scoped_symbols {
+            validate_scoped_symbol_descriptor_shape(descriptor)?;
+            if !seen_descriptor_keys.insert(format!("{activation_key}:{}", descriptor.key)) {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "duplicate scoped symbol descriptor key `{}` for activation `{activation_key}`",
+                    descriptor.key
+                )));
+            }
+            validate_scoped_symbol_role(descriptor)?;
+            validate_scoped_symbol_diagnostics(descriptor)?;
+
+            if descriptor.eligible_in.is_empty() {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "scoped symbol descriptor `{}` must declare at least one eligible position",
+                    descriptor.key
+                )));
+            }
+
+            for eligibility in &descriptor.eligible_in {
+                validate_scoped_symbol_eligibility(&descriptor.key, eligibility, &declarations, &clauses)?;
+                let position_key = format!(
+                    "{}:{}:{}:{}:{}:{:?}",
+                    activation_key,
+                    descriptor.symbol,
+                    eligibility.declaration,
+                    eligibility.clause.as_deref().unwrap_or(""),
+                    eligibility.call.as_deref().unwrap_or(""),
+                    eligibility.position
+                );
+                if !seen_positive_positions.insert(position_key) {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "ambiguous scoped symbol descriptor `{}` conflicts with another descriptor for the same activation, symbol, and eligible position",
+                        descriptor.key
+                    )));
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate scoped-symbol descriptor identity and identifier spelling.
+fn validate_scoped_symbol_descriptor_shape(
+    descriptor: &incan_vocab::ScopedSymbolDescriptor,
+) -> Result<(), LibraryManifestError> {
+    if descriptor.key.trim().is_empty() {
+        return Err(LibraryManifestError::Invalid(
+            "vocab scoped symbol descriptor key cannot be empty".to_string(),
+        ));
+    }
+    if descriptor.symbol.trim().is_empty() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "scoped symbol descriptor `{}` symbol cannot be empty",
+            descriptor.key
+        )));
+    }
+    if !is_identifier_spelling(&descriptor.symbol) {
+        return Err(LibraryManifestError::Invalid(format!(
+            "scoped symbol descriptor `{}` symbol `{}` is not a valid identifier",
+            descriptor.key, descriptor.symbol
+        )));
+    }
+    if incan_core::lang::keywords::from_str_hard_only(&descriptor.symbol).is_some() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "scoped symbol descriptor `{}` symbol `{}` cannot be a hard keyword",
+            descriptor.key, descriptor.symbol
+        )));
+    }
+    Ok(())
+}
+
+/// Validate optional DSL-authored role metadata.
+fn validate_scoped_symbol_role(descriptor: &incan_vocab::ScopedSymbolDescriptor) -> Result<(), LibraryManifestError> {
+    let Some(role) = &descriptor.role else {
+        return Ok(());
+    };
+
+    if role.key.trim().is_empty() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "scoped symbol descriptor `{}` role key cannot be empty",
+            descriptor.key
+        )));
+    }
+    if role.label.as_ref().is_some_and(|label| label.trim().is_empty()) {
+        return Err(LibraryManifestError::Invalid(format!(
+            "scoped symbol descriptor `{}` role label cannot be empty",
+            descriptor.key
+        )));
+    }
+    if role
+        .description
+        .as_ref()
+        .is_some_and(|description| description.trim().is_empty())
+    {
+        return Err(LibraryManifestError::Invalid(format!(
+            "scoped symbol descriptor `{}` role description cannot be empty",
+            descriptor.key
+        )));
+    }
+    Ok(())
+}
+
+/// Validate author-provided diagnostic templates for one scoped-symbol descriptor.
+fn validate_scoped_symbol_diagnostics(
+    descriptor: &incan_vocab::ScopedSymbolDescriptor,
+) -> Result<(), LibraryManifestError> {
+    let mut seen_codes = HashSet::new();
+    for diagnostic in &descriptor.diagnostics {
+        if diagnostic.code.trim().is_empty() {
+            return Err(LibraryManifestError::Invalid(format!(
+                "scoped symbol descriptor `{}` diagnostic code cannot be empty",
+                descriptor.key
+            )));
+        }
+        if diagnostic.message.trim().is_empty() {
+            return Err(LibraryManifestError::Invalid(format!(
+                "scoped symbol descriptor `{}` diagnostic `{}` message cannot be empty",
+                descriptor.key, diagnostic.code
+            )));
+        }
+        if !seen_codes.insert(diagnostic.code.as_str()) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "scoped symbol descriptor `{}` contains duplicate diagnostic code `{}`",
+                descriptor.key, diagnostic.code
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Validate that a scoped-symbol positive eligibility rule references a known declaration or clause.
+fn validate_scoped_symbol_eligibility(
+    descriptor_key: &str,
+    eligibility: &incan_vocab::ScopedSymbolEligibility,
+    declarations: &HashSet<&str>,
+    clauses: &HashSet<(&str, &str)>,
+) -> Result<(), LibraryManifestError> {
+    if eligibility.declaration.trim().is_empty() {
+        return Err(LibraryManifestError::Invalid(format!(
+            "scoped symbol descriptor `{descriptor_key}` eligibility declaration cannot be empty"
+        )));
+    }
+    if !declarations.contains(eligibility.declaration.as_str()) {
+        return Err(LibraryManifestError::Invalid(format!(
+            "scoped symbol descriptor `{descriptor_key}` references unknown declaration `{}`",
+            eligibility.declaration
+        )));
+    }
+
+    match eligibility.position {
+        incan_vocab::ScopedSymbolPosition::ClauseBody => match &eligibility.clause {
+            Some(clause) if !clause.trim().is_empty() => {
+                if eligibility.call.is_some() {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "scoped symbol descriptor `{descriptor_key}` clause-body eligibility cannot declare a call"
+                    )));
+                }
+                if !clauses.contains(&(eligibility.declaration.as_str(), clause.as_str())) {
+                    return Err(LibraryManifestError::Invalid(format!(
+                        "scoped symbol descriptor `{descriptor_key}` references unknown clause `{}` in declaration `{}`",
+                        clause, eligibility.declaration
+                    )));
+                }
+                Ok(())
+            }
+            _ => Err(LibraryManifestError::Invalid(format!(
+                "scoped symbol descriptor `{descriptor_key}` clause-body eligibility must declare a clause"
+            ))),
+        },
+        incan_vocab::ScopedSymbolPosition::DeclarationBody => {
+            if eligibility.clause.is_some() || eligibility.call.is_some() {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "scoped symbol descriptor `{descriptor_key}` declaration eligibility cannot declare a clause or call"
+                )));
+            }
+            Ok(())
+        }
+        incan_vocab::ScopedSymbolPosition::CallArgument => {
+            if eligibility.clause.is_some() {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "scoped symbol descriptor `{descriptor_key}` call-argument eligibility cannot declare a clause"
+                )));
+            }
+            match eligibility.call.as_deref() {
+                Some(call) if !call.trim().is_empty() => Ok(()),
+                _ => Err(LibraryManifestError::Invalid(format!(
+                    "scoped symbol descriptor `{descriptor_key}` call-argument eligibility must declare a call"
+                ))),
+            }
+        }
+        _ => Err(LibraryManifestError::Invalid(format!(
+            "scoped symbol descriptor `{descriptor_key}` uses an unsupported eligibility position"
+        ))),
+    }
+}
+
+/// Return whether a scoped symbol spelling is compatible with ordinary identifier call syntax.
+fn is_identifier_spelling(symbol: &str) -> bool {
+    let mut chars = symbol.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic()) && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
 /// Validate RFC 040 scoped-surface descriptors before they become compiler-facing manifest data.

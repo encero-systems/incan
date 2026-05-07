@@ -33,7 +33,7 @@ impl<'a> Parser<'a> {
 
             if self.starts_surface_function_decl() {
                 parsing_methods = true;
-                methods.push(self.method_decl(method_decorators)?);
+                methods.push(self.method_decl(method_decorators, false)?);
             } else {
                 if !method_decorators.is_empty() {
                     return Err(CompileError::syntax(
