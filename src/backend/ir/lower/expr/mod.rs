@@ -13,8 +13,8 @@ mod patterns;
 
 use super::super::TypedExpr;
 use super::super::expr::{
-    CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry, IrMethodDispatch,
-    MethodCallArgPolicy, MethodKind, NumericResizePolicy, UnaryOp, VarAccess, VarRefKind,
+    BuiltinFn, CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry,
+    IrMethodDispatch, MethodCallArgPolicy, MethodKind, NumericResizePolicy, UnaryOp, VarAccess, VarRefKind,
 };
 use super::super::types::IrType;
 use super::AstLowering;
@@ -23,10 +23,50 @@ use crate::frontend::ast::{self, Spanned};
 use crate::frontend::typechecker::{IdentKind, ResolvedMethodDispatch, ResolvedOperatorKind};
 use incan_core::interop::RustCollectionFamily;
 use incan_core::lang::magic_methods::{self, MagicMethodId};
+use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::result_methods::ResultMethodId;
+use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
+    /// Lower `list.repeat(...)` arguments in canonical helper-parameter order.
+    ///
+    /// The surface helper accepts named arguments, but `BuiltinFn::ListRepeat` stores arguments positionally for
+    /// emission, so lowering must bind `value` before `count` instead of preserving source order.
+    fn lower_builtin_list_repeat_args(&mut self, args: &[ast::CallArg]) -> Result<Vec<TypedExpr>, LoweringError> {
+        let mut value = None;
+        let mut count = None;
+        let mut positional_index = 0usize;
+
+        for arg in args {
+            match arg {
+                ast::CallArg::Positional(expr) => {
+                    match positional_index {
+                        0 if value.is_none() => value = Some(expr),
+                        1 if count.is_none() => count = Some(expr),
+                        _ => {}
+                    }
+                    positional_index += 1;
+                }
+                ast::CallArg::Named(name, expr) => match name.as_str() {
+                    "value" if value.is_none() => value = Some(expr),
+                    "count" if count.is_none() => count = Some(expr),
+                    _ => {}
+                },
+                ast::CallArg::PositionalUnpack(_) | ast::CallArg::KeywordUnpack(_) => {}
+            }
+        }
+
+        let mut lowered = Vec::with_capacity(2);
+        if let Some(value) = value {
+            lowered.push(self.lower_expr_spanned(value)?);
+        }
+        if let Some(count) = count {
+            lowered.push(self.lower_expr_spanned(count)?);
+        }
+        Ok(lowered)
+    }
+
     /// Return whether a concrete receiver type explicitly adopts the Incan `Iterator` protocol.
     fn receiver_adopts_iterator_protocol(&self, ty: &IrType) -> bool {
         let mut ty = ty;
@@ -448,6 +488,30 @@ impl AstLowering {
 
             // ---- Method calls ----
             ast::Expr::MethodCall(o, m, type_args, args) => {
+                if matches!(&o.node, ast::Expr::Ident(name)
+                    if collection_helpers::from_parts(name, m) == Some(BuiltinCollectionHelperId::ListRepeat)
+                        && collection_types::from_str(name.as_str()) == Some(CollectionTypeId::List))
+                    && self
+                        .type_info
+                        .as_ref()
+                        .is_some_and(|info| matches!(info.ident_kind(o.span), Some(IdentKind::TypeName)))
+                {
+                    let args_ir = self.lower_builtin_list_repeat_args(args)?;
+                    let expr_ty = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.expr_type(expr_span))
+                        .map(|ty| self.lower_resolved_type(ty))
+                        .unwrap_or(IrType::Unknown);
+                    return Ok(TypedExpr::new(
+                        IrExprKind::BuiltinCall {
+                            func: BuiltinFn::ListRepeat,
+                            args: args_ir,
+                        },
+                        expr_ty,
+                    ));
+                }
+
                 let receiver = if let ast::Expr::Index(base, _) = &o.node
                     && let ast::Expr::Ident(name) = &base.node
                     && self.type_info.as_ref().is_some_and(|info| {

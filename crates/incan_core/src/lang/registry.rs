@@ -79,6 +79,9 @@ pub const RFC_052: RfcId = "RFC 052";
 /// RFC 057 — targeted Rust lint suppression.
 pub const RFC_057: RfcId = "RFC 057";
 
+/// RFC 069 — `list.repeat` helper for fixed-length initialization.
+pub const RFC_069: RfcId = "RFC 069";
+
 /// RFC 070 — `Result[T, E]` combinators.
 pub const RFC_070: RfcId = "RFC 070";
 
@@ -133,6 +136,8 @@ impl RFC {
     pub const _052: RfcId = RFC_052;
     /// RFC 057 — targeted Rust lint suppression.
     pub const _057: RfcId = RFC_057;
+    /// RFC 069 — `list.repeat` helper for fixed-length initialization.
+    pub const _069: RfcId = RFC_069;
     /// RFC 070 — `Result[T, E]` combinators.
     pub const _070: RfcId = RFC_070;
     /// RFC 083 — symbol and method aliases.

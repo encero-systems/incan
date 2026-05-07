@@ -21,6 +21,7 @@
 - [Builtin types](#builtin-types)
 - [Surface constructors](#surface-constructors)
 - [Surface functions](#surface-functions)
+- [Built-in collection helpers](#built-in-collection-helpers)
 - [Surface string methods](#surface-string-methods)
 - [Surface types](#surface-types)
 - [Surface methods](#surface-methods)
@@ -473,6 +474,12 @@ def main() -> None:
 | Channel | `channel` |  | Create a bounded channel (sender, receiver). | RFC 000 | 0.1 | Stable |
 | UnboundedChannel | `unbounded_channel` |  | Create an unbounded channel (sender, receiver). | RFC 000 | 0.1 | Stable |
 | Oneshot | `oneshot` |  | Create a oneshot channel (sender, receiver). | RFC 000 | 0.1 | Stable |
+
+## Built-in collection helpers
+
+| Id | Receiver | Member | Signature | Aliases | Description | RFC | Since | Stability |
+|---|---|---|---|---|---|---|---|---|
+| ListRepeat | `list` | `repeat` | `list.repeat[T](value: T, count: int) -> list[T]` |  | Create a list containing `count` clone-derived copies of `value`; negative counts raise `ValueError`. | RFC 069 | 0.3 | Stable |
 
 ## Surface string methods
 
