@@ -1128,6 +1128,33 @@ fn test_std_fs_import_codegen() {
 }
 
 #[test]
+fn test_std_tempfile_import_codegen() {
+    let source = load_test_file("std_tempfile_import");
+    let rust_code = generate_rust(&source);
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::tempfile::NamedTemporaryFile;"),
+        "std.tempfile NamedTemporaryFile import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::tempfile::TemporaryDirectory;"),
+        "std.tempfile TemporaryDirectory import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::tempfile::SpooledTemporaryFile;"),
+        "std.tempfile SpooledTemporaryFile import should emit through the generated stdlib tempfile module; generated:\n{rust_code}"
+    );
+    assert!(
+        rust_code.contains("pub use crate::__incan_std::fs::Path;"),
+        "std.tempfile call sites should still use std.fs Path for path values; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("__incan_std::web::Path"),
+        "std.tempfile must not reuse the std.web Path extractor path; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("std_tempfile_import", rust_code);
+}
+
+#[test]
 fn test_function_calls_codegen() {
     let source = load_test_file("function_calls");
     let rust_code = generate_rust(&source);
@@ -1204,6 +1231,13 @@ fn test_control_flow_codegen() {
     let source = load_test_file("control_flow");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("control_flow", rust_code);
+}
+
+#[test]
+fn test_pattern_alternation_codegen() {
+    let source = load_test_file("pattern_alternation");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("pattern_alternation", rust_code);
 }
 
 #[test]

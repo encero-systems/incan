@@ -38,6 +38,17 @@ def describe(value: int | str) -> str:
 
 `match` over a union must cover every member type or include `_`.
 
+Pattern alternation can group union type patterns when the branch does not need differently typed bindings:
+
+```incan
+def classify(value: int | str | None) -> str:
+    match value:
+        int(_) | str(_) => return "present"
+        None => return "missing"
+```
+
+Do not reuse one binding name across alternatives that infer different types. `int(item) | str(item)` is rejected because `item` would be both `int` and `str` in the same branch.
+
 For unions that canonicalize through `Option[...]`, use `is None` or `is not None` to narrow the optional value:
 
 ```incan

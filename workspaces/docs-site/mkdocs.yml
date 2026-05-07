@@ -154,6 +154,7 @@ nav:
               - std.fs: language/reference/stdlib/fs.md
               - std.graph: language/reference/stdlib/graph.md
               - std.io: language/reference/stdlib/io.md
+              - std.tempfile: language/reference/stdlib/tempfile.md
               - std.reflection: language/reference/stdlib/reflection.md
               - std.result: language/reference/stdlib/result.md
               - std.traits.*: language/reference/stdlib/traits.md
@@ -178,6 +179,8 @@ nav:
           - Why Incan?: language/explanation/why_incan.md
           - Why not just Rust?: language/explanation/why_not_just_rust.md
           - How Incan works: language/explanation/how_incan_works.md
+          - Compile time and runtime: language/explanation/compile_time_and_runtime.md
+          - Rust-shaped confidence: language/explanation/rust_shaped_confidence.md
           - Control flow: language/explanation/control_flow.md
           - Closures: language/explanation/closures.md
           - Consts: language/explanation/consts.md

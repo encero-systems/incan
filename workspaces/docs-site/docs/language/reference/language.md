@@ -108,6 +108,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.fs` | - | `std.fs.path`, `std.fs.file`, `std.fs.metadata`, `std.fs.glob`, `std.fs.prelude` | - |
 | `std.graph` | - | - | - |
 | `std.io` | - | - | - |
+| `std.tempfile` | - | - | - |
 | `std.rust` | - | - | - |
 
 ## Builtin exceptions

@@ -287,6 +287,13 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "tempfile",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "rust",
         feature: None,
         extra_crate_deps: &[],
@@ -443,6 +450,8 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "result"])));
         assert!(is_known_stdlib_module(&segs(&["std", "fs"])));
         assert!(is_known_stdlib_module(&segs(&["std", "graph"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "io"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "tempfile"])));
         assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
     }
 
@@ -492,6 +501,14 @@ mod tests {
             stdlib_stub_path(&segs(&["std", "graph"])),
             Some("stdlib/graph.incn".to_string())
         );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "io"])),
+            Some("stdlib/io.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "tempfile"])),
+            Some("stdlib/tempfile.incn".to_string())
+        );
     }
 
     #[test]
@@ -509,10 +526,12 @@ mod tests {
         assert!(hint.windows(2).all(|w| w[0] <= w[1]));
         assert!(hint.contains(&"std.derives".to_string()));
         assert!(hint.contains(&"std.fs".to_string()));
+        assert!(hint.contains(&"std.graph".to_string()));
+        assert!(hint.contains(&"std.io".to_string()));
+        assert!(hint.contains(&"std.tempfile".to_string()));
+        assert!(hint.contains(&"std.rust".to_string()));
         assert!(hint.contains(&"std.web.app".to_string()));
         assert!(hint.contains(&"std.async.prelude".to_string()));
-        assert!(hint.contains(&"std.graph".to_string()));
-        assert!(hint.contains(&"std.rust".to_string()));
     }
 
     #[test]
@@ -571,6 +590,7 @@ mod tests {
         let async_ns = find_namespace("async");
         let reflection_ns = find_namespace("reflection");
         let fs_ns = find_namespace("fs");
+        let tempfile_ns = find_namespace("tempfile");
         let traits_ns = find_namespace("traits");
         let math_ns = find_namespace("math");
         let graph_ns = find_namespace("graph");
@@ -579,6 +599,8 @@ mod tests {
         assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
         assert_eq!(fs_ns.map(|ns| ns.submodules.contains(&"path")), Some(true));
         assert_eq!(fs_ns.and_then(|ns| ns.feature), None);
+        assert_eq!(tempfile_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(tempfile_ns.and_then(|ns| ns.feature), None);
         assert_eq!(traits_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
         assert_eq!(
             math_ns

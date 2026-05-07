@@ -827,6 +827,16 @@ impl TypeChecker {
         }
     }
 
+    /// Return a Rust generic type-parameter name when the display is the simple identifier form rust-analyzer uses
+    /// for params like `T` or `U`.
+    pub(crate) fn rust_display_type_var_name(normalized: &str) -> Option<&str> {
+        if normalized.len() == 1 && normalized.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) {
+            Some(normalized)
+        } else {
+            None
+        }
+    }
+
     /// Convert a Rust parameter display type into a [`ResolvedType`] while preserving borrow shape.
     ///
     /// `resolved_type_from_rust_display()` intentionally maps borrowed scalar-like returns such as `&str` and `&[u8]`
@@ -836,6 +846,9 @@ impl TypeChecker {
         let trimmed = rust_ty.trim();
         let no_lifetimes = trimmed.replace("'static ", "").replace("'_", "").replace(' ', "");
         let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        if let Some(name) = Self::rust_display_type_var_name(normalized.as_str()) {
+            return ResolvedType::TypeVar(name.to_string());
+        }
         if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
             let inner_ty = match inner {
                 "str" => ResolvedType::Str,

@@ -356,6 +356,116 @@ edition = "2021"
 }
 
 #[test]
+fn multi_entrypoint_lock_covers_project_scripts_and_tests_issue505() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_multi_entry_lock_freshness_project",
+        r#"
+extra = "src/extra.incn"
+
+[rust-dependencies]
+tiny_helper = { path = "rust/tiny_helper" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"pub def value() -> int:
+  return 1
+
+def main() -> None:
+  println(value())
+"#,
+    )?;
+    let extra_path = tmp.path().join("src").join("extra.incn");
+    fs::write(
+        &extra_path,
+        r#"from rust::tiny_helper import plus_one
+
+def main() -> None:
+  println(plus_one(1))
+"#,
+    )?;
+
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        tests_dir.join("test_main.incn"),
+        r#"from std.serde.json import Serialize
+from std.testing import assert_eq
+from crate.main import value
+
+model Event with Serialize:
+  id: int
+
+def test_value() -> None:
+  event = Event(id=1)
+  assert_eq(event.to_json(), "{\"id\":1}")
+  assert_eq(value(), 1)
+"#,
+    )?;
+
+    let helper_src = tmp.path().join("rust").join("tiny_helper").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("helper src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "tiny_helper"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        "pub fn plus_one(value: i64) -> i64 { value + 1 }\n",
+    )?;
+
+    let assert_no_stale_warning = |output: &Output, context: &str| {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            !stderr.contains("incan.lock is out of date"),
+            "{context} should not warn that incan.lock is stale, got:\n{stderr}"
+        );
+    };
+
+    let default_lock_output = run_incan(tmp.path(), &["lock"])?;
+    assert_success(&default_lock_output, "default incan lock");
+
+    let test_after_default_lock = run_incan(tmp.path(), &["test"])?;
+    assert_success(&test_after_default_lock, "incan test after default lock");
+    assert_no_stale_warning(&test_after_default_lock, "incan test after default lock");
+
+    let extra_after_default_lock = run_incan(
+        tmp.path(),
+        &["run", extra_path.to_str().ok_or("extra path was not valid UTF-8")?],
+    )?;
+    assert_success(&extra_after_default_lock, "incan run extra after default lock");
+    assert_no_stale_warning(&extra_after_default_lock, "incan run extra after default lock");
+
+    let extra_lock_output = run_incan(
+        tmp.path(),
+        &["lock", extra_path.to_str().ok_or("extra path was not valid UTF-8")?],
+    )?;
+    assert_success(&extra_lock_output, "incan lock extra");
+
+    let extra_after_extra_lock = run_incan(
+        tmp.path(),
+        &["run", extra_path.to_str().ok_or("extra path was not valid UTF-8")?],
+    )?;
+    assert_success(&extra_after_extra_lock, "incan run extra after extra lock");
+    assert_no_stale_warning(&extra_after_extra_lock, "incan run extra after extra lock");
+
+    let test_after_extra_lock = run_incan(tmp.path(), &["test"])?;
+    assert_success(&test_after_extra_lock, "incan test after extra lock");
+    assert_no_stale_warning(&test_after_extra_lock, "incan test after extra lock");
+
+    Ok(())
+}
+
+#[test]
 fn run_accepts_owned_incan_value_for_borrowed_generic_rust_param_issue506() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(

@@ -1377,6 +1377,31 @@ pub fn named_pattern_not_supported(name: &str, span: Span) -> CompileError {
         .with_hint("Use positional patterns for enum variants and builtins")
 }
 
+/// Report an alternation whose alternatives do not bind the same names.
+pub fn pattern_alternation_binding_mismatch(expected: &[String], found: &[String], span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Pattern alternation binding mismatch: expected bindings [{}], found [{}]",
+            expected.join(", "),
+            found.join(", ")
+        ),
+        span,
+    )
+    .with_hint("Every alternative in a pattern alternation must bind the same names")
+}
+
+/// Report an alternation whose same-named binding resolves to different types across alternatives.
+pub fn pattern_alternation_binding_type_mismatch(name: &str, expected: &str, found: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!(
+            "Pattern alternation binding '{}' has incompatible types: expected '{}', found '{}'",
+            name, expected, found
+        ),
+        span,
+    )
+    .with_hint("Use separate branches when alternatives bind the same name with different types")
+}
+
 pub fn duplicate_pattern_field(type_name: &str, field: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!(

@@ -2,6 +2,60 @@
 
 This tutorial shows how to choose between plain return values, `Option`, `Result`, and panics.
 
+## Coming from Python
+
+Python code often uses `None`, `raise`, `try`/`except`, and `assert` to describe paths that do not produce the ordinary
+value. Incan keeps those paths visible in signatures and at call sites.
+
+| Python habit                                               | Incan shape                         |
+| ---------------------------------------------------------- | ----------------------------------- |
+| `None` means "not found" or "not present"                  | `Option[T]`                         |
+| `ValueError`, `OSError`, or a custom recoverable exception | `Result[T, E]`                      |
+| `raise SomeError(...)`                                     | `return Err(SomeError(...))`        |
+| `try`/`except` handles a failure locally                   | `match` on `Result`                 |
+| Let an exception bubble to the caller                      | `?` propagates an `Err(...)`        |
+| `assert` for an impossible state or programmer mistake     | `panic()` or a narrowly proven path |
+
+In Python, an exception can skip the rest of the current block and search outward for a handler. In Incan, fallible paths
+are ordinary return values. Propagation is visible where it happens:
+
+```python title="Python"
+def load_username(path: str) -> str:
+    try:
+        text = read_text(path)
+    except OSError:
+        return "guest"
+
+    if text.strip() == "":
+        raise ValueError("name must not be empty")
+
+    return text.strip()
+```
+
+```incan title="Incan"
+from std.fs import IoError, Path
+
+enum NameError:
+    Io(IoError)
+    Empty
+
+def read_username(path: Path) -> Result[str, NameError]:
+    text = path.read_text().map_err(NameError.Io)?
+    name = text.strip()
+    if len(name) == 0:
+        return Err(NameError.Empty)
+    return Ok(name)
+
+def load_username(path: Path) -> str:
+    match read_username(path):
+        Ok(name) => return name
+        Err(NameError.Io(_)) => return "guest"
+        Err(NameError.Empty) => return "guest"
+```
+
+The important difference is not syntax. It is control flow: Incan makes recovery (`match`) and propagation (`?`) explicit
+instead of hiding them behind exception unwinding.
+
 The short rule:
 
 - Return a plain value when the operation is expected to succeed for valid inputs.

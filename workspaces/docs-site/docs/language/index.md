@@ -49,6 +49,8 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 
 - [Control flow](explanation/control_flow.md)
 - [Closures](explanation/closures.md)
+- [Compile time and runtime](explanation/compile_time_and_runtime.md)
+- [Rust-shaped confidence](explanation/rust_shaped_confidence.md)
 - [Consts](explanation/consts.md)
 - [Module static storage](explanation/static_storage.md)
 - [Numeric types](explanation/numeric_types.md)

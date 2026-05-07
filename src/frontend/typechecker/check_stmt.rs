@@ -1165,7 +1165,7 @@ impl TypeChecker {
                     self.define_for_pattern_bindings(item, &item_ty);
                 }
             }
-            Pattern::Constructor(_, _) | Pattern::Literal(_) => {
+            Pattern::Constructor(_, _) | Pattern::Literal(_) | Pattern::Group(_) | Pattern::Or(_) => {
                 self.errors.push(errors::expected_token_message(
                     "Expected identifier, wildcard, or tuple binding in for-loop pattern",
                     &format!("{:?}", pattern.node),

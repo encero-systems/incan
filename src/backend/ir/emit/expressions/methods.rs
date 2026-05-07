@@ -217,6 +217,14 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return whether an argument already has Rust reference shape for a method parameter.
+    fn method_arg_already_borrowed_for_ref_param(arg_ty: &IrType) -> bool {
+        matches!(
+            arg_ty,
+            IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr
+        )
+    }
+
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
     fn emit_method_call_args(
         &self,
@@ -294,12 +302,19 @@ impl<'a> IrEmitter<'a> {
                     base_use_site,
                     ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
                 );
+                let param = callable_signature.and_then(|sig| sig.params.get(idx));
+                let arg_use_site =
+                    if external_method_shape && matches!(param.map(|param| &param.ty), Some(IrType::Generic(_))) {
+                        ValueUseSite::MethodArg
+                    } else {
+                        base_use_site
+                    };
                 let previous_qualify = if *from_default {
                     Some(self.qualify_internal_canonical_paths.replace(true))
                 } else {
                     None
                 };
-                let emitted = self.emit_expr_for_use(arg, base_use_site);
+                let emitted = self.emit_expr_for_use(arg, arg_use_site);
                 if let Some(previous) = previous_qualify {
                     self.qualify_internal_canonical_paths.replace(previous);
                 }
@@ -328,7 +343,7 @@ impl<'a> IrEmitter<'a> {
                 {
                     return Ok(wrapped);
                 }
-                let Some(param) = callable_signature.and_then(|sig| sig.params.get(idx)) else {
+                let Some(param) = param else {
                     if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty)
                     {
                         emitted = quote! { &mut #emitted };
@@ -350,8 +365,9 @@ impl<'a> IrEmitter<'a> {
                     return Ok(quote! { &#emitted });
                 }
                 match &param.ty {
+                    IrType::Ref(_) if matches!(base_use_site, ValueUseSite::MethodArg) => {}
                     IrType::Ref(_) => match &arg.ty {
-                        IrType::Ref(_) | IrType::RefMut(_) => {}
+                        _ if Self::method_arg_already_borrowed_for_ref_param(&arg.ty) => {}
                         _ => emitted = quote! { &#emitted },
                     },
                     IrType::RefMut(_) => match &arg.ty {

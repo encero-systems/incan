@@ -202,7 +202,7 @@ The same boundary applies to general `Reader` / `Writer` protocols. Those may we
 
 ### Interaction with temporary storage
 
-Spill-to-disk behavior does not belong in `BytesIO`. Python puts that concept in `tempfile.SpooledTemporaryFile`, not in `io.BytesIO`, and Incan should keep the same separation. RFC 056 is about pure in-memory streams. If Incan later standardizes spooled temporary files in RFC 010, that type should align with `BytesIO` where practical without being defined as a magical disk-spilling `BytesIO`.
+Spill-to-disk behavior does not belong in `BytesIO`. Python puts that concept in `tempfile.SpooledTemporaryFile`, not in `io.BytesIO`, and Incan keeps the same separation. RFC 056 is about pure in-memory streams; RFC 010 standardizes spooled temporary files in `std.tempfile`, aligned with `BytesIO` where practical without defining `BytesIO` as a magical disk-spilling stream.
 
 ## Alternatives considered
 

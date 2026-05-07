@@ -11,6 +11,7 @@ Pages in this section are curated and checked into the repository.
 - [`std.fs`](fs.md) (curated)
 - [`std.graph`](graph.md) (curated)
 - [`std.io`](io.md) (curated)
+- [`std.tempfile`](tempfile.md) (curated)
 - [`std.reflection`](reflection.md) (curated)
 - [`std.result`](result.md) (curated)
 - [`std.traits.*`](traits.md) (curated)
