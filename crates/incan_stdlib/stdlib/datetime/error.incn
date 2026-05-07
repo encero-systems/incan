@@ -1,0 +1,37 @@
+"""
+Shared datetime error type.
+
+`DateTimeError` is used by both the civil calendar layer and the runtime clock layer so callers can import one error
+type from `std.datetime`.
+"""
+
+from std.traits.error import Error
+
+
+pub model DateTimeError with Error:
+    """
+    Error returned by `std.datetime` parsers and checked constructors.
+
+    The `detail` string is intended for diagnostics. It is stable enough for display, but callers should not branch on
+    exact wording.
+    """
+
+    pub detail: str
+
+    def message(self) -> str:
+        """
+        Return the datetime error message.
+
+        Returns:
+            The human-readable detail string.
+        """
+        return self.detail
+
+    def source(self) -> Option[str]:
+        """
+        Return the lower-level error source.
+
+        Returns:
+            `None`; datetime errors do not wrap another error source.
+        """
+        return None

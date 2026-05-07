@@ -1008,6 +1008,79 @@ mod tests {
     }
 
     #[test]
+    fn external_method_call_uses_by_value_signature_for_field_argument() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let rust_duration = IrType::Struct("std::time::Duration".to_string());
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Field {
+                        object: Box::new(TypedExpr::new(
+                            IrExprKind::Var {
+                                name: "self".to_string(),
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::Value,
+                            },
+                            IrType::Struct("Duration".to_string()),
+                        )),
+                        field: "value".to_string(),
+                    },
+                    rust_duration.clone(),
+                )),
+                method: "saturating_add".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Field {
+                            object: Box::new(TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: "other".to_string(),
+                                    access: VarAccess::Read,
+                                    ref_kind: VarRefKind::Value,
+                                },
+                                IrType::Struct("Duration".to_string()),
+                            )),
+                            field: "value".to_string(),
+                        },
+                        rust_duration.clone(),
+                    ),
+                }],
+                callable_signature: Some(FunctionSignature {
+                    params: vec![FunctionParam {
+                        name: "rhs".to_string(),
+                        ty: rust_duration.clone(),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: crate::frontend::ast::ParamKind::Normal,
+                        default: None,
+                    }],
+                    return_type: rust_duration,
+                }),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Struct("std::time::Duration".to_string()),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("saturating_add") && rendered.contains("other . value"),
+            "expected direct field argument in external method call, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("& other . value") && !rendered.contains("&other . value"),
+            "by-value Rust method params must not borrow field arguments, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn interop_try_adapter_emits_question_mark() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);

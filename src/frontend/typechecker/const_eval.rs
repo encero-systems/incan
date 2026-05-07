@@ -9,9 +9,10 @@
 //! - `**` yields `Int` only for non-negative int literal exponents; otherwise `Float`
 
 use crate::frontend::ast::*;
-use crate::frontend::diagnostics::errors;
+use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::symbols::{ResolvedType, SymbolKind};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
+use incan_core::lang::types::numerics::NumericTypeId;
 use incan_core::strings::{self, StringAccessError};
 use incan_core::{NumericTy, result_numeric_type};
 
@@ -59,6 +60,25 @@ fn const_int(value: &ConstValue) -> Option<i64> {
     }
 }
 
+/// Return the inclusive integer range accepted by an exact-width numeric const annotation.
+fn const_integer_value_bounds(id: NumericTypeId) -> Option<(i128, i128)> {
+    match id {
+        NumericTypeId::I8 => Some((i128::from(i8::MIN), i128::from(i8::MAX))),
+        NumericTypeId::I16 => Some((i128::from(i16::MIN), i128::from(i16::MAX))),
+        NumericTypeId::I32 => Some((i128::from(i32::MIN), i128::from(i32::MAX))),
+        NumericTypeId::I64 => Some((i128::from(i64::MIN), i128::from(i64::MAX))),
+        NumericTypeId::I128 => Some((i128::MIN, i128::MAX)),
+        NumericTypeId::U8 => Some((0, i128::from(u8::MAX))),
+        NumericTypeId::U16 => Some((0, i128::from(u16::MAX))),
+        NumericTypeId::U32 => Some((0, i128::from(u32::MAX))),
+        NumericTypeId::U64 => Some((0, i128::from(u64::MAX))),
+        NumericTypeId::U128 => Some((0, i128::MAX)),
+        NumericTypeId::ISize => Some((isize::MIN as i128, isize::MAX as i128)),
+        NumericTypeId::USize => Some((0, usize::MAX as i128)),
+        NumericTypeId::F32 | NumericTypeId::F64 | NumericTypeId::Bool => None,
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConstEvalState {
     NotStarted,
@@ -75,10 +95,11 @@ impl TypeChecker {
         freeze_const_type(ty)
     }
 
+    /// Evaluate, type-check, classify, and publish one `const` declaration for later compiler stages.
     pub(crate) fn check_and_resolve_const(&mut self, konst: &ConstDecl, decl_span: Span) {
         // Evaluate (with cycle detection) and update the symbol table entry.
         let mut stack = Vec::new();
-        let Some(result) = self.eval_const_by_name(&konst.name, &mut stack) else {
+        let Some(mut result) = self.eval_const_by_name(&konst.name, &mut stack) else {
             return;
         };
 
@@ -87,29 +108,59 @@ impl TypeChecker {
         if let Some(val) = result.value.clone() {
             self.type_info.const_values.insert(konst.name.clone(), val);
         }
-        // Record the root initializer type so lowering/codegen can use it.
-        self.record_expr_type(konst.value.span, result.ty.clone());
 
         // If an annotation exists, require compatibility.
         if let Some(ann) = &konst.ty {
             let resolved = self.resolve_type_checked(ann);
             let expected = self.freeze_const_annotation(resolved);
-            if !self.types_compatible(&result.ty, &expected) {
-                self.errors.push(errors::type_mismatch(
-                    &expected.to_string(),
-                    &result.ty.to_string(),
-                    konst.value.span,
-                ));
+            if self.types_compatible(&result.ty, &expected) {
+                result.ty = expected;
+            } else {
+                match self.const_int_value_checked_against_numeric_expected(&result, &expected, konst.value.span) {
+                    Some(true) => result.ty = expected,
+                    Some(false) => {}
+                    None => {
+                        self.errors.push(errors::type_mismatch(
+                            &expected.to_string(),
+                            &result.ty.to_string(),
+                            konst.value.span,
+                        ));
+                    }
+                }
             }
         } else if matches!(result.ty, ResolvedType::Unknown) {
             self.errors
                 .push(errors::const_missing_type_annotation(&konst.name, decl_span));
         }
 
+        // Record the root initializer type so lowering/codegen can use it.
+        self.record_expr_type(konst.value.span, result.ty.clone());
+        self.const_eval_cache.insert(konst.name.clone(), result.clone());
+
         // Update the symbol table type (so later expressions see the refined type).
         if let Some(var_info) = self.lookup_local_variable_info_mut(&konst.name) {
             var_info.ty = result.ty.clone();
         }
+    }
+
+    /// Validate a const integer value against an exact-width numeric annotation without widening runtime integers.
+    fn const_int_value_checked_against_numeric_expected(
+        &mut self,
+        result: &ConstEvalResult,
+        expected: &ResolvedType,
+        span: Span,
+    ) -> Option<bool> {
+        let target = super::numeric_type_id_for_compat(expected)?;
+        let value = result.value.as_ref().and_then(const_int)?;
+        let (min, max) = const_integer_value_bounds(target)?;
+        if i128::from(value) < min || i128::from(value) > max {
+            self.errors.push(CompileError::type_error(
+                format!("Integer literal {value} does not fit in {expected}; valid range is {min}..={max}"),
+                span,
+            ));
+            return Some(false);
+        }
+        Some(true)
     }
 
     fn eval_const_by_name(&mut self, name: &str, stack: &mut Vec<String>) -> Option<ConstEvalResult> {

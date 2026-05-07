@@ -1,0 +1,524 @@
+"""
+Runtime clock primitives for `std.datetime`.
+
+This module is intentionally backed by Rust's `std::time` because the host monotonic clock, system clock, and
+nonnegative elapsed durations are already platform-owned primitives in Rust.
+
+Example:
+
+```incan
+from std.datetime.runtime import Instant
+
+started = Instant.now()
+println(started.elapsed().whole_seconds())
+```
+"""
+
+from rust::std::time import Duration as RustDuration, Instant as RustInstant, SystemTime as RustSystemTime, UNIX_EPOCH
+from std.datetime.error import DateTimeError
+
+const _DAYS_PER_WEEK: int = 7
+const _HOURS_PER_DAY: int = 24
+const _MINUTES_PER_HOUR: int = 60
+const _SECONDS_PER_MINUTE: int = 60
+const _SECONDS_PER_HOUR: int = _MINUTES_PER_HOUR * _SECONDS_PER_MINUTE
+const _SECONDS_PER_DAY: int = _HOURS_PER_DAY * _SECONDS_PER_HOUR
+const _NANOS_PER_MICROSECOND: int = 1_000
+const _NANOS_PER_MILLISECOND: int = 1_000_000
+const _NANOS_PER_SECOND: int = 1_000_000_000
+
+
+pub model Duration:
+    """
+    Nonnegative elapsed duration backed by `rust::std::time::Duration`.
+
+    Use `Duration` for monotonic elapsed time and Unix timestamp offsets. Use `TimeDelta` from `std.datetime.civil`
+    when a signed day/time interval is required.
+    """
+
+    pub value: RustDuration
+
+    @staticmethod
+    def nanoseconds(value: int) -> Duration:
+        """
+        Construct a duration from nanoseconds.
+
+        Args:
+            value: Nanoseconds. Negative values saturate to zero because Rust `Duration` is nonnegative.
+
+        Returns:
+            A nonnegative `Duration`.
+        """
+        return Duration(value=_rust_duration_from_nanos(value))
+
+    @staticmethod
+    def microseconds(value: int) -> Duration:
+        """
+        Construct a duration from microseconds.
+
+        Args:
+            value: Microseconds. Negative values saturate to zero.
+
+        Returns:
+            A nonnegative `Duration`.
+        """
+        return Duration.nanoseconds(value * _NANOS_PER_MICROSECOND)
+
+    @staticmethod
+    def milliseconds(value: int) -> Duration:
+        """
+        Construct a duration from milliseconds.
+
+        Args:
+            value: Milliseconds. Negative values saturate to zero.
+
+        Returns:
+            A nonnegative `Duration`.
+        """
+        return Duration.nanoseconds(value * _NANOS_PER_MILLISECOND)
+
+    @staticmethod
+    def seconds(value: int) -> Duration:
+        """
+        Construct a duration from seconds.
+
+        Args:
+            value: Seconds. Negative values saturate to zero.
+
+        Returns:
+            A nonnegative `Duration`.
+        """
+        return Duration(value=RustDuration.from_secs(_saturating_nonnegative(value)))
+
+    @staticmethod
+    def minutes(value: int) -> Duration:
+        """
+        Construct a duration from minutes.
+
+        Args:
+            value: Minutes. Negative values saturate to zero.
+
+        Returns:
+            A nonnegative `Duration`.
+        """
+        return Duration.seconds(value * _SECONDS_PER_MINUTE)
+
+    @staticmethod
+    def hours(value: int) -> Duration:
+        """
+        Construct a duration from hours.
+
+        Args:
+            value: Hours. Negative values saturate to zero.
+
+        Returns:
+            A nonnegative `Duration`.
+        """
+        return Duration.seconds(value * _SECONDS_PER_HOUR)
+
+    @staticmethod
+    def days(value: int) -> Duration:
+        """
+        Construct a fixed 24-hour duration.
+
+        Args:
+            value: Day count. Negative values saturate to zero.
+
+        Returns:
+            A nonnegative `Duration`.
+        """
+        return Duration.seconds(value * _SECONDS_PER_DAY)
+
+    @staticmethod
+    def weeks(value: int) -> Duration:
+        """
+        Construct a fixed seven-day duration.
+
+        Args:
+            value: Week count. Negative values saturate to zero.
+
+        Returns:
+            A nonnegative `Duration`.
+        """
+        return Duration.days(value * _DAYS_PER_WEEK)
+
+    def whole_seconds(self) -> int:
+        """
+        Return the whole-second component.
+
+        Returns:
+            Whole seconds in this duration.
+        """
+        return int(self.value.as_secs())
+
+    def subsecond_nanoseconds(self) -> int:
+        """
+        Return the fractional nanosecond component.
+
+        Returns:
+            Nanoseconds after the whole-second component.
+        """
+        return int(self.value.subsec_nanos())
+
+    def total_nanoseconds(self) -> int:
+        """
+        Return this duration as total nanoseconds.
+
+        Returns:
+            Total nonnegative nanoseconds represented by this duration.
+        """
+        return self.whole_seconds() * _NANOS_PER_SECOND + self.subsecond_nanoseconds()
+
+    def __add__(self, other: Duration) -> Duration:
+        """
+        Add two durations.
+
+        Args:
+            other: Duration to add.
+
+        Returns:
+            Saturating duration sum.
+        """
+        return Duration(value=self.value.saturating_add(other.value))
+
+    def __sub__(self, other: Duration) -> Duration:
+        """
+        Subtract one duration from another.
+
+        Args:
+            other: Duration to subtract.
+
+        Returns:
+            Saturating duration difference.
+        """
+        return Duration(value=self.value.saturating_sub(other.value))
+
+    def __eq__(self, other: Duration) -> bool:
+        """
+        Compare two durations for equality.
+
+        Args:
+            other: Duration to compare against.
+
+        Returns:
+            True if both durations represent the same elapsed time.
+        """
+        return self.value == other.value
+
+    def __lt__(self, other: Duration) -> bool:
+        """
+        Compare two durations by elapsed length.
+
+        Args:
+            other: Duration to compare against.
+
+        Returns:
+            True if this duration is shorter than `other`.
+        """
+        return self.value < other.value
+
+
+pub model Instant:
+    """
+    Monotonic instant backed by `rust::std::time::Instant`.
+
+    Instants are opaque. They can be compared with other instants and used to measure elapsed `Duration` values, but
+    they do not expose a Unix timestamp or wall-clock representation.
+    """
+
+    pub value: RustInstant
+
+    @staticmethod
+    def now() -> Instant:
+        """
+        Read the host monotonic clock.
+
+        Returns:
+            Current monotonic instant.
+        """
+        return Instant(value=RustInstant.now())
+
+    def elapsed(self) -> Duration:
+        """
+        Return elapsed time since this instant.
+
+        Returns:
+            Saturating elapsed duration reported by Rust `Instant`.
+        """
+        return Duration(value=self.value.elapsed())
+
+    def duration_since(self, earlier: Instant) -> Duration:
+        """
+        Return elapsed time from `earlier` to this instant.
+
+        Args:
+            earlier: Earlier instant to compare against.
+
+        Returns:
+            Saturating duration between `earlier` and `self`.
+        """
+        return Duration(value=self.value.duration_since(earlier.value))
+
+    def elapsed_since(self, earlier: Instant) -> Duration:
+        """
+        Return elapsed time from `earlier` to this instant.
+
+        Args:
+            earlier: Earlier instant to compare against.
+
+        Returns:
+            Saturating duration between `earlier` and `self`.
+        """
+        return self.duration_since(earlier)
+
+    def checked_add(self, duration: Duration) -> Result[Instant, DateTimeError]:
+        """
+        Offset this instant forward if the platform can represent the result.
+
+        Args:
+            duration: Duration to add.
+
+        Returns:
+            `Ok(Instant)` when representable, otherwise `Err(DateTimeError)`.
+        """
+        match self.value.checked_add(duration.value):
+            Some(value) => return Ok(Instant(value=value))
+            None => return Err(DateTimeError(detail="instant addition is out of range"))
+
+    def checked_sub(self, duration: Duration) -> Result[Instant, DateTimeError]:
+        """
+        Offset this instant backward if the platform can represent the result.
+
+        Args:
+            duration: Duration to subtract.
+
+        Returns:
+            `Ok(Instant)` when representable, otherwise `Err(DateTimeError)`.
+        """
+        match self.value.checked_sub(duration.value):
+            Some(value) => return Ok(Instant(value=value))
+            None => return Err(DateTimeError(detail="instant subtraction is out of range"))
+
+    def __eq__(self, other: Instant) -> bool:
+        """
+        Compare two instants for equality.
+
+        Args:
+            other: Instant to compare against.
+
+        Returns:
+            True if both values refer to the same monotonic instant.
+        """
+        return self.value == other.value
+
+    def __lt__(self, other: Instant) -> bool:
+        """
+        Compare two instants by monotonic ordering.
+
+        Args:
+            other: Instant to compare against.
+
+        Returns:
+            True if this instant is earlier than `other`.
+        """
+        return self.value < other.value
+
+
+pub model SystemTime:
+    """
+    Host system-clock timestamp backed by `rust::std::time::SystemTime`.
+
+    System time is not monotonic. Prefer `Instant` for elapsed measurements and use `duration_since` when comparing two
+    system timestamps so clock drift can be reported as `DateTimeError`.
+    """
+
+    pub value: RustSystemTime
+
+    @staticmethod
+    def now() -> SystemTime:
+        """
+        Read the host system clock.
+
+        Returns:
+            Current host system time.
+        """
+        return SystemTime(value=RustSystemTime.now())
+
+    @staticmethod
+    def from_unix_seconds(seconds: int) -> Result[SystemTime, DateTimeError]:
+        """
+        Construct a timestamp from Unix seconds.
+
+        Args:
+            seconds: Signed seconds since the Unix epoch.
+
+        Returns:
+            `Ok(SystemTime)` at that timestamp when the platform supports it, otherwise `Err(DateTimeError)`.
+        """
+        return SystemTime.from_unix_nanoseconds(seconds * _NANOS_PER_SECOND)
+
+    @staticmethod
+    def from_unix_nanoseconds(nanoseconds: int) -> Result[SystemTime, DateTimeError]:
+        """
+        Construct a timestamp from Unix nanoseconds.
+
+        Args:
+            nanoseconds: Signed nanoseconds since the Unix epoch.
+
+        Returns:
+            `Ok(SystemTime)` at that timestamp when the platform supports it, otherwise `Err(DateTimeError)`.
+        """
+        if nanoseconds < 0:
+            match UNIX_EPOCH.checked_sub(_rust_duration_from_nanos(0 - nanoseconds)):
+                Some(value) => return Ok(SystemTime(value=value))
+                None => return Err(DateTimeError(detail="Unix timestamp is out of range"))
+        match UNIX_EPOCH.checked_add(_rust_duration_from_nanos(nanoseconds)):
+            Some(value) => return Ok(SystemTime(value=value))
+            None => return Err(DateTimeError(detail="Unix timestamp is out of range"))
+
+    def unix_seconds(self) -> int:
+        """
+        Return whole Unix seconds.
+
+        Returns:
+            Whole seconds since the Unix epoch.
+        """
+        return _floor_div(self.unix_nanoseconds(), _NANOS_PER_SECOND)
+
+    def unix_nanoseconds(self) -> int:
+        """
+        Return Unix timestamp nanoseconds.
+
+        Returns:
+            Signed nanoseconds since the Unix epoch.
+        """
+        match self.value.duration_since(UNIX_EPOCH):
+            Ok(duration) => return _rust_duration_total_nanos(duration)
+            Err(err) => return 0 - _rust_duration_total_nanos(err.duration())
+
+    def duration_since(self, earlier: SystemTime) -> Result[Duration, DateTimeError]:
+        """
+        Return elapsed time from `earlier` to this timestamp.
+
+        Args:
+            earlier: Earlier system timestamp.
+
+        Returns:
+            `Ok(Duration)` when `self` is not earlier than `earlier`, otherwise `Err(DateTimeError)`.
+        """
+        match self.value.duration_since(earlier.value):
+            Ok(duration) => return Ok(Duration(value=duration))
+            Err(_err) => return Err(DateTimeError(detail="system time is earlier than the comparison timestamp"))
+
+    def checked_add(self, duration: Duration) -> Result[SystemTime, DateTimeError]:
+        """
+        Offset this timestamp forward if the platform can represent the result.
+
+        Args:
+            duration: Duration to add.
+
+        Returns:
+            `Ok(SystemTime)` when representable, otherwise `Err(DateTimeError)`.
+        """
+        match self.value.checked_add(duration.value):
+            Some(value) => return Ok(SystemTime(value=value))
+            None => return Err(DateTimeError(detail="system time addition is out of range"))
+
+    def checked_sub(self, duration: Duration) -> Result[SystemTime, DateTimeError]:
+        """
+        Offset this timestamp backward if the platform can represent the result.
+
+        Args:
+            duration: Duration to subtract.
+
+        Returns:
+            `Ok(SystemTime)` when representable, otherwise `Err(DateTimeError)`.
+        """
+        match self.value.checked_sub(duration.value):
+            Some(value) => return Ok(SystemTime(value=value))
+            None => return Err(DateTimeError(detail="system time subtraction is out of range"))
+
+    def __eq__(self, other: SystemTime) -> bool:
+        """
+        Compare two system timestamps for equality.
+
+        Args:
+            other: Timestamp to compare against.
+
+        Returns:
+            True if both timestamps are equal.
+        """
+        return self.value == other.value
+
+    def __lt__(self, other: SystemTime) -> bool:
+        """
+        Compare two system timestamps.
+
+        Args:
+            other: Timestamp to compare against.
+
+        Returns:
+            True if this timestamp is earlier than `other`.
+        """
+        return self.value < other.value
+
+
+def _saturating_nonnegative(value: int) -> u64:
+    """
+    Clamp negative integer inputs to zero for Rust `Duration` constructors.
+
+    Args:
+        value: Candidate integer duration component.
+
+    Returns:
+        `value` when nonnegative, otherwise zero.
+    """
+    if value < 0:
+        return 0
+    maybe_value: Option[u64] = value.try_resize()
+    match maybe_value:
+        Some(resized) => return resized
+        None => return 0
+
+
+def _rust_duration_from_nanos(nanoseconds: int) -> RustDuration:
+    """
+    Build a Rust duration from a nonnegative nanosecond count.
+
+    Args:
+        nanoseconds: Nonnegative nanoseconds.
+
+    Returns:
+        Rust `Duration` with whole seconds plus subsecond nanoseconds.
+    """
+    return RustDuration.from_nanos(_saturating_nonnegative(nanoseconds))
+
+
+def _rust_duration_total_nanos(duration: RustDuration) -> int:
+    """
+    Convert a Rust duration to total nanoseconds.
+
+    Args:
+        duration: Rust duration to convert.
+
+    Returns:
+        Total nanoseconds as an Incan integer.
+    """
+    return int(duration.as_secs()) * _NANOS_PER_SECOND + int(duration.subsec_nanos())
+
+
+def _floor_div(numerator: int, denominator: int) -> int:
+    """
+    Divide integers with floor semantics.
+
+    Args:
+        numerator: Dividend.
+        denominator: Positive divisor.
+
+    Returns:
+        Mathematical floor of `numerator / denominator`.
+    """
+    quotient = int(numerator / denominator)
+    if numerator < 0 and numerator % denominator != 0:
+        return quotient - 1
+    return quotient

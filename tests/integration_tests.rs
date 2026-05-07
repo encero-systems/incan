@@ -2166,9 +2166,18 @@ def describe(value: str) -> str:
         case other:
             return other.upper()
 
+def describe_alt(value: str) -> str:
+    mut out = ""
+    match value:
+        "star" | "sun" => out += "literal"
+        other => out += other.upper()
+    return out
+
 def main() -> None:
     println(describe("star"))
     println(describe("fallback"))
+    println(describe_alt("sun"))
+    println(describe_alt("fallback"))
 "#,
             ])
             .env("CARGO_NET_OFFLINE", "true")
@@ -2185,7 +2194,7 @@ def main() -> None:
         let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
         assert_eq!(
             lines,
-            vec!["literal", "FALLBACK"],
+            vec!["literal", "FALLBACK", "literal", "FALLBACK"],
             "unexpected string match output:\n{stdout}"
         );
         Ok(())
@@ -5350,6 +5359,85 @@ def main() -> None:
         assert!((hypot - 5.0).abs() < 1e-12, "unexpected hypot value: {hypot}");
         assert_eq!(gcd, 6, "unexpected gcd value: {gcd}");
         assert_eq!(lcm, 24, "unexpected lcm value: {lcm}");
+    }
+
+    #[test]
+    fn test_std_datetime_surface_runs_with_std_time_runtime_boundary() -> Result<(), Box<dyn std::error::Error>> {
+        let runtime_source = std::fs::read_to_string("crates/incan_stdlib/stdlib/datetime/runtime.incn")?;
+        let mut civil_sources = Vec::new();
+        civil_sources.push(std::fs::read_to_string(
+            "crates/incan_stdlib/stdlib/datetime/civil.incn",
+        )?);
+        for entry in std::fs::read_dir("crates/incan_stdlib/stdlib/datetime/civil")? {
+            let entry = entry?;
+            if entry.path().extension().is_some_and(|extension| extension == "incn") {
+                civil_sources.push(std::fs::read_to_string(entry.path())?);
+            }
+        }
+        let civil_source = civil_sources.join("\n");
+        assert!(
+            runtime_source.contains("from rust::std::time import") && !runtime_source.contains("@rust"),
+            "std.datetime runtime must use the Rust std::time boundary without raw @rust bodies"
+        );
+        assert!(
+            !civil_source.contains("from rust::") && !civil_source.contains("@rust"),
+            "std.datetime civil calendar code must remain source-defined Incan"
+        );
+
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/std_datetime_surface.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "std.datetime surface run failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec![
+                "500",
+                "2",
+                "9",
+                "true",
+                "true",
+                "true",
+                "2026-04-21",
+                "2026-07-14",
+                "true",
+                "2026-04-15T00:34:56.123456789",
+                "Tue Apr 14 2026",
+                "12:34:56.123456789",
+                "07:08:09.123456789",
+                "2026-04-14",
+                "2026-04-14T07:08:09.123456789",
+                "2026-04-14",
+                "53",
+                "bad-week",
+                "2026-04-15T12:34:56",
+                "true",
+                "1800",
+                "+01:00",
+                "Z",
+                "2026-04-14T12:34:56.123456789+01:00",
+                "2026-04-14T12:34:56.123456789+0100",
+                "2026-04-14 12:34:56.123456789+01:00",
+                "2026-04-14T12:34:56.123456789+01:00",
+                "2026-04-14T12:34:56Z",
+                "bad-offset",
+                "long-nanos",
+                "bad-date-digits",
+                "bad-time-digits",
+                "named-timezone",
+            ],
+            "unexpected std.datetime output: {stdout}"
+        );
+        Ok(())
     }
 
     #[test]

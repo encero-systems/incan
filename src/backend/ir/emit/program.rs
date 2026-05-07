@@ -1564,7 +1564,7 @@ impl<'a> IrEmitter<'a> {
             .enumerate()
             .map(|(index, member)| {
                 let variant = format_ident!("{}", IrType::union_variant_name(index));
-                let member_ty = self.emit_type(member);
+                let member_ty = self.emit_generated_union_member_type(member);
                 quote! { #variant(#member_ty) }
             })
             .collect();
@@ -1574,6 +1574,115 @@ impl<'a> IrEmitter<'a> {
                 #(#variants),*
             }
         })
+    }
+
+    /// Emit a payload type for a crate-root anonymous union definition.
+    ///
+    /// Shared union wrappers are emitted before ordinary `use` items in `main.rs`. When a shared wrapper is collected
+    /// from a dependency module, its payloads may mention dependency-local types that the main module never imported
+    /// directly. Qualify those nominal payloads through their generated module path so wrapper emission does not depend
+    /// on incidental source imports.
+    fn emit_generated_union_member_type(&self, ty: &IrType) -> TokenStream {
+        match ty {
+            IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => self
+                .emit_dependency_nominal_type_path(name)
+                .unwrap_or_else(|| self.emit_type(ty)),
+            IrType::NamedGeneric(name, args) if name == super::super::types::IR_UNION_TYPE_NAME => {
+                self.emit_union_type_path(ty)
+            }
+            IrType::NamedGeneric(name, args) => {
+                let base = self.emit_dependency_nominal_type_path(name).unwrap_or_else(|| {
+                    let ident = Self::rust_ident(name);
+                    quote! { #ident }
+                });
+                let args: Vec<_> = args
+                    .iter()
+                    .map(|arg| self.emit_generated_union_member_type(arg))
+                    .collect();
+                quote! { #base < #(#args),* > }
+            }
+            IrType::List(inner) => {
+                let inner = self.emit_generated_union_member_type(inner);
+                quote! { Vec<#inner> }
+            }
+            IrType::Dict(key, value) => {
+                let key = self.emit_generated_union_member_type(key);
+                let value = self.emit_generated_union_member_type(value);
+                quote! { std::collections::HashMap<#key, #value> }
+            }
+            IrType::Set(inner) => {
+                let inner = self.emit_generated_union_member_type(inner);
+                quote! { std::collections::HashSet<#inner> }
+            }
+            IrType::Tuple(items) => {
+                let items: Vec<_> = items
+                    .iter()
+                    .map(|item| self.emit_generated_union_member_type(item))
+                    .collect();
+                quote! { (#(#items),*) }
+            }
+            IrType::Option(inner) => {
+                let inner = self.emit_generated_union_member_type(inner);
+                quote! { Option<#inner> }
+            }
+            IrType::Result(ok, err) => {
+                let ok = self.emit_generated_union_member_type(ok);
+                let err = self.emit_generated_union_member_type(err);
+                quote! { Result<#ok, #err> }
+            }
+            IrType::Function { params, ret } => {
+                let params: Vec<_> = params
+                    .iter()
+                    .map(|param| self.emit_generated_union_member_type(param))
+                    .collect();
+                let ret = self.emit_generated_union_member_type(ret);
+                quote! { fn(#(#params),*) -> #ret }
+            }
+            IrType::Ref(inner) => {
+                let inner = self.emit_generated_union_member_type(inner);
+                quote! { &#inner }
+            }
+            IrType::RefMut(inner) => {
+                let inner = self.emit_generated_union_member_type(inner);
+                quote! { &mut #inner }
+            }
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::Numeric(_)
+            | IrType::Decimal { .. }
+            | IrType::String
+            | IrType::Bytes
+            | IrType::StaticStr
+            | IrType::StaticBytes
+            | IrType::FrozenStr
+            | IrType::FrozenBytes
+            | IrType::StrRef
+            | IrType::ImplTrait(_)
+            | IrType::Generic(_)
+            | IrType::SelfType
+            | IrType::Unknown => self.emit_type(ty),
+        }
+    }
+
+    /// Emit a crate-qualified path for an unambiguous nominal type declared in a dependency module.
+    fn emit_dependency_nominal_type_path(&self, name: &str) -> Option<TokenStream> {
+        if name.contains("::") || self.ambiguous_type_names.contains(name) {
+            return None;
+        }
+        let module_path = self.type_module_paths.get(name)?;
+        let mut segments = vec![quote! { crate }];
+        for segment in module_path {
+            let ident = Self::rust_ident(segment);
+            segments.push(quote! { #ident });
+        }
+        let name_ident = Self::rust_ident(name);
+        segments.push(quote! { #name_ident });
+
+        let mut iter = segments.into_iter();
+        let first = iter.next()?;
+        Some(iter.fold(first, |acc, segment| quote! { #acc :: #segment }))
     }
 
     /// Emit a complete IR program to formatted Rust code.

@@ -102,8 +102,7 @@ impl<'a> Parser<'a> {
         Ok(Spanned::new(stmt, Span::new(start, end)))
     }
 
-    /// Parse a single inline statement (for use in inline case arms)
-    /// Supports: return, expression statements, pass
+    /// Parse a single inline statement (for use in inline case arms).
     fn inline_statement(&mut self) -> Result<Spanned<Statement>, CompileError> {
         let start = self.current_span().start;
 
@@ -129,10 +128,10 @@ impl<'a> Parser<'a> {
             self.assert_stmt()?
         } else if let Some(surface_stmt) = self.try_surface_keyword_statement()? {
             surface_stmt
+        } else if self.check_keyword(KeywordId::Let) || self.check_keyword(KeywordId::Mut) {
+            self.assignment_stmt()?
         } else {
-            // Expression statement
-            let expr = self.expression()?;
-            Statement::Expr(expr)
+            self.assignment_or_expr_stmt()?
         };
 
         let end = self.tokens[self.pos.saturating_sub(1)].span.end;

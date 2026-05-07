@@ -740,6 +740,28 @@ def main() -> None:
 }
 
 #[test]
+fn rfc009_const_integer_literals_use_exact_width_annotation() -> Result<(), String> {
+    let source = r#"
+const NANOS_PER_SECOND: u64 = 1_000_000_000
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn rfc009_const_integer_literals_are_range_checked_for_exact_width_targets() {
+    let source = r#"
+const BYTE: u8 = -1
+"#;
+    let errors = check_str_err(source, "expected out-of-range u8 const literal to fail");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("Integer literal -1 does not fit in u8")),
+        "expected u8 range diagnostic, got: {errors:?}"
+    );
+}
+
+#[test]
 fn rfc009_negative_integer_literals_use_signed_exact_width_ranges() -> Result<(), String> {
     let source = r#"
 def main() -> None:
@@ -2804,6 +2826,67 @@ fn test_rust_item_metadata_lookup_reuses_cached_nominal_item_for_instantiated_ru
     };
     assert_eq!(meta.canonical_path, "demo::SendError");
     Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_constant_identifier_records_value_kind_for_lowering() {
+    let mut checker = TypeChecker::new();
+    let span = Span::new(0, "UNIX_EPOCH".len());
+    checker.symbols.define(Symbol {
+        name: "UNIX_EPOCH".to_string(),
+        kind: SymbolKind::RustItem(RustItemInfo {
+            crate_name: "std".to_string(),
+            path: "std::time::UNIX_EPOCH".to_string(),
+            binding: RustImportBindingKind::FromImport,
+            metadata: Some(RustItemMetadata {
+                canonical_path: "std::time::UNIX_EPOCH".to_string(),
+                definition_path: Some("std::time::UNIX_EPOCH".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Constant {
+                    type_display: "std::time::SystemTime".to_string(),
+                },
+            }),
+        }),
+        span,
+        scope: 0,
+    });
+
+    let expr = Spanned::new(Expr::Ident("UNIX_EPOCH".to_string()), span);
+    let ty = checker.check_expr(&expr);
+
+    assert_eq!(
+        checker.type_info().ident_kind(span),
+        Some(IdentKind::RustValue),
+        "Rust constants must lower as values so `UNIX_EPOCH.method()` emits `UNIX_EPOCH.method()`"
+    );
+    assert_eq!(ty, ResolvedType::RustPath("std::time::SystemTime".to_string()));
+}
+
+#[test]
+fn test_rust_constant_identifier_without_metadata_uses_const_name_fallback() {
+    let mut checker = TypeChecker::new();
+    let span = Span::new(0, "UNIX_EPOCH".len());
+    checker.symbols.define(Symbol {
+        name: "UNIX_EPOCH".to_string(),
+        kind: SymbolKind::RustItem(RustItemInfo {
+            crate_name: "std".to_string(),
+            path: "std::time::UNIX_EPOCH".to_string(),
+            binding: RustImportBindingKind::FromImport,
+            metadata: None,
+        }),
+        span,
+        scope: 0,
+    });
+
+    let expr = Spanned::new(Expr::Ident("UNIX_EPOCH".to_string()), span);
+    let _ = checker.check_expr(&expr);
+
+    assert_eq!(
+        checker.type_info().ident_kind(span),
+        Some(IdentKind::RustValue),
+        "metadata-free Rust constants should still lower as values when the imported Rust item uses const naming"
+    );
 }
 
 #[cfg(feature = "rust_inspect")]

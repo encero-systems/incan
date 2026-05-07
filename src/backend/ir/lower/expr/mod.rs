@@ -231,6 +231,7 @@ impl AstLowering {
                             IdentKind::Variant => VarRefKind::TypeName,
                             IdentKind::Module => VarRefKind::ExternalName,
                             IdentKind::RustImport => VarRefKind::ExternalRustName,
+                            IdentKind::RustValue => VarRefKind::Value,
                             IdentKind::Trait => VarRefKind::TypeName,
                         };
                     }
