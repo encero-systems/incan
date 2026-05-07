@@ -844,14 +844,11 @@ impl<'a> IrEmitter<'a> {
                     let awaitable = self.emit_expr(&arm.awaitable)?;
                     let body = self.emit_expr(&arm.body)?;
                     branch_tokens.push(quote! {
-                        #binding_ident = #awaitable => #body
+                        incan_stdlib::r#async::race::scoped_arm(#awaitable, |#binding_ident| #body)
                     });
                 }
                 Ok(quote! {
-                    tokio::select! {
-                        biased;
-                        #(#branch_tokens,)*
-                    }
+                    incan_stdlib::r#async::race::scoped_race(vec![#(#branch_tokens),*]).await
                 })
             }
 

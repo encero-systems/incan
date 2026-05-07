@@ -2524,7 +2524,7 @@ fn test_std_async_race_compiled_codegen() {
     insta::assert_snapshot!("std_async_race_compiled", rust_code);
 }
 
-/// Compile `race for value:` to a deterministic Tokio select expression.
+/// Compile `race for value:` through the shared `std.async.race` runtime helper surface.
 #[test]
 fn test_race_for_expression_codegen() {
     let source = r#"

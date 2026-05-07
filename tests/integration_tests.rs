@@ -5366,6 +5366,77 @@ async def main() -> None:
     }
 
     #[test]
+    fn test_race_for_expression_first_completion_runs_through_shared_runtime() {
+        let output = run_incan_source(
+            r#"
+import std.async
+from std.async.time import sleep
+
+async def fast() -> int:
+    return 1
+
+async def slow() -> int:
+    await sleep(0.01)
+    return 2
+
+async def main() -> None:
+    prefix = "win"
+    result = race for value:
+        await slow() => f"{prefix}:{value}"
+        await fast() => f"{prefix}:{value}"
+    println(result)
+"#,
+        );
+        assert!(
+            output.status.success(),
+            "race for first-completion run failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        assert_eq!(
+            stdout.lines().last().map(str::trim),
+            Some("win:1"),
+            "unexpected stdout:\n{stdout}"
+        );
+    }
+
+    #[test]
+    fn test_race_for_expression_ready_tie_uses_stdlib_source_order() {
+        let output = run_incan_source(
+            r#"
+import std.async
+
+async def first() -> int:
+    return 1
+
+async def second() -> int:
+    return 2
+
+async def main() -> None:
+    result = race for value:
+        await first() => value
+        await second() => value
+    println(result)
+"#,
+        );
+        assert!(
+            output.status.success(),
+            "race for ready-tie run failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        assert_eq!(
+            stdout.lines().last().map(str::trim),
+            Some("1"),
+            "unexpected stdout:\n{stdout}"
+        );
+    }
+
+    #[test]
     fn test_std_math_module_constants_and_functions_run() {
         let Ok(output) = Command::new(incan_debug_binary())
             .args([
