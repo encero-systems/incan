@@ -5010,9 +5010,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#expected-capability-areas" class="md-nav__link">
+  <a href="#capability-areas" class="md-nav__link">
     <span class="md-ellipsis">
-      Expected capability areas
+      Capability areas
     </span>
   </a>
   
@@ -5133,15 +5133,6 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#simple-inspection-model_1" class="md-nav__link">
-    <span class="md-ellipsis">
-      Simple inspection model
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#interaction-with-existing-features" class="md-nav__link">
     <span class="md-ellipsis">
       Interaction with existing features
@@ -5220,7 +5211,7 @@
 
 <h1 id="rfc-060-stduuid-uuid-parsing-generation-and-formatting">RFC 060: <code>std.uuid</code> — UUID parsing, generation, and formatting<a class="headerlink" href="#rfc-060-stduuid-uuid-parsing-generation-and-formatting" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-04-14</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -5236,7 +5227,7 @@
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes <code>std.uuid</code> as Incan's standard library module for working with UUIDs, using RFC 9562 as the normative baseline for canonical formatting and generation while remaining compatible with binary-first interoperability surfaces such as Substrait. It provides a first-class <code>UUID</code> type together with parsing, formatting, byte and <code>u128</code> conversion, version and variant inspection, standard constants, and generation helpers for the RFC-defined UUID versions that have portable generation rules. The goal is to treat UUIDs as real values rather than as loose strings, ad hoc byte arrays, or database-specific conventions.</p>
+<p>This RFC defines <code>std.uuid</code> as Incan's standard library module for working with UUIDs, using RFC 9562 as the normative baseline for canonical formatting and generation while remaining compatible with binary-first interoperability surfaces such as Substrait. It provides a first-class <code>UUID</code> type together with parsing, formatting, byte and <code>u128</code> conversion, version and variant inspection, standard constants, and generation helpers for the RFC-defined UUID versions that have portable generation rules. The goal is to treat UUIDs as real values rather than as loose strings, ad hoc byte arrays, or database-specific conventions.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>UUIDs show up everywhere: APIs, databases, event streams, object storage keys, distributed systems, and migration tooling. Without a dedicated stdlib type, users pass them around as strings, bytes, or loosely documented conventions, which makes validation, formatting, and version-aware behavior harder than it should be.</p>
 <p>This matters for several reasons:</p>
@@ -5279,7 +5270,7 @@
 <span class="n">raw</span> <span class="o">=</span> <span class="n">request_id</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">()</span>
 <span class="n">round_tripped</span> <span class="o">=</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">from_bytes</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span><span class="o">?</span>
 <span class="n">number</span> <span class="o">=</span> <span class="n">request_id</span><span class="o">.</span><span class="n">to_int</span><span class="p">()</span>
-<span class="n">same_id</span> <span class="o">=</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">from_int</span><span class="p">(</span><span class="n">number</span><span class="p">)</span><span class="o">?</span>
+<span class="n">same_id</span> <span class="o">=</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">from_int</span><span class="p">(</span><span class="n">number</span><span class="p">)</span>
 </code></pre></div>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">UUID</span>
 
@@ -5288,17 +5279,19 @@
 </code></pre></div>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="module-scope">Module scope<a class="headerlink" href="#module-scope" title="Permanent link">&para;</a></h3>
-<p><code>std.uuid</code> should provide:</p>
+<p><code>std.uuid</code> must provide:</p>
 <ul>
 <li>a <code>UUID</code> value type;</li>
+<li>a module-owned <code>UuidError</code> error type for parsing, byte-length, and generation failures;</li>
+<li>module-owned <code>UuidVersion</code> and <code>UuidVariant</code> inspection values;</li>
 <li>parse and format helpers;</li>
 <li>binary and numeric conversion helpers;</li>
 <li>constants for Nil, Max, and the standard namespace UUIDs;</li>
 <li>version and variant inspection;</li>
 <li>generation helpers for the RFC 9562 UUID versions with portable generation rules.</li>
 </ul>
-<h3 id="expected-capability-areas">Expected capability areas<a class="headerlink" href="#expected-capability-areas" title="Permanent link">&para;</a></h3>
-<p>The eventual contract should cover:</p>
+<h3 id="capability-areas">Capability areas<a class="headerlink" href="#capability-areas" title="Permanent link">&para;</a></h3>
+<p>The contract must cover:</p>
 <ul>
 <li>parsing RFC 9562 UUID values across supported textual forms;</li>
 <li>accepting arbitrary 128-bit UUID payloads through bytes and <code>u128</code> conversion, even when the bit pattern is not an RFC 9562-generated value;</li>
@@ -5306,7 +5299,7 @@
 <li>equality and ordering semantics;</li>
 <li>conversion to and from 16-byte binary representations;</li>
 <li>conversion to and from <code>u128</code>;</li>
-<li>helpers to inspect the UUID version and variant;</li>
+<li>helpers to inspect the UUID version and variant without rejecting non-standard bit patterns that entered through binary or numeric construction;</li>
 <li>generation helpers for UUID versions 1, 3, 4, 5, 6, 7, and 8;</li>
 <li>explicit handling of version 2 as parseable and inspectable but not generatable in core stdlib because RFC 9562 leaves its definition outside the scope of the specification.</li>
 </ul>
@@ -5320,21 +5313,20 @@
 <li>which UUID versions can be generated directly;</li>
 <li>which UUID versions are supported only for parsing and inspection.</li>
 </ul>
-<p>The module should remain simple. It does not need to expose raw, version-specific wire fields as part of the core standard-library surface.</p>
 <p>The module should remain simple. It should not turn UUIDs into a protocol-forensics API with version-specific raw field extraction as part of the core standard-library surface.</p>
 <h3 id="public-api-surface">Public API surface<a class="headerlink" href="#public-api-surface" title="Permanent link">&para;</a></h3>
 <p>The north-star surface should include:</p>
 <ul>
-<li><code>UUID.parse(text: str) -&gt; Result[UUID, E]</code></li>
-<li><code>UUID.from_bytes(raw: bytes) -&gt; Result[UUID, E]</code></li>
-<li><code>UUID.from_int(value: u128) -&gt; Result[UUID, E]</code></li>
-<li><code>UUID.v1() -&gt; Result[UUID, E]</code></li>
-<li><code>UUID.v3(namespace: UUID, name: str | bytes) -&gt; Result[UUID, E]</code></li>
-<li><code>UUID.v4() -&gt; Result[UUID, E]</code></li>
-<li><code>UUID.v5(namespace: UUID, name: str | bytes) -&gt; Result[UUID, E]</code></li>
-<li><code>UUID.v6() -&gt; Result[UUID, E]</code></li>
-<li><code>UUID.v7() -&gt; Result[UUID, E]</code></li>
-<li><code>UUID.v8(raw: bytes) -&gt; Result[UUID, E]</code></li>
+<li><code>UUID.parse(text: str) -&gt; Result[UUID, UuidError]</code></li>
+<li><code>UUID.from_bytes(raw: bytes) -&gt; Result[UUID, UuidError]</code></li>
+<li><code>UUID.from_int(value: u128) -&gt; UUID</code></li>
+<li><code>UUID.v1() -&gt; Result[UUID, UuidError]</code></li>
+<li><code>UUID.v3(namespace: UUID, name: str | bytes) -&gt; Result[UUID, UuidError]</code></li>
+<li><code>UUID.v4() -&gt; Result[UUID, UuidError]</code></li>
+<li><code>UUID.v5(namespace: UUID, name: str | bytes) -&gt; Result[UUID, UuidError]</code></li>
+<li><code>UUID.v6() -&gt; Result[UUID, UuidError]</code></li>
+<li><code>UUID.v7() -&gt; Result[UUID, UuidError]</code></li>
+<li><code>UUID.v8(raw: bytes) -&gt; Result[UUID, UuidError]</code></li>
 <li><code>uuid.to_string() -&gt; str</code></li>
 <li><code>uuid.to_hex() -&gt; str</code></li>
 <li><code>uuid.to_urn() -&gt; str</code></li>
@@ -5343,8 +5335,8 @@
 </ul>
 <p>The type should also expose read-only information and constants:</p>
 <ul>
-<li><code>uuid.version</code></li>
-<li><code>uuid.variant</code></li>
+<li><code>uuid.version -&gt; UuidVersion</code></li>
+<li><code>uuid.variant -&gt; UuidVariant</code></li>
 <li><code>UUID.NIL</code></li>
 <li><code>UUID.MAX</code></li>
 <li><code>UUID.NAMESPACE_DNS</code></li>
@@ -5352,6 +5344,8 @@
 <li><code>UUID.NAMESPACE_OID</code></li>
 <li><code>UUID.NAMESPACE_X500</code></li>
 </ul>
+<p><code>UuidVersion</code> must represent at least <code>Nil</code>, <code>V1</code>, <code>V2</code>, <code>V3</code>, <code>V4</code>, <code>V5</code>, <code>V6</code>, <code>V7</code>, <code>V8</code>, <code>Max</code>, and <code>Unknown(int)</code>. <code>UuidVariant</code> must represent at least <code>Ncs</code>, <code>Rfc9562</code>, <code>Microsoft</code>, <code>Future</code>, and <code>Unknown</code>. Generated UUIDs must use the RFC 9562 variant. UUIDs introduced through <code>from_bytes(...)</code> or <code>from_int(...)</code> may report non-RFC variants rather than being rejected.</p>
+<p><code>UuidError</code> must distinguish at least invalid text, invalid byte length, unavailable randomness, unavailable clock state, and invalid version-specific generation input. The error type may carry spans or source text later, but this RFC only commits to these semantic categories.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="why-uuid-deserves-a-first-class-type">Why UUID deserves a first-class type<a class="headerlink" href="#why-uuid-deserves-a-first-class-type" title="Permanent link">&para;</a></h3>
 <p>Using <code>str</code> for UUIDs works until it doesn't. Parsing, validation, formatting, version inspection, and byte conversion all become repeated ad hoc logic. A dedicated type makes the API clearer, allows version-aware helpers, and gives the language a consistent interoperability story across text, bytes, and <code>u128</code>.</p>
@@ -5375,7 +5369,7 @@
 <p>Substrait UUID values are looser than RFC 9562 text-format UUIDs: the binary type is a 128-bit UUID payload and does not require every value to be a canonical RFC-generated UUID. To stay compatible with that model:</p>
 <ul>
 <li><code>UUID.from_bytes(...)</code> must accept any 16-byte payload;</li>
-<li><code>UUID.from_int(...)</code> must accept any <code>u128</code> value;</li>
+<li><code>UUID.from_int(...)</code> must accept every <code>u128</code> value and therefore does not need to return <code>Result</code>;</li>
 <li><code>UUID.parse(...)</code> remains the textual RFC-oriented parser for standard UUID string forms.</li>
 </ul>
 <p>This means <code>std.uuid</code> is RFC 9562-aware rather than RFC 9562-validity-gated. The type supports canonical RFC generation and formatting, but binary and numeric interchange remain fully 128-bit-compatible.</p>
@@ -5394,11 +5388,9 @@
 </ul>
 <p>Regardless of input form, canonical stringification should render lowercase hyphenated output.</p>
 <p>When a <code>UUID</code> is converted to <code>str</code>, it should produce the same canonical lowercase hyphenated form.</p>
-<p>When a <code>UUID</code> is converted to <code>str</code>, it should produce the same canonical lowercase hyphenated form.</p>
 <h3 id="bytes-and-u128">Bytes and <code>u128</code><a class="headerlink" href="#bytes-and-u128" title="Permanent link">&para;</a></h3>
 <p><code>UUID.to_bytes()</code> and <code>UUID.from_bytes(...)</code> must use the RFC 9562 byte ordering only. The standard library should not standardize platform- or vendor-specific alternate byte layouts such as COM/GUID little-endian field permutations.</p>
 <p><code>UUID.to_int()</code> and <code>UUID.from_int(...)</code> should be part of the core contract. This gives Incan a lossless numeric UUID representation that is stronger than ecosystems which fall back to strings or narrower integer surrogates when UUID columns are inconvenient to store natively.</p>
-<p>The public numeric representation is <code>u128</code>, not <code>i128</code>. UUIDs are 128-bit identifier values, not signed numbers. The implementation may store the bits however it likes internally, but the public contract should standardize <code>u128</code> as the lossless numeric view.</p>
 <p>The public numeric representation is <code>u128</code>, not <code>i128</code>. UUIDs are 128-bit identifier values, not signed numbers. The implementation may store the bits however it likes internally, but the public contract should standardize <code>u128</code> as the lossless numeric view.</p>
 <h3 id="comparison-and-ordering">Comparison and ordering<a class="headerlink" href="#comparison-and-ordering" title="Permanent link">&para;</a></h3>
 <p>UUID values should support equality and ordering by raw UUID value, equivalent to comparison by their <code>u128</code> representation or RFC/network-order bytes.</p>
@@ -5439,15 +5431,8 @@
 <li><code>uuid.version</code></li>
 <li><code>uuid.variant</code></li>
 </ul>
-<p>That is enough for ordinary application, analytics, and interoperability use cases. The standard library does not need to expose every internal field of time-based UUID layouts just because those fields exist in the wire format.</p>
-<p>For non-RFC bit patterns introduced through <code>from_bytes(...)</code> or <code>from_int(...)</code>, these inspection views should reflect the bits when they map cleanly onto known UUID variant/version classifications and otherwise indicate an unknown or non-standard value.</p>
-<h3 id="simple-inspection-model_1">Simple inspection model<a class="headerlink" href="#simple-inspection-model_1" title="Permanent link">&para;</a></h3>
-<p>Core stdlib inspection should stop at:</p>
-<ul>
-<li><code>uuid.version</code></li>
-<li><code>uuid.variant</code></li>
-</ul>
 <p>That is enough for most application, analytics, and interoperability use cases. The standard library does not need to expose every version-specific internal field of time-based UUID layouts just because those fields exist in the wire format.</p>
+<p>For non-RFC bit patterns introduced through <code>from_bytes(...)</code> or <code>from_int(...)</code>, these inspection views should reflect the bits when they map cleanly onto known UUID variant/version classifications and otherwise indicate an unknown or non-standard value.</p>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>std.io</code> can support reading and writing UUID bytes once a canonical byte-ordering contract exists.</li>
@@ -5503,14 +5488,15 @@
 <li>Parsing accepts canonical hyphenated text plus common interoperable forms such as bare hex, braces, and URN-prefixed UUID text.</li>
 <li>Canonical formatting is lowercase hyphenated text.</li>
 <li><code>UUID.to_bytes()</code> and <code>UUID.from_bytes(...)</code> use RFC/network byte order only.</li>
-<li><code>UUID.to_int()</code> and <code>UUID.from_int(...)</code> are part of the core contract and depend on RFC 009 <code>u128</code>.</li>
+<li><code>UUID.to_int()</code> and <code>UUID.from_int(...)</code> are part of the core contract and depend on RFC 009 <code>u128</code>; <code>from_int(...)</code> accepts every <code>u128</code> value and returns <code>UUID</code> directly.</li>
 <li><code>str(uuid)</code> renders the canonical lowercase hyphenated text form.</li>
 <li><code>UUID</code> values support equality and total ordering by raw UUID value.</li>
 <li><code>UUID.NIL</code>, <code>UUID.MAX</code>, and the four standard namespace constants are part of the public surface.</li>
 <li>Core stdlib generation includes <code>v1</code>, <code>v3</code>, <code>v4</code>, <code>v5</code>, <code>v6</code>, <code>v7</code>, and <code>v8</code>.</li>
 <li>Core stdlib does not promise <code>UUID.v2()</code> generation, because RFC 9562 leaves version 2 outside the scope of the specification.</li>
+<li><code>UuidError</code>, <code>UuidVersion</code>, and <code>UuidVariant</code> are module-owned public types rather than backend-specific implementation leaks.</li>
 <li>Core inspection is intentionally small and stops at <code>version</code> and <code>variant</code>.</li>
-<li><code>UUID.parse(...) -&gt; Result[...]</code> is the parsing entry point; there is no separate <code>try_parse(...)</code> alias.</li>
+<li><code>UUID.parse(...) -&gt; Result[UUID, UuidError]</code> is the parsing entry point; there is no separate <code>try_parse(...)</code> alias.</li>
 <li>The public numeric UUID representation is <code>u128</code>; internal storage is not part of the public contract.</li>
 <li>The module should remain compatible with Substrait-style 16-byte UUID interchange.</li>
 <li>Documentation should recommend <code>v7</code> for ordered IDs, <code>v4</code> for simple random IDs, and <code>v5</code> over <code>v3</code> for deterministic namespace-based IDs.</li>
