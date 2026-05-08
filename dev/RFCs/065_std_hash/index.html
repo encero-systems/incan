@@ -5019,9 +5019,18 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#api-shape-direction" class="md-nav__link">
+  <a href="#file-and-reader-helpers" class="md-nav__link">
     <span class="md-ellipsis">
-      API shape direction
+      File and reader helpers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#api-shape-policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      API shape policy
     </span>
   </a>
   
@@ -5055,6 +5064,15 @@
   <a href="#initial-algorithm-set" class="md-nav__link">
     <span class="md-ellipsis">
       Initial algorithm set
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#configurable-algorithms" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configurable algorithms
     </span>
   </a>
   
@@ -5100,6 +5118,15 @@
   <a href="#file-and-stream-helpers" class="md-nav__link">
     <span class="md-ellipsis">
       File and stream helpers
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#error-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Error model
     </span>
   </a>
   
@@ -5175,7 +5202,7 @@
 
 <h1 id="rfc-065-stdhash-stable-hashing-primitives-for-data-and-integrity-workflows">RFC 065: <code>std.hash</code> — stable hashing primitives for data and integrity workflows<a class="headerlink" href="#rfc-065-stdhash-stable-hashing-primitives-for-data-and-integrity-workflows" title="Permanent link">&para;</a></h1>
 <ul>
-<li><strong>Status:</strong> Draft</li>
+<li><strong>Status:</strong> Planned</li>
 <li><strong>Created:</strong> 2026-04-14</li>
 <li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
 <li><strong>Related:</strong><ul>
@@ -5192,17 +5219,18 @@
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes <code>std.hash</code> as Incan's standard library module for stable hashing operations over bytes and stream-like inputs. The module should clearly separate cryptographic hashes from non-cryptographic fast hashes while keeping a consistent API shape.</p>
+<p>This RFC standardizes <code>std.hash</code> as Incan's standard library module for stable hashing over bytes, files, and binary readers. The module defines explicit algorithm namespaces, separates cryptographic hashes from non-cryptographic fast hashes, and provides consistent one-shot, incremental, and file/reader helper APIs.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>Hashing is foundational in analytics, data pipelines, and systems tooling: checksums, content addressing, deduplication keys, integrity checks, and reproducible fingerprints all depend on it. Without a standard module, projects duplicate hash wrappers and make inconsistent algorithm choices.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Provide a standard hash surface in <code>std.hash</code>.</li>
 <li>Separate cryptographic and non-cryptographic hash families explicitly.</li>
+<li>Define the initial algorithm namespaces and baseline functions each namespace must expose.</li>
 <li>Include MD5 for interoperability and file-fingerprint/checksum workflows, with explicit non-security positioning.</li>
 <li>Support one-shot and incremental update/finalize workflows.</li>
 <li>Include first-class file/stream hashing helpers in addition to incremental hashing APIs.</li>
-<li>Keep output representation explicit (<code>bytes</code>, optional hex helper via <code>std.encoding</code>).</li>
+<li>Keep output representation explicit: cryptographic digests are <code>bytes</code>, non-cryptographic hashes additionally expose width-specific integer helpers, and text rendering composes through <code>std.encoding</code>.</li>
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5210,6 +5238,8 @@
 <li>Standardizing password hashing APIs in this RFC.</li>
 <li>Standardizing CRC/Adler checksum algorithms in this RFC.</li>
 <li>Hiding algorithm choice behind implicit defaults in high-stakes contexts.</li>
+<li>Defining keyed MACs, signatures, or authenticated encryption.</li>
+<li>Exposing backend crate names or backend-specific option objects as part of the public Incan contract.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.hash</span><span class="w"> </span><span class="kn">import</span> <span class="n">sha256</span>
@@ -5230,31 +5260,74 @@
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="nb">hex</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
 
-<span class="n">digest</span> <span class="o">=</span> <span class="n">file_digest</span><span class="p">(</span><span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;events.parquet&quot;</span><span class="p">),</span> <span class="s2">&quot;sha256&quot;</span><span class="p">)</span>
-<span class="nb">println</span><span class="p">(</span><span class="nb">hex</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">digest</span><span class="o">.</span><span class="n">finalize_bytes</span><span class="p">()))</span>
+<span class="n">digest</span> <span class="o">=</span> <span class="n">file_digest</span><span class="p">(</span><span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;events.parquet&quot;</span><span class="p">),</span> <span class="s2">&quot;sha256&quot;</span><span class="p">)</span><span class="o">?</span>
+<span class="nb">println</span><span class="p">(</span><span class="nb">hex</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">digest</span><span class="p">))</span>
 </code></pre></div>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="module-scope">Module scope<a class="headerlink" href="#module-scope" title="Permanent link">&para;</a></h3>
-<p><code>std.hash</code> should expose algorithm-specific submodules or constructors with a shared shape:</p>
+<p><code>std.hash</code> must expose algorithm-specific namespaces with a shared shape. The initial namespaces are:</p>
 <ul>
-<li>cryptographic family (for example SHA-2/BLAKE3);</li>
-<li>non-cryptographic family (for example xxhash);</li>
-<li>MD5 available in the main module surface for compatibility/file hashing where collision resistance is not a requirement;</li>
+<li>cryptographic namespaces: <code>sha224</code>, <code>sha256</code>, <code>sha384</code>, <code>sha512</code>, <code>sha3_224</code>, <code>sha3_256</code>, <code>sha3_384</code>, <code>sha3_512</code>, <code>shake128</code>, <code>shake256</code>, <code>blake2b</code>, <code>blake2s</code>, <code>blake3</code>, and <code>md5</code>;</li>
+<li>non-cryptographic namespaces: <code>xxh3_64</code>, <code>xxh3_128</code>, <code>xxh64</code>, and <code>xxh32</code>;</li>
+<li>top-level helpers for file and binary-reader hashing.</li>
 </ul>
+<p>Family grouping namespaces such as <code>std.hash.sha2</code>, <code>std.hash.sha3</code>, and <code>std.hash.xxh</code> may be added as re-export convenience surfaces, but the algorithm namespaces above are the required import targets.</p>
 <h3 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h3>
-<p>Each algorithm surface should support:</p>
+<p>Each algorithm namespace must support:</p>
 <ul>
-<li>one-shot digest over <code>bytes</code>;</li>
-<li>incremental hasher object (<code>new</code>, <code>update</code>, <code>finalize</code>);</li>
-<li>explicit output type (<code>bytes</code> or fixed-width integer).</li>
+<li>one-shot hashing over <code>bytes</code>;</li>
+<li>incremental hasher construction with <code>new</code>, <code>update</code>, and finalization;</li>
+<li>explicit output type: <code>bytes</code> for digest output and fixed-width unsigned integers for non-cryptographic integer helpers;</li>
+<li>deterministic, portable output for identical input across supported platforms.</li>
 </ul>
-<h3 id="api-shape-direction">API shape direction<a class="headerlink" href="#api-shape-direction" title="Permanent link">&para;</a></h3>
-<p>The module should avoid hidden global defaults. Callers should choose algorithms explicitly.</p>
+<p>Baseline cryptographic and MD5 namespace shape:</p>
+<ul>
+<li><code>digest(data: bytes) -&gt; bytes</code></li>
+<li><code>new() -&gt; Hasher</code></li>
+<li><code>Hasher.update(chunk: bytes) -&gt; None</code></li>
+<li><code>Hasher.finalize_bytes() -&gt; bytes</code></li>
+</ul>
+<p>Baseline SHAKE namespace shape:</p>
+<ul>
+<li><code>digest(data: bytes, length: int) -&gt; Result[bytes, HashError]</code></li>
+<li><code>new() -&gt; Hasher</code></li>
+<li><code>Hasher.update(chunk: bytes) -&gt; None</code></li>
+<li><code>Hasher.finalize_bytes(length: int) -&gt; Result[bytes, HashError]</code></li>
+</ul>
+<p>Baseline non-cryptographic namespace shape:</p>
+<ul>
+<li><code>digest(data: bytes) -&gt; bytes</code></li>
+<li><code>hash_u32(data: bytes) -&gt; u32</code> where the algorithm width is 32-bit</li>
+<li><code>hash_u64(data: bytes) -&gt; u64</code> where the algorithm width is 64-bit</li>
+<li><code>hash_u128(data: bytes) -&gt; u128</code> where the algorithm width is 128-bit</li>
+<li><code>new() -&gt; Hasher</code></li>
+<li><code>Hasher.update(chunk: bytes) -&gt; None</code></li>
+<li><code>Hasher.finalize_bytes() -&gt; bytes</code></li>
+<li><code>Hasher.finalize_u32() -&gt; u32</code> where the algorithm width is 32-bit</li>
+<li><code>Hasher.finalize_u64() -&gt; u64</code> where the algorithm width is 64-bit</li>
+<li><code>Hasher.finalize_u128() -&gt; u128</code> where the algorithm width is 128-bit</li>
+</ul>
+<p>Width-specific integer helpers must only exist for matching non-cryptographic algorithms. For example, <code>xxh3_64.finalize_u64()</code> is valid and <code>sha256.finalize_u64()</code> is not part of this RFC.</p>
+<h3 id="file-and-reader-helpers">File and reader helpers<a class="headerlink" href="#file-and-reader-helpers" title="Permanent link">&para;</a></h3>
+<p><code>std.hash</code> must provide top-level helpers that stream input through the same algorithm implementations used by one-shot and incremental APIs:</p>
+<ul>
+<li><code>file_digest(input: Path | File, algorithm: str, chunk_size: int = 65536) -&gt; Result[bytes, HashError]</code></li>
+<li><code>reader_digest(input: BinaryReader, algorithm: str, chunk_size: int = 65536) -&gt; Result[bytes, HashError]</code></li>
+<li><code>file_hash_u32(input: Path | File, algorithm: str, chunk_size: int = 65536) -&gt; Result[u32, HashError]</code></li>
+<li><code>file_hash_u64(input: Path | File, algorithm: str, chunk_size: int = 65536) -&gt; Result[u64, HashError]</code></li>
+<li><code>file_hash_u128(input: Path | File, algorithm: str, chunk_size: int = 65536) -&gt; Result[u128, HashError]</code></li>
+<li><code>reader_hash_u32(input: BinaryReader, algorithm: str, chunk_size: int = 65536) -&gt; Result[u32, HashError]</code></li>
+<li><code>reader_hash_u64(input: BinaryReader, algorithm: str, chunk_size: int = 65536) -&gt; Result[u64, HashError]</code></li>
+<li><code>reader_hash_u128(input: BinaryReader, algorithm: str, chunk_size: int = 65536) -&gt; Result[u128, HashError]</code></li>
+</ul>
+<p>The <code>algorithm</code> string must match one of the required algorithm namespace names. Unknown algorithm names, unsupported integer widths, invalid SHAKE output lengths, invalid chunk sizes, and I/O failures must produce <code>HashError</code>.</p>
+<h3 id="api-shape-policy">API shape policy<a class="headerlink" href="#api-shape-policy" title="Permanent link">&para;</a></h3>
+<p>The module must avoid hidden global defaults. Callers choose algorithms explicitly by importing an algorithm namespace or passing an algorithm name to file/reader helpers. <code>std.hash</code> must not provide a generic <code>hash(data)</code> helper that chooses an algorithm implicitly.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="family-separation">Family separation<a class="headerlink" href="#family-separation" title="Permanent link">&para;</a></h3>
-<p>The docs and namespace should make security posture obvious:</p>
+<p>The docs and namespace must make security posture obvious:</p>
 <ul>
-<li>cryptographic hashes for integrity/security-sensitive digests;</li>
+<li>cryptographic hashes for integrity/security-sensitive digests where a hash function is appropriate;</li>
 <li>non-cryptographic hashes for speed-oriented partitioning or hash-key workflows.</li>
 <li>MD5 documented as interoperability/checksum oriented and unsuitable for collision-resistant security usage.</li>
 </ul>
@@ -5264,12 +5337,16 @@
 <li>cryptographic: <code>sha2</code> (224/256/384/512), <code>sha3</code> (224/256/384/512), <code>shake</code> (128/256), <code>blake2b</code>, <code>blake2s</code>, <code>blake3</code>, <code>md5</code>;</li>
 <li>non-cryptographic: <code>xxh3_64</code>, <code>xxh3_128</code>, <code>xxh64</code>, <code>xxh32</code>.</li>
 </ul>
+<p>The required public names are the algorithm namespace names listed in the Module scope section. Family labels such as <code>sha2</code>, <code>sha3</code>, <code>shake</code>, and <code>xxh</code> describe documentation grouping and optional re-export modules; they are not substitutes for the required per-algorithm namespaces.</p>
+<h3 id="configurable-algorithms">Configurable algorithms<a class="headerlink" href="#configurable-algorithms" title="Permanent link">&para;</a></h3>
+<p>The initial <code>blake2b</code> and <code>blake2s</code> surfaces must expose their standard unkeyed digest sizes by default (<code>64</code> bytes for <code>blake2b</code>, <code>32</code> bytes for <code>blake2s</code>). Optional digest-size configuration may be added as explicit parameters, but keyed hashing is out of scope for this RFC because it crosses into MAC/key-management concerns.</p>
+<p><code>shake128</code> and <code>shake256</code> must require an explicit output length for one-shot and finalization calls. The implementation must reject non-positive lengths and lengths that cannot be represented safely by the backend.</p>
 <h3 id="md5-safety-signaling">MD5 safety signaling<a class="headerlink" href="#md5-safety-signaling" title="Permanent link">&para;</a></h3>
-<p>MD5 remains part of <code>std.hash</code> for practical ecosystem interoperability. The RFC mandates clear non-security guidance in documentation and examples; whether additional compiler/runtime warning behavior exists is an implementation detail.</p>
+<p>MD5 remains part of <code>std.hash</code> for practical ecosystem interoperability. Documentation and examples must identify MD5 as unsuitable for collision-resistant security usage. Compiler or runtime warning behavior is not part of the public contract in this RFC.</p>
 <h3 id="checksum-boundary">Checksum boundary<a class="headerlink" href="#checksum-boundary" title="Permanent link">&para;</a></h3>
-<p>CRC/Adler checksums are intentionally out of scope for this RFC and should be handled by a future dedicated checksum-focused RFC/module.</p>
+<p>CRC/Adler checksums are intentionally out of scope for this RFC and belong in a future dedicated checksum-focused RFC or module.</p>
 <h3 id="output-policy">Output policy<a class="headerlink" href="#output-policy" title="Permanent link">&para;</a></h3>
-<p>Raw digest bytes should be the core output. Text rendering (<code>hex</code>) should compose via <code>std.encoding</code> instead of being duplicated in every hash API.</p>
+<p>Raw digest bytes are the core output. Text rendering (<code>hex</code>) composes via <code>std.encoding</code> instead of being duplicated in every hash API.</p>
 <h3 id="finalize-result-policy">Finalize result policy<a class="headerlink" href="#finalize-result-policy" title="Permanent link">&para;</a></h3>
 <p><code>std.hash</code> follows a Python-aligned shape for cryptographic hashes and an analytics-friendly shape for non-cryptographic hashes:</p>
 <ul>
@@ -5279,12 +5356,26 @@
 <h3 id="file-and-stream-helpers">File and stream helpers<a class="headerlink" href="#file-and-stream-helpers" title="Permanent link">&para;</a></h3>
 <p><code>std.hash</code> includes first-class helpers for hashing files and readers directly, aligned with Python ergonomics while remaining explicit:</p>
 <ul>
-<li><code>file_digest(input, algorithm)</code> hashes a <code>std.fs.Path</code>, <code>std.fs.File</code>, or binary reader and returns the algorithm hasher/digest object;</li>
+<li><code>file_digest(input, algorithm)</code> hashes a <code>std.fs.Path</code> or <code>std.fs.File</code> and returns digest bytes;</li>
+<li><code>reader_digest(input, algorithm)</code> hashes a binary reader and returns digest bytes;</li>
+<li>width-specific <code>file_hash_u*</code> and <code>reader_hash_u*</code> helpers return typed integers only for matching non-cryptographic algorithms;</li>
 <li>algorithm selection is explicit by constructor or algorithm name string;</li>
 <li>helpers are convenience APIs over the same deterministic incremental hashing model, not a separate semantics path.</li>
 </ul>
+<p>These helpers must process input incrementally and must not require full input materialization. <code>chunk_size</code> defaults to <code>65536</code> bytes and must be positive.</p>
+<h3 id="error-model">Error model<a class="headerlink" href="#error-model" title="Permanent link">&para;</a></h3>
+<p><code>HashError</code> must represent:</p>
+<ul>
+<li>unknown algorithm names;</li>
+<li>unsupported output width requests;</li>
+<li>invalid SHAKE output lengths;</li>
+<li>invalid chunk sizes;</li>
+<li>I/O errors while opening or reading files/readers;</li>
+<li>backend hashing failures if an implementation backend can fail after validation.</li>
+</ul>
+<p>Algorithm-specific backend details may be preserved as metadata, but the language-level error type must remain stable.</p>
 <h3 id="stability-and-portability">Stability and portability<a class="headerlink" href="#stability-and-portability" title="Permanent link">&para;</a></h3>
-<p>Algorithm outputs must be deterministic and portable across platforms for identical input.</p>
+<p>Algorithm outputs must be deterministic and portable across platforms for identical input. Non-cryptographic integer helpers must define byte order for byte conversion; this RFC requires little-endian interpretation for integer helpers whose backend exposes bytes rather than native integers.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Single <code>hash(data)</code> helper</strong></li>
@@ -5300,33 +5391,44 @@
 <li>
 <p><strong>Only fast hashes</strong></p>
 </li>
-<li>Too weak for integrity-sensitive use cases.</li>
+<li>
+<p>Too weak for integrity-sensitive use cases.</p>
+</li>
+<li>
+<p><strong>File helpers returning mutable hasher objects</strong></p>
+</li>
+<li>Too error-prone for a completed file operation. The final digest is the normal result of hashing a whole file; callers who need custom interleaving can use <code>new</code>, <code>update</code>, and <code>finalize_*</code> directly.</li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Surface can sprawl if too many algorithms are included too early.</li>
 <li>Family separation requires careful docs to avoid misuse.</li>
+<li>Dynamic algorithm-name helpers introduce runtime errors for invalid names, so static algorithm namespaces remain the preferred normal API.</li>
 </ul>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Stdlib / runtime</strong>: algorithm implementations and stable output behavior.</li>
-<li><strong>Language surface</strong>: the module families, hasher types, and helper functions must be available as specified.</li>
-<li><strong>Execution handoff</strong>: implementations must preserve deterministic hashing semantics.</li>
-<li><strong>Docs / examples</strong>: algorithm selection guidance and misuse avoidance.</li>
+<li><strong>Stdlib / runtime</strong>: algorithm implementations, hasher objects, file/reader helpers, and stable output behavior.</li>
+<li><strong>Language surface</strong>: the required algorithm namespaces, hasher types, helper functions, and <code>HashError</code> must be available as specified.</li>
+<li><strong>Execution handoff</strong>: implementations must preserve deterministic hashing semantics and stream input without whole-file materialization.</li>
+<li><strong>Docs / examples</strong>: algorithm selection guidance, MD5 misuse avoidance, digest-vs-text encoding guidance, and file/reader examples.</li>
 </ul>
 <h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ul>
 <li><code>std.hash</code> includes both cryptographic and non-cryptographic hash families in one module, with clear API-level separation between them.</li>
-<li>The core cryptographic set is <code>sha2</code> (<code>sha224</code>, <code>sha256</code>, <code>sha384</code>, <code>sha512</code>), <code>sha3</code> (<code>sha3_224</code>, <code>sha3_256</code>, <code>sha3_384</code>, <code>sha3_512</code>), <code>shake</code> (<code>shake128</code>, <code>shake256</code>), <code>blake2b</code>, <code>blake2s</code>, <code>blake3</code>, and <code>md5</code>.</li>
+<li>The core cryptographic set is <code>sha224</code>, <code>sha256</code>, <code>sha384</code>, <code>sha512</code>, <code>sha3_224</code>, <code>sha3_256</code>, <code>sha3_384</code>, <code>sha3_512</code>, <code>shake128</code>, <code>shake256</code>, <code>blake2b</code>, <code>blake2s</code>, <code>blake3</code>, and <code>md5</code>.</li>
 <li>The core non-cryptographic set is <code>xxh3_64</code>, <code>xxh3_128</code>, <code>xxh64</code>, and <code>xxh32</code>.</li>
+<li>Required import targets are per-algorithm namespaces; family grouping namespaces are optional re-export conveniences.</li>
+<li>Algorithm namespaces expose one-shot <code>digest</code>, incremental <code>new</code>/<code>update</code>/<code>finalize_*</code>, and width-specific integer helpers where applicable.</li>
 <li>MD5 is part of the main <code>std.hash</code> surface for interoperability and file-fingerprint workflows; the spec does not relegate it to a separate legacy namespace.</li>
 <li>MD5 is explicitly non-security-positioned in the spec, but any runtime warning behavior is implementation detail rather than part of the public contract.</li>
 <li>CRC and Adler-family checksum algorithms are out of scope for this RFC.</li>
 <li>The public API includes both one-shot hashing helpers and incremental hasher objects.</li>
-<li>The public API includes first-class file or stream hashing helpers rather than forcing all file hashing to be manually composed from <code>std.fs</code> reads plus incremental updates.</li>
+<li>The public API includes first-class file and reader hashing helpers rather than forcing all file hashing to be manually composed from <code>std.fs</code> reads plus incremental updates.</li>
 <li>Cryptographic hashes are bytes-first and expose digest bytes as the primary finalized representation.</li>
 <li>Non-cryptographic hashes also expose integer-oriented finalize helpers (<code>u32</code>, <code>u64</code>, <code>u128</code> where applicable) for analytics and systems workflows that want numeric hash outputs directly.</li>
 <li>Hex rendering is convenience surface layered through explicit helpers and must not obscure the distinction between raw hash bytes and text encodings.</li>
+<li>File and reader helpers return finalized digest bytes or typed integer values, not mutable hasher objects.</li>
+<li><code>HashError</code> is the stable error boundary for invalid algorithm names, unsupported widths, invalid SHAKE lengths, invalid chunk sizes, I/O failures, and backend failures.</li>
 </ul>
 
 
