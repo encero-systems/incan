@@ -14,7 +14,7 @@ pub use incan_stdlib::r#async::race::RaceArm as RawRaceArm;
 pub use incan_stdlib::r#async::race::RuntimeRaceCallback;
 pub use incan_stdlib::r#async::race::arm as rust_arm;
 pub use incan_stdlib::r#async::race::race as rust_race;
-use tokio::time::timeout as tokio_timeout;
+pub use incan_stdlib::__private::tokio::time::timeout as tokio_timeout;
 pub type RaceArm<R> = RawRaceArm<R>;
 pub fn arm<
     T: Send,

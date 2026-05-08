@@ -31,7 +31,7 @@ from rust::incan_stdlib::async::task import RuntimeFuture
 from rust::incan_stdlib::async::race import RaceArm as RawRaceArm, RuntimeRaceCallback
 from rust::incan_stdlib::async::race import arm as rust_arm
 from rust::incan_stdlib::async::race import race as rust_race
-from rust::tokio::time import timeout as tokio_timeout
+from rust::incan_stdlib::__private::tokio::time import timeout as tokio_timeout
 
 
 pub type RaceArm[R] = rusttype RawRaceArm[R]:

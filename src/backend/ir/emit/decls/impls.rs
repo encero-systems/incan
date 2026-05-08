@@ -189,8 +189,7 @@ impl<'a> IrEmitter<'a> {
             {
                 trait_methods.push(quote! {
                     fn from_json(json_str: String) -> Result<Self, String> {
-                        serde_json::from_str(&json_str)
-                            .map_err(|e| incan_stdlib::errors::json_decode_error_string(e))
+                        incan_stdlib::json::__private::parse_or_error(&json_str)
                     }
                 });
             }

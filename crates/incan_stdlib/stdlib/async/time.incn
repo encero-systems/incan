@@ -43,7 +43,7 @@ from rust::incan_stdlib::async::time import (
     timeout_join as rust_timeout_join,
     timeout_join_ms as rust_timeout_join_ms,
 )
-from rust::tokio::time import (
+from rust::incan_stdlib::__private::tokio::time import (
     sleep as tokio_sleep,
     timeout as tokio_timeout,
 )
