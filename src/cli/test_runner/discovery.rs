@@ -67,6 +67,7 @@ fn file_has_inline_test_module(path: &Path) -> bool {
 fn program_for_decls(declarations: Vec<Spanned<Declaration>>) -> Program {
     Program {
         declarations,
+        source_path: None,
         rust_module_path: None,
         warnings: Vec::new(),
     }

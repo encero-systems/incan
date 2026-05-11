@@ -2746,6 +2746,57 @@ fn test_std_serde_with_serialize_trait_codegen() {
     insta::assert_snapshot!("std_serde_with_serialize_trait", rust_code);
 }
 
+#[test]
+fn test_newtype_with_serialize_trait_forwards_rust_derive() {
+    let source = r#"
+from std.serde.json import Serialize
+
+type Wrapped = newtype str with Serialize
+
+def main() -> None:
+  println(Wrapped("ok").to_json())
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("#[derive(Debug,serde::Serialize)]structWrapped(pubString);")
+            || compact.contains("#[derive(Debug,Clone,serde::Serialize)]structWrapped(pubString);"),
+        "expected newtype `with Serialize` to forward the Rust serde derive; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("implSerializeforWrapped"),
+        "expected newtype `with Serialize` to expand the stdlib Serialize impl; generated:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_with_serialize_keeps_ordinary_methods_inherent() {
+    let source = r#"
+from std.serde.json import Serialize
+
+model Payload with Serialize:
+  value: str
+
+  def display_text(self) -> str:
+    return self.value
+
+def main() -> None:
+  payload = Payload(value="ok")
+  println(payload.display_text())
+  println(payload.to_json())
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("implPayload{pubfndisplay_text(&self)->String"),
+        "expected ordinary method on `with Serialize` model to emit as inherent impl; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("implSerializeforPayload{fndisplay_text"),
+        "ordinary methods must not be emitted into the Serialize trait impl; generated:\n{rust_code}"
+    );
+}
+
 /// RFC 024: module-level derive metadata should let `@derive(json)` adopt serde traits and emit Rust derives.
 #[test]
 fn test_rfc024_module_derive_json_codegen() {

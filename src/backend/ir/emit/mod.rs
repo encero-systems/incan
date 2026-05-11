@@ -99,6 +99,8 @@ pub struct IrEmitter<'a> {
     external_rust_functions: std::collections::HashSet<String>,
     /// Enum variant field typing lookup: (EnumName, VariantName) -> VariantFields
     enum_variant_fields: std::collections::HashMap<(String, String), VariantFields>,
+    /// Enum variant alias lookup: (EnumName, AliasName) -> CanonicalVariantName
+    enum_variant_aliases: std::collections::HashMap<(String, String), String>,
     /// Struct field type lookup: (StructName, FieldName) -> IrType
     struct_field_types: std::collections::HashMap<(String, String), IrType>,
     /// Struct field visibility lookup: (StructName, FieldName) -> Visibility
@@ -203,6 +205,7 @@ impl<'a> IrEmitter<'a> {
             current_function_return_type: RefCell::new(None),
             external_rust_functions: std::collections::HashSet::new(),
             enum_variant_fields: std::collections::HashMap::new(),
+            enum_variant_aliases: std::collections::HashMap::new(),
             struct_field_types: std::collections::HashMap::new(),
             struct_field_visibilities: std::collections::HashMap::new(),
             struct_field_names: std::collections::HashMap::new(),
@@ -510,6 +513,10 @@ impl<'a> IrEmitter<'a> {
                         self.enum_variant_fields
                             .insert((e.name.clone(), v.name.clone()), v.fields.clone());
                     }
+                    for alias in &e.variant_aliases {
+                        self.enum_variant_aliases
+                            .insert((e.name.clone(), alias.name.clone()), alias.target.clone());
+                    }
                 }
                 IrDeclKind::TypeAlias {
                     name,
@@ -542,9 +549,15 @@ impl<'a> IrEmitter<'a> {
         method_name: &str,
     ) -> Option<&FunctionSignature> {
         match receiver_ty {
-            IrType::Struct(name) | IrType::NamedGeneric(name, _) => {
-                self.method_signatures.get(&(name.clone(), method_name.to_string()))
-            }
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => self
+                .method_signatures
+                .get(&(name.clone(), method_name.to_string()))
+                .or_else(|| {
+                    name.rsplit("::").next().and_then(|short_name| {
+                        self.method_signatures
+                            .get(&(short_name.to_string(), method_name.to_string()))
+                    })
+                }),
             IrType::Ref(inner) | IrType::RefMut(inner) => self.method_signature_for_receiver(inner, method_name),
             _ => None,
         }

@@ -3503,12 +3503,13 @@ def main() -> int:
 
     #[test]
     fn test_parse_value_enum_with_string_values() -> Result<(), Vec<CompileError>> {
-        let source = "enum Color(str):\n    Red = \"red\"\n    Blue = \"blue\"\n";
+        let source = "enum Color(str):\n    Red = \"red\"\n    Blue = \"blue\"\n    Cyan = alias Blue\n";
         let program = parse_str(source)?;
         let en = require_enum_decl(&program.declarations[0])?;
 
         assert!(matches!(en.value_type.as_ref().map(|ty| ty.node), Some(ValueEnumType::Str)));
         assert_eq!(en.variants.len(), 2);
+        assert_eq!(en.variant_aliases.len(), 1);
         assert_eq!(en.variants[0].node.name, "Red");
         assert!(en.variants[0].node.fields.is_empty());
         assert!(matches!(
@@ -3519,6 +3520,8 @@ def main() -> int:
             en.variants[1].node.value.as_ref().map(|value| &value.node),
             Some(ValueEnumLiteral::Str(value)) if value == "blue"
         ));
+        assert_eq!(en.variant_aliases[0].node.name, "Cyan");
+        assert_eq!(en.variant_aliases[0].node.target, "Blue");
         Ok(())
     }
 

@@ -951,6 +951,7 @@ impl<'a> IrEmitter<'a> {
     ) -> Result<TokenStream, EmitError> {
         let local_name = "__incan_static_value";
         let rhs_name = "__incan_static_rhs";
+        let rhs_ident = format_ident!("{}", rhs_name);
         let rewritten_target = match target {
             AssignTarget::Field { object, field } => AssignTarget::Field {
                 object: Box::new(Self::rewrite_storage_root_expr(object, local_name)),
@@ -986,7 +987,7 @@ impl<'a> IrEmitter<'a> {
         let emitted_value = self.emit_assignment_value(value, None)?;
         let wrapped = self.emit_storage_with_mut(storage_expr, inner)?;
         Ok(quote! {
-            let #rhs_name = #emitted_value;
+            let #rhs_ident = #emitted_value;
             #wrapped
         })
     }

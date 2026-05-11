@@ -160,6 +160,12 @@ pub struct CheckedEnumVariant {
 }
 
 #[derive(Debug, Clone)]
+pub struct CheckedEnumVariantAlias {
+    pub name: String,
+    pub target: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct CheckedEnumExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
@@ -167,6 +173,7 @@ pub struct CheckedEnumExport {
     pub trait_adoptions: Vec<CheckedTypeBound>,
     pub value_type: Option<ValueEnumBacking>,
     pub variants: Vec<CheckedEnumVariant>,
+    pub variant_aliases: Vec<CheckedEnumVariantAlias>,
     pub methods: Vec<CheckedMethod>,
     pub derives: Vec<String>,
 }
@@ -640,6 +647,14 @@ fn checked_enum_export(enum_decl: &EnumDecl, checker: &TypeChecker) -> Option<Ch
         trait_adoptions: sorted_type_bounds(map_type_bound_infos(&enum_info.trait_adoptions)),
         value_type: enum_info.value_enum.as_ref().map(|value_enum| value_enum.value_type),
         variants,
+        variant_aliases: enum_decl
+            .variant_aliases
+            .iter()
+            .map(|alias| CheckedEnumVariantAlias {
+                name: alias.node.name.clone(),
+                target: alias.node.target.clone(),
+            })
+            .collect(),
         methods: map_method_overloads(&enum_info.method_overloads),
         derives: sorted_vec(enum_info.derives.clone()),
     })

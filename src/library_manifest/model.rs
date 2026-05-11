@@ -454,6 +454,9 @@ pub struct EnumExport {
     #[serde(default)]
     pub value_type: Option<EnumValueTypeExport>,
     pub variants: Vec<EnumVariantExport>,
+    /// Variant aliases exposed by this enum.
+    #[serde(default)]
+    pub variant_aliases: Vec<EnumVariantAliasExport>,
     /// Methods and associated functions exposed by the enum.
     #[serde(default)]
     pub methods: Vec<MethodExport>,
@@ -479,6 +482,13 @@ pub struct EnumVariantExport {
     /// Raw value for RFC 032 value enum variants.
     #[serde(default)]
     pub value: Option<EnumValueExport>,
+}
+
+/// Exported alias for one enum variant.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumVariantAliasExport {
+    pub name: String,
+    pub target: String,
 }
 
 /// Exported raw value for one value enum variant.
@@ -880,6 +890,14 @@ fn enum_export_from_checked(export: &CheckedEnumExport) -> EnumExport {
                 name: variant.name.clone(),
                 fields: variant.fields.iter().map(type_ref_from_resolved).collect(),
                 value: variant.value.as_ref().map(value_enum_value_from_checked),
+            })
+            .collect(),
+        variant_aliases: export
+            .variant_aliases
+            .iter()
+            .map(|alias| EnumVariantAliasExport {
+                name: alias.name.clone(),
+                target: alias.target.clone(),
             })
             .collect(),
         methods: export.methods.iter().map(method_from_checked).collect(),

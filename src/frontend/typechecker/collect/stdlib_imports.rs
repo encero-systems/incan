@@ -885,6 +885,14 @@ impl TypeChecker {
                     fields: &variant.fields,
                 });
             }
+            if let Some(alias) = enum_export.variant_aliases.iter().find(|alias| alias.name == name)
+                && let Some(variant) = enum_export.variants.iter().find(|variant| variant.name == alias.target)
+            {
+                return Some(ManifestExportRef::EnumVariant {
+                    enum_name: &enum_export.name,
+                    fields: &variant.fields,
+                });
+            }
         }
         if manifest.exports.type_aliases.iter().any(|item| item.name == name) {
             return Some(ManifestExportRef::TypeAlias);
@@ -1288,6 +1296,11 @@ impl TypeChecker {
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             variants: export.variants.iter().map(|variant| variant.name.clone()).collect(),
+            variant_aliases: export
+                .variant_aliases
+                .iter()
+                .map(|alias| (alias.name.clone(), alias.target.clone()))
+                .collect(),
             value_enum,
             derives: export.derives.clone(),
             method_overloads: self.method_overloads_from_manifest(&export.methods),

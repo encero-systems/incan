@@ -101,18 +101,34 @@ pub const TRAITS: &[TraitInfo] = &[
         RFC::_000,
         Since(0, 1),
     ),
-    info(TraitId::From, "From", "Trait for conversions.", RFC::_000, Since(0, 1)),
-    info(TraitId::Into, "Into", "Trait for conversions.", RFC::_000, Since(0, 1)),
-    info(
+    info_with_aliases(
+        TraitId::From,
+        "From",
+        &["ConvertFrom"],
+        "Trait for conversions.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info_with_aliases(
+        TraitId::Into,
+        "Into",
+        &["ConvertInto"],
+        "Trait for conversions.",
+        RFC::_000,
+        Since(0, 1),
+    ),
+    info_with_aliases(
         TraitId::TryFrom,
         "TryFrom",
+        &["ConvertTryFrom"],
         "Trait for fallible conversions.",
         RFC::_000,
         Since(0, 1),
     ),
-    info(
+    info_with_aliases(
         TraitId::TryInto,
         "TryInto",
+        &["ConvertTryInto"],
         "Trait for fallible conversions.",
         RFC::_000,
         Since(0, 1),
@@ -166,7 +182,10 @@ pub const TRAITS: &[TraitInfo] = &[
 /// ## Notes
 /// - Matching is **case-sensitive**.
 pub fn from_str(name: &str) -> Option<TraitId> {
-    TRAITS.iter().find(|t| t.canonical == name).map(|t| t.id)
+    TRAITS
+        .iter()
+        .find(|t| t.canonical == name || t.aliases.contains(&name))
+        .map(|t| t.id)
 }
 
 /// Return the canonical spelling for a builtin trait.
@@ -178,6 +197,10 @@ pub fn as_str(id: TraitId) -> &'static str {
 pub fn method_names(id: TraitId) -> &'static [&'static str] {
     match id {
         TraitId::Error => &["message", "source"],
+        TraitId::From => &["from"],
+        TraitId::Into => &["into"],
+        TraitId::TryFrom => &["try_from"],
+        TraitId::TryInto => &["try_into"],
         TraitId::Debug
         | TraitId::Display
         | TraitId::Eq
@@ -187,15 +210,32 @@ pub fn method_names(id: TraitId) -> &'static [&'static str] {
         | TraitId::Hash
         | TraitId::Clone
         | TraitId::Default
-        | TraitId::From
-        | TraitId::Into
-        | TraitId::TryFrom
-        | TraitId::TryInto
         | TraitId::Iterator
         | TraitId::IntoIterator
         | TraitId::Iterable
         | TraitId::Sum
         | TraitId::Awaitable => &[],
+    }
+}
+
+/// Build a builtin trait metadata entry with explicit source aliases.
+const fn info_with_aliases(
+    id: TraitId,
+    canonical: &'static str,
+    aliases: &'static [&'static str],
+    description: &'static str,
+    introduced_in_rfc: RfcId,
+    since: Since,
+) -> TraitInfo {
+    LangItemInfo {
+        id,
+        canonical,
+        aliases,
+        description,
+        introduced_in_rfc,
+        since,
+        stability: Stability::Stable,
+        examples: &[],
     }
 }
 

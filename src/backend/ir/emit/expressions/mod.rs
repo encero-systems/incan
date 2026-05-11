@@ -205,7 +205,11 @@ impl<'a> IrEmitter<'a> {
         value_target_ty: Option<&IrType>,
     ) -> Result<TokenStream, EmitError> {
         if pairs.is_empty() {
-            return Ok(quote! { HashMap::new() });
+            return if *self.qualify_internal_canonical_paths.borrow() {
+                Ok(quote! { std::collections::HashMap::new() })
+            } else {
+                Ok(quote! { HashMap::new() })
+            };
         }
 
         if pairs.iter().all(|entry| matches!(entry, IrDictEntry::Pair(_, _))) {
@@ -232,7 +236,11 @@ impl<'a> IrEmitter<'a> {
                     )),
                 })
                 .collect::<Result<_, EmitError>>()?;
-            return Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<HashMap<_, _>>() });
+            return if *self.qualify_internal_canonical_paths.borrow() {
+                Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<std::collections::HashMap<_, _>>() })
+            } else {
+                Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<HashMap<_, _>>() })
+            };
         }
 
         let steps: Vec<TokenStream> = pairs
@@ -265,7 +273,7 @@ impl<'a> IrEmitter<'a> {
             .collect::<Result<_, EmitError>>()?;
 
         Ok(quote! {{
-            let mut __incan_dict = HashMap::new();
+            let mut __incan_dict = std::collections::HashMap::new();
             #(#steps)*
             __incan_dict
         }})
@@ -282,6 +290,18 @@ impl<'a> IrEmitter<'a> {
             | ValueUseSite::ReturnValue { target_ty }
             | ValueUseSite::MatchScrutinee { target_ty } => target_ty,
             ValueUseSite::MethodArg => None,
+        }
+    }
+
+    /// Prefer the call-site target type unless it is still generic enough that Rust needs the literal's own type.
+    fn concrete_literal_target<'b>(
+        target_ty: Option<&'b IrType>,
+        inferred_ty: Option<&'b IrType>,
+    ) -> Option<&'b IrType> {
+        match target_ty {
+            Some(ty) if Self::is_unresolved_call_seed_type(ty) => inferred_ty.or(Some(ty)),
+            Some(ty) => Some(ty),
+            None => inferred_ty,
         }
     }
 
@@ -309,38 +329,61 @@ impl<'a> IrEmitter<'a> {
     /// expression is emitted. Non-aggregate expressions are emitted normally, then the planned conversion is applied to
     /// the resulting token stream.
     pub(super) fn emit_expr_for_use(&self, expr: &TypedExpr, site: ValueUseSite<'_>) -> Result<TokenStream, EmitError> {
+        if matches!(site, ValueUseSite::CollectionElement { .. })
+            && let Some(target_ty) = Self::use_site_target_ty(site)
+            && let Some(wrapped) = self.emit_inference_seeded_literal_arg(expr, target_ty)?
+        {
+            return Ok(wrapped);
+        }
+
         match &expr.kind {
+            IrExprKind::InteropCoerce { expr: inner, .. }
+                if Self::use_site_target_ty(site).is_some()
+                    && matches!(
+                        inner.kind,
+                        IrExprKind::List(_) | IrExprKind::Dict(_) | IrExprKind::Set(_) | IrExprKind::Tuple(_)
+                    ) =>
+            {
+                return self.emit_expr_for_use(inner, site);
+            }
             IrExprKind::List(items) => {
-                let item_target_ty = match Self::use_site_target_ty(site) {
+                let site_item_ty = match Self::use_site_target_ty(site) {
                     Some(IrType::List(elem)) => Some(elem.as_ref()),
-                    _ => match &expr.ty {
-                        IrType::List(elem) => Some(elem.as_ref()),
-                        _ => None,
-                    },
+                    _ => None,
                 };
+                let inferred_item_ty = match &expr.ty {
+                    IrType::List(elem) => Some(elem.as_ref()),
+                    _ => None,
+                };
+                let item_target_ty = Self::concrete_literal_target(site_item_ty, inferred_item_ty);
                 return self.emit_list_literal_entries(items, item_target_ty);
             }
             IrExprKind::Dict(pairs) => {
-                let (key_target_ty, value_target_ty) = match Self::use_site_target_ty(site) {
+                let (site_key_ty, site_value_ty) = match Self::use_site_target_ty(site) {
                     Some(IrType::Dict(key, value)) => (Some(key.as_ref()), Some(value.as_ref())),
-                    _ => match &expr.ty {
-                        IrType::Dict(key, value) => (Some(key.as_ref()), Some(value.as_ref())),
-                        _ => (None, None),
-                    },
+                    _ => (None, None),
                 };
+                let (inferred_key_ty, inferred_value_ty) = match &expr.ty {
+                    IrType::Dict(key, value) => (Some(key.as_ref()), Some(value.as_ref())),
+                    _ => (None, None),
+                };
+                let key_target_ty = Self::concrete_literal_target(site_key_ty, inferred_key_ty);
+                let value_target_ty = Self::concrete_literal_target(site_value_ty, inferred_value_ty);
                 return self.emit_dict_literal_entries(pairs, key_target_ty, value_target_ty);
             }
             IrExprKind::Set(items) => {
                 if items.is_empty() {
                     return Ok(quote! { HashSet::new() });
                 }
-                let item_target_ty = match Self::use_site_target_ty(site) {
+                let site_item_ty = match Self::use_site_target_ty(site) {
                     Some(IrType::Set(elem)) => Some(elem.as_ref()),
-                    _ => match &expr.ty {
-                        IrType::Set(elem) => Some(elem.as_ref()),
-                        _ => None,
-                    },
+                    _ => None,
                 };
+                let inferred_item_ty = match &expr.ty {
+                    IrType::Set(elem) => Some(elem.as_ref()),
+                    _ => None,
+                };
+                let item_target_ty = Self::concrete_literal_target(site_item_ty, inferred_item_ty);
                 let item_tokens: Vec<TokenStream> = items
                     .iter()
                     .map(|item| {
@@ -355,18 +398,21 @@ impl<'a> IrEmitter<'a> {
                 return Ok(quote! { [#(#item_tokens),*].into_iter().collect::<HashSet<_>>() });
             }
             IrExprKind::Tuple(items) => {
-                let tuple_target_items = match Self::use_site_target_ty(site) {
+                let site_tuple_items = match Self::use_site_target_ty(site) {
                     Some(IrType::Tuple(items)) => Some(items.as_slice()),
-                    _ => match &expr.ty {
-                        IrType::Tuple(items) => Some(items.as_slice()),
-                        _ => None,
-                    },
+                    _ => None,
+                };
+                let inferred_tuple_items = match &expr.ty {
+                    IrType::Tuple(items) => Some(items.as_slice()),
+                    _ => None,
                 };
                 let item_tokens: Vec<TokenStream> = items
                     .iter()
                     .enumerate()
                     .map(|(idx, item)| {
-                        let item_target_ty = tuple_target_items.and_then(|items| items.get(idx));
+                        let site_item_ty = site_tuple_items.and_then(|items| items.get(idx));
+                        let inferred_item_ty = inferred_tuple_items.and_then(|items| items.get(idx));
+                        let item_target_ty = Self::concrete_literal_target(site_item_ty, inferred_item_ty);
                         self.emit_expr_for_use(item, Self::tuple_item_use_site(site, item_target_ty))
                     })
                     .collect::<Result<_, _>>()?;
@@ -1167,6 +1213,97 @@ mod tests {
         assert!(
             rendered.starts_with("&"),
             "expected borrowed String interop coercion to emit a borrow, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn interop_wrapped_dict_literal_keeps_call_site_value_target() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let union_ty = IrType::Option(Box::new(IrType::NamedGeneric(
+            crate::backend::ir::types::IR_UNION_TYPE_NAME.to_string(),
+            vec![IrType::Bool, IrType::Int],
+        )));
+        let target_ty = IrType::Dict(Box::new(IrType::String), Box::new(union_ty.clone()));
+        let dict = TypedExpr::new(
+            IrExprKind::Dict(vec![
+                IrDictEntry::Pair(
+                    TypedExpr::new(IrExprKind::String("count".to_string()), IrType::String),
+                    Box::new(TypedExpr::new(IrExprKind::Int(1), IrType::Int)),
+                ),
+                IrDictEntry::Pair(
+                    TypedExpr::new(IrExprKind::String("ok".to_string()), IrType::String),
+                    Box::new(TypedExpr::new(IrExprKind::Bool(true), IrType::Bool)),
+                ),
+            ]),
+            IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int)),
+        );
+        let expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(dict),
+                from_ty: IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int)),
+                to_ty: target_ty.clone(),
+                kind: IrInteropCoercionKind::RustTypeUnwrap,
+            },
+            target_ty.clone(),
+        );
+
+        let emitted = emitter
+            .emit_expr_for_use(
+                &expr,
+                ValueUseSite::IncanCallArg {
+                    target_ty: Some(&target_ty),
+                    callee_param: None,
+                    in_return: false,
+                },
+            )
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        let some_constructor = incan_core::lang::surface::constructors::as_str(
+            incan_core::lang::surface::constructors::ConstructorId::Some,
+        );
+        assert!(
+            rendered.contains(some_constructor) && rendered.contains("__IncanUnion"),
+            "expected target union wrapping to survive interop aggregate wrapper, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn generic_collection_literal_target_uses_inferred_tuple_item_types() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let inferred_tuple_ty = IrType::Tuple(vec![IrType::String, IrType::Int]);
+        let target_ty = IrType::List(Box::new(IrType::Tuple(vec![
+            IrType::Generic("K".to_string()),
+            IrType::Generic("V".to_string()),
+        ])));
+        let expr = TypedExpr::new(
+            IrExprKind::List(vec![IrListEntry::Element(TypedExpr::new(
+                IrExprKind::Tuple(vec![
+                    TypedExpr::new(IrExprKind::String("host".to_string()), IrType::String),
+                    TypedExpr::new(IrExprKind::Int(1), IrType::Int),
+                ]),
+                inferred_tuple_ty,
+            ))]),
+            IrType::List(Box::new(IrType::Tuple(vec![IrType::String, IrType::Int]))),
+        );
+
+        let emitted = emitter
+            .emit_expr_for_use(
+                &expr,
+                ValueUseSite::IncanCallArg {
+                    target_ty: Some(&target_ty),
+                    callee_param: None,
+                    in_return: false,
+                },
+            )
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("\"host\" . to_string ()") || rendered.contains("\"host\".to_string()"),
+            "expected generic collection target to preserve concrete string item conversion, got `{rendered}`"
         );
         Ok(())
     }

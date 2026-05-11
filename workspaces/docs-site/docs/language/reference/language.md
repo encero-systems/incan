@@ -100,6 +100,8 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 |---|---|---|---|
 | `std.web` | `web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.macros`, `std.web.prelude` | - |
 | `std.testing` | - | - | - |
+| `std.logging` | - | - | - |
+| `std.telemetry` | - | `std.telemetry.core` | - |
 | `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.race`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.serde` | `json` | `std.serde.json` | - |
 | `std.reflection` | - | - | - |

@@ -1,0 +1,19 @@
+"""
+Public `std.telemetry` surface.
+
+The prelude re-exports the pure telemetry data-model values that are safe to use without installing a provider or
+starting exporters. Full provider configuration, tracing, context propagation, semantic conventions, and metrics build
+on this data layer.
+"""
+
+from std.telemetry.core import (
+    Timestamp,
+    TelemetryValue,
+    Attributes,
+    Resource,
+    InstrumentationScope,
+    TraceId,
+    SpanId,
+    TraceFlags,
+    SpanContext,
+)
