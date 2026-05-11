@@ -37,6 +37,13 @@ impl TypeChecker {
         }
 
         let Some(sym) = self.lookup_symbol(name) else {
+            if name == "log" {
+                self.type_info
+                    .expressions
+                    .ident_kinds
+                    .insert((span.start, span.end), IdentKind::Value);
+                return ResolvedType::Named("Logger".to_string());
+            }
             self.errors.push(errors::unknown_symbol(name, span));
             return ResolvedType::Unknown;
         };

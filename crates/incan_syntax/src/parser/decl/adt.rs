@@ -23,6 +23,7 @@ impl<'a> Parser<'a> {
         let docstring = self.optional_leading_block_docstring();
 
         let mut variants = Vec::new();
+        let mut variant_aliases = Vec::new();
         let mut methods = Vec::new();
         let mut parsing_methods = false;
         while !self.check(&TokenKind::Dedent) && !self.is_at_end() {
@@ -47,7 +48,11 @@ impl<'a> Parser<'a> {
                         self.current_span(),
                     ));
                 }
-                variants.push(self.variant_decl(value_enum_type)?);
+                if self.starts_variant_alias_decl() {
+                    variant_aliases.push(self.variant_alias_decl()?);
+                } else {
+                    variants.push(self.variant_decl(value_enum_type)?);
+                }
             }
             self.skip_newlines();
         }
@@ -63,6 +68,7 @@ impl<'a> Parser<'a> {
             traits,
             docstring,
             variants,
+            variant_aliases,
             methods,
         })
     }
@@ -91,6 +97,36 @@ impl<'a> Parser<'a> {
         };
 
         Ok(Some(Spanned::new(value_type, ty.span)))
+    }
+
+    /// Return whether the current tokens start an enum variant alias declaration.
+    fn starts_variant_alias_decl(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Ident(_) | TokenKind::Keyword(_))
+            && self.peek_next().kind.is_operator(OperatorId::Eq)
+            && matches!(
+                self.tokens.get(self.pos + 2).map(|token| &token.kind),
+                Some(TokenKind::Ident(name)) if name == "alias"
+            )
+    }
+
+    /// Parse an enum variant alias declaration.
+    fn variant_alias_decl(&mut self) -> Result<Spanned<EnumVariantAliasDecl>, CompileError> {
+        let start = self.current_span().start;
+        let name = self.identifier_or_keyword()?;
+        self.expect_op(OperatorId::Eq, "Expected '=' in enum variant alias declaration")?;
+        if !self.match_ident_text("alias") {
+            return Err(errors::expected_token_message(
+                "Expected 'alias' in enum variant alias declaration",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        }
+        let target = self.identifier_or_keyword()?;
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Spanned::new(
+            EnumVariantAliasDecl { name, target },
+            Span::new(start, end),
+        ))
     }
 
     /// Parse a variant declaration.

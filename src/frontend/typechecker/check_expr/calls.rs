@@ -66,7 +66,8 @@ impl TypeChecker {
             }
             if let ResolvedType::Named(enum_name) = &base_ty
                 && let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name)
-                && enum_info.variants.iter().any(|v| v == member_name)
+                && (enum_info.variants.iter().any(|v| v == member_name)
+                    || enum_info.variant_aliases.contains_key(member_name))
             {
                 if !type_args.is_empty() {
                     self.errors

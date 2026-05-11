@@ -291,6 +291,8 @@ pub struct StructField {
 pub struct IrEnum {
     pub name: String,
     pub variants: Vec<EnumVariant>,
+    /// Alias name to canonical variant name.
+    pub variant_aliases: Vec<EnumVariantAlias>,
     /// Value enum backing type, when this enum is an RFC 032 value enum.
     pub value_type: Option<IrEnumValueType>,
     pub derives: Vec<String>,
@@ -303,6 +305,13 @@ pub struct IrEnum {
     pub derive_rust_modules: std::collections::HashMap<String, String>,
     /// Targeted Rust lint suppressions from RFC 057 `@rust.allow(...)`.
     pub lint_allows: Vec<IrRustLintAllow>,
+}
+
+/// Alias for an enum variant.
+#[derive(Debug, Clone)]
+pub struct EnumVariantAlias {
+    pub name: String,
+    pub target: String,
 }
 
 /// A passthrough Rust attribute generated from an Incan decorator.

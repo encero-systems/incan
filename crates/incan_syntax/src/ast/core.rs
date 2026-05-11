@@ -62,6 +62,11 @@ pub enum Visibility {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Program {
     pub declarations: Vec<Spanned<Declaration>>,
+    /// Source path supplied by the host parser, when available.
+    ///
+    /// This is contextual metadata used by later compiler phases for source-aware stdlib behavior. It is not authored
+    /// syntax and may be absent for inline `-c` programs or tests that parse bare snippets.
+    pub source_path: Option<String>,
     /// The `rust.module("path::to::module")` directive, if present.
     ///
     /// Declares that `@rust.extern` items in this module are backed by Rust functions at the given

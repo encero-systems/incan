@@ -150,6 +150,7 @@ pub struct ApiEnum {
     pub type_params: Vec<TypeParamExport>,
     pub value_type: Option<EnumValueTypeExport>,
     pub variants: Vec<ApiEnumVariant>,
+    pub variant_aliases: Vec<ApiEnumVariantAlias>,
     pub derives: Vec<String>,
 }
 
@@ -158,6 +159,12 @@ pub struct ApiEnumVariant {
     pub name: String,
     pub fields: Vec<TypeRef>,
     pub value: Option<EnumValueExport>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiEnumVariantAlias {
+    pub name: String,
+    pub target: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -642,6 +649,7 @@ fn api_trait(
     }
 }
 
+/// Convert a checked enum export into API metadata, preserving canonical variants and public aliases.
 fn api_enum(
     enum_decl: &EnumDecl,
     span: Span,
@@ -671,6 +679,14 @@ fn api_enum(
                     crate::frontend::symbols::ValueEnumValue::Str(value) => EnumValueExport::Str(value.clone()),
                     crate::frontend::symbols::ValueEnumValue::Int(value) => EnumValueExport::Int(*value),
                 }),
+            })
+            .collect(),
+        variant_aliases: export
+            .variant_aliases
+            .iter()
+            .map(|alias| ApiEnumVariantAlias {
+                name: alias.name.clone(),
+                target: alias.target.clone(),
             })
             .collect(),
         derives: export.derives.clone(),

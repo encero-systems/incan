@@ -213,6 +213,20 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "logging",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "telemetry",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &["core"],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "async",
         feature: Some("async"),
         extra_crate_deps: &[],

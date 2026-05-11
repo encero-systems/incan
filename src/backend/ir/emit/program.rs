@@ -1605,7 +1605,7 @@ impl<'a> IrEmitter<'a> {
             })
             .collect();
         Some(quote! {
-            #[derive(Clone)]
+            #[derive(Debug, Clone)]
             pub enum #name_ident {
                 #(#variants),*
             }
@@ -1759,6 +1759,10 @@ impl<'a> IrEmitter<'a> {
                 for v in &e.variants {
                     self.enum_variant_fields
                         .insert((e.name.clone(), v.name.clone()), v.fields.clone());
+                }
+                for alias in &e.variant_aliases {
+                    self.enum_variant_aliases
+                        .insert((e.name.clone(), alias.name.clone()), alias.target.clone());
                 }
             }
             if let IrDeclKind::TypeAlias {

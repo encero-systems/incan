@@ -3307,6 +3307,11 @@ impl TypeChecker {
                         traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                         trait_adoptions: Vec::new(),
                         variants: en.variants.iter().map(|v| v.node.name.clone()).collect(),
+                        variant_aliases: en
+                            .variant_aliases
+                            .iter()
+                            .map(|alias| (alias.node.name.clone(), alias.node.target.clone()))
+                            .collect(),
                         value_enum: None,
                         derives: Vec::new(),
                         methods: HashMap::new(),

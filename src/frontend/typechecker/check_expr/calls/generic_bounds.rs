@@ -144,7 +144,10 @@ impl TypeChecker {
     /// - `method`: Method name (for diagnostics).
     /// - `method_info`: Declared [`MethodInfo`] for that method (owned and temporarily mutated for substitution).
     /// - `explicit_type_args`: AST types inside `[...]` before `(`; empty if the call omitted brackets.
-    /// - `args` / `arg_types`: Call arguments and their already-checked types (parallel to `args`).
+    /// - `args`: Call arguments. The selected method parameters are threaded back into these expressions so inline
+    ///   collection literals can adopt contextual element types.
+    /// - `_arg_types`: Argument types from the pre-selection pass. Method validation recomputes them after the final
+    ///   parameter list is known.
     /// - `call_site_span`: Span of the whole `MethodCall` expression (monomorph snapshot key).
     /// - `receiver_ty`: Resolved type of the receiver expression.
     ///
@@ -158,7 +161,7 @@ impl TypeChecker {
         mut method_info: MethodInfo,
         explicit_type_args: &[Spanned<Type>],
         args: &[CallArg],
-        arg_types: &[ResolvedType],
+        _arg_types: &[ResolvedType],
         call_site_span: Span,
         receiver_ty: &ResolvedType,
     ) -> ResolvedType {
@@ -197,7 +200,8 @@ impl TypeChecker {
 
         // ---- Call-site `Self`, value-arg compatibility ----
         let (params, return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
-        self.validate_callable_arg_bindings(method, &params, args, arg_types, &mut type_bindings, call_site_span);
+        let arg_types = self.check_call_arg_types_for_params(args, &params);
+        self.validate_callable_arg_bindings(method, &params, args, &arg_types, &mut type_bindings, call_site_span);
         self.type_info.record_call_site_callable_params(call_site_span, &params);
         if method_info.is_async {
             self.warn_if_unawaited_async_call(method, call_site_span);

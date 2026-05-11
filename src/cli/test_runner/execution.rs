@@ -90,6 +90,7 @@ fn ast_with_inline_test_declarations(ast: &Program) -> Program {
 
     Program {
         declarations,
+        source_path: ast.source_path.clone(),
         rust_module_path: ast.rust_module_path.clone(),
         warnings: ast.warnings.clone(),
     }

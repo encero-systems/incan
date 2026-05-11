@@ -105,9 +105,10 @@ fn generated_module_path_for_source_import(path: &ImportPath, current_module_pat
 
 /// True when a dependency module should keep its public API even if the main module does not import every item.
 fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_stdlib_public_items: bool) -> bool {
-    if module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "derives", "collection"])
-        || module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "result"])
-        || module_path_matches(module_path, &[stdlib::INCAN_STD_NAMESPACE, "serde", "json"])
+    if module_path_matches_any_std_root(module_path, &["derives", "collection"])
+        || module_path_matches_any_std_root(module_path, &["result"])
+        || module_path_matches_any_std_root(module_path, &["serde", "json"])
+        || module_path_matches_any_std_root(module_path, &["logging"])
     {
         return true;
     }
@@ -121,12 +122,20 @@ fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_
 }
 
 /// Return whether a generated module path exactly matches a static path literal.
-fn module_path_matches(module_path: &[String], expected: &[&str]) -> bool {
-    module_path.len() == expected.len()
-        && module_path
-            .iter()
-            .zip(expected.iter())
-            .all(|(actual, expected)| actual == expected)
+fn module_path_matches_any_std_root(module_path: &[String], tail: &[&str]) -> bool {
+    if module_path.len() != tail.len() + 1 {
+        return false;
+    }
+    if !matches!(
+        module_path.first().map(String::as_str),
+        Some(stdlib::STDLIB_ROOT) | Some(stdlib::INCAN_STD_NAMESPACE)
+    ) {
+        return false;
+    }
+    module_path[1..]
+        .iter()
+        .zip(tail.iter())
+        .all(|(actual, expected)| actual == expected)
 }
 
 /// Return whether a function carries the stdlib-backed web route decorator that lowers to a Rust proc-macro attribute.
@@ -173,6 +182,12 @@ fn collect_externally_reachable_items_by_module(
         current_module_path: &[String],
         module_paths: &HashSet<Vec<String>>,
     ) {
+        if crate::frontend::surface_semantics::uses_ambient_log_surface(program) {
+            reachable
+                .entry(vec!["std".to_string(), "logging".to_string()])
+                .or_default()
+                .insert("get_logger".to_string());
+        }
         let mut module_import_bindings: HashMap<String, Vec<String>> = HashMap::new();
         for decl in &program.declarations {
             let Declaration::Import(import) = &decl.node else {
@@ -888,6 +903,12 @@ impl<'a> IrCodegen<'a> {
 
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
+        lowering.set_current_source_module_name(
+            program
+                .source_path
+                .as_deref()
+                .and_then(crate::frontend::module::logical_module_name_from_source_path),
+        );
         lowering.seed_dependency_trait_decls(&self.dependency_modules);
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
@@ -905,6 +926,12 @@ impl<'a> IrCodegen<'a> {
             // For dependencies, use best-effort lowering without type info to
             // preserve prior behavior and avoid redundant typechecking.
             let mut dep_lowering = AstLowering::new();
+            dep_lowering.set_current_source_module_name(
+                dep_ast
+                    .source_path
+                    .as_deref()
+                    .and_then(crate::frontend::module::logical_module_name_from_source_path),
+            );
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let dep_ir = dep_lowering.lower_program(dep_ast)?;
             unified_registry.merge(&dep_ir.function_registry);
@@ -982,6 +1009,12 @@ impl<'a> IrCodegen<'a> {
     pub fn try_generate_module(&mut self, _module_name: &str, program: &Program) -> Result<String, GenerationError> {
         // Use the IR pipeline for module generation too
         let mut lowering = AstLowering::new();
+        lowering.set_current_source_module_name(
+            program
+                .source_path
+                .as_deref()
+                .and_then(crate::frontend::module::logical_module_name_from_source_path),
+        );
         let mut ir_program = lowering.lower_program(program)?;
 
         // RFC 023: Infer trait bounds for generic functions.
@@ -1091,6 +1124,12 @@ impl<'a> IrCodegen<'a> {
                 }
             };
             let mut lowering = AstLowering::new_with_type_info(module_type_info);
+            lowering.set_current_source_module_name(Some(
+                path_segments
+                    .clone()
+                    .unwrap_or_else(|| vec![name.to_string()])
+                    .join("."),
+            ));
             lowering.seed_dependency_trait_decls(&self.dependency_modules);
             lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut ir = lowering.lower_program(ast)?;
@@ -1273,6 +1312,7 @@ impl<'a> IrCodegen<'a> {
                     }
                 };
                 let mut lowering = AstLowering::new_with_type_info(module_type_info);
+                lowering.set_current_source_module_name(Some(path.join(".")));
                 lowering.seed_dependency_trait_decls(&self.dependency_modules);
                 lowering.seed_struct_field_aliases(global_aliases.clone());
                 let mut ir = lowering.lower_program(ast)?;

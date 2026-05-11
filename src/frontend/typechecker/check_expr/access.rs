@@ -9,8 +9,8 @@ use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::IdentKind;
 use crate::frontend::typechecker::helpers::{
-    collection_name, collection_type_id, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index, list_ty,
-    option_ty, string_method_return,
+    collection_name, collection_type_id, dict_ty, generator_ty, is_frozen_bytes, is_frozen_str, is_intlike_for_index,
+    list_ty, option_ty, string_method_return,
 };
 use crate::frontend::typechecker::type_info::{RustMethodTraitImportUse, RustTraitImportInfo};
 use incan_core::interop::{CoercionPolicy, RustCollectionFamily, RustItemKind};
@@ -61,6 +61,95 @@ fn rust_receiver_display(path: &str) -> String {
 }
 
 impl TypeChecker {
+    /// Return the structured field value type accepted by ambient `std.logging` calls.
+    fn logging_field_value_ty() -> ResolvedType {
+        crate::frontend::symbols::union_ty(
+            crate::frontend::surface_semantics::std_logging_field_value_kinds()
+                .iter()
+                .map(|kind| match kind {
+                    crate::frontend::surface_semantics::StdLoggingFieldValueKind::TelemetryValue => {
+                        ResolvedType::Named("TelemetryValue".to_string())
+                    }
+                    crate::frontend::surface_semantics::StdLoggingFieldValueKind::String => ResolvedType::Str,
+                    crate::frontend::surface_semantics::StdLoggingFieldValueKind::Bool => ResolvedType::Bool,
+                    crate::frontend::surface_semantics::StdLoggingFieldValueKind::Int => ResolvedType::Int,
+                    crate::frontend::surface_semantics::StdLoggingFieldValueKind::Float => ResolvedType::Float,
+                    crate::frontend::surface_semantics::StdLoggingFieldValueKind::None => ResolvedType::Unit,
+                })
+                .collect(),
+        )
+    }
+
+    /// Return whether `expr` names the shadowable ambient `std.logging.log` surface.
+    fn is_ambient_log_expr(&self, expr: &Spanned<Expr>) -> bool {
+        matches!(&expr.node, Expr::Ident(name) if name == "log" && self.lookup_symbol(name).is_none())
+    }
+
+    /// Validate ambient `log` call arguments against the synthesized logger method signature.
+    fn check_ambient_log_args(&mut self, method: &str, params: &[CallableParam], args: &[CallArg], span: Span) {
+        let arg_types = self.check_call_arg_types_for_params(args, params);
+        let mut type_bindings = std::collections::HashMap::new();
+        let callee = format!("log.{method}");
+        self.validate_callable_arg_bindings(&callee, params, args, &arg_types, &mut type_bindings, span);
+        self.type_info.record_call_site_callable_params(span, params);
+    }
+
+    /// Type-check a method call on the ambient `log` surface without requiring a source binding.
+    fn check_ambient_log_method_call(
+        &mut self,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> ResolvedType {
+        if !type_args.is_empty() {
+            self.errors
+                .push(errors::explicit_call_site_type_args_not_supported(span));
+        }
+        if crate::frontend::surface_semantics::is_std_logging_event_method(method) {
+            let params = vec![
+                CallableParam::named("message", ResolvedType::Str, ParamKind::Normal),
+                CallableParam::named_with_default(
+                    "fields",
+                    dict_ty(ResolvedType::Str, Self::logging_field_value_ty()),
+                    ParamKind::Normal,
+                    true,
+                ),
+            ];
+            self.check_ambient_log_args(method, &params, args, span);
+            return ResolvedType::Unit;
+        }
+        match method {
+            "is_enabled" => {
+                let params = vec![CallableParam::named(
+                    "level",
+                    ResolvedType::Named("Level".to_string()),
+                    ParamKind::Normal,
+                )];
+                self.check_ambient_log_args(method, &params, args, span);
+                ResolvedType::Bool
+            }
+            "child" => {
+                let params = vec![CallableParam::named("suffix", ResolvedType::Str, ParamKind::Normal)];
+                self.check_ambient_log_args(method, &params, args, span);
+                ResolvedType::Named("Logger".to_string())
+            }
+            "bind" => {
+                let params = vec![CallableParam::named(
+                    "fields",
+                    dict_ty(ResolvedType::Str, Self::logging_field_value_ty()),
+                    ParamKind::Normal,
+                )];
+                self.check_ambient_log_args(method, &params, args, span);
+                ResolvedType::Named("Logger".to_string())
+            }
+            _ => {
+                self.errors.push(errors::missing_method("log", method, span));
+                ResolvedType::Unknown
+            }
+        }
+    }
+
     /// Return whether `method` names an RFC 070 `Result[T, E]` combinator.
     fn result_combinator_name(method: &str) -> bool {
         result_methods::from_str(method).is_some()
@@ -1148,7 +1237,7 @@ impl TypeChecker {
                 info.ty.clone()
             }
             TypeInfo::Enum(enum_info) => {
-                if enum_info.variants.contains(&field.to_string()) {
+                if enum_info.variants.contains(&field.to_string()) || enum_info.variant_aliases.contains_key(field) {
                     return Some(if let Some(args) = type_args {
                         ResolvedType::Generic(type_name.to_string(), args.to_vec())
                     } else {
@@ -2466,6 +2555,10 @@ impl TypeChecker {
             return self.check_builtin_list_repeat_call(args, span);
         }
 
+        if self.is_ambient_log_expr(base) {
+            return self.check_ambient_log_method_call(method, type_args, args, span);
+        }
+
         let base_ty = self.check_expr(base);
 
         // If the receiver type is Unknown, be permissive and do not error on methods.
@@ -2549,7 +2642,7 @@ impl TypeChecker {
         // Treat Enum.Variant(...) method-style calls as variant constructors
         if let ResolvedType::Named(enum_name) = &base_ty
             && let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name)
-            && enum_info.variants.iter().any(|v| v == method)
+            && (enum_info.variants.iter().any(|v| v == method) || enum_info.variant_aliases.contains_key(method))
         {
             // Args were checked above; no strict arity enforcement here.
             let _ = &arg_types; // keep for potential future validation

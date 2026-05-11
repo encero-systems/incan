@@ -35,7 +35,8 @@ impl AstLowering {
         }
 
         // ---- Derives: user-specified via @derive(...) decorators ----
-        let (user_derives, derive_rust_modules) = self.extract_derives(&n.decorators);
+        let (mut user_derives, derive_rust_modules) = self.extract_derives(&n.decorators);
+        self.extend_derives_with_adopted_serde_traits(&mut user_derives, &n.traits);
 
         // Merge: auto-derives first, then user derives (skip duplicates)
         let mut derives = auto_derives;

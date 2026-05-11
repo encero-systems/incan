@@ -1128,16 +1128,34 @@ impl<'a> IrEmitter<'a> {
         if let Some(adapter) = self.borrowed_function_adapter_arg(arg, target_ty) {
             return Ok(adapter);
         }
+        let in_return = *self.in_return_context.borrow();
+        let use_site = if let IrExprKind::Var { name, ref_kind, .. } = &func.kind {
+            if matches!(ref_kind, VarRefKind::ExternalRustName) || self.external_rust_functions.contains(name) {
+                ValueUseSite::ExternalCallArg { target_ty }
+            } else {
+                ValueUseSite::IncanCallArg {
+                    target_ty,
+                    callee_param: Some(param),
+                    in_return,
+                }
+            }
+        } else {
+            ValueUseSite::IncanCallArg {
+                target_ty,
+                callee_param: Some(param),
+                in_return,
+            }
+        };
         let emitted = if let Some(seed) = self.emit_inference_seeded_literal_arg(arg, &param.ty)? {
             seed
         } else if Self::is_unresolved_call_seed_type(&param.ty) {
             if let Some(seed) = self.emit_inference_seeded_literal_arg(arg, &arg.ty)? {
                 seed
             } else {
-                self.emit_expr(arg)?
+                self.emit_expr_for_use(arg, use_site)?
             }
         } else {
-            self.emit_expr(arg)?
+            self.emit_expr_for_use(arg, use_site)?
         };
 
         if let IrExprKind::Var { access, .. } = &arg.kind {
@@ -1162,30 +1180,11 @@ impl<'a> IrEmitter<'a> {
             _ => {}
         }
 
-        let in_return = *self.in_return_context.borrow();
-        let use_site = if let IrExprKind::Var { name, ref_kind, .. } = &func.kind {
-            if matches!(ref_kind, VarRefKind::ExternalRustName) || self.external_rust_functions.contains(name) {
-                ValueUseSite::ExternalCallArg { target_ty }
-            } else {
-                ValueUseSite::IncanCallArg {
-                    target_ty,
-                    callee_param: Some(param),
-                    in_return,
-                }
-            }
-        } else {
-            ValueUseSite::IncanCallArg {
-                target_ty,
-                callee_param: Some(param),
-                in_return,
-            }
-        };
-
         let mut tokens = match use_site {
             ValueUseSite::ExternalCallArg { target_ty } => self
                 .external_list_arg_element_coercion(arg, target_ty, emitted.clone())
-                .unwrap_or_else(|| plan_value_use(arg, use_site).apply(emitted)),
-            _ => plan_value_use(arg, use_site).apply(emitted),
+                .unwrap_or(emitted),
+            _ => emitted,
         };
         if incan_call_arg_needs_rust_mut_borrow(param) {
             match &arg.ty {

@@ -563,6 +563,7 @@ mod tests {
         IrEnum {
             name: name.to_string(),
             variants,
+            variant_aliases: Vec::new(),
             value_type: Some(value_type),
             derives: vec![
                 derives::as_str(DeriveId::Debug).to_string(),

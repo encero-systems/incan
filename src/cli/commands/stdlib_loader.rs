@@ -22,7 +22,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use crate::cli::{CliError, CliResult};
-use crate::frontend::{ast_walk, diagnostics, lexer::Lexer, parser::Parser};
+use crate::frontend::{ast_walk, diagnostics, lexer::Lexer, parser::Parser, surface_semantics};
 use incan_core::lang::stdlib;
 use incan_syntax::ast::{Declaration, ImportKind, Program};
 
@@ -59,6 +59,9 @@ pub fn load_stdlib_modules(modules: &[crate::cli::prelude::ParsedModule]) -> Cli
     for module in modules {
         if uses_iterator_adapter_surface(&module.ast) {
             stdlib_paths.insert(vec!["std".to_string(), "derives".to_string(), "collection".to_string()]);
+        }
+        if surface_semantics::uses_ambient_log_surface(&module.ast) {
+            stdlib_paths.insert(vec!["std".to_string(), "logging".to_string()]);
         }
         for import in collect_imports(&module.ast) {
             let path = match &import.kind {

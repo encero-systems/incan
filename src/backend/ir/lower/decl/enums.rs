@@ -1,6 +1,6 @@
 //! Enum declaration lowering.
 
-use super::super::super::decl::{EnumVariant, IrEnum, IrEnumValue, IrEnumValueType, VariantFields};
+use super::super::super::decl::{EnumVariant, EnumVariantAlias, IrEnum, IrEnumValue, IrEnumValueType, VariantFields};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
@@ -59,6 +59,14 @@ impl AstLowering {
         Ok(IrEnum {
             name: e.name.clone(),
             variants,
+            variant_aliases: e
+                .variant_aliases
+                .iter()
+                .map(|alias| EnumVariantAlias {
+                    name: alias.node.name.clone(),
+                    target: alias.node.target.clone(),
+                })
+                .collect(),
             value_type,
             derives,
             visibility: Self::map_visibility(e.visibility),

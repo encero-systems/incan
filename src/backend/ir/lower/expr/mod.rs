@@ -14,9 +14,10 @@ mod patterns;
 use super::super::TypedExpr;
 use super::super::expr::{
     BuiltinFn, CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry,
-    IrMethodDispatch, MethodCallArgPolicy, MethodKind, NumericResizePolicy, RaceArm, UnaryOp, VarAccess, VarRefKind,
+    IrMethodDispatch, Literal as IrLiteral, MethodCallArgPolicy, MethodKind, NumericResizePolicy, RaceArm, UnaryOp,
+    VarAccess, VarRefKind,
 };
-use super::super::types::IrType;
+use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
@@ -31,6 +32,77 @@ use incan_core::lang::types::collections::{self as collection_types, CollectionT
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
+    /// Return the IR dictionary type expected by source-defined `std.logging.Logger` field parameters.
+    ///
+    /// Ambient logging calls are compiler-shaped before ordinary method metadata is always available, so lowering uses
+    /// the same field type as the stdlib source declarations to keep collection literal emission structured.
+    fn logging_field_dict_ir_type() -> IrType {
+        let mut members = crate::frontend::surface_semantics::std_logging_field_value_kinds()
+            .iter()
+            .filter_map(|kind| match kind {
+                crate::frontend::surface_semantics::StdLoggingFieldValueKind::TelemetryValue => {
+                    Some(IrType::Struct("TelemetryValue".to_string()))
+                }
+                crate::frontend::surface_semantics::StdLoggingFieldValueKind::String => Some(IrType::String),
+                crate::frontend::surface_semantics::StdLoggingFieldValueKind::Bool => Some(IrType::Bool),
+                crate::frontend::surface_semantics::StdLoggingFieldValueKind::Int => Some(IrType::Int),
+                crate::frontend::surface_semantics::StdLoggingFieldValueKind::Float => Some(IrType::Float),
+                crate::frontend::surface_semantics::StdLoggingFieldValueKind::None => None,
+            })
+            .collect::<Vec<_>>();
+        members.sort_by_key(IrType::rust_name);
+        IrType::Dict(
+            Box::new(IrType::String),
+            Box::new(IrType::Option(Box::new(IrType::NamedGeneric(
+                IR_UNION_TYPE_NAME.to_string(),
+                members,
+            )))),
+        )
+    }
+
+    /// Return whether an AST receiver expression should use `std.logging.Logger` argument shaping.
+    ///
+    /// This covers ambient `log`, direct `get_logger(...)`, and simple logger-producing chains such as
+    /// `get_logger(...).bind(...).child(...)` before backend method emission has enough receiver metadata to infer the
+    /// field dictionary target on its own.
+    fn logging_receiver_ast(&self, expr: &ast::Spanned<ast::Expr>, receiver: &TypedExpr) -> bool {
+        match &receiver.ty {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) if name.rsplit("::").next() == Some("Logger") => {
+                return true;
+            }
+            _ => {}
+        }
+        match &expr.node {
+            ast::Expr::Ident(name) if name == "log" && !self.is_local_binding(name) => true,
+            ast::Expr::Call(callee, _, _) => {
+                matches!(&callee.node, ast::Expr::Ident(name) if name == "get_logger")
+            }
+            ast::Expr::MethodCall(base, method, _, _) if matches!(method.as_str(), "bind" | "child") => {
+                self.logging_receiver_ast(base, receiver)
+            }
+            _ => false,
+        }
+    }
+
+    /// Apply the structured field dictionary type to logging event and bind arguments.
+    ///
+    /// The typechecker records the public `Logger` surface, but lowering can still see interop-shaped argument nodes in
+    /// metadata-light ambient calls. Retyping the field expression here lets the backend preserve primitive and
+    /// `TelemetryValue` payloads instead of letting Rust infer a homogeneous dictionary from the first value.
+    fn apply_logging_field_arg_type(method: &str, args: &mut [IrCallArg]) {
+        let fields_index = match method {
+            method if crate::frontend::surface_semantics::is_std_logging_event_method(method) => 1,
+            "bind" => 0,
+            _ => return,
+        };
+        for (idx, arg) in args.iter_mut().enumerate() {
+            let is_fields_arg = arg.name.as_deref() == Some("fields") || (arg.name.is_none() && idx == fields_index);
+            if is_fields_arg {
+                arg.expr.ty = Self::logging_field_dict_ir_type();
+            }
+        }
+    }
+
     /// Lower `race for value:` to the IR race expression used by Rust emission.
     fn lower_race_for_expr(
         &mut self,
@@ -410,6 +482,43 @@ impl AstLowering {
             ast::Expr::Ident(name) => {
                 let lowered_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
                 let ty = self.lookup_var(&lowered_name);
+                if name == "log" && !self.is_local_binding(name) && !self.import_aliases.contains_key(name) {
+                    let logger_name = self.current_default_logger_name();
+                    let func = TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "get_logger".to_string(),
+                            access: VarAccess::Copy,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Unknown,
+                    );
+                    let arg = IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: TypedExpr::new(
+                            IrExprKind::Literal(IrLiteral::StaticStr(logger_name)),
+                            IrType::StaticStr,
+                        ),
+                    };
+                    return Ok(TypedExpr::new(
+                        IrExprKind::Call {
+                            func: Box::new(func),
+                            type_args: Vec::new(),
+                            args: vec![arg],
+                            callable_signature: self.callable_signature_for_imported_stdlib_path(&[
+                                "std".to_string(),
+                                "logging".to_string(),
+                                "get_logger".to_string(),
+                            ]),
+                            canonical_path: Some(vec![
+                                "std".to_string(),
+                                "logging".to_string(),
+                                "get_logger".to_string(),
+                            ]),
+                        },
+                        IrType::Struct("Logger".to_string()),
+                    ));
+                }
                 let access = self.select_var_access_for_ident(&lowered_name, &ty);
                 (
                     IrExprKind::Var {
@@ -724,6 +833,9 @@ impl AstLowering {
                         arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
                     }
                 }
+                if self.logging_receiver_ast(o, &receiver) {
+                    Self::apply_logging_field_arg_type(&method_name, &mut args_ir);
+                }
 
                 let expr_ty = self
                     .type_info
@@ -794,6 +906,19 @@ impl AstLowering {
                             }),
                             _ => None,
                         };
+                    let call_site_signature = self.callable_signature_for_call_span(expr_span);
+                    let callable_signature = match (call_site_signature, imported_type_method_signature) {
+                        (Some(mut call_site), Some(imported)) => {
+                            for (param, imported_param) in call_site.params.iter_mut().zip(imported.params.iter()) {
+                                if param.default.is_none() {
+                                    param.default = imported_param.default.clone();
+                                }
+                            }
+                            Some(call_site)
+                        }
+                        (Some(call_site), None) => Some(call_site),
+                        (None, imported) => imported,
+                    };
                     // Unknown method - keep as string-based call
                     (
                         IrExprKind::MethodCall {
@@ -802,8 +927,7 @@ impl AstLowering {
                             dispatch,
                             type_args: lowered_type_args,
                             args: args_ir,
-                            callable_signature: imported_type_method_signature
-                                .or_else(|| self.callable_signature_for_call_span(expr_span)),
+                            callable_signature,
                             arg_policy,
                         },
                         expr_ty,

@@ -123,7 +123,10 @@ impl AstLowering {
     /// current module's IR function registry, but their `.incn` declarations are still available through the stdlib AST
     /// cache. Attaching the exact module-qualified signature here lets codegen apply normal Incan argument conversion
     /// rules without merging same-named helpers from unrelated stdlib modules.
-    fn callable_signature_for_imported_stdlib_path(&self, path: &[String]) -> Option<FunctionSignature> {
+    pub(in crate::backend::ir::lower) fn callable_signature_for_imported_stdlib_path(
+        &self,
+        path: &[String],
+    ) -> Option<FunctionSignature> {
         if path.len() < 2 || path.first().map(String::as_str) != Some(incan_core::lang::stdlib::STDLIB_ROOT) {
             return None;
         }
@@ -1505,6 +1508,21 @@ impl AstLowering {
 
         // Regular function call (user-defined or unknown)
         let mut args_ir = self.lower_call_args(args)?;
+        if args_ir.is_empty()
+            && imported_callee_path
+                .as_ref()
+                .is_some_and(|path| path.as_slice() == ["std", "logging", "get_logger"])
+        {
+            let logger_name = self.current_default_logger_name();
+            args_ir.push(IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr: TypedExpr::new(
+                    IrExprKind::Literal(IrLiteral::StaticStr(logger_name)),
+                    IrType::StaticStr,
+                ),
+            });
+        }
         let lowered_type_args = self.lower_call_site_type_args(call_span, type_args);
         for (arg_ir, arg_ast) in args_ir.iter_mut().zip(args.iter()) {
             let arg_span = Self::call_arg_expr(arg_ast).span;

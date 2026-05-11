@@ -160,6 +160,7 @@ nav:
               - std.fs: language/reference/stdlib/fs.md
               - std.graph: language/reference/stdlib/graph.md
               - std.io: language/reference/stdlib/io.md
+              - std.logging: language/reference/stdlib/logging.md
               - std.tempfile: language/reference/stdlib/tempfile.md
               - std.reflection: language/reference/stdlib/reflection.md
               - std.result: language/reference/stdlib/result.md

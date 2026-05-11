@@ -40,6 +40,29 @@ fn emit_dict_lookup_index_key(object: &TypedExpr, index: &TypedExpr, emitted: To
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Build the fully-qualified generated-module path for a type imported from another emitted module.
+    ///
+    /// Default argument expressions can be expanded at a call site outside the module that declared the default. When
+    /// the default names an enum variant from that declaring module, the generated Rust must qualify the enum type
+    /// through the dependency module path instead of assuming the type name is locally imported.
+    fn emit_dependency_type_path(&self, name: &str) -> Option<TokenStream> {
+        if name.contains("::") || self.ambiguous_type_names.contains(name) {
+            return None;
+        }
+        let module_path = self.type_module_paths.get(name)?;
+        let mut segments = vec![quote! { crate }];
+        for segment in module_path {
+            let ident = Self::rust_ident(segment);
+            segments.push(quote! { #ident });
+        }
+        let name_ident = Self::rust_ident(name);
+        segments.push(quote! { #name_ident });
+
+        let mut iter = segments.into_iter();
+        let first = iter.next()?;
+        Some(iter.fold(first, |acc, segment| quote! { #acc :: #segment }))
+    }
+
     /// Emit an index expression.
     ///
     /// Handles `list[i]` and `dict[k]` access with:
@@ -67,7 +90,7 @@ impl<'a> IrEmitter<'a> {
                 "__incan_static_value",
             );
             let inner = self.emit_expr(&rewritten)?;
-            return self.emit_storage_with_ref(object, inner);
+            return self.emit_storage_with_ref(object, quote! { (#inner).clone() });
         }
 
         let o = self.emit_expr(object)?;
@@ -201,7 +224,7 @@ impl<'a> IrEmitter<'a> {
                 "__incan_static_value",
             );
             let inner = self.emit_expr(&rewritten)?;
-            return self.emit_storage_with_ref(object, inner);
+            return self.emit_storage_with_ref(object, quote! { (#inner).clone() });
         }
 
         let o = self.emit_expr(object)?;
@@ -209,13 +232,29 @@ impl<'a> IrEmitter<'a> {
         // Check if this is an enum variant access using the actual enum registry, not capitalization heuristics
         if let IrExprKind::Var { name, .. } = &object.kind {
             let key = (name.to_string(), field.to_string());
-            if self.enum_variant_fields.contains_key(&key) {
-                let type_ident = format_ident!("{}", name);
-                let f = format_ident!("{}", field);
+            let canonical_field = self.enum_variant_aliases.get(&key).map(String::as_str).unwrap_or(field);
+            let canonical_key = (name.to_string(), canonical_field.to_string());
+            if self.enum_variant_fields.contains_key(&canonical_key) {
+                let type_ident = if *self.qualify_internal_canonical_paths.borrow()
+                    && let Some(path) = self.emit_dependency_type_path(name)
+                {
+                    path
+                } else {
+                    let ident = format_ident!("{}", name);
+                    quote! { #ident }
+                };
+                let f = format_ident!("{}", canonical_field);
                 return Ok(quote! { #type_ident::#f });
             }
             if Self::expr_is_type_like(object) {
-                let type_ident = format_ident!("{}", name);
+                let type_ident = if *self.qualify_internal_canonical_paths.borrow()
+                    && let Some(path) = self.emit_dependency_type_path(name)
+                {
+                    path
+                } else {
+                    let ident = format_ident!("{}", name);
+                    quote! { #ident }
+                };
                 let f = format_ident!("{}", field);
                 return Ok(quote! { #type_ident::#f });
             }

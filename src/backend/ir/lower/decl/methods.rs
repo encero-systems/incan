@@ -667,6 +667,35 @@ impl AstLowering {
         lowered_args == trait_type_args
     }
 
+    /// Return source-level method names for compiler-known imported traits whose declaration may be unavailable in
+    /// this lowering unit.
+    fn known_imported_trait_method_names(trait_name: &str) -> &'static [&'static str] {
+        if let Some(trait_id) = core_traits::from_str(trait_name) {
+            return core_traits::method_names(trait_id);
+        }
+        let short_name = trait_name
+            .rsplit(['.', ':'])
+            .find(|segment| !segment.is_empty())
+            .unwrap_or(trait_name);
+        if let Some(trait_id) = core_traits::from_str(short_name) {
+            return core_traits::method_names(trait_id);
+        }
+        match short_name {
+            "Serialize" | "JsonSerialize" => &["to_json"],
+            "Deserialize" | "JsonDeserialize" => &["from_json"],
+            _ => &[],
+        }
+    }
+
+    /// Return whether a method is safe to emit into an imported trait impl when the trait declaration is missing.
+    fn method_matches_imported_trait_without_decl(&self, method: &ast::MethodDecl, trait_name: &str) -> bool {
+        if method.trait_target.is_some() {
+            return true;
+        }
+        let known_methods = Self::known_imported_trait_method_names(trait_name);
+        known_methods.iter().any(|name| *name == method.name)
+    }
+
     /// Return whether a concrete method is eligible for the current trait impl.
     fn method_trait_target_matches_impl(
         &mut self,
@@ -808,6 +837,9 @@ impl AstLowering {
             let Some(trait_decl) = self.trait_decls.get(trait_name).cloned() else {
                 let mut methods: Vec<IrFunction> = Vec::new();
                 for method in impl_methods {
+                    if !self.method_matches_imported_trait_without_decl(&method.node, trait_name) {
+                        continue;
+                    }
                     if self.method_trait_target_matches_impl(
                         &method.node,
                         trait_name,

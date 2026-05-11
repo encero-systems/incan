@@ -1414,6 +1414,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                         value: Some(EnumValueExport::Str("disabled".to_string())),
                     },
                 ],
+                variant_aliases: Vec::new(),
                 methods: vec![MethodExport {
                     alias_of: None,
                     name: "label".to_string(),
@@ -1595,6 +1596,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                     fields: Vec::new(),
                     value: None,
                 }],
+                variant_aliases: Vec::new(),
                 methods: vec![
                     MethodExport {
                         alias_of: None,
@@ -7776,14 +7778,29 @@ fn test_value_enum_str_generated_surface_typechecks() {
 enum Env(str):
   Dev = "development"
   Prod = "production"
+  Production = alias Prod
 
 def raw(env: Env) -> str:
   return env.value()
 
 def parse() -> Option[Env]:
-  return Env.from_value("production")
+  return Env.Production
 "#;
     assert_check_ok(source);
+}
+
+#[test]
+fn test_value_enum_variant_aliases_validate_target() {
+    let source = r#"
+enum Env(str):
+  Dev = "development"
+  Local = alias Missing
+"#;
+    let errs = check_str_err(source, "value enum alias with missing target should fail");
+    assert!(
+        errs.iter().any(|e| e.message.contains("Unknown symbol 'Missing'")),
+        "expected unknown alias target diagnostic, got {errs:?}"
+    );
 }
 
 #[test]

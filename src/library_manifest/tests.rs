@@ -392,6 +392,7 @@ fn manifest_io_round_trip_preserves_value_enum_metadata() -> Result<(), Box<dyn 
                 value: Some(EnumValueExport::Str("disabled".to_string())),
             },
         ],
+        variant_aliases: Vec::new(),
         methods: Vec::new(),
         derives: Vec::new(),
     });
@@ -413,6 +414,7 @@ fn manifest_io_round_trip_preserves_value_enum_metadata() -> Result<(), Box<dyn 
                 value: Some(EnumValueExport::Int(404)),
             },
         ],
+        variant_aliases: Vec::new(),
         methods: Vec::new(),
         derives: Vec::new(),
     });
@@ -440,6 +442,7 @@ fn manifest_io_round_trip_preserves_enum_traits_and_methods() -> Result<(), Box<
             fields: Vec::new(),
             value: None,
         }],
+        variant_aliases: Vec::new(),
         methods: vec![MethodExport {
             alias_of: None,
             name: "label".to_string(),
@@ -687,6 +690,7 @@ fn manifest_io_round_trip_preserves_type_trait_adoptions() -> Result<(), Box<dyn
             fields: Vec::new(),
             value: None,
         }],
+        variant_aliases: Vec::new(),
         methods: Vec::new(),
         derives: Vec::new(),
     });

@@ -7,36 +7,36 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum __IncanUnion2f03b6f5e4eabba1 {
     V0(String),
     V1(bool),
     V2(i64),
 }
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum __IncanUnion43fbd19e99c1db05 {
     V0(String),
     V1(bool),
     V2(f64),
     V3(i64),
 }
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum __IncanUnionaff9193be7941891 {
     V0(String),
     V1(f64),
     V2(i64),
 }
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum __IncanUnionbd05f9b5647daa54 {
     V0(String),
     V1(bool),
 }
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum __IncanUnionc4e172615a54ed2d {
     V0(String),
     V1(i64),
 }
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub enum __IncanUnionf030b96172dcb024 {
     V0(String),
     V1(f64),

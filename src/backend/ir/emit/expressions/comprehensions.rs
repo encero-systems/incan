@@ -258,6 +258,12 @@ impl<'a> IrEmitter<'a> {
                 func: BuiltinFn::Enumerate,
                 args,
             } => self.emit_owned_enumerate_iter(args).map(Some),
+            IrExprKind::MethodCall {
+                receiver, method, args, ..
+            } if method == "keys" && args.is_empty() && matches!(receiver.ty, IrType::Dict(_, _)) => {
+                let receiver_tokens = self.emit_expr(receiver)?;
+                Ok(Some(quote! { (#receiver_tokens).keys().cloned() }))
+            }
             _ => Ok(None),
         }
     }

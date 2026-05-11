@@ -205,7 +205,11 @@ impl<'a> IrEmitter<'a> {
         value_target_ty: Option<&IrType>,
     ) -> Result<TokenStream, EmitError> {
         if pairs.is_empty() {
-            return Ok(quote! { HashMap::new() });
+            return if *self.qualify_internal_canonical_paths.borrow() {
+                Ok(quote! { std::collections::HashMap::new() })
+            } else {
+                Ok(quote! { HashMap::new() })
+            };
         }
 
         if pairs.iter().all(|entry| matches!(entry, IrDictEntry::Pair(_, _))) {
@@ -232,7 +236,11 @@ impl<'a> IrEmitter<'a> {
                     )),
                 })
                 .collect::<Result<_, EmitError>>()?;
-            return Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<HashMap<_, _>>() });
+            return if *self.qualify_internal_canonical_paths.borrow() {
+                Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<std::collections::HashMap<_, _>>() })
+            } else {
+                Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<HashMap<_, _>>() })
+            };
         }
 
         let steps: Vec<TokenStream> = pairs
@@ -265,7 +273,7 @@ impl<'a> IrEmitter<'a> {
             .collect::<Result<_, EmitError>>()?;
 
         Ok(quote! {{
-            let mut __incan_dict = HashMap::new();
+            let mut __incan_dict = std::collections::HashMap::new();
             #(#steps)*
             __incan_dict
         }})
@@ -309,7 +317,23 @@ impl<'a> IrEmitter<'a> {
     /// expression is emitted. Non-aggregate expressions are emitted normally, then the planned conversion is applied to
     /// the resulting token stream.
     pub(super) fn emit_expr_for_use(&self, expr: &TypedExpr, site: ValueUseSite<'_>) -> Result<TokenStream, EmitError> {
+        if matches!(site, ValueUseSite::CollectionElement { .. })
+            && let Some(target_ty) = Self::use_site_target_ty(site)
+            && let Some(wrapped) = self.emit_inference_seeded_literal_arg(expr, target_ty)?
+        {
+            return Ok(wrapped);
+        }
+
         match &expr.kind {
+            IrExprKind::InteropCoerce { expr: inner, .. }
+                if Self::use_site_target_ty(site).is_some()
+                    && matches!(
+                        inner.kind,
+                        IrExprKind::List(_) | IrExprKind::Dict(_) | IrExprKind::Set(_) | IrExprKind::Tuple(_)
+                    ) =>
+            {
+                return self.emit_expr_for_use(inner, site);
+            }
             IrExprKind::List(items) => {
                 let item_target_ty = match Self::use_site_target_ty(site) {
                     Some(IrType::List(elem)) => Some(elem.as_ref()),
@@ -1167,6 +1191,59 @@ mod tests {
         assert!(
             rendered.starts_with("&"),
             "expected borrowed String interop coercion to emit a borrow, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn interop_wrapped_dict_literal_keeps_call_site_value_target() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let union_ty = IrType::Option(Box::new(IrType::NamedGeneric(
+            crate::backend::ir::types::IR_UNION_TYPE_NAME.to_string(),
+            vec![IrType::Bool, IrType::Int],
+        )));
+        let target_ty = IrType::Dict(Box::new(IrType::String), Box::new(union_ty.clone()));
+        let dict = TypedExpr::new(
+            IrExprKind::Dict(vec![
+                IrDictEntry::Pair(
+                    TypedExpr::new(IrExprKind::String("count".to_string()), IrType::String),
+                    Box::new(TypedExpr::new(IrExprKind::Int(1), IrType::Int)),
+                ),
+                IrDictEntry::Pair(
+                    TypedExpr::new(IrExprKind::String("ok".to_string()), IrType::String),
+                    Box::new(TypedExpr::new(IrExprKind::Bool(true), IrType::Bool)),
+                ),
+            ]),
+            IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int)),
+        );
+        let expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(dict),
+                from_ty: IrType::Dict(Box::new(IrType::String), Box::new(IrType::Int)),
+                to_ty: target_ty.clone(),
+                kind: IrInteropCoercionKind::RustTypeUnwrap,
+            },
+            target_ty.clone(),
+        );
+
+        let emitted = emitter
+            .emit_expr_for_use(
+                &expr,
+                ValueUseSite::IncanCallArg {
+                    target_ty: Some(&target_ty),
+                    callee_param: None,
+                    in_return: false,
+                },
+            )
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        let some_constructor = incan_core::lang::surface::constructors::as_str(
+            incan_core::lang::surface::constructors::ConstructorId::Some,
+        );
+        assert!(
+            rendered.contains(some_constructor) && rendered.contains("__IncanUnion"),
+            "expected target union wrapping to survive interop aggregate wrapper, got `{rendered}`"
         );
         Ok(())
     }

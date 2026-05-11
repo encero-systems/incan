@@ -620,6 +620,9 @@ impl TypeCheckInfo {
 
 /// Return whether a callable parameter type carries borrow shape that lowering cannot recover from the callee alone.
 fn callable_param_needs_boundary_snapshot(ty: &ResolvedType) -> bool {
+    if ty.is_union() {
+        return true;
+    }
     match ty {
         ResolvedType::Ref(_) | ResolvedType::RefMut(_) => true,
         ResolvedType::Function(params, ret) => {
