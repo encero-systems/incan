@@ -759,11 +759,6 @@ impl AstLowering {
             .any(|scope| scope.contains(name))
     }
 
-    /// Return whether `name` resolves to an ordinary local binding in an active scope.
-    pub(super) fn is_local_binding(&self, name: &str) -> bool {
-        self.scopes.iter().rev().any(|scope| scope.contains_key(name))
-    }
-
     pub(super) fn is_direct_static_ident(&self, expr: &ast::Spanned<ast::Expr>) -> Option<String> {
         let ast::Expr::Ident(name) = &expr.node else {
             return None;

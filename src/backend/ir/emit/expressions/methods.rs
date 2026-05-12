@@ -7,13 +7,12 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use super::super::super::FunctionSignature;
-use super::super::super::decl::FunctionParam;
 use super::super::super::expr::{
     CollectionMethodKind, InternalMethodKind, IrCallArg, IrExprKind, IrMethodDispatch, MethodCallArgPolicy, MethodKind,
     TypedExpr, VarAccess, VarRefKind,
 };
 use super::super::super::ownership::ValueUseSite;
-use super::super::super::types::{IR_UNION_TYPE_NAME, IrType, Mutability};
+use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use incan_core::interop::RustCollectionFamily;
 use incan_core::lang::surface::result_methods::{self, ResultMethodId};
@@ -63,103 +62,6 @@ fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamil
 }
 
 impl<'a> IrEmitter<'a> {
-    /// Return the structured logging field value type used by `std.logging.Logger` methods.
-    fn logging_field_value_type() -> IrType {
-        let mut members = crate::frontend::surface_semantics::std_logging_field_value_kinds()
-            .iter()
-            .filter_map(|kind| match kind {
-                crate::frontend::surface_semantics::StdLoggingFieldValueKind::TelemetryValue => {
-                    Some(IrType::Struct("TelemetryValue".to_string()))
-                }
-                crate::frontend::surface_semantics::StdLoggingFieldValueKind::String => Some(IrType::String),
-                crate::frontend::surface_semantics::StdLoggingFieldValueKind::Bool => Some(IrType::Bool),
-                crate::frontend::surface_semantics::StdLoggingFieldValueKind::Int => Some(IrType::Int),
-                crate::frontend::surface_semantics::StdLoggingFieldValueKind::Float => Some(IrType::Float),
-                crate::frontend::surface_semantics::StdLoggingFieldValueKind::None => None,
-            })
-            .collect::<Vec<_>>();
-        members.sort_by_key(IrType::rust_name);
-        IrType::Option(Box::new(IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), members)))
-    }
-
-    /// Return fallback callable metadata for generated `std.logging.Logger` calls.
-    ///
-    /// Imported stdlib method bodies are emitted outside the main user module, so the main module may not have an
-    /// ordinary method registry entry for `Logger`. The typechecker records call-site metadata when it can, but ambient
-    /// `log` lowering and imported `get_logger()` chains still need a backend fallback so dictionary literals are
-    /// emitted against the method parameter's union value type.
-    fn logging_method_signature(method: &str) -> Option<FunctionSignature> {
-        let field_dict = IrType::Dict(Box::new(IrType::String), Box::new(Self::logging_field_value_type()));
-        let param = |name: &str, ty: IrType, default: bool| FunctionParam {
-            name: name.to_string(),
-            ty,
-            mutability: Mutability::Immutable,
-            is_self: false,
-            kind: crate::frontend::ast::ParamKind::Normal,
-            default: if default {
-                Some(TypedExpr::new(IrExprKind::Dict(Vec::new()), field_dict.clone()))
-            } else {
-                None
-            },
-        };
-        let params = if crate::frontend::surface_semantics::is_std_logging_event_method(method) {
-            vec![
-                param("message", IrType::String, false),
-                param("fields", field_dict.clone(), true),
-            ]
-        } else {
-            match method {
-                "bind" => vec![param("fields", field_dict.clone(), false)],
-                "child" => vec![param("suffix", IrType::String, false)],
-                "is_enabled" => vec![param("level", IrType::Struct("Level".to_string()), false)],
-                _ => return None,
-            }
-        };
-        Some(FunctionSignature {
-            params,
-            return_type: IrType::Unknown,
-        })
-    }
-
-    /// Return whether an expression is known to produce a `std.logging.Logger`.
-    fn is_logging_receiver(receiver: &TypedExpr) -> bool {
-        match &receiver.ty {
-            IrType::Struct(name) | IrType::NamedGeneric(name, _) if name.rsplit("::").next() == Some("Logger") => {
-                return true;
-            }
-            IrType::Ref(inner) | IrType::RefMut(inner) => {
-                return Self::is_logging_receiver(&TypedExpr::new(receiver.kind.clone(), (**inner).clone()));
-            }
-            _ => {}
-        }
-
-        match &receiver.kind {
-            IrExprKind::Call {
-                canonical_path: Some(path),
-                ..
-            } if path.as_slice() == ["std", "logging", "get_logger"] => true,
-            IrExprKind::MethodCall { receiver, method, .. } if matches!(method.as_str(), "bind" | "child") => {
-                Self::is_logging_receiver(receiver)
-            }
-            IrExprKind::InteropCoerce { expr, .. } => Self::is_logging_receiver(expr),
-            _ => false,
-        }
-    }
-
-    /// Return whether argument spelling itself matches the logging structured-fields surface.
-    fn has_logging_field_arg(method: &str, args: &[IrCallArg]) -> bool {
-        if crate::frontend::surface_semantics::is_std_logging_event_method(method) {
-            return args
-                .iter()
-                .enumerate()
-                .any(|(idx, arg)| arg.name.as_deref() == Some("fields") || (idx == 1 && arg.name.is_none()));
-        }
-        match method {
-            "bind" => !args.is_empty(),
-            _ => false,
-        }
-    }
-
     /// Emit a one-argument callback invocation for a `Result` combinator payload.
     fn emit_result_callback_call(
         &self,
@@ -941,12 +843,6 @@ impl<'a> IrEmitter<'a> {
         } else {
             ValueUseSite::ExternalCallArg { target_ty: None }
         };
-        let logging_signature = if Self::is_logging_receiver(receiver) || Self::has_logging_field_arg(method, args) {
-            Self::logging_method_signature(method)
-        } else {
-            None
-        };
-        let callable_signature = callable_signature.or(logging_signature.as_ref());
         let arg_tokens =
             self.emit_method_call_args(method, receiver, args, callable_signature, use_site, result_target_ty)?;
         Ok(quote! { #r.#m #method_turbofish (#(#arg_tokens),*) })

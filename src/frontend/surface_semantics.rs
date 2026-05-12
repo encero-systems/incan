@@ -83,58 +83,21 @@ impl SurfaceContext {
     }
 }
 
-/// Return whether `method` is one of the std.logging event methods.
-pub(crate) fn is_std_logging_event_method(method: &str) -> bool {
-    matches!(method, "trace" | "debug" | "info" | "warning" | "error" | "critical")
-}
-
-/// Structured field value families accepted by source-defined `std.logging.Logger` methods.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum StdLoggingFieldValueKind {
-    TelemetryValue,
-    String,
-    Bool,
-    Int,
-    Float,
-    None,
-}
-
-const STD_LOGGING_FIELD_VALUE_KINDS: &[StdLoggingFieldValueKind] = &[
-    StdLoggingFieldValueKind::TelemetryValue,
-    StdLoggingFieldValueKind::String,
-    StdLoggingFieldValueKind::Bool,
-    StdLoggingFieldValueKind::Int,
-    StdLoggingFieldValueKind::Float,
-    StdLoggingFieldValueKind::None,
-];
-
-/// Return the structured field value families accepted by source-defined `std.logging.Logger` methods.
-pub(crate) fn std_logging_field_value_kinds() -> &'static [StdLoggingFieldValueKind] {
-    STD_LOGGING_FIELD_VALUE_KINDS
-}
-
-/// Return whether `method` is callable through the ambient std.logging `log` surface.
-pub(crate) fn is_std_logging_ambient_method(method: &str) -> bool {
-    is_std_logging_event_method(method) || matches!(method, "is_enabled" | "child" | "bind")
-}
-
-/// Return whether the program uses ambient `log.<method>(...)`.
+/// Return whether the program may use the ambient `std.logging` logger binding.
+///
+/// This deliberately detects the binding candidate, not a fixed list of `Logger` methods. The typechecker still lets
+/// local or imported `log` bindings shadow the ambient value; this scan only ensures the stdlib module is available
+/// when a file contains an unqualified `log` expression.
 pub(crate) fn uses_ambient_log_surface(program: &Program) -> bool {
     ast_walk::any_expr_in_program(program, |expr| match expr {
-        Expr::MethodCall(receiver, method, _, _) => {
-            matches!(&receiver.node, Expr::Ident(name) if name == "log")
-                && is_std_logging_ambient_method(method.as_str())
-        }
+        Expr::Ident(name) => name == "log",
         _ => false,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        StdLoggingFieldValueKind, SurfaceContext, is_std_logging_ambient_method, is_std_logging_event_method,
-        std_logging_field_value_kinds,
-    };
+    use super::SurfaceContext;
     use crate::frontend::{lexer, parser};
     use incan_core::lang::keywords::KeywordId;
     use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
@@ -170,21 +133,13 @@ mod tests {
     }
 
     #[test]
-    fn classifies_std_logging_methods() {
-        assert!(is_std_logging_event_method("info"));
-        assert!(is_std_logging_ambient_method("bind"));
-        assert!(!is_std_logging_event_method("bind"));
-        assert!(!is_std_logging_ambient_method("unknown"));
-        assert_eq!(
-            std_logging_field_value_kinds(),
-            &[
-                StdLoggingFieldValueKind::TelemetryValue,
-                StdLoggingFieldValueKind::String,
-                StdLoggingFieldValueKind::Bool,
-                StdLoggingFieldValueKind::Int,
-                StdLoggingFieldValueKind::Float,
-                StdLoggingFieldValueKind::None,
-            ]
-        );
+    fn detects_ambient_log_binding_candidates() -> Result<(), String> {
+        let source = "def run() -> None:\n    log.info(\"started\")\n";
+        let tokens = lexer::lex(source).map_err(|e| format!("{e:?}"))?;
+        let program = parser::parse(&tokens).map_err(|e| format!("{e:?}"))?;
+        if !super::uses_ambient_log_surface(&program) {
+            return Err("expected ambient log candidate to activate std.logging".to_string());
+        }
+        Ok(())
     }
 }

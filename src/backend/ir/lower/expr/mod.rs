@@ -17,7 +17,7 @@ use super::super::expr::{
     IrMethodDispatch, Literal as IrLiteral, MethodCallArgPolicy, MethodKind, NumericResizePolicy, RaceArm, UnaryOp,
     VarAccess, VarRefKind,
 };
-use super::super::types::{IR_UNION_TYPE_NAME, IrType};
+use super::super::types::IrType;
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
@@ -32,74 +32,36 @@ use incan_core::lang::types::collections::{self as collection_types, CollectionT
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
-    /// Return the IR dictionary type expected by source-defined `std.logging.Logger` field parameters.
-    ///
-    /// Ambient logging calls are compiler-shaped before ordinary method metadata is always available, so lowering uses
-    /// the same field type as the stdlib source declarations to keep collection literal emission structured.
-    fn logging_field_dict_ir_type() -> IrType {
-        let mut members = crate::frontend::surface_semantics::std_logging_field_value_kinds()
-            .iter()
-            .filter_map(|kind| match kind {
-                crate::frontend::surface_semantics::StdLoggingFieldValueKind::TelemetryValue => {
-                    Some(IrType::Struct("TelemetryValue".to_string()))
-                }
-                crate::frontend::surface_semantics::StdLoggingFieldValueKind::String => Some(IrType::String),
-                crate::frontend::surface_semantics::StdLoggingFieldValueKind::Bool => Some(IrType::Bool),
-                crate::frontend::surface_semantics::StdLoggingFieldValueKind::Int => Some(IrType::Int),
-                crate::frontend::surface_semantics::StdLoggingFieldValueKind::Float => Some(IrType::Float),
-                crate::frontend::surface_semantics::StdLoggingFieldValueKind::None => None,
-            })
-            .collect::<Vec<_>>();
-        members.sort_by_key(IrType::rust_name);
-        IrType::Dict(
-            Box::new(IrType::String),
-            Box::new(IrType::Option(Box::new(IrType::NamedGeneric(
-                IR_UNION_TYPE_NAME.to_string(),
-                members,
-            )))),
+    /// Return the source-defined `std.logging.Logger.<method>` signature, including default expressions.
+    fn std_logging_logger_method_signature(&mut self, method: &str) -> Option<super::super::FunctionSignature> {
+        self.callable_signature_for_imported_stdlib_type_method_path(
+            &["std".to_string(), "logging".to_string(), "Logger".to_string()],
+            method,
         )
     }
 
-    /// Return whether an AST receiver expression should use `std.logging.Logger` argument shaping.
+    /// Merge typechecker call-site metadata with the source-defined `std.logging.Logger` method declaration.
     ///
-    /// This covers ambient `log`, direct `get_logger(...)`, and simple logger-producing chains such as
-    /// `get_logger(...).bind(...).child(...)` before backend method emission has enough receiver metadata to infer the
-    /// field dictionary target on its own.
-    fn logging_receiver_ast(&self, expr: &ast::Spanned<ast::Expr>, receiver: &TypedExpr) -> bool {
-        match &receiver.ty {
-            IrType::Struct(name) | IrType::NamedGeneric(name, _) if name.rsplit("::").next() == Some("Logger") => {
-                return true;
+    /// The call-site snapshot carries the selected parameter types; the stdlib declaration carries source defaults such
+    /// as `fields={}`. Keeping the merge here lets emission stay independent from logging-specific method names.
+    fn std_logging_callable_signature_for_call(
+        &mut self,
+        span: ast::Span,
+        method: &str,
+    ) -> Option<super::super::FunctionSignature> {
+        let call_site = self.callable_signature_for_call_span(span);
+        let stdlib = self.std_logging_logger_method_signature(method);
+        match (call_site, stdlib) {
+            (Some(mut call_site), Some(stdlib)) => {
+                for (param, stdlib_param) in call_site.params.iter_mut().zip(stdlib.params.iter()) {
+                    if param.default.is_none() {
+                        param.default = stdlib_param.default.clone();
+                    }
+                }
+                Some(call_site)
             }
-            _ => {}
-        }
-        match &expr.node {
-            ast::Expr::Ident(name) if name == "log" && !self.is_local_binding(name) => true,
-            ast::Expr::Call(callee, _, _) => {
-                matches!(&callee.node, ast::Expr::Ident(name) if name == "get_logger")
-            }
-            ast::Expr::MethodCall(base, method, _, _) if matches!(method.as_str(), "bind" | "child") => {
-                self.logging_receiver_ast(base, receiver)
-            }
-            _ => false,
-        }
-    }
-
-    /// Apply the structured field dictionary type to logging event and bind arguments.
-    ///
-    /// The typechecker records the public `Logger` surface, but lowering can still see interop-shaped argument nodes in
-    /// metadata-light ambient calls. Retyping the field expression here lets the backend preserve primitive and
-    /// `TelemetryValue` payloads instead of letting Rust infer a homogeneous dictionary from the first value.
-    fn apply_logging_field_arg_type(method: &str, args: &mut [IrCallArg]) {
-        let fields_index = match method {
-            method if crate::frontend::surface_semantics::is_std_logging_event_method(method) => 1,
-            "bind" => 0,
-            _ => return,
-        };
-        for (idx, arg) in args.iter_mut().enumerate() {
-            let is_fields_arg = arg.name.as_deref() == Some("fields") || (arg.name.is_none() && idx == fields_index);
-            if is_fields_arg {
-                arg.expr.ty = Self::logging_field_dict_ir_type();
-            }
+            (Some(call_site), None) => Some(call_site),
+            (None, stdlib) => stdlib,
         }
     }
 
@@ -482,7 +444,11 @@ impl AstLowering {
             ast::Expr::Ident(name) => {
                 let lowered_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
                 let ty = self.lookup_var(&lowered_name);
-                if name == "log" && !self.is_local_binding(name) && !self.import_aliases.contains_key(name) {
+                if self
+                    .type_info
+                    .as_ref()
+                    .is_some_and(|info| info.is_ambient_logger_binding(expr_span))
+                {
                     let logger_name = self.current_default_logger_name();
                     let func = TypedExpr::new(
                         IrExprKind::Var {
@@ -833,10 +799,6 @@ impl AstLowering {
                         arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
                     }
                 }
-                if self.logging_receiver_ast(o, &receiver) {
-                    Self::apply_logging_field_arg_type(&method_name, &mut args_ir);
-                }
-
                 let expr_ty = self
                     .type_info
                     .as_ref()
@@ -907,7 +869,18 @@ impl AstLowering {
                             _ => None,
                         };
                     let call_site_signature = self.callable_signature_for_call_span(expr_span);
-                    let callable_signature = match (call_site_signature, imported_type_method_signature) {
+                    let std_logging_signature = if matches!(
+                        &receiver.ty,
+                        IrType::Struct(name) | IrType::NamedGeneric(name, _) if name.rsplit("::").next() == Some("Logger")
+                    ) {
+                        self.std_logging_callable_signature_for_call(expr_span, m)
+                    } else {
+                        None
+                    };
+                    let callable_signature = match (
+                        std_logging_signature.or(call_site_signature),
+                        imported_type_method_signature,
+                    ) {
                         (Some(mut call_site), Some(imported)) => {
                             for (param, imported_param) in call_site.params.iter_mut().zip(imported.params.iter()) {
                                 if param.default.is_none() {

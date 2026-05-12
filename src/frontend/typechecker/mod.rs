@@ -3574,6 +3574,16 @@ impl TypeChecker {
             (ResolvedType::Generic(name, members), expected) if name == UNION_TYPE_NAME => {
                 members.iter().all(|member| self.types_compatible(member, expected))
             }
+            (actual, ResolvedType::Generic(name, members))
+                if name == UNION_TYPE_NAME
+                    && actual.is_option()
+                    && actual
+                        .option_inner_type()
+                        .is_some_and(|inner| matches!(inner, ResolvedType::Unknown))
+                    && members.iter().any(|member| matches!(member, ResolvedType::Unit)) =>
+            {
+                true
+            }
             (actual, ResolvedType::Generic(name, members)) if name == UNION_TYPE_NAME => {
                 members.iter().any(|member| self.types_compatible(actual, member))
             }
