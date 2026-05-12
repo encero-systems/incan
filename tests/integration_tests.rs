@@ -2382,6 +2382,26 @@ def main() -> None:
     }
 
     #[test]
+    fn test_string_and_bytes_iteration_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = run_incan_source(
+            "def main() -> None:\n  mut out = \"\"\n  for ch in \"Az\":\n    out += ch\n  for index, ch in enumerate(\"xy\"):\n    out += f\"{index}{ch}\"\n  mut total = 0\n  for byte in b\"Az\":\n    total += byte\n  for index, byte in enumerate(b\"\\x01\\x02\"):\n    total += index + byte\n  println(out)\n  println(total)\n",
+        );
+
+        assert!(
+            output.status.success(),
+            "incan run string/bytes iteration regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(lines, vec!["Az0x1y", "191"]);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_std_fs_compile_and_run_path_file_and_tree_operations() -> Result<(), Box<dyn std::error::Error>> {
         let base = std::env::temp_dir().join(format!("incan_std_fs_integration_{}", std::process::id()));
         let root = base.join("root");
@@ -2617,6 +2637,40 @@ def main() -> None:
                 "0"
             ],
             "unexpected std.io output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_std_encoding_hex_compile_and_run_strict_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/std_encoding_hex_surface.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run std.encoding.hex smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec![
+                "417a00",
+                "3",
+                "417a00",
+                "417a00",
+                "FF",
+                "10",
+                "00",
+                "7f",
+                "invalid_length",
+                "invalid_character"
+            ],
+            "unexpected std.encoding.hex output:\n{stdout}"
         );
         Ok(())
     }
@@ -4893,6 +4947,32 @@ async def main() -> None:
             "incan run rfc030_std_collections_behavior failed: status={:?} stderr={}",
             output.status,
             String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn test_run_rfc064_std_encoding_behavior() {
+        let Ok(output) = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/rfc064_std_encoding_behavior.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan run rfc064_std_encoding_behavior failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("strict-padding-error")
+                && stdout.contains("bech32-checksum-error")
+                && stdout.contains("rfc064-encoding-ok"),
+            "expected strict error markers and success marker; got:\n{}",
+            stdout
         );
     }
 

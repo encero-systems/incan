@@ -329,19 +329,28 @@ impl TypeChecker {
                     Some(list_ty(ResolvedType::Int))
                 }
                 BuiltinFnId::Enumerate => {
-                    // enumerate(xs) -> List[(int, T)] (simple)
+                    // enumerate(xs) -> list[(int, T)]
                     let mut inner_ty = ResolvedType::Unknown;
                     if let Some(arg) = args.first() {
                         let iter_ty = self.check_expr(Self::call_arg_expr(arg));
-                        if let ResolvedType::Generic(name, type_args) = &iter_ty
-                            && (name == surface_types::as_str(SurfaceTypeId::Vec)
-                                || matches!(
-                                    collection_type_id(name.as_str()),
-                                    Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
-                                ))
-                            && !type_args.is_empty()
-                        {
-                            inner_ty = type_args[0].clone();
+                        match &iter_ty {
+                            ResolvedType::Generic(name, type_args)
+                                if (name == surface_types::as_str(SurfaceTypeId::Vec)
+                                    || matches!(
+                                        collection_type_id(name.as_str()),
+                                        Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
+                                    ))
+                                    && !type_args.is_empty() =>
+                            {
+                                inner_ty = type_args[0].clone();
+                            }
+                            ResolvedType::Str | ResolvedType::FrozenStr => {
+                                inner_ty = ResolvedType::Str;
+                            }
+                            ResolvedType::Bytes | ResolvedType::FrozenBytes => {
+                                inner_ty = ResolvedType::Int;
+                            }
+                            _ => {}
                         }
                     }
                     self.check_call_args(args);

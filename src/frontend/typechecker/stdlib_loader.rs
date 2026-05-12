@@ -1415,6 +1415,114 @@ mod tests {
     }
 
     #[test]
+    fn test_load_encoding_modules_export_source_owned_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let prelude_path = vec!["std".to_string(), "encoding".to_string()];
+        let prelude = load_stdlib_module_data(&prelude_path).ok_or("failed to load stdlib/encoding/prelude.incn")?;
+        assert!(
+            prelude.types.iter().any(|(name, _)| name == "EncodingError"),
+            "std.encoding should export source-owned EncodingError"
+        );
+
+        for (module_name, expected_functions) in [
+            (
+                "hex",
+                vec![
+                    "encode",
+                    "decode",
+                    "b16encode",
+                    "b16decode",
+                    "encode_stream",
+                    "decode_stream",
+                ],
+            ),
+            (
+                "base64",
+                vec![
+                    "encode",
+                    "decode",
+                    "decode_lenient",
+                    "b64encode",
+                    "b64decode",
+                    "b64decode_lenient",
+                    "b64encode_stream",
+                    "b64decode_stream",
+                    "urlsafe_b64encode",
+                    "urlsafe_b64decode",
+                    "urlsafe_b64encode_stream",
+                    "urlsafe_b64decode_stream",
+                ],
+            ),
+            (
+                "base32",
+                vec![
+                    "encode",
+                    "decode",
+                    "decode_lenient",
+                    "b32encode",
+                    "b32decode",
+                    "b32decode_lenient",
+                    "b32hexencode",
+                    "b32hexdecode",
+                    "b32encode_stream",
+                    "b32decode_stream",
+                    "b32hexencode_stream",
+                    "b32hexdecode_stream",
+                    "encode_stream",
+                    "decode_stream",
+                ],
+            ),
+            (
+                "base85",
+                vec![
+                    "a85encode",
+                    "a85decode",
+                    "b85encode",
+                    "b85decode",
+                    "z85encode",
+                    "z85decode",
+                    "a85encode_stream",
+                    "a85decode_stream",
+                    "b85encode_stream",
+                    "b85decode_stream",
+                    "z85encode_stream",
+                    "z85decode_stream",
+                    "encode_stream",
+                    "decode_stream",
+                ],
+            ),
+            (
+                "base58",
+                vec![
+                    "encode",
+                    "decode",
+                    "b58encode",
+                    "b58decode",
+                    "b58encode_stream",
+                    "b58decode_stream",
+                    "encode_stream",
+                    "decode_stream",
+                ],
+            ),
+            (
+                "bech32",
+                vec!["bech32_encode", "bech32_decode", "bech32m_encode", "bech32m_decode"],
+            ),
+        ] {
+            let path = vec!["std".to_string(), "encoding".to_string(), module_name.to_string()];
+            let module = load_stdlib_module_data(&path)
+                .ok_or_else(|| format!("failed to load stdlib/encoding/{module_name}.incn"))?;
+            for expected in expected_functions {
+                assert!(
+                    module.functions.iter().any(|(name, _)| name == expected),
+                    "std.encoding.{module_name} should export {expected}"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn extract_type_signatures_preserves_same_name_method_overloads() -> Result<(), Box<dyn std::error::Error>> {
         let source = r#"
 pub trait Convert[T]:
