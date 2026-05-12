@@ -1,0 +1,38 @@
+from std.uuid import (
+    MAX,
+    NAMESPACE_DNS,
+    NAMESPACE_URL,
+    NIL,
+    UUID,
+    UuidError,
+    UuidVariant,
+    UuidVersion,
+)
+
+
+def exercise_uuid() -> Result[None, UuidError]:
+    parsed = UUID.parse("550e8400-e29b-41d4-a716-446655440000")?
+    same = UUID.from_int(parsed.to_int())
+    raw = parsed.to_bytes()?
+    roundtrip = UUID.from_bytes(raw)?
+    assert same == parsed
+    assert roundtrip == parsed
+    assert NIL == UUID.nil()
+    assert MAX == UUID.max()
+    assert parsed.version()? == UuidVersion.V4
+    assert parsed.variant()? == UuidVariant.Rfc9562
+    assert UUID.from_int(parsed.to_int()) == parsed
+    assert NAMESPACE_DNS.canonical()? == "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+    assert NAMESPACE_URL.canonical()? == "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+    assert UUID.v3(NAMESPACE_DNS, "www.example.com")?.version()? == UuidVersion.V3
+    assert UUID.v4()?.version()? == UuidVersion.V4
+    assert UUID.v5(NAMESPACE_DNS, "www.example.com")?.version()? == UuidVersion.V5
+    assert UUID.v7()?.variant()? == UuidVariant.Rfc9562
+    assert UUID.v8(b"abcdefghijklmnop")?.version()? == UuidVersion.V8
+    return Ok(None)
+
+
+def main() -> None:
+    match exercise_uuid():
+        Ok(_) => pass
+        Err(err) => println(err.message())

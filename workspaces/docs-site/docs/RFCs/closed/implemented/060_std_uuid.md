@@ -1,6 +1,6 @@
 # RFC 060: `std.uuid` — UUID parsing, generation, and formatting
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-04-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -11,7 +11,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/338
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 

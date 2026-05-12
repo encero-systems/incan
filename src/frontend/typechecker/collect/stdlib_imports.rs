@@ -471,6 +471,16 @@ impl TypeChecker {
             return true;
         }
 
+        if let Some(info) = self.stdlib_cache.lookup_static(&context.module.segments, &item.name) {
+            let local_name = Self::import_item_local_name(item);
+            self.type_info.declarations.static_bindings.insert(
+                local_name.clone(),
+                crate::frontend::typechecker::StaticBindingInfo { is_imported: true },
+            );
+            self.define_named_import_symbol(local_name, SymbolKind::Static(info), span);
+            return true;
+        }
+
         false
     }
 

@@ -48,6 +48,7 @@ impl<'a> IrEmitter<'a> {
                 | IrType::StaticBytes
                 | IrType::FrozenStr
                 | IrType::FrozenBytes => true,
+                IrType::Struct(_) => true,
                 IrType::Tuple(items) => items.iter().all(ok_ty),
                 IrType::NamedGeneric(name, args) if name == collections::as_str(CollectionTypeId::FrozenList) => {
                     args.first().map(ok_ty).unwrap_or(false)
@@ -85,7 +86,14 @@ impl<'a> IrEmitter<'a> {
 
         match kind {
             // Primitives and static literals
-            K::Unit | K::None | K::Bool(_) | K::Int(_) | K::Float(_) | K::String(_) | K::Bytes(_) => Ok(()),
+            K::Unit
+            | K::None
+            | K::Bool(_)
+            | K::Int(_)
+            | K::IntLiteral(_)
+            | K::Float(_)
+            | K::String(_)
+            | K::Bytes(_) => Ok(()),
             K::Literal(IrLiteral::StaticStr(_)) => Ok(()),
 
             // Const-to-const references
@@ -134,6 +142,19 @@ impl<'a> IrEmitter<'a> {
                 }
                 Ok(())
             }
+            K::Struct { fields, .. } if fields.len() == 1 && fields[0].0.is_empty() => {
+                Self::validate_const_expr_kind(&fields[0].1.kind)
+            }
+
+            K::Call {
+                func, type_args, args, ..
+            } if type_args.is_empty()
+                && matches!(&func.kind, K::Var { .. })
+                && args.len() == 1
+                && matches!(args[0].kind, super::super::expr::IrCallArgKind::Positional) =>
+            {
+                Self::validate_const_expr_kind(&args[0].expr.kind)
+            }
 
             // Disallowed constructs in const initializers
             K::Call { .. } => Err(EmitError::Unsupported(
@@ -160,7 +181,6 @@ impl<'a> IrEmitter<'a> {
             | K::Field { .. }
             | K::Index { .. }
             | K::Slice { .. }
-            | K::Struct { .. }
             | K::Range { .. }
             | K::Cast { .. }
             | K::Format { .. }

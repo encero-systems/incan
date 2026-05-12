@@ -70,3 +70,39 @@ fn std_collections_source_has_no_rust_backed_dispatch_markers_when_present() {
         );
     }
 }
+
+#[test]
+fn std_uuid_namespace_stays_source_stdlib_only() {
+    let Some(ns) = stdlib::find_namespace("uuid") else {
+        panic!("std.uuid should be registered");
+    };
+
+    assert_eq!(ns.feature, None, "std.uuid must not activate a Cargo feature");
+    assert!(
+        ns.extra_crate_deps.is_empty(),
+        "std.uuid primitive crate handoffs should be visible as inline source imports, not hidden namespace metadata"
+    );
+    assert!(
+        ns.submodules.is_empty(),
+        "std.uuid should resolve as a leaf stdlib source module"
+    );
+    assert!(
+        !ns.typechecker_only,
+        "std.uuid must load through the ordinary stdlib source path"
+    );
+}
+
+#[test]
+fn std_uuid_source_has_no_rust_backed_type_markers() {
+    let source_path = std::path::Path::new("crates/incan_stdlib/stdlib/uuid.incn");
+    let Ok(source) = std::fs::read_to_string(source_path) else {
+        panic!("std.uuid source should exist");
+    };
+
+    for forbidden in ["rust.module", "@rust.extern", "rusttype"] {
+        assert!(
+            !source.contains(forbidden),
+            "`{forbidden}` is not allowed in source-defined std.uuid"
+        );
+    }
+}

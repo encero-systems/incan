@@ -85,8 +85,15 @@ impl<'a> Lexer<'a> {
         } else {
             let end = self.current_pos;
             let repr = self.source.get(start..end).unwrap_or("").to_string();
-            match value.parse::<i64>() {
-                Ok(i) => self.add_token(TokenKind::Int(IntLiteral { value: i, repr }), start),
+            match value.parse::<u128>() {
+                Ok(magnitude) => self.add_token(
+                    TokenKind::Int(IntLiteral {
+                        value: magnitude.try_into().unwrap_or(i64::MAX),
+                        magnitude,
+                        repr,
+                    }),
+                    start,
+                ),
                 Err(_) => {
                     self.errors
                         .push(errors::invalid_integer_literal(&repr, Span::new(start, end)));

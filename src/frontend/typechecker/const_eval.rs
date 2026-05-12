@@ -10,7 +10,7 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::{CompileError, errors};
-use crate::frontend::symbols::{ResolvedType, SymbolKind};
+use crate::frontend::symbols::{ResolvedType, SymbolKind, TypeInfo};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
 use incan_core::lang::types::numerics::NumericTypeId;
 use incan_core::strings::{self, StringAccessError};
@@ -76,6 +76,25 @@ fn const_integer_value_bounds(id: NumericTypeId) -> Option<(i128, i128)> {
         NumericTypeId::ISize => Some((isize::MIN as i128, isize::MAX as i128)),
         NumericTypeId::USize => Some((0, usize::MAX as i128)),
         NumericTypeId::F32 | NumericTypeId::F64 | NumericTypeId::Bool => None,
+    }
+}
+
+/// Return whether a non-negative integer literal can initialize an exact-width numeric type.
+fn unsigned_int_literal_fits_numeric_target(lit: &IntLiteral, id: NumericTypeId) -> bool {
+    match id {
+        NumericTypeId::I8 => lit.magnitude <= i8::MAX as u128,
+        NumericTypeId::I16 => lit.magnitude <= i16::MAX as u128,
+        NumericTypeId::I32 => lit.magnitude <= i32::MAX as u128,
+        NumericTypeId::I64 => lit.magnitude <= i64::MAX as u128,
+        NumericTypeId::I128 => lit.magnitude <= i128::MAX as u128,
+        NumericTypeId::U8 => lit.magnitude <= u8::MAX as u128,
+        NumericTypeId::U16 => lit.magnitude <= u16::MAX as u128,
+        NumericTypeId::U32 => lit.magnitude <= u32::MAX as u128,
+        NumericTypeId::U64 => lit.magnitude <= u64::MAX as u128,
+        NumericTypeId::U128 => true,
+        NumericTypeId::ISize => lit.magnitude <= isize::MAX as u128,
+        NumericTypeId::USize => lit.magnitude <= usize::MAX as u128,
+        NumericTypeId::F32 | NumericTypeId::F64 | NumericTypeId::Bool => false,
     }
 }
 
@@ -770,6 +789,49 @@ impl TypeChecker {
                     ty: frozen_str_ty(),
                     kind: ConstKind::Frozen,
                     value,
+                })
+            }
+
+            Expr::Call(callee, type_args, args) if type_args.is_empty() => {
+                let Some(ResolvedType::Named(expected_name)) = expected else {
+                    self.errors.push(errors::const_expression_not_allowed(expr.span));
+                    return None;
+                };
+                let Expr::Ident(callee_name) = &callee.node else {
+                    self.errors.push(errors::const_expression_not_allowed(expr.span));
+                    return None;
+                };
+                let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(callee_name).cloned() else {
+                    self.errors.push(errors::const_expression_not_allowed(expr.span));
+                    return None;
+                };
+                if callee_name != expected_name {
+                    self.errors.push(errors::const_expression_not_allowed(expr.span));
+                    return None;
+                }
+                let [CallArg::Positional(arg)] = args.as_slice() else {
+                    self.errors.push(errors::const_expression_not_allowed(expr.span));
+                    return None;
+                };
+                let Some(target) = super::numeric_type_id_for_compat(&newtype.underlying) else {
+                    self.errors.push(errors::const_expression_not_allowed(expr.span));
+                    return None;
+                };
+                let Expr::Literal(Literal::Int(lit)) = &arg.node else {
+                    self.errors.push(errors::const_expression_not_allowed(expr.span));
+                    return None;
+                };
+                if !unsigned_int_literal_fits_numeric_target(lit, target) {
+                    self.errors.push(CompileError::type_error(
+                        format!("Integer literal {} does not fit in {}", lit.repr, newtype.underlying),
+                        arg.span,
+                    ));
+                    return None;
+                }
+                Some(ConstEvalResult {
+                    ty: ResolvedType::Named(expected_name.clone()),
+                    kind: ConstKind::RustNative,
+                    value: None,
                 })
             }
 

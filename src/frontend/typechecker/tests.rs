@@ -5461,6 +5461,16 @@ def main() -> None:
 }
 
 #[test]
+fn test_list_repeat_u8_can_initialize_bytes() {
+    let source = r#"
+def zeros(size: int) -> bytes:
+  zero: u8 = 0
+  return list.repeat(zero, size)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
 fn test_list_repeat_rejects_wrong_arity() {
     let source = r#"
 def main() -> None:
@@ -8795,6 +8805,20 @@ const DOUBLED: int = BASE * 2
 
 def foo() -> int:
   return DOUBLED
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_const_newtype_constructor_from_numeric_literal() {
+    let source = r#"
+type Token = newtype u128
+
+const ZERO: Token = Token(0)
+const MAX_TOKEN: Token = Token(340282366920938463463374607431768211455)
+
+def foo() -> Token:
+  return MAX_TOKEN
 "#;
     assert!(check_str(source).is_ok());
 }
