@@ -1412,7 +1412,7 @@ dependencies = [
 
 [[package]]
 name = "incan"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.45"
 dependencies = [
  "byteorder",
  "clap",
@@ -1433,6 +1433,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "sha1",
  "sha2",
  "syn",
  "tempfile",
@@ -1450,14 +1451,14 @@ dependencies = [
 
 [[package]]
 name = "incan_core"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.45"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_derive"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.45"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1466,14 +1467,14 @@ dependencies = [
 
 [[package]]
 name = "incan_semantics_core"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.45"
 dependencies = [
  "incan_core",
 ]
 
 [[package]]
 name = "incan_semantics_stdlib"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.45"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1481,7 +1482,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.45"
 dependencies = [
  "axum",
  "incan_core",
@@ -1494,7 +1495,7 @@ dependencies = [
 
 [[package]]
 name = "incan_syntax"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.45"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1515,7 +1516,7 @@ dependencies = [
 
 [[package]]
 name = "incan_web_macros"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.45"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3020,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "rust_inspect"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.45"
 dependencies = [
  "hex",
  "incan_core",
@@ -3297,6 +3298,17 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "sha1"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
 ]
 
 [[package]]

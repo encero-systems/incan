@@ -1586,6 +1586,18 @@ impl TypeChecker {
             ],
             "std::io::Write" => &["write", "write_all", "write_fmt", "flush"],
             "std::io::Seek" => &["seek", "rewind", "stream_position", "seek_relative"],
+            "sha2::Digest" | "sha3::Digest" | "blake2::Digest" | "md5::Digest" | "sha1::Digest" => &[
+                "new",
+                "new_with_prefix",
+                "update",
+                "chain_update",
+                "finalize",
+                "finalize_into",
+                "finalize_reset",
+                "reset",
+                "output_size",
+                "digest",
+            ],
             "std::os::unix::fs::MetadataExt" => &[
                 "dev", "ino", "mode", "nlink", "uid", "gid", "rdev", "size", "atime", "mtime", "ctime", "blksize",
                 "blocks",

@@ -1101,6 +1101,15 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         if matches!(
             &receiver.kind,
             IrExprKind::Var {
+                ref_kind: VarRefKind::ExternalRustName,
+                ..
+            }
+        ) {
+            return true;
+        }
+        if matches!(
+            &receiver.kind,
+            IrExprKind::Var {
                 ref_kind: VarRefKind::ExternalName | VarRefKind::ExternalRustName | VarRefKind::TypeName,
                 ..
             }

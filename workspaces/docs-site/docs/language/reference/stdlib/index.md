@@ -12,6 +12,7 @@ Pages in this section are curated and checked into the repository.
 - [`std.datetime`](datetime.md) (curated; see also [tutorial](../../tutorials/dates_and_times.md), [how-to](../../how-to/dates_and_times.md), and [model](../../explanation/datetime_model.md))
 - [`std.fs`](fs.md) (curated)
 - [`std.graph`](graph.md) (curated)
+- [`std.hash`](hash.md) (curated)
 - [`std.io`](io.md) (curated)
 - [`std.tempfile`](tempfile.md) (curated)
 - [`std.reflection`](reflection.md) (curated)

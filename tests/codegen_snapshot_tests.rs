@@ -2282,7 +2282,7 @@ fn test_issue459_rust_enum_pattern_import_codegen() {
     let rust_code = generate_rust_with_substrait_probe(&source);
     insta::assert_snapshot!("issue459_rust_enum_pattern_import", rust_code);
     assert!(
-        rust_code.contains("use substrait::proto::rel::RelType;"),
+        rust_code.contains("use ::substrait::proto::rel::RelType;"),
         "expected Rust enum import used only by a match pattern to be retained:\n{rust_code}"
     );
 }

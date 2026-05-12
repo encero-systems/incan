@@ -2521,6 +2521,104 @@ def main() -> None:
     }
 
     #[test]
+    fn test_std_hash_compile_and_run_digest_file_and_error_paths() -> Result<(), Box<dyn std::error::Error>> {
+        let payload = std::env::temp_dir().join(format!("incan_std_hash_integration_{}.txt", std::process::id()));
+        std::fs::write(&payload, b"abc")?;
+
+        let source = format!(
+            r#"
+from std.hash import (
+    HashError,
+    file_digest,
+    file_hash_u64,
+    sha1,
+    sha256,
+    shake128,
+    xxh3_64,
+)
+from std.fs import Path
+
+def run() -> Result[None, HashError]:
+    sha1_digest = sha1.digest(b"abc")
+    println(len(sha1_digest))
+    println(sha1_digest == b"\xa9\x99\x3e\x36\x47\x06\x81\x6a\xba\x3e\x25\x71\x78\x50\xc2\x6c\x9c\xd0\xd8\x9d")
+
+    mut legacy = sha1.new()
+    legacy.update(b"a")
+    legacy.update(b"bc")
+    println(legacy.finalize_bytes() == sha1_digest)
+
+    digest = sha256.digest(b"abc")
+    println(len(digest))
+
+    mut h = sha256.new()
+    h.update(b"a")
+    h.update(b"bc")
+    println(h.finalize_bytes() == digest)
+
+    mut fast = xxh3_64.new()
+    fast.update(b"a")
+    fast.update(b"bc")
+    println(fast.finalize_u64() == xxh3_64.hash_u64(b"abc"))
+
+    println(len(shake128.digest(b"abc", 8)?))
+    match shake128.digest(b"abc", 0):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+
+    path = Path("{payload}")
+    println(file_digest(path, "sha1", 1)? == sha1_digest)
+    println(file_digest(path, "sha256", 1)? == digest)
+    println(file_hash_u64(path, "xxh3_64", 1)? == xxh3_64.hash_u64(b"abc"))
+
+    match file_hash_u64(path, "sha256", 1):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    return Ok(None)
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(err) => println(err.message())
+"#,
+            payload = payload.display(),
+        );
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "-c", source.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        let _ = std::fs::remove_file(&payload);
+        assert!(
+            output.status.success(),
+            "incan run std.hash smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec![
+                "20",
+                "true",
+                "true",
+                "32",
+                "true",
+                "true",
+                "8",
+                "invalid_length",
+                "true",
+                "true",
+                "true",
+                "unsupported_width"
+            ],
+            "unexpected std.hash output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_std_io_compile_and_run_bytesio_core_and_numeric_helpers() -> Result<(), Box<dyn std::error::Error>> {
         // Keep std.io's generated-project dependency in the root Cargo graph so CI fetches it before this smoke runs
         // the generated project under CARGO_NET_OFFLINE.

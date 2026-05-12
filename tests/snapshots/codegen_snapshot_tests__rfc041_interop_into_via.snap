@@ -7,8 +7,8 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-use std::env::var;
-use std::string::String as RustString;
+use ::std::env::var;
+use ::std::string::String as RustString;
 type Name = RustString;
 fn main() {
     std::panic::set_hook(

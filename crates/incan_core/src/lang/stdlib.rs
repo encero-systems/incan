@@ -311,6 +311,13 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "hash",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "tempfile",
         feature: None,
         extra_crate_deps: &[],
@@ -496,6 +503,7 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil", "offset"])));
         assert!(is_known_stdlib_module(&segs(&["std", "graph"])));
         assert!(is_known_stdlib_module(&segs(&["std", "io"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "hash"])));
         assert!(is_known_stdlib_module(&segs(&["std", "tempfile"])));
         assert!(is_known_stdlib_module(&segs(&["std", "collections"])));
         assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
@@ -567,6 +575,10 @@ mod tests {
             Some("stdlib/io.incn".to_string())
         );
         assert_eq!(
+            stdlib_stub_path(&segs(&["std", "hash"])),
+            Some("stdlib/hash.incn".to_string())
+        );
+        assert_eq!(
             stdlib_stub_path(&segs(&["std", "tempfile"])),
             Some("stdlib/tempfile.incn".to_string())
         );
@@ -595,6 +607,7 @@ mod tests {
         assert!(hint.contains(&"std.fs".to_string()));
         assert!(hint.contains(&"std.graph".to_string()));
         assert!(hint.contains(&"std.io".to_string()));
+        assert!(hint.contains(&"std.hash".to_string()));
         assert!(hint.contains(&"std.tempfile".to_string()));
         assert!(hint.contains(&"std.rust".to_string()));
         assert!(hint.contains(&"std.web.app".to_string()));
@@ -664,6 +677,7 @@ mod tests {
         let traits_ns = find_namespace("traits");
         let math_ns = find_namespace("math");
         let graph_ns = find_namespace("graph");
+        let hash_ns = find_namespace("hash");
         let datetime_ns = find_namespace("datetime");
         let collections_ns = find_namespace("collections");
 
@@ -692,6 +706,10 @@ mod tests {
                 .map(|dep| dep.crate_name),
             Some("byteorder")
         );
+        assert_eq!(hash_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(hash_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
+        assert_eq!(hash_ns.map(|ns| ns.submodules.is_empty()), Some(true));
+        assert_eq!(hash_ns.map(|ns| ns.typechecker_only), Some(false));
         assert_eq!(datetime_ns.map(|ns| ns.feature), Some(None));
         assert_eq!(datetime_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
         assert_eq!(datetime_ns.map(|ns| ns.submodules.contains(&"civil.naive")), Some(true));
