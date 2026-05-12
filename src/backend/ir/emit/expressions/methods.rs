@@ -331,8 +331,17 @@ impl<'a> IrEmitter<'a> {
         args: &[IrCallArg],
         callable_signature: Option<&FunctionSignature>,
         base_use_site: ValueUseSite<'_>,
+        result_target_ty: Option<&IrType>,
     ) -> Result<Vec<TokenStream>, EmitError> {
-        let receiver_signature = self.method_signature_for_receiver(&receiver.ty, method);
+        let specialized_signature =
+            result_target_ty.and_then(|ty| self.specialized_method_signature_for_receiver(ty, method));
+        let specialized_call_signature = callable_signature.and_then(|signature| {
+            result_target_ty.and_then(|ty| Self::specialize_signature_by_receiver_args(signature, ty))
+        });
+        let callable_signature = specialized_call_signature.as_ref().or(callable_signature);
+        let receiver_signature = self
+            .method_signature_for_receiver(&receiver.ty, method)
+            .or(specialized_signature.as_ref());
         let callable_signature = match (callable_signature, receiver_signature) {
             (Some(call_sig), Some(method_sig))
                 if call_sig.params.iter().all(|param| param.default.is_none())
@@ -697,10 +706,60 @@ impl<'a> IrEmitter<'a> {
         callable_signature: Option<&FunctionSignature>,
         arg_policy: MethodCallArgPolicy,
     ) -> Result<TokenStream, EmitError> {
+        self.emit_method_call_expr_with_result_use(
+            receiver,
+            method,
+            dispatch,
+            type_args,
+            args,
+            callable_signature,
+            arg_policy,
+            None,
+        )
+    }
+
+    /// Emit a method call while preserving the surrounding value-use target for argument shaping.
+    #[allow(clippy::too_many_arguments)]
+    pub(in super::super) fn emit_method_call_expr_for_use(
+        &self,
+        receiver: &TypedExpr,
+        method: &str,
+        dispatch: Option<&IrMethodDispatch>,
+        type_args: &[IrType],
+        args: &[IrCallArg],
+        callable_signature: Option<&FunctionSignature>,
+        arg_policy: MethodCallArgPolicy,
+        result_use_site: ValueUseSite<'_>,
+    ) -> Result<TokenStream, EmitError> {
+        self.emit_method_call_expr_with_result_use(
+            receiver,
+            method,
+            dispatch,
+            type_args,
+            args,
+            callable_signature,
+            arg_policy,
+            Some(result_use_site),
+        )
+    }
+
+    /// Shared method-call emitter used by plain and target-aware method emission.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_method_call_expr_with_result_use(
+        &self,
+        receiver: &TypedExpr,
+        method: &str,
+        dispatch: Option<&IrMethodDispatch>,
+        type_args: &[IrType],
+        args: &[IrCallArg],
+        callable_signature: Option<&FunctionSignature>,
+        arg_policy: MethodCallArgPolicy,
+        result_use_site: Option<ValueUseSite<'_>>,
+    ) -> Result<TokenStream, EmitError> {
         if Self::expr_is_storage_rooted(receiver) {
             let (arg_bindings, rewritten_args) = self.materialize_storage_rooted_args(args)?;
             let rewritten_receiver = Self::rewrite_storage_root_expr(receiver, "__incan_static_value");
-            let inner = self.emit_method_call_expr(
+            let inner = self.emit_method_call_expr_with_result_use(
                 &rewritten_receiver,
                 method,
                 dispatch,
@@ -708,6 +767,7 @@ impl<'a> IrEmitter<'a> {
                 &rewritten_args,
                 callable_signature,
                 arg_policy,
+                result_use_site,
             )?;
             let wrapped = if matches!(arg_policy, MethodCallArgPolicy::PreserveShape) {
                 self.emit_storage_with_ref(receiver, inner)
@@ -736,6 +796,7 @@ impl<'a> IrEmitter<'a> {
             quote! { ::<#(#emitted),*> }
         };
         let arg_exprs: Vec<TypedExpr> = args.iter().map(|a| a.expr.clone()).collect();
+        let result_target_ty = result_use_site.and_then(Self::use_site_target_ty);
 
         // Check if this is an enum variant construction.
         //
@@ -808,7 +869,8 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     ValueUseSite::ExternalCallArg { target_ty: None }
                 };
-                let arg_tokens = self.emit_method_call_args(method, receiver, args, callable_signature, use_site)?;
+                let arg_tokens =
+                    self.emit_method_call_args(method, receiver, args, callable_signature, use_site, result_target_ty)?;
                 return Ok(quote! { #type_path::#m #method_turbofish (#(#arg_tokens),*) });
             }
         }
@@ -829,8 +891,14 @@ impl<'a> IrEmitter<'a> {
                 quote! { #trait_tokens :: < #(#trait_type_args),* > }
             };
             let m = Self::rust_ident(method);
-            let arg_tokens =
-                self.emit_method_call_args(method, receiver, args, callable_signature, ValueUseSite::MethodArg)?;
+            let arg_tokens = self.emit_method_call_args(
+                method,
+                receiver,
+                args,
+                callable_signature,
+                ValueUseSite::MethodArg,
+                result_target_ty,
+            )?;
             return Ok(quote! { #trait_tokens::#m(&#r, #(#arg_tokens),*) });
         }
 
@@ -879,7 +947,8 @@ impl<'a> IrEmitter<'a> {
             None
         };
         let callable_signature = callable_signature.or(logging_signature.as_ref());
-        let arg_tokens = self.emit_method_call_args(method, receiver, args, callable_signature, use_site)?;
+        let arg_tokens =
+            self.emit_method_call_args(method, receiver, args, callable_signature, use_site, result_target_ty)?;
         Ok(quote! { #r.#m #method_turbofish (#(#arg_tokens),*) })
     }
 

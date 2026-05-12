@@ -346,6 +346,12 @@ impl<'a> IrEmitter<'a> {
             {
                 return self.emit_expr_for_use(inner, site);
             }
+            IrExprKind::InteropCoerce { expr: inner, .. }
+                if Self::use_site_target_ty(site).is_some()
+                    && matches!(inner.kind, IrExprKind::Call { .. } | IrExprKind::MethodCall { .. }) =>
+            {
+                return self.emit_expr_for_use(inner, site);
+            }
             IrExprKind::List(items) => {
                 let site_item_ty = match Self::use_site_target_ty(site) {
                     Some(IrType::List(elem)) => Some(elem.as_ref()),
@@ -417,6 +423,42 @@ impl<'a> IrEmitter<'a> {
                     })
                     .collect::<Result<_, _>>()?;
                 return Ok(quote! { (#(#item_tokens),*) });
+            }
+            IrExprKind::MethodCall {
+                receiver,
+                method,
+                dispatch,
+                type_args,
+                args,
+                callable_signature,
+                arg_policy,
+            } => {
+                return self.emit_method_call_expr_for_use(
+                    receiver,
+                    method,
+                    dispatch.as_ref(),
+                    type_args,
+                    args,
+                    callable_signature.as_ref(),
+                    *arg_policy,
+                    site,
+                );
+            }
+            IrExprKind::Call {
+                func,
+                type_args,
+                args,
+                callable_signature,
+                canonical_path,
+            } => {
+                return self.emit_call_expr_for_use(
+                    func,
+                    type_args,
+                    args,
+                    callable_signature.as_ref(),
+                    canonical_path.as_deref(),
+                    site,
+                );
             }
             _ => {}
         }

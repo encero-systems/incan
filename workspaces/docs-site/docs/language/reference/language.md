@@ -357,10 +357,10 @@ and `@requires` keep their existing special behavior.
 | Hash | `Hash` |  | Trait for hashing support. | RFC 000 | 0.1 | Stable |
 | Clone | `Clone` |  | Trait for cloning values. | RFC 000 | 0.1 | Stable |
 | Default | `Default` |  | Trait for default value construction. | RFC 000 | 0.1 | Stable |
-| From | `From` |  | Trait for conversions. | RFC 000 | 0.1 | Stable |
-| Into | `Into` |  | Trait for conversions. | RFC 000 | 0.1 | Stable |
-| TryFrom | `TryFrom` |  | Trait for fallible conversions. | RFC 000 | 0.1 | Stable |
-| TryInto | `TryInto` |  | Trait for fallible conversions. | RFC 000 | 0.1 | Stable |
+| From | `From` | `ConvertFrom` | Trait for conversions. | RFC 000 | 0.1 | Stable |
+| Into | `Into` | `ConvertInto` | Trait for conversions. | RFC 000 | 0.1 | Stable |
+| TryFrom | `TryFrom` | `ConvertTryFrom` | Trait for fallible conversions. | RFC 000 | 0.1 | Stable |
+| TryInto | `TryInto` | `ConvertTryInto` | Trait for fallible conversions. | RFC 000 | 0.1 | Stable |
 | Iterator | `Iterator` |  | Trait for iterator behavior. | RFC 000 | 0.1 | Stable |
 | IntoIterator | `IntoIterator` |  | Trait for conversion into iterators. | RFC 000 | 0.1 | Stable |
 | Error | `Error` |  | Trait for error-like values. | RFC 000 | 0.1 | Stable |

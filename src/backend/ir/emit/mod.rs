@@ -117,6 +117,8 @@ pub struct IrEmitter<'a> {
     rusttype_alias_names: HashSet<String>,
     /// Method signature lookup for Incan-owned nominal receivers, including imported modules.
     method_signatures: HashMap<(String, String), FunctionSignature>,
+    /// Impl-level generic parameter order for method signatures.
+    method_signature_type_params: HashMap<(String, String), Vec<String>>,
     /// Whether we're currently emitting a return expression (allows moves instead of clones)
     in_return_context: RefCell<bool>,
     /// Map of const string bindings to their literal values (for const folding of string adds)
@@ -214,6 +216,7 @@ impl<'a> IrEmitter<'a> {
             struct_field_defaults: std::collections::HashMap::new(),
             rusttype_alias_names: HashSet::new(),
             method_signatures: HashMap::new(),
+            method_signature_type_params: HashMap::new(),
             in_return_context: RefCell::new(false),
             const_string_literals: std::collections::HashMap::new(),
             type_module_paths: HashMap::new(),
@@ -528,13 +531,16 @@ impl<'a> IrEmitter<'a> {
                 IrDeclKind::Impl(i) => {
                     for method in &i.methods {
                         let params = method.params.iter().filter(|param| !param.is_self).cloned().collect();
+                        let key = (i.target_type.clone(), method.name.clone());
                         self.method_signatures.insert(
-                            (i.target_type.clone(), method.name.clone()),
+                            key.clone(),
                             FunctionSignature {
                                 params,
                                 return_type: method.return_type.clone(),
                             },
                         );
+                        self.method_signature_type_params
+                            .insert(key, i.type_params.iter().map(|param| param.name.clone()).collect());
                     }
                 }
                 _ => {}
@@ -561,6 +567,159 @@ impl<'a> IrEmitter<'a> {
             IrType::Ref(inner) | IrType::RefMut(inner) => self.method_signature_for_receiver(inner, method_name),
             _ => None,
         }
+    }
+
+    /// Return a method signature specialized through a concrete generic receiver target.
+    ///
+    /// Associated constructors such as `OrderedDict.from_items(...)` can be checked from the assignment target
+    /// (`OrderedDict[String, Int]`) even when the callee expression itself still carries generic impl parameters
+    /// (`K`, `V`). Specializing the raw impl signature lets aggregate literal emission materialize owned element
+    /// shapes before Rust typechecking sees the generated call.
+    pub(super) fn specialized_method_signature_for_receiver(
+        &self,
+        receiver_ty: &IrType,
+        method_name: &str,
+    ) -> Option<FunctionSignature> {
+        let IrType::NamedGeneric(type_name, args) = receiver_ty else {
+            return None;
+        };
+        let (signature_key, signature) = self
+            .method_signatures
+            .get_key_value(&(type_name.clone(), method_name.to_string()))
+            .or_else(|| {
+                type_name.rsplit("::").next().and_then(|short_name| {
+                    self.method_signatures
+                        .get_key_value(&(short_name.to_string(), method_name.to_string()))
+                })
+            })?;
+        let type_params = self.method_signature_type_params.get(signature_key)?;
+        if type_params.len() != args.len() {
+            return None;
+        }
+        let subst: HashMap<&str, &IrType> = type_params.iter().map(String::as_str).zip(args.iter()).collect();
+        Some(FunctionSignature {
+            params: signature
+                .params
+                .iter()
+                .map(|param| {
+                    let mut param = param.clone();
+                    param.ty = Self::substitute_signature_type(&param.ty, &subst);
+                    param
+                })
+                .collect(),
+            return_type: Self::substitute_signature_type(&signature.return_type, &subst),
+        })
+    }
+
+    /// Substitute generic placeholders inside a method signature type.
+    fn substitute_signature_type(ty: &IrType, subst: &HashMap<&str, &IrType>) -> IrType {
+        match ty {
+            IrType::Generic(name) => subst.get(name.as_str()).copied().cloned().unwrap_or_else(|| ty.clone()),
+            IrType::Struct(name) if Self::is_signature_placeholder_name(name) => {
+                subst.get(name.as_str()).copied().cloned().unwrap_or_else(|| ty.clone())
+            }
+            IrType::List(inner) => IrType::List(Box::new(Self::substitute_signature_type(inner, subst))),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(Self::substitute_signature_type(key, subst)),
+                Box::new(Self::substitute_signature_type(value, subst)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(Self::substitute_signature_type(inner, subst))),
+            IrType::Tuple(items) => IrType::Tuple(
+                items
+                    .iter()
+                    .map(|item| Self::substitute_signature_type(item, subst))
+                    .collect(),
+            ),
+            IrType::Option(inner) => IrType::Option(Box::new(Self::substitute_signature_type(inner, subst))),
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(Self::substitute_signature_type(ok, subst)),
+                Box::new(Self::substitute_signature_type(err, subst)),
+            ),
+            IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
+                name.clone(),
+                args.iter()
+                    .map(|arg| Self::substitute_signature_type(arg, subst))
+                    .collect(),
+            ),
+            IrType::Function { params, ret } => IrType::Function {
+                params: params
+                    .iter()
+                    .map(|param| Self::substitute_signature_type(param, subst))
+                    .collect(),
+                ret: Box::new(Self::substitute_signature_type(ret, subst)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(Self::substitute_signature_type(inner, subst))),
+            IrType::RefMut(inner) => IrType::RefMut(Box::new(Self::substitute_signature_type(inner, subst))),
+            _ => ty.clone(),
+        }
+    }
+
+    /// Best-effort specialization for call-site signatures that still expose receiver generics.
+    pub(super) fn specialize_signature_by_receiver_args(
+        signature: &FunctionSignature,
+        receiver_ty: &IrType,
+    ) -> Option<FunctionSignature> {
+        let IrType::NamedGeneric(_, args) = receiver_ty else {
+            return None;
+        };
+        let mut generic_names = Vec::new();
+        for param in &signature.params {
+            Self::collect_signature_generics(&param.ty, &mut generic_names);
+        }
+        if generic_names.is_empty() || generic_names.len() > args.len() {
+            return None;
+        }
+        let subst: HashMap<&str, &IrType> = generic_names.iter().map(String::as_str).zip(args.iter()).collect();
+        Some(FunctionSignature {
+            params: signature
+                .params
+                .iter()
+                .map(|param| {
+                    let mut param = param.clone();
+                    param.ty = Self::substitute_signature_type(&param.ty, &subst);
+                    param
+                })
+                .collect(),
+            return_type: Self::substitute_signature_type(&signature.return_type, &subst),
+        })
+    }
+
+    /// Collect generic placeholder names from a signature type in first-use order.
+    fn collect_signature_generics(ty: &IrType, out: &mut Vec<String>) {
+        match ty {
+            IrType::Generic(name) if !out.contains(name) => out.push(name.clone()),
+            IrType::Struct(name) if Self::is_signature_placeholder_name(name) && !out.contains(name) => {
+                out.push(name.clone());
+            }
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner) => {
+                Self::collect_signature_generics(inner, out);
+            }
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                Self::collect_signature_generics(key, out);
+                Self::collect_signature_generics(value, out);
+            }
+            IrType::Tuple(items) | IrType::NamedGeneric(_, items) => {
+                for item in items {
+                    Self::collect_signature_generics(item, out);
+                }
+            }
+            IrType::Function { params, ret } => {
+                for param in params {
+                    Self::collect_signature_generics(param, out);
+                }
+                Self::collect_signature_generics(ret, out);
+            }
+            _ => {}
+        }
+    }
+
+    /// Return whether a struct-shaped name is really a lowered generic placeholder.
+    fn is_signature_placeholder_name(name: &str) -> bool {
+        !name.is_empty() && name.len() <= 2 && name.chars().all(|ch| ch.is_ascii_uppercase())
     }
 
     /// True if `ty` is a user-defined Incan enum in IR, including imported enums.

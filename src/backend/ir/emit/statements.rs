@@ -887,6 +887,23 @@ impl<'a> IrEmitter<'a> {
                 return Ok(seed);
             }
         }
+        let call_like_value = match &value.kind {
+            IrExprKind::Call { .. } | IrExprKind::MethodCall { .. } => true,
+            IrExprKind::InteropCoerce { expr, .. } => {
+                matches!(expr.kind, IrExprKind::Call { .. } | IrExprKind::MethodCall { .. })
+            }
+            _ => false,
+        };
+        if let Some(target_ty) = expected_ty
+            && call_like_value
+        {
+            return self.emit_expr_for_use(
+                value,
+                ValueUseSite::Assignment {
+                    target_ty: Some(target_ty),
+                },
+            );
+        }
         self.emit_expr(value)
     }
 

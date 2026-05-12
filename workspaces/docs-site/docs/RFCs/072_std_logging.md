@@ -1,6 +1,6 @@
 # RFC 072: `std.logging` — logger acquisition, configuration, and structured events
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-04-23
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -17,7 +17,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/392
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -682,11 +682,14 @@ Span semantics need more than a helper method. They raise questions about scoped
 ### Configuration policy
 
 - [x] Implement `basic_config(...)` threshold, format, style, color, and target validation in source.
-- [ ] Apply color policy in human rendering.
-- [ ] Load project defaults from `[logging]` in `incan.toml`.
-- [ ] Add runtime overrides through CLI flags.
-- [ ] Add runtime overrides through `INCAN_LOG_*` environment variables.
-- [ ] Test and document the host/source precedence order.
+
+Deferred until Incan has a source-owned host configuration boundary:
+
+- Apply terminal color policy in human rendering.
+- Load project defaults from `[logging]` in `incan.toml`.
+- Add runtime overrides through CLI flags.
+- Add runtime overrides through `INCAN_LOG_*` environment variables.
+- Test and document the host/source precedence order.
 
 ### Tests
 
@@ -698,7 +701,8 @@ Span semantics need more than a helper method. They raise questions about scoped
 - [x] Test human renderer styles.
 - [x] Test OTel-aligned JSON renderer output.
 - [x] Test source-level `basic_config(...)`.
-- [ ] Test configuration precedence.
+
+Configuration precedence tests are deferred with the project/CLI/environment configuration surface.
 
 ### Docs / release notes
 
