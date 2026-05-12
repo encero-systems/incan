@@ -1,0 +1,58 @@
+from rust::std::io import Cursor, Read
+from rust::flate2 @ "1" import Compression as FlateCompression
+from rust::flate2::read @ "1" import DeflateDecoder, DeflateEncoder
+from std.compression.common import Codec, CompressionError, _codec_error, _level_or_default, _read_all, _validate_chunk_size, _write_all
+from std.io import _BytesIO
+
+
+pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
+    """
+    Compress bytes as a raw deflate stream.
+    """
+    mut reader = DeflateEncoder.new(Cursor.new(data), _flate_level(level)?)
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Deflate, "compress", err.to_string()))
+
+
+pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
+    """
+    Decompress a raw deflate stream.
+    """
+    mut reader = DeflateDecoder.new(Cursor.new(data))
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Deflate, "decompress", err.to_string()))
+
+
+pub def compress_stream(
+    source: _BytesIO,
+    target: _BytesIO,
+    level: Option[int] = None,
+    chunk_size: int = 65536,
+) -> Result[None, CompressionError]:
+    _validate_chunk_size(Some(Codec.Deflate), chunk_size, "compress_stream")?
+    data = _read_all(source, chunk_size, "compress_stream")?
+    _write_all(target, compress(data, level)?, "compress_stream")?
+    return Ok(None)
+
+
+pub def decompress_stream(
+    source: _BytesIO,
+    target: _BytesIO,
+    chunk_size: int = 65536,
+) -> Result[None, CompressionError]:
+    _validate_chunk_size(Some(Codec.Deflate), chunk_size, "decompress_stream")?
+    data = _read_all(source, chunk_size, "decompress_stream")?
+    _write_all(target, decompress(data)?, "decompress_stream")?
+    return Ok(None)
+
+
+def _flate_level(level: Option[int]) -> Result[FlateCompression, CompressionError]:
+    selected = _level_or_default(Codec.Deflate, level, 6, 0, 9)?
+    maybe: Option[u32] = selected.try_resize()
+    match maybe:
+        Some(value) => return Ok(FlateCompression.new(value))
+        None => return Err(_codec_error(Codec.Deflate, "compress", "level does not fit u32"))

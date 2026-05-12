@@ -1,0 +1,51 @@
+from rust::std::io import Cursor, Read
+from rust::snap::read @ "1" import FrameDecoder, FrameEncoder
+from std.compression.common import Codec, CompressionError, _codec_error, _read_all, _reject_level, _validate_chunk_size, _write_all
+from std.io import _BytesIO
+
+
+pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
+    """
+    Compress bytes as a framed Snappy stream.
+    """
+    _reject_level(Codec.Snappy, level)?
+    mut reader = FrameEncoder.new(Cursor.new(data))
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Snappy, "compress", err.to_string()))
+
+
+pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
+    """
+    Decompress a framed Snappy stream.
+    """
+    mut reader = FrameDecoder.new(Cursor.new(data))
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Snappy, "decompress", err.to_string()))
+
+
+pub def compress_stream(
+    source: _BytesIO,
+    target: _BytesIO,
+    level: Option[int] = None,
+    chunk_size: int = 65536,
+) -> Result[None, CompressionError]:
+    _reject_level(Codec.Snappy, level)?
+    _validate_chunk_size(Some(Codec.Snappy), chunk_size, "compress_stream")?
+    data = _read_all(source, chunk_size, "compress_stream")?
+    _write_all(target, compress(data)?, "compress_stream")?
+    return Ok(None)
+
+
+pub def decompress_stream(
+    source: _BytesIO,
+    target: _BytesIO,
+    chunk_size: int = 65536,
+) -> Result[None, CompressionError]:
+    _validate_chunk_size(Some(Codec.Snappy), chunk_size, "decompress_stream")?
+    data = _read_all(source, chunk_size, "decompress_stream")?
+    _write_all(target, decompress(data)?, "decompress_stream")?
+    return Ok(None)

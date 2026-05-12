@@ -1,0 +1,31 @@
+from rust::snap::raw @ "1" import Decoder as RawDecoder, Encoder as RawEncoder
+from std.compression.common import Codec, CompressionError, _codec_error, _reject_level
+
+
+pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
+    """
+    Compress bytes using raw Snappy block format.
+    """
+    _reject_level(Codec.Snappy, level)?
+    return _compress_borrowed(data)
+
+
+def _compress_borrowed(data: &bytes) -> Result[bytes, CompressionError]:
+    mut encoder = RawEncoder.new()
+    match encoder.compress_vec(data):
+        Ok(out) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Snappy, "raw.compress", err))
+
+
+pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
+    """
+    Decompress bytes using raw Snappy block format.
+    """
+    return _decompress_borrowed(data)
+
+
+def _decompress_borrowed(data: &bytes) -> Result[bytes, CompressionError]:
+    mut decoder = RawDecoder.new()
+    match decoder.decompress_vec(data):
+        Ok(out) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Snappy, "raw.decompress", err))
