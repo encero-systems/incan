@@ -5,7 +5,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::frontend::ast::{Declaration, ImportKind, Program};
+use crate::frontend::ast::{Declaration, Expr, ImportKind, Program};
+use crate::frontend::ast_walk;
 use crate::frontend::decorator_resolution;
 use incan_core::lang::keywords::KeywordId;
 use incan_core::lang::stdlib;
@@ -82,6 +83,18 @@ impl SurfaceContext {
     }
 }
 
+/// Return whether the program may use the ambient `std.logging` logger binding.
+///
+/// This deliberately detects the binding candidate, not a fixed list of `Logger` methods. The typechecker still lets
+/// local or imported `log` bindings shadow the ambient value; this scan only ensures the stdlib module is available
+/// when a file contains an unqualified `log` expression.
+pub(crate) fn uses_ambient_log_surface(program: &Program) -> bool {
+    ast_walk::any_expr_in_program(program, |expr| match expr {
+        Expr::Ident(name) => name == "log",
+        _ => false,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::SurfaceContext;
@@ -117,5 +130,16 @@ mod tests {
             feature,
             Some(SurfaceFeatureKey::Decorator(DecoratorFeature::StdlibDecoratorFunction))
         );
+    }
+
+    #[test]
+    fn detects_ambient_log_binding_candidates() -> Result<(), String> {
+        let source = "def run() -> None:\n    log.info(\"started\")\n";
+        let tokens = lexer::lex(source).map_err(|e| format!("{e:?}"))?;
+        let program = parser::parse(&tokens).map_err(|e| format!("{e:?}"))?;
+        if !super::uses_ambient_log_surface(&program) {
+            return Err("expected ambient log candidate to activate std.logging".to_string());
+        }
+        Ok(())
     }
 }

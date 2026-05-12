@@ -146,6 +146,8 @@ pub struct AstLowering {
     pub(super) rusttype_interop_edges: HashMap<String, Vec<ast::InteropEdgeDecl>>,
     /// Method rebinding aliases keyed by type alias/newtype name (`alias -> target_method`).
     pub(super) type_method_rebindings: HashMap<String, HashMap<String, String>>,
+    /// Best-effort source module name for compiler-provided call-site metadata.
+    pub(super) current_source_module_name: Option<String>,
 }
 
 impl AstLowering {
@@ -229,7 +231,20 @@ impl AstLowering {
             rusttype_underlying: HashMap::new(),
             rusttype_interop_edges: HashMap::new(),
             type_method_rebindings: HashMap::new(),
+            current_source_module_name: None,
         }
+    }
+
+    /// Override the source module name used for compiler-provided call-site metadata.
+    pub fn set_current_source_module_name(&mut self, name: Option<String>) {
+        self.current_source_module_name = name;
+    }
+
+    /// Return the logger name supplied to default `std.logging.get_logger()` calls.
+    pub(super) fn current_default_logger_name(&self) -> String {
+        self.current_source_module_name
+            .clone()
+            .unwrap_or_else(|| "root".to_string())
     }
 
     /// Extract generated validation constraints from a newtype underlying annotation.
@@ -736,6 +751,7 @@ impl AstLowering {
         }
     }
 
+    /// Return whether `name` resolves to a source-level static binding in an active scope.
     pub(super) fn is_static_binding(&self, name: &str) -> bool {
         self.static_binding_scopes
             .iter()
@@ -890,7 +906,6 @@ impl AstLowering {
 
         // RFC 023: propagate rust.module() path from AST to IR.
         ir_program.rust_module_path = program.rust_module_path.as_ref().map(|sp| sp.node.clone());
-
         // Seed alias maps for imported model aliases before lowering expressions.
         self.register_imported_struct_aliases(program);
 
@@ -1623,6 +1638,9 @@ impl AstLowering {
         let existing = self.trait_decls.clone();
         for (alias, path) in self.import_aliases.clone() {
             let module_key = path.join(".");
+            if let Some(decl) = existing.get(&module_key) {
+                self.trait_decls.entry(alias.clone()).or_insert_with(|| decl.clone());
+            }
             let prefix = format!("{module_key}.");
             for (qualified, decl) in &existing {
                 let Some(trait_name) = qualified.strip_prefix(&prefix) else {

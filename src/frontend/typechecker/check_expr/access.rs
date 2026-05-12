@@ -1148,7 +1148,7 @@ impl TypeChecker {
                 info.ty.clone()
             }
             TypeInfo::Enum(enum_info) => {
-                if enum_info.variants.contains(&field.to_string()) {
+                if enum_info.variants.contains(&field.to_string()) || enum_info.variant_aliases.contains_key(field) {
                     return Some(if let Some(args) = type_args {
                         ResolvedType::Generic(type_name.to_string(), args.to_vec())
                     } else {
@@ -1752,6 +1752,75 @@ impl TypeChecker {
         self.errors
             .push(errors::ambiguous_trait_method_call(method, call_site_span));
         Some(ResolvedType::Unknown)
+    }
+
+    /// Resolve a source-defined method when its owner has exactly one direct implementation for the requested name.
+    ///
+    /// Ordinary method checking computes argument types before overload selection. That is useful for overloaded
+    /// methods, but it is actively harmful for unambiguous source methods because collection literals can be checked
+    /// before their parameter context is known. This path lets the declared method signature drive argument checking
+    /// directly, the same way function calls do.
+    fn resolve_unambiguous_source_method_without_arg_prepass(
+        &mut self,
+        base_ty: &ResolvedType,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let type_name = match base_ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
+            _ => return None,
+        };
+        let type_info = self.lookup_semantic_type_info(type_name).cloned().or_else(|| {
+            if type_name == "Logger" {
+                self.stdlib_cache
+                    .lookup_type(&["std".to_string(), "logging".to_string()], "Logger")
+            } else {
+                None
+            }
+        })?;
+        match type_info {
+            TypeInfo::Model(model) => {
+                let method_info = match model.method_overloads.get(method) {
+                    Some(overloads) if overloads.len() == 1 => overloads[0].clone(),
+                    Some(_) => return None,
+                    None => model.methods.get(method)?.clone(),
+                };
+                Some(self.check_generic_method_call(method, method_info, type_args, args, &[], span, base_ty))
+            }
+            TypeInfo::Class(class) => {
+                let method_info = match class.method_overloads.get(method) {
+                    Some(overloads) if overloads.len() == 1 => overloads[0].clone(),
+                    Some(_) => return None,
+                    None => class.methods.get(method)?.clone(),
+                };
+                Some(self.check_generic_method_call(method, method_info, type_args, args, &[], span, base_ty))
+            }
+            TypeInfo::Enum(en) => {
+                let method_info = match en.method_overloads.get(method) {
+                    Some(overloads) if overloads.len() == 1 => overloads[0].clone(),
+                    Some(_) => return None,
+                    None => en.methods.get(method)?.clone(),
+                };
+                Some(self.check_generic_method_call(method, method_info, type_args, args, &[], span, base_ty))
+            }
+            TypeInfo::Newtype(nt) => {
+                let resolved_method = self.resolve_newtype_method_name(&nt, method);
+                let method_info = match nt.method_overloads.get(resolved_method) {
+                    Some(overloads) if overloads.len() == 1 => overloads[0].clone(),
+                    Some(_) => return None,
+                    None => nt.methods.get(resolved_method)?.clone(),
+                };
+                let ret =
+                    self.check_generic_method_call(resolved_method, method_info, type_args, args, &[], span, base_ty);
+                if nt.is_rusttype {
+                    self.maybe_record_rusttype_return_coercion(&nt, resolved_method, &ret, span);
+                }
+                Some(ret)
+            }
+            _ => None,
+        }
     }
 
     /// Return a compatibility score for one method candidate.
@@ -2484,6 +2553,12 @@ impl TypeChecker {
             return ResolvedType::Unknown;
         }
 
+        if let Some(ret) =
+            self.resolve_unambiguous_source_method_without_arg_prepass(&base_ty, method, type_args, args, span)
+        {
+            return ret;
+        }
+
         // Collect arg types for method-specific validation.
         let arg_types: Vec<ResolvedType> = args
             .iter()
@@ -2549,7 +2624,7 @@ impl TypeChecker {
         // Treat Enum.Variant(...) method-style calls as variant constructors
         if let ResolvedType::Named(enum_name) = &base_ty
             && let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name)
-            && enum_info.variants.iter().any(|v| v == method)
+            && (enum_info.variants.iter().any(|v| v == method) || enum_info.variant_aliases.contains_key(method))
         {
             // Args were checked above; no strict arity enforcement here.
             let _ = &arg_types; // keep for potential future validation

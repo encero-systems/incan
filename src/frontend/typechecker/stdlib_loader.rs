@@ -761,6 +761,11 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                         trait_adoptions: trait_adoption_infos_from_bounds(&en.traits, &tp_names),
                         variants: en.variants.iter().map(|variant| variant.node.name.clone()).collect(),
+                        variant_aliases: en
+                            .variant_aliases
+                            .iter()
+                            .map(|alias| (alias.node.name.clone(), alias.node.target.clone()))
+                            .collect(),
                         value_enum: None,
                         derives: Vec::new(),
                         method_overloads,

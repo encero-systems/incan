@@ -109,6 +109,11 @@ pub struct ExpressionArtifacts {
     /// - `Type.method(...)` where `Type` is a type name (emits `Type::method(...)` in Rust), and
     /// - imported placeholders (e.g. `from rust::... import Foo`) which are not value bindings.
     pub ident_kinds: HashMap<(usize, usize), IdentKind>,
+    /// Identifier spans that resolved to the compiler-provided ambient `std.logging` logger binding.
+    ///
+    /// The binding is typechecked like an ordinary immutable `Logger` value, but lowering must materialize it as a
+    /// module-local `std.logging.get_logger(...)` call so source metadata can become the logger name.
+    pub ambient_logger_bindings: HashSet<(usize, usize)>,
     /// RFC 017 validated-newtype coercion decisions keyed by source expression span.
     ///
     /// Lowering consumes these decisions when an expression is used at an approved implicit-coercion site, such as a
@@ -476,6 +481,18 @@ impl TypeCheckInfo {
         self.expressions.ident_kinds.get(&(span.start, span.end)).copied()
     }
 
+    /// Return whether the identifier at `span` resolved to the ambient `std.logging` logger binding.
+    pub fn is_ambient_logger_binding(&self, span: Span) -> bool {
+        self.expressions
+            .ambient_logger_bindings
+            .contains(&(span.start, span.end))
+    }
+
+    /// Record that an identifier resolved to the ambient `std.logging` logger binding.
+    pub(crate) fn record_ambient_logger_binding(&mut self, span: Span) {
+        self.expressions.ambient_logger_bindings.insert((span.start, span.end));
+    }
+
     /// Return static-binding metadata for `name`, if the checker recorded one.
     pub fn static_binding(&self, name: &str) -> Option<&StaticBindingInfo> {
         self.declarations.static_bindings.get(name)
@@ -620,6 +637,9 @@ impl TypeCheckInfo {
 
 /// Return whether a callable parameter type carries borrow shape that lowering cannot recover from the callee alone.
 fn callable_param_needs_boundary_snapshot(ty: &ResolvedType) -> bool {
+    if ty.is_union() {
+        return true;
+    }
     match ty {
         ResolvedType::Ref(_) | ResolvedType::RefMut(_) => true,
         ResolvedType::Function(params, ret) => {

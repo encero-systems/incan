@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use incan_core::lang::conventions;
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
+use incan_core::lang::traits::{self as core_traits, TraitId};
 
 use super::super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::super::{EmitError, IrEmitter};
@@ -193,6 +194,28 @@ impl<'a> IrEmitter<'a> {
                     }
                 });
             }
+            if Self::is_convert_from_trait_name(trait_name)
+                && !impl_block.methods.iter().any(|method| method.name == "from")
+                && let Some(source_ty) = impl_block.trait_type_args.first()
+            {
+                let source_ty = self.emit_type(source_ty);
+                trait_methods.push(quote! {
+                    fn from(value: #source_ty) -> Self {
+                        #target_type::from(value)
+                    }
+                });
+            }
+            if Self::is_convert_try_from_trait_name(trait_name)
+                && !impl_block.methods.iter().any(|method| method.name == "try_from")
+                && let Some(source_ty) = impl_block.trait_type_args.first()
+            {
+                let source_ty = self.emit_type(source_ty);
+                trait_methods.push(quote! {
+                    fn try_from(value: #source_ty) -> Result<Self, String> {
+                        #target_type::try_from(value)
+                    }
+                });
+            }
             let trait_tokens = self.emit_supertrait_bound_path(trait_name, &impl_block.trait_type_args);
             quote! {
                 impl #generics #trait_tokens for #target_type #generics_bare {
@@ -241,6 +264,29 @@ impl<'a> IrEmitter<'a> {
             trait_name,
             "Deserialize" | "JsonDeserialize" | "json.Deserialize" | "std.serde.json.Deserialize"
         )
+    }
+
+    /// Return the final path segment of a trait name.
+    fn trait_short_name(trait_name: &str) -> &str {
+        trait_name
+            .rsplit(['.', ':'])
+            .find(|segment| !segment.is_empty())
+            .unwrap_or(trait_name)
+    }
+
+    /// Resolve a trait impl target through the builtin trait registry.
+    fn builtin_trait_id(trait_name: &str) -> Option<TraitId> {
+        core_traits::from_str(trait_name).or_else(|| core_traits::from_str(Self::trait_short_name(trait_name)))
+    }
+
+    /// Return whether a trait impl target names the stdlib conversion `From` trait.
+    fn is_convert_from_trait_name(trait_name: &str) -> bool {
+        Self::builtin_trait_id(trait_name) == Some(TraitId::From)
+    }
+
+    /// Return whether a trait impl target names the stdlib conversion `TryFrom` trait.
+    fn is_convert_try_from_trait_name(trait_name: &str) -> bool {
+        Self::builtin_trait_id(trait_name) == Some(TraitId::TryFrom)
     }
 
     /// Emit compiler-generated field overlay methods for a struct, independent of source impl blocks.

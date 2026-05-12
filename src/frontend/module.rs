@@ -277,6 +277,37 @@ pub(crate) fn logical_module_segments_from_file(base: &Path, module_file: &Path)
     Some(canonicalize_source_module_segments(&segments))
 }
 
+/// Derive a logical module name from parser-supplied source metadata.
+///
+/// This is a fallback for single-file and test flows that have a source path but have not already built the full
+/// source-module graph. Multi-file orchestration should prefer explicit `path_segments` from [`SourceModuleRef`].
+pub(crate) fn logical_module_name_from_source_path(source_path: &str) -> Option<String> {
+    let path = Path::new(source_path);
+    let mut segments: Vec<String> = Vec::new();
+    let mut seen_src = false;
+    for component in path.components() {
+        let value = component.as_os_str().to_string_lossy();
+        if seen_src {
+            segments.push(value.to_string());
+        } else if value == "src" {
+            seen_src = true;
+        }
+    }
+    if !seen_src {
+        return None;
+    }
+    let file = segments.pop()?;
+    let stem = Path::new(&file).file_stem()?.to_string_lossy().to_string();
+    if stem != "mod" && stem != "__init__" {
+        segments.push(stem);
+    }
+    if segments.is_empty() {
+        Some("main".to_string())
+    } else {
+        Some(segments.join("."))
+    }
+}
+
 /// Resolves an Incan module file under `base` from import path segments (e.g. `foo.bar` → `foo/bar`).
 ///
 /// Tries, in order: `segments.incn`, `segments.incan`, `segments/mod.incn`, `segments/mod.incan`,
@@ -389,6 +420,12 @@ pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
                         exports.push(ExportedSymbol::Variant {
                             enum_name: e.name.clone(),
                             variant_name: variant.node.name.clone(),
+                        });
+                    }
+                    for alias in &e.variant_aliases {
+                        exports.push(ExportedSymbol::Variant {
+                            enum_name: e.name.clone(),
+                            variant_name: alias.node.name.clone(),
                         });
                     }
                 }
@@ -843,6 +880,7 @@ source-root = "library"
         let program = Program {
             declarations: vec![],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);
@@ -867,6 +905,7 @@ source-root = "library"
         let program = Program {
             declarations: vec![make_spanned(Declaration::Model(model))],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);
@@ -896,6 +935,7 @@ source-root = "library"
         let program = Program {
             declarations: vec![make_spanned(Declaration::Class(class))],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);
@@ -933,11 +973,13 @@ source-root = "library"
                     value: None,
                 }),
             ],
+            variant_aliases: vec![],
             methods: vec![],
         };
         let program = Program {
             declarations: vec![make_spanned(Declaration::Enum(enum_decl))],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);
@@ -984,6 +1026,7 @@ source-root = "library"
         let program = Program {
             declarations: vec![make_spanned(Declaration::Newtype(newtype))],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);
@@ -1011,6 +1054,7 @@ source-root = "library"
         let program = Program {
             declarations: vec![make_spanned(Declaration::Trait(trait_decl))],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);
@@ -1036,6 +1080,7 @@ source-root = "library"
         let program = Program {
             declarations: vec![make_spanned(Declaration::Function(func))],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);
@@ -1060,6 +1105,7 @@ source-root = "library"
         let program = Program {
             declarations: vec![make_spanned(Declaration::Import(import))],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);
@@ -1092,6 +1138,7 @@ source-root = "library"
         let program = Program {
             declarations: vec![make_spanned(Declaration::Import(import))],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);
@@ -1111,6 +1158,7 @@ source-root = "library"
         let program = Program {
             declarations: vec![make_spanned(Declaration::Docstring("Module documentation".to_string()))],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);
@@ -1128,6 +1176,7 @@ source-root = "library"
         let program = Program {
             declarations: vec![make_spanned(Declaration::Const(konst))],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);
@@ -1149,6 +1198,7 @@ source-root = "library"
         let program = Program {
             declarations: vec![make_spanned(Declaration::Static(static_decl))],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);
@@ -1203,6 +1253,7 @@ source-root = "library"
                 make_spanned(Declaration::Trait(trait_decl)),
             ],
             rust_module_path: None,
+            source_path: None,
             warnings: vec![],
         };
         let exports = exported_symbols(&program);

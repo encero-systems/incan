@@ -240,6 +240,8 @@ pub struct EnumDecl {
     pub docstring: Option<String>,
     /// Variants declared before any enum methods.
     pub variants: Vec<Spanned<VariantDecl>>,
+    /// Alias declarations for existing variants.
+    pub variant_aliases: Vec<Spanned<EnumVariantAliasDecl>>,
     /// Methods and associated functions declared after the variant list.
     pub methods: Vec<Spanned<MethodDecl>>,
 }
@@ -264,6 +266,13 @@ pub struct VariantDecl {
     pub name: Ident,
     pub fields: Vec<Spanned<Type>>,
     pub value: Option<Spanned<ValueEnumLiteral>>,
+}
+
+/// A same-enum variant alias declaration: `WARNING = alias WARN`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnumVariantAliasDecl {
+    pub name: Ident,
+    pub target: Ident,
 }
 
 // ============================================================================

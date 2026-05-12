@@ -3307,6 +3307,11 @@ impl TypeChecker {
                         traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                         trait_adoptions: Vec::new(),
                         variants: en.variants.iter().map(|v| v.node.name.clone()).collect(),
+                        variant_aliases: en
+                            .variant_aliases
+                            .iter()
+                            .map(|alias| (alias.node.name.clone(), alias.node.target.clone()))
+                            .collect(),
                         value_enum: None,
                         derives: Vec::new(),
                         methods: HashMap::new(),
@@ -3568,6 +3573,16 @@ impl TypeChecker {
             }
             (ResolvedType::Generic(name, members), expected) if name == UNION_TYPE_NAME => {
                 members.iter().all(|member| self.types_compatible(member, expected))
+            }
+            (actual, ResolvedType::Generic(name, members))
+                if name == UNION_TYPE_NAME
+                    && actual.is_option()
+                    && actual
+                        .option_inner_type()
+                        .is_some_and(|inner| matches!(inner, ResolvedType::Unknown))
+                    && members.iter().any(|member| matches!(member, ResolvedType::Unit)) =>
+            {
+                true
             }
             (actual, ResolvedType::Generic(name, members)) if name == UNION_TYPE_NAME => {
                 members.iter().any(|member| self.types_compatible(actual, member))

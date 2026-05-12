@@ -102,7 +102,7 @@ impl TypeChecker {
     }
 
     /// Type-check call arguments while threading parameter types into contextual-expression checks when available.
-    pub(in crate::frontend::typechecker::check_expr::calls) fn check_call_arg_types_for_params(
+    pub(in crate::frontend::typechecker::check_expr) fn check_call_arg_types_for_params(
         &mut self,
         args: &[CallArg],
         params: &[CallableParam],

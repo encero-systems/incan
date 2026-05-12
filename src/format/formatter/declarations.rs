@@ -583,8 +583,11 @@ impl Formatter {
         for variant in &en.variants {
             self.format_enum_variant(&variant.node);
         }
+        for alias in &en.variant_aliases {
+            self.format_enum_variant_alias(&alias.node);
+        }
 
-        if en.variants.is_empty() {
+        if en.variants.is_empty() && en.variant_aliases.is_empty() {
             if en.docstring.is_some() {
                 self.writer.newline();
             }
@@ -611,6 +614,14 @@ impl Formatter {
             self.writer.write(" = ");
             self.format_value_enum_literal(&value.node);
         }
+        self.writer.newline();
+    }
+
+    /// Format one enum variant alias declaration.
+    fn format_enum_variant_alias(&mut self, alias: &EnumVariantAliasDecl) {
+        self.writer.write(&alias.name);
+        self.writer.write(" = alias ");
+        self.writer.write(&alias.target);
         self.writer.newline();
     }
 
