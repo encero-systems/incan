@@ -44,6 +44,12 @@ def main() -> None:
     match b64decode("@@@="):
         Ok(_) => assert false, "invalid base64 unexpectedly decoded"
         Err(err) => assert err.kind == "invalid_character"
+    match b64decode("A"):
+        Ok(_) => assert false, "invalid-length base64 unexpectedly decoded"
+        Err(err) => assert err.kind == "invalid_length"
+    match b64decode("a=AA"):
+        Ok(_) => assert false, "invalid-padding base64 unexpectedly decoded"
+        Err(err) => assert err.kind == "invalid_padding"
 "#,
     )
 }
@@ -62,6 +68,9 @@ def main() -> None:
     match b32decode("MZXW6===="):
         Ok(_) => assert false, "invalid base32 unexpectedly decoded"
         Err(err) => assert err.kind == "invalid_length" or err.kind == "invalid_padding"
+    match b32decode("MZ=XW6=="):
+        Ok(_) => assert false, "misplaced-padding base32 unexpectedly decoded"
+        Err(err) => assert err.kind == "invalid_padding"
 "#,
     )
 }
@@ -103,6 +112,12 @@ def main() -> None:
     match z85decode("Hello"):
         Ok(data) => assert data == b"\x86\x4f\xd2\x6f"
         Err(err) => assert false, err.detail
+    match z85decode("Hell"):
+        Ok(_) => assert false, "invalid-length z85 unexpectedly decoded"
+        Err(err) => assert err.kind == "invalid_length"
+    match b85decode("\t"):
+        Ok(_) => assert false, "invalid-character base85 unexpectedly decoded"
+        Err(err) => assert err.kind == "invalid_character"
 "#,
     )
 }

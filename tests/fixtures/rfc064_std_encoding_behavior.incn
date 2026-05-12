@@ -30,6 +30,12 @@ def exercise() -> Result[None, EncodingError]:
         Ok(_) => println("accepted-missing-padding")
         Err(_) => println("strict-padding-error")
 
+    non_ascii_source = BytesIO(b"\xff")
+    non_ascii_target = BytesIO()
+    match base64.decode(non_ascii_source, non_ascii_target, chunk_size=1):
+        Ok(_) => println("accepted-non-ascii-stream")
+        Err(err) => assert err.kind == "non_ascii"
+
     assert base85.a85encode(b"hello") == "BOu!rDZ"
     assert base85.a85decode("BOu!rDZ")? == b"hello"
     assert base85.b85encode(b"hello") == "Xk~0{Zv"

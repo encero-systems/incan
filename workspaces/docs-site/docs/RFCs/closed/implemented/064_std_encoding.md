@@ -1,6 +1,6 @@
 # RFC 064: `std.encoding` — binary-text encoding and decoding utilities
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-04-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -12,7 +12,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/342
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3
 
 ## Summary
 
@@ -244,7 +244,7 @@ Those belong to dedicated modules (`std.compression`, `std.archive`, and future 
 - Add user-facing stdlib reference docs and examples for `std.encoding`.
 - Update release notes and development version metadata for the active `0.3` line.
 
-## Progress Checklist
+## Implementation log
 
 ### Spec / lifecycle
 
@@ -280,7 +280,7 @@ Those belong to dedicated modules (`std.compression`, `std.archive`, and future 
 - [x] Add registry/typechecker coverage for `std.encoding` imports and unknown submodules.
 - [x] Add codegen/stdlib source snapshot coverage for the new modules.
 - [x] Add end-to-end one-shot tests for representative valid values.
-- [ ] Add strict error tests for invalid alphabet, length, padding, checksum, and non-ASCII source input. Current coverage includes invalid length, invalid character, and Bech32 checksum paths.
+- [x] Add strict error tests for invalid alphabet, length, padding, checksum, and non-ASCII source input.
 - [x] Add lenient decode tests where leniency is exposed.
 - [x] Add source/sink round-trip tests for the implemented byte-oriented surfaces.
 

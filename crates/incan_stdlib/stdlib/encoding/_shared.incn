@@ -77,6 +77,13 @@ pub def _invalid_input(encoding: str, detail: str) -> EncodingError:
     return _encoding_error(encoding, "invalid_input", detail, -1)
 
 
+pub def _non_ascii(encoding: str, detail: str, position: int) -> EncodingError:
+    """
+    Return an error for encoded representation bytes outside the ASCII range.
+    """
+    return _encoding_error(encoding, "non_ascii", detail, position)
+
+
 pub def _io_boundary_error(encoding: str, detail: str, position: int) -> EncodingError:
     """
     Return an I/O boundary error while preserving the codec family name.
@@ -238,7 +245,9 @@ pub def _ascii_text(encoding: str, data: bytes) -> Result[str, EncodingError]:
     """
     mut out = ""
     for index, code in enumerate(data):
-        if code < 32 or code > 126:
+        if code > 126:
+            return Err(_non_ascii(encoding, "stream input must contain ASCII representation bytes", index))
+        if code < 32:
             return Err(_encoding_error(encoding, "invalid_character", "stream input must contain printable ASCII", index))
         out += _ASCII_PRINTABLE[code - 32:code - 31]
     return Ok(out)
