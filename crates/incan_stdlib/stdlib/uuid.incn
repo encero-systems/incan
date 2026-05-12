@@ -4,6 +4,7 @@ UUID parsing, formatting, inspection, and generation helpers.
 `UUID` stores the 128-bit value directly and exposes the common text, byte, integer, namespace, version, and variant operations expected from a UUID module. Generators cover RFC 9562 versions 1, 3, 4, 5, 6, 7, and 8.
 """
 
+# TODO(RFC 065/std.hash): switch UUIDv3/v5 hashing to std.hash once std.hash lands with MD5 and SHA-1.
 from rust::md5 @ "0.8" import compute as md5_compute
 from rust::rand import Rng, thread_rng
 from rust::sha1 @ "0.10" import Digest, Sha1
