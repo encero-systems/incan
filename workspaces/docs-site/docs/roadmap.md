@@ -43,12 +43,14 @@ kept high-level and status-oriented (RFCs will be added over time).
 - Capability-based access model for IO/process/env/network (secure-by-default for tools)
 - Interactive execution engine: `incan run -i` (expression-first) → eventual Jupyter/kernel interop → richer workspace UX
 - Packaging/distribution story for tools and projects (reproducible builds, artifact creation)
+- Rust-hosted Incan caller boundary for native Rust applications consuming Incan-authored libraries ([RFC 097](RFCs/097_rust_hosted_incan_caller.md))
 
 ## Status by Area (high-level)
 
 - Core language: see [RFC 000] / [RFC 008]
 - Tooling (build/run/fmt/test): see the CLI docs and [RFC 001]/[RFC 002]/[RFC 004]/[RFC 007] for the planned testing surface
 - Rust interop: see [RFC 005] / [RFC 013] and the [Rust Interop guide](language/how-to/rust_interop.md)
+- Rust-hosted Incan consumption: see [RFC 097](RFCs/097_rust_hosted_incan_caller.md) for the proposed caller boundary between native Rust applications and Incan-authored libraries
 - Web: see [Web Framework guide](language/tutorials/web_framework.md) (stabilization ongoing); interactive runtime stdlib contracts in [RFC 092](RFCs/092_interactive_runtime_stdlib_contracts.md)
 
 ## Upcoming (next)
