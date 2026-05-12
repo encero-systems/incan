@@ -1,0 +1,897 @@
+"""
+Hashing algorithms and file helpers.
+
+The public API, algorithm dispatch, incremental model, file reading, and `HashError` mapping live in Incan source.
+Rust hash crates provide the algorithm implementations through direct imports; the stdlib facade owns the control flow.
+"""
+
+from rust::incan_stdlib::errors import raise_value_error
+from rust::blake2 @ "0.10" import Blake2b512, Blake2s256, Digest
+from rust::blake3 @ "1" import Hasher as Blake3Hasher, hash as blake3_hash
+from rust::incan_stdlib::hash import u32_to_le_bytes, u64_to_le_bytes, u128_to_le_bytes
+from rust::md5 @ "0.10" import Md5
+from rust::sha1 @ "0.10" import Sha1
+from rust::sha2 @ "0.10" import Sha224, Sha256, Sha384, Sha512
+from rust::sha3 @ "0.10" import Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256
+from rust::sha3::digest @ "0.10" import ExtendableOutputReset, Update, XofReader
+from rust::std::vec import Vec
+from rust::xxhash_rust::xxh3 @ "0.8" with ["xxh3"] import Xxh3Default
+from rust::xxhash_rust::xxh32 @ "0.8" with ["xxh32"] import Xxh32
+from rust::xxhash_rust::xxh64 @ "0.8" with ["xxh64"] import Xxh64
+from std.fs import File, Path
+from std.traits.error import Error
+
+
+const DEFAULT_CHUNK_SIZE: int = 65536
+const ZERO_BYTE: u8 = 0
+
+
+@derive(Clone)
+pub model HashError with Error:
+    """
+    Hash operation failure.
+    """
+
+    pub kind: str
+    pub algorithm: str
+    pub detail: str
+
+    def message(self) -> str:
+        return self.detail
+
+    def source(self) -> Option[str]:
+        return None
+
+
+pub trait ByteDigestHasher:
+    def update(mut self, chunk: bytes) -> None: ...
+
+    def finalize_bytes(mut self) -> bytes: ...
+
+
+pub trait ShakeDigestHasher:
+    def update(mut self, chunk: bytes) -> None: ...
+
+    def finalize_bytes(mut self, length: int) -> Result[bytes, HashError]: ...
+
+
+pub trait Hash32DigestHasher:
+    def update(mut self, chunk: bytes) -> None: ...
+
+    def finalize_bytes(mut self) -> bytes: ...
+
+    def finalize_u32(mut self) -> u32: ...
+
+
+pub trait Hash64DigestHasher:
+    def update(mut self, chunk: bytes) -> None: ...
+
+    def finalize_bytes(mut self) -> bytes: ...
+
+    def finalize_u64(mut self) -> u64: ...
+
+
+pub trait Hash128DigestHasher:
+    def update(mut self, chunk: bytes) -> None: ...
+
+    def finalize_bytes(mut self) -> bytes: ...
+
+    def finalize_u128(mut self) -> u128: ...
+
+
+pub class _Sha224Hasher with ByteDigestHasher:
+    """
+    Incremental SHA-224 hasher.
+    """
+
+    handle: Sha224
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha256Hasher with ByteDigestHasher:
+    handle: Sha256
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha384Hasher with ByteDigestHasher:
+    handle: Sha384
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha512Hasher with ByteDigestHasher:
+    handle: Sha512
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha3_224Hasher with ByteDigestHasher:
+    handle: Sha3_224
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha3_256Hasher with ByteDigestHasher:
+    handle: Sha3_256
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha3_384Hasher with ByteDigestHasher:
+    handle: Sha3_384
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha3_512Hasher with ByteDigestHasher:
+    handle: Sha3_512
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Shake128Hasher with ShakeDigestHasher:
+    handle: Shake128
+
+    def update(mut self, chunk: bytes) -> None:
+        Update.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self, length: int) -> Result[bytes, HashError]:
+        if length <= 0:
+            return Err(_invalid_error("shake128", "invalid_length", "SHAKE digest length must be positive"))
+        mut out = _zeros(length)
+        mut reader = ExtendableOutputReset.finalize_xof_reset(self.handle)
+        reader.read(out)
+        return Ok(out)
+
+
+pub class _Shake256Hasher with ShakeDigestHasher:
+    handle: Shake256
+
+    def update(mut self, chunk: bytes) -> None:
+        Update.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self, length: int) -> Result[bytes, HashError]:
+        if length <= 0:
+            return Err(_invalid_error("shake256", "invalid_length", "SHAKE digest length must be positive"))
+        mut out = _zeros(length)
+        mut reader = ExtendableOutputReset.finalize_xof_reset(self.handle)
+        reader.read(out)
+        return Ok(out)
+
+
+pub class _Blake2bHasher with ByteDigestHasher:
+    handle: Blake2b512
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Blake2sHasher with ByteDigestHasher:
+    handle: Blake2s256
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Blake3Hasher with ByteDigestHasher:
+    handle: Blake3Hasher
+
+    def update(mut self, chunk: bytes) -> None:
+        self.handle.update(chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize().as_bytes().to_vec()
+
+
+pub class _Md5Hasher with ByteDigestHasher:
+    handle: Md5
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha1Hasher with ByteDigestHasher:
+    handle: Sha1
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Xxh32Hasher with Hash32DigestHasher:
+    handle: Xxh32
+
+    def update(mut self, chunk: bytes) -> None:
+        self.handle.update(chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return u32_to_le_bytes(self.finalize_u32())
+
+    def finalize_u32(mut self) -> u32:
+        return self.handle.digest()
+
+
+pub class _Xxh64Hasher with Hash64DigestHasher:
+    handle: Xxh64
+
+    def update(mut self, chunk: bytes) -> None:
+        self.handle.update(chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return u64_to_le_bytes(self.finalize_u64())
+
+    def finalize_u64(mut self) -> u64:
+        return self.handle.digest()
+
+
+pub class _Xxh3_64Hasher with Hash64DigestHasher:
+    handle: Xxh3Default
+
+    def update(mut self, chunk: bytes) -> None:
+        self.handle.update(chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return u64_to_le_bytes(self.finalize_u64())
+
+    def finalize_u64(mut self) -> u64:
+        return self.handle.digest()
+
+
+pub class _Xxh3_128Hasher with Hash128DigestHasher:
+    handle: Xxh3Default
+
+    def update(mut self, chunk: bytes) -> None:
+        self.handle.update(chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return u128_to_le_bytes(self.finalize_u128())
+
+    def finalize_u128(mut self) -> u128:
+        return self.handle.digest128()
+
+
+pub class sha224:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha224", 0)
+
+    @staticmethod
+    def new() -> _Sha224Hasher:
+        return _Sha224Hasher(handle=Sha224.new())
+
+
+pub class sha256:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha256", 0)
+
+    @staticmethod
+    def new() -> _Sha256Hasher:
+        return _Sha256Hasher(handle=Sha256.new())
+
+
+pub class sha384:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha384", 0)
+
+    @staticmethod
+    def new() -> _Sha384Hasher:
+        return _Sha384Hasher(handle=Sha384.new())
+
+
+pub class sha512:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha512", 0)
+
+    @staticmethod
+    def new() -> _Sha512Hasher:
+        return _Sha512Hasher(handle=Sha512.new())
+
+
+pub class sha3_224:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha3_224", 0)
+
+    @staticmethod
+    def new() -> _Sha3_224Hasher:
+        return _Sha3_224Hasher(handle=Sha3_224.new())
+
+
+pub class sha3_256:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha3_256", 0)
+
+    @staticmethod
+    def new() -> _Sha3_256Hasher:
+        return _Sha3_256Hasher(handle=Sha3_256.new())
+
+
+pub class sha3_384:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha3_384", 0)
+
+    @staticmethod
+    def new() -> _Sha3_384Hasher:
+        return _Sha3_384Hasher(handle=Sha3_384.new())
+
+
+pub class sha3_512:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha3_512", 0)
+
+    @staticmethod
+    def new() -> _Sha3_512Hasher:
+        return _Sha3_512Hasher(handle=Sha3_512.new())
+
+
+pub class shake128:
+    @staticmethod
+    def digest(data: bytes, length: int) -> Result[bytes, HashError]:
+        return _digest_bytes(data, "shake128", length)
+
+    @staticmethod
+    def new() -> _Shake128Hasher:
+        return _Shake128Hasher(handle=Shake128.default())
+
+
+pub class shake256:
+    @staticmethod
+    def digest(data: bytes, length: int) -> Result[bytes, HashError]:
+        return _digest_bytes(data, "shake256", length)
+
+    @staticmethod
+    def new() -> _Shake256Hasher:
+        return _Shake256Hasher(handle=Shake256.default())
+
+
+pub class blake2b:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "blake2b", 64)
+
+    @staticmethod
+    def new() -> _Blake2bHasher:
+        return _Blake2bHasher(handle=Blake2b512.new())
+
+
+pub class blake2s:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "blake2s", 32)
+
+    @staticmethod
+    def new() -> _Blake2sHasher:
+        return _Blake2sHasher(handle=Blake2s256.new())
+
+
+pub class blake3:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "blake3", 0)
+
+    @staticmethod
+    def new() -> _Blake3Hasher:
+        return _Blake3Hasher(handle=Blake3Hasher.new())
+
+
+pub class md5:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "md5", 0)
+
+    @staticmethod
+    def new() -> _Md5Hasher:
+        return _Md5Hasher(handle=Md5.new())
+
+
+pub class sha1:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha1", 0)
+
+    @staticmethod
+    def new() -> _Sha1Hasher:
+        return _Sha1Hasher(handle=Sha1.new())
+
+
+pub class xxh3_64:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "xxh3_64", 0)
+
+    @staticmethod
+    def hash_u64(data: bytes) -> u64:
+        return _must_hash_u64(data, "xxh3_64")
+
+    @staticmethod
+    def new() -> _Xxh3_64Hasher:
+        return _Xxh3_64Hasher(handle=Xxh3Default.new())
+
+
+pub class xxh3_128:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "xxh3_128", 0)
+
+    @staticmethod
+    def hash_u128(data: bytes) -> u128:
+        return _must_hash_u128(data, "xxh3_128")
+
+    @staticmethod
+    def new() -> _Xxh3_128Hasher:
+        return _Xxh3_128Hasher(handle=Xxh3Default.new())
+
+
+pub class xxh64:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "xxh64", 0)
+
+    @staticmethod
+    def hash_u64(data: bytes) -> u64:
+        return _must_hash_u64(data, "xxh64")
+
+    @staticmethod
+    def new() -> _Xxh64Hasher:
+        return _Xxh64Hasher(handle=Xxh64.default())
+
+
+pub class xxh32:
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "xxh32", 0)
+
+    @staticmethod
+    def hash_u32(data: bytes) -> u32:
+        return _must_hash_u32(data, "xxh32")
+
+    @staticmethod
+    def new() -> _Xxh32Hasher:
+        return _Xxh32Hasher(handle=Xxh32.default())
+
+
+pub def file_digest(
+    input: Union[Path, File],
+    algorithm: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    length: int = 0,
+) -> Result[bytes, HashError]:
+    if chunk_size <= 0:
+        return Err(_invalid_error(algorithm, "invalid_chunk_size", "chunk_size must be positive"))
+    if _is_shake(algorithm) and length <= 0:
+        return Err(_invalid_error(algorithm, "invalid_length", "SHAKE digest length must be positive"))
+    if isinstance(input, File):
+        return _file_digest_handle(input, algorithm, chunk_size, length)
+
+    path = _hash_path(input)
+    match path.open("rb"):
+        Ok(file) => return _file_digest_handle(file, algorithm, chunk_size, length)
+        Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+pub def file_hash_u32(
+    input: Union[Path, File],
+    algorithm: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> Result[u32, HashError]:
+    if chunk_size <= 0:
+        return Err(_invalid_error(algorithm, "invalid_chunk_size", "chunk_size must be positive"))
+    if isinstance(input, File):
+        return _file_hash_u32_handle(input, algorithm, chunk_size)
+
+    path = _hash_path(input)
+    match path.open("rb"):
+        Ok(file) => return _file_hash_u32_handle(file, algorithm, chunk_size)
+        Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+pub def file_hash_u64(
+    input: Union[Path, File],
+    algorithm: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> Result[u64, HashError]:
+    if chunk_size <= 0:
+        return Err(_invalid_error(algorithm, "invalid_chunk_size", "chunk_size must be positive"))
+    if isinstance(input, File):
+        return _file_hash_u64_handle(input, algorithm, chunk_size)
+
+    path = _hash_path(input)
+    match path.open("rb"):
+        Ok(file) => return _file_hash_u64_handle(file, algorithm, chunk_size)
+        Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+pub def file_hash_u128(
+    input: Union[Path, File],
+    algorithm: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> Result[u128, HashError]:
+    if chunk_size <= 0:
+        return Err(_invalid_error(algorithm, "invalid_chunk_size", "chunk_size must be positive"))
+    if isinstance(input, File):
+        return _file_hash_u128_handle(input, algorithm, chunk_size)
+
+    path = _hash_path(input)
+    match path.open("rb"):
+        Ok(file) => return _file_hash_u128_handle(file, algorithm, chunk_size)
+        Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+def _file_digest_handle(file: File, algorithm: str, chunk_size: int, length: int) -> Result[bytes, HashError]:
+    if algorithm == "sha224":
+        return _feed_digest_hasher(sha224.new(), file, algorithm, chunk_size)
+    elif algorithm == "sha256":
+        return _feed_digest_hasher(sha256.new(), file, algorithm, chunk_size)
+    elif algorithm == "sha384":
+        return _feed_digest_hasher(sha384.new(), file, algorithm, chunk_size)
+    elif algorithm == "sha512":
+        return _feed_digest_hasher(sha512.new(), file, algorithm, chunk_size)
+    elif algorithm == "sha3_224":
+        return _feed_digest_hasher(sha3_224.new(), file, algorithm, chunk_size)
+    elif algorithm == "sha3_256":
+        return _feed_digest_hasher(sha3_256.new(), file, algorithm, chunk_size)
+    elif algorithm == "sha3_384":
+        return _feed_digest_hasher(sha3_384.new(), file, algorithm, chunk_size)
+    elif algorithm == "sha3_512":
+        return _feed_digest_hasher(sha3_512.new(), file, algorithm, chunk_size)
+    elif algorithm == "shake128":
+        return _feed_shake_hasher(shake128.new(), file, algorithm, chunk_size, length)
+    elif algorithm == "shake256":
+        return _feed_shake_hasher(shake256.new(), file, algorithm, chunk_size, length)
+    elif algorithm == "blake2b":
+        return _feed_digest_hasher(blake2b.new(), file, algorithm, chunk_size)
+    elif algorithm == "blake2s":
+        return _feed_digest_hasher(blake2s.new(), file, algorithm, chunk_size)
+    elif algorithm == "blake3":
+        return _feed_digest_hasher(blake3.new(), file, algorithm, chunk_size)
+    elif algorithm == "md5":
+        return _feed_digest_hasher(md5.new(), file, algorithm, chunk_size)
+    elif algorithm == "sha1":
+        return _feed_digest_hasher(sha1.new(), file, algorithm, chunk_size)
+    elif algorithm == "xxh32":
+        return _feed_hash32_hasher(xxh32.new(), file, algorithm, chunk_size)
+    elif algorithm == "xxh64":
+        return _feed_hash64_hasher(xxh64.new(), file, algorithm, chunk_size)
+    elif algorithm == "xxh3_64":
+        return _feed_hash64_hasher(xxh3_64.new(), file, algorithm, chunk_size)
+    elif algorithm == "xxh3_128":
+        return _feed_hash128_hasher(xxh3_128.new(), file, algorithm, chunk_size)
+    return Err(_invalid_error(algorithm, "unknown_algorithm", f"unknown hash algorithm: {algorithm}"))
+
+
+def _file_hash_u32_handle(file: File, algorithm: str, chunk_size: int) -> Result[u32, HashError]:
+    if algorithm == "xxh32":
+        return _feed_hash32_value(xxh32.new(), file, algorithm, chunk_size)
+    return Err(_invalid_error(algorithm, "unsupported_width", f"{algorithm} does not expose a u32 hash"))
+
+
+def _file_hash_u64_handle(file: File, algorithm: str, chunk_size: int) -> Result[u64, HashError]:
+    if algorithm == "xxh3_64":
+        return _feed_hash64_value(xxh3_64.new(), file, algorithm, chunk_size)
+    elif algorithm == "xxh64":
+        return _feed_hash64_value(xxh64.new(), file, algorithm, chunk_size)
+    return Err(_invalid_error(algorithm, "unsupported_width", f"{algorithm} does not expose a u64 hash"))
+
+
+def _file_hash_u128_handle(file: File, algorithm: str, chunk_size: int) -> Result[u128, HashError]:
+    if algorithm == "xxh3_128":
+        return _feed_hash128_value(xxh3_128.new(), file, algorithm, chunk_size)
+    return Err(_invalid_error(algorithm, "unsupported_width", f"{algorithm} does not expose a u128 hash"))
+
+
+def _feed_digest_hasher[H with ByteDigestHasher](
+    mut hasher: H,
+    file: File,
+    algorithm: str,
+    chunk_size: int,
+) -> Result[bytes, HashError]:
+    while true:
+        match file.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_bytes())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+def _feed_shake_hasher[H with ShakeDigestHasher](
+    mut hasher: H,
+    file: File,
+    algorithm: str,
+    chunk_size: int,
+    length: int,
+) -> Result[bytes, HashError]:
+    while true:
+        match file.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return hasher.finalize_bytes(length)
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+def _feed_hash32_hasher[H with Hash32DigestHasher](
+    mut hasher: H,
+    file: File,
+    algorithm: str,
+    chunk_size: int,
+) -> Result[bytes, HashError]:
+    while true:
+        match file.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_bytes())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+def _feed_hash64_hasher[H with Hash64DigestHasher](
+    mut hasher: H,
+    file: File,
+    algorithm: str,
+    chunk_size: int,
+) -> Result[bytes, HashError]:
+    while true:
+        match file.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_bytes())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+def _feed_hash128_hasher[H with Hash128DigestHasher](
+    mut hasher: H,
+    file: File,
+    algorithm: str,
+    chunk_size: int,
+) -> Result[bytes, HashError]:
+    while true:
+        match file.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_bytes())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+def _feed_hash32_value[H with Hash32DigestHasher](
+    mut hasher: H,
+    file: File,
+    algorithm: str,
+    chunk_size: int,
+) -> Result[u32, HashError]:
+    while true:
+        match file.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_u32())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+def _feed_hash64_value[H with Hash64DigestHasher](
+    mut hasher: H,
+    file: File,
+    algorithm: str,
+    chunk_size: int,
+) -> Result[u64, HashError]:
+    while true:
+        match file.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_u64())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+def _feed_hash128_value[H with Hash128DigestHasher](
+    mut hasher: H,
+    file: File,
+    algorithm: str,
+    chunk_size: int,
+) -> Result[u128, HashError]:
+    while true:
+        match file.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_u128())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+def _digest_bytes(data: bytes, algorithm: str, length: int) -> Result[bytes, HashError]:
+    if algorithm == "sha224":
+        return Ok(Sha224.digest(data).to_vec())
+    elif algorithm == "sha256":
+        return Ok(Sha256.digest(data).to_vec())
+    elif algorithm == "sha384":
+        return Ok(Sha384.digest(data).to_vec())
+    elif algorithm == "sha512":
+        return Ok(Sha512.digest(data).to_vec())
+    elif algorithm == "sha3_224":
+        return Ok(Sha3_224.digest(data).to_vec())
+    elif algorithm == "sha3_256":
+        return Ok(Sha3_256.digest(data).to_vec())
+    elif algorithm == "sha3_384":
+        return Ok(Sha3_384.digest(data).to_vec())
+    elif algorithm == "sha3_512":
+        return Ok(Sha3_512.digest(data).to_vec())
+    elif algorithm == "shake128":
+        if length <= 0:
+            return Err(_invalid_error(algorithm, "invalid_length", "SHAKE digest length must be positive"))
+        mut hasher = shake128.new()
+        hasher.update(data)
+        return hasher.finalize_bytes(length)
+    elif algorithm == "shake256":
+        if length <= 0:
+            return Err(_invalid_error(algorithm, "invalid_length", "SHAKE digest length must be positive"))
+        mut hasher = shake256.new()
+        hasher.update(data)
+        return hasher.finalize_bytes(length)
+    elif algorithm == "blake2b":
+        return Ok(Blake2b512.digest(data).to_vec())
+    elif algorithm == "blake2s":
+        return Ok(Blake2s256.digest(data).to_vec())
+    elif algorithm == "blake3":
+        return Ok(blake3_hash(data.as_slice()).as_bytes().to_vec())
+    elif algorithm == "md5":
+        return Ok(Md5.digest(data).to_vec())
+    elif algorithm == "sha1":
+        return Ok(Sha1.digest(data).to_vec())
+    elif algorithm == "xxh32":
+        return Ok(u32_to_le_bytes(_xxh32_hash(data)))
+    elif algorithm == "xxh64":
+        return Ok(u64_to_le_bytes(_xxh64_hash(data)))
+    elif algorithm == "xxh3_64":
+        return Ok(u64_to_le_bytes(_xxh3_64_hash(data)))
+    elif algorithm == "xxh3_128":
+        return Ok(u128_to_le_bytes(_xxh3_128_hash(data)))
+    return Err(_invalid_error(algorithm, "unknown_algorithm", f"unknown hash algorithm: {algorithm}"))
+
+
+def _hash_u32(data: bytes, algorithm: str) -> Result[u32, HashError]:
+    if algorithm == "xxh32":
+        return Ok(_xxh32_hash(data))
+    return Err(_invalid_error(algorithm, "unsupported_width", f"{algorithm} does not expose a u32 hash"))
+
+
+def _hash_u64(data: bytes, algorithm: str) -> Result[u64, HashError]:
+    if algorithm == "xxh3_64":
+        return Ok(_xxh3_64_hash(data))
+    elif algorithm == "xxh64":
+        return Ok(_xxh64_hash(data))
+    return Err(_invalid_error(algorithm, "unsupported_width", f"{algorithm} does not expose a u64 hash"))
+
+
+def _hash_u128(data: bytes, algorithm: str) -> Result[u128, HashError]:
+    if algorithm == "xxh3_128":
+        return Ok(_xxh3_128_hash(data))
+    return Err(_invalid_error(algorithm, "unsupported_width", f"{algorithm} does not expose a u128 hash"))
+
+
+def _xxh32_hash(data: bytes) -> u32:
+    mut hasher = xxh32.new()
+    hasher.update(data)
+    return hasher.finalize_u32()
+
+
+def _xxh64_hash(data: bytes) -> u64:
+    mut hasher = xxh64.new()
+    hasher.update(data)
+    return hasher.finalize_u64()
+
+
+def _xxh3_64_hash(data: bytes) -> u64:
+    mut hasher = xxh3_64.new()
+    hasher.update(data)
+    return hasher.finalize_u64()
+
+
+def _xxh3_128_hash(data: bytes) -> u128:
+    mut hasher = xxh3_128.new()
+    hasher.update(data)
+    return hasher.finalize_u128()
+
+
+def _must_digest_bytes(data: bytes, algorithm: str, length: int) -> bytes:
+    match _digest_bytes(data, algorithm, length):
+        Ok(value) => return value
+        Err(err) => return raise_value_error(err.detail)
+
+
+def _must_hash_u32(data: bytes, algorithm: str) -> u32:
+    match _hash_u32(data, algorithm):
+        Ok(value) => return value
+        Err(err) => return raise_value_error(err.detail)
+
+
+def _must_hash_u64(data: bytes, algorithm: str) -> u64:
+    match _hash_u64(data, algorithm):
+        Ok(value) => return value
+        Err(err) => return raise_value_error(err.detail)
+
+
+def _must_hash_u128(data: bytes, algorithm: str) -> u128:
+    match _hash_u128(data, algorithm):
+        Ok(value) => return value
+        Err(err) => return raise_value_error(err.detail)
+
+
+def _hash_path(input: Union[Path, File]) -> Path:
+    if isinstance(input, File):
+        return input.path
+    elif isinstance(input, Path):
+        return input
+
+
+def _zeros(size: int) -> bytes:
+    mut out = Vec.new()
+    mut index = 0
+    while index < size:
+        out.push(ZERO_BYTE)
+        index += 1
+    return out
+
+
+def _invalid_error(algorithm: str, kind: str, detail: str) -> HashError:
+    return HashError(kind=kind, algorithm=algorithm, detail=detail)
+
+
+def _io_error(algorithm: str, kind: str, detail: str) -> HashError:
+    return HashError(kind=kind, algorithm=algorithm, detail=detail)
+
+
+def _is_shake(algorithm: str) -> bool:
+    return algorithm == "shake128" or algorithm == "shake256"
