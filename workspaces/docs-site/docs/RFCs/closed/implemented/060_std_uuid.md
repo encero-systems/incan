@@ -9,7 +9,7 @@
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 056 (`std.io` in-memory byte streams and binary parsing helpers)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/338
-- **RFC PR:** —
+- **RFC PR:** https://github.com/dannys-code-corner/incan/pull/572
 - **Written against:** v0.2
 - **Shipped in:** v0.3
 
