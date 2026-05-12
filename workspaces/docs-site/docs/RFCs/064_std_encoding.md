@@ -1,6 +1,6 @@
 # RFC 064: `std.encoding` — binary-text encoding and decoding utilities
 
-- **Status:** Draft
+- **Status:** Planned
 - **Created:** 2026-04-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -74,7 +74,7 @@ base64.b64encode_stream(source, target)?
 
 ### Module scope
 
-`std.encoding` should provide:
+`std.encoding` must provide:
 
 - `std.encoding.hex` (base16)
 - `std.encoding.base32`
@@ -85,7 +85,10 @@ base64.b64encode_stream(source, target)?
 
 ### Core model
 
-- input/output types are explicit (`bytes`, `str`, stream-like values);
+- one-shot encode APIs accept `bytes` and return `str`;
+- one-shot decode APIs accept `str` and return `Result[bytes, EncodingError]`;
+- stream encode APIs read binary bytes and write ASCII representation bytes to a binary writer;
+- stream decode APIs read ASCII representation bytes from a binary reader and write decoded binary bytes to a binary writer;
 - decode errors are structured;
 - strict decode is default;
 - lenient decode is explicit and separately named;
@@ -93,7 +96,7 @@ base64.b64encode_stream(source, target)?
 
 ### North-star API direction
 
-Per encoding family, the contract should include:
+Per encoding family, the contract must include:
 
 - one-shot encode/decode
 - streaming encode/decode
@@ -103,9 +106,11 @@ Baseline shape:
 
 - `encode(data: bytes) -> str`
 - `decode(text: str) -> Result[bytes, EncodingError]`
-- `decode_lenient(text: str) -> Result[bytes, EncodingError]` (where leniency is meaningful)
+- `decode_lenient(text: str) -> Result[bytes, EncodingError]` where leniency is meaningful
 - `encode_stream(source: File | BytesIO, target: File | BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]`
 - `decode_stream(source: File | BytesIO, target: File | BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]`
+
+Stream APIs operate on binary streams even when the representation is textual. Encoders write ASCII bytes so callers can pipe encoded output to files and transports without requiring a text-mode writer. Decoders must reject non-ASCII input bytes before alphabet-specific validation.
 
 ## Design details
 
@@ -113,16 +118,16 @@ Baseline shape:
 
 `std.encoding` includes these families:
 
-- **hex/base16**
-- **base32** (standard and explicit variant alphabets where applicable)
-- **base64** (standard + URL-safe)
-- **base85** variants (explicitly named families: `a85*`, `b85*`, `z85*`)
-- **base58** (explicit alphabet variant naming where needed)
-- **bech32** / **bech32m**
+- **hex/base16** with lowercase output from `hex.encode` and strict decode requiring even-length ASCII hex input;
+- **base32** with standard Base32 and explicit extended-hex helpers where implemented;
+- **base64** with standard and URL-safe helpers;
+- **base85** variants using explicitly named families: `a85*`, `b85*`, and `z85*`;
+- **base58** with Bitcoin-alphabet `b58*` as the baseline surface and explicit names for any additional alphabets;
+- **bech32** and **bech32m** helpers that keep human-readable part and payload words explicit.
 
 ### Python familiarity
 
-Python-shaped naming should be first-class API surface, not compatibility afterthought. Examples:
+Python-shaped naming must be first-class API surface, not compatibility afterthought. Examples:
 
 - `b64encode`, `b64decode`, `urlsafe_b64encode`, `urlsafe_b64decode`
 - `b32encode`, `b32decode`
@@ -140,6 +145,8 @@ Lenient behavior must be explicit:
 
 - separate `*_decode_lenient` APIs rather than boolean strictness flags.
 
+Lenient APIs may normalize ASCII whitespace and common case differences only when that behavior is documented for the family. They must not silently switch alphabets, ignore checksum failures, or recover from truncated input in a way that changes the decoded bytes.
+
 ### Variant explicitness
 
 Where formats have multiple non-interchangeable variants, the variant must be in the API name. This avoids silent ambiguity:
@@ -149,11 +156,28 @@ Where formats have multiple non-interchangeable variants, the variant must be in
 - Bech32 vs Bech32m
 - Base58 alphabet variants where relevant
 
+Default helper names are allowed only when the default is a widely recognized family baseline. For this RFC, `b64*` is standard Base64, `urlsafe_b64*` is URL-safe Base64, `b58*` is Bitcoin-alphabet Base58, and Bech32m must not be hidden behind plain `bech32_*` names.
+
 ### Streaming support
 
 Streaming encode/decode is part of this RFC's north-star contract, not a follow-on.
 
-Stream APIs should compose directly with `std.fs.File` and `std.io.BytesIO` and define consistent chunking/error behavior.
+Stream APIs must compose directly with `std.fs.File` and `std.io.BytesIO` and define consistent chunking/error behavior.
+
+Partial stream failures must be reported as errors. Implementations may have already written earlier chunks to the target by the time an error occurs, so the docs must not promise transactional stream output.
+
+### Error model
+
+`EncodingError` must be the stable error type for this module. It must distinguish at least:
+
+- invalid alphabet character;
+- invalid length;
+- invalid or missing padding where padding is required;
+- checksum or separator failure for checksum-bearing formats such as Bech32;
+- non-ASCII representation bytes in stream decode;
+- I/O failure in stream workflows.
+
+Family-specific detail may be carried as metadata, but callers must be able to handle the stable error categories without depending on backend crate messages.
 
 ### Line wrapping policy
 
@@ -204,4 +228,6 @@ Those belong to dedicated modules (`std.compression`, `std.archive`, and future 
 - Lenient decode is explicit and separately named.
 - One-shot and streaming APIs are both in scope in this RFC.
 - Variant ambiguity is avoided by explicit function-family naming.
+- Stream APIs operate on binary streams and use ASCII representation bytes for encoded text.
+- `EncodingError` is the stable module error type and must expose family-neutral error categories.
 - Media codecs and compression codecs are explicitly out of scope for this module.

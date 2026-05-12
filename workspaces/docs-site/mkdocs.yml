@@ -94,6 +94,11 @@ nav:
       - Coming from Rust (evaluator): start_here/coming_from_rust.md
       - Pipelines & automation: start_here/pipelines_and_automation.md
       - Beginner: start_here/beginner.md
+  - Comparisons:
+      - Overview: comparisons/index.md
+      - Incan vs Python: comparisons/python.md
+      - Incan vs Rust: comparisons/rust.md
+      - Incan vs Python compatibility tools: comparisons/python_compatibility_tools.md
   - Language:
       - Start here: language/index.md
       - Tutorials:

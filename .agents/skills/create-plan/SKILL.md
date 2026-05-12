@@ -17,6 +17,7 @@ Produce a **single markdown plan** (paste into Plan mode or a `.plan.md` file):
 
 - **Goal** or **root cause** (1–3 sentences).
 - **Pattern intake**: active area, 2-3 local precedent files to read, source-of-truth boundary/registry, and required verification path.
+- **Capability intake** for Incan-language or stdlib work: current language features, local examples/tests proving available constructs, and any claimed limitation with evidence.
 - **TDD** (red → green → refine) when behavior is testable.
 - **Concrete file paths** as markdown links to real paths in that repo.
 - **Documentation** subsection when the change is user-visible (see below).
@@ -40,6 +41,20 @@ Before selecting files to edit, identify the local pattern that should govern th
 - Verification path: the narrow red test plus any broader proof needed to cover downstream stages or build modes.
 
 Plans should name these items explicitly. If there is no close precedent, say so and explain which boundary document or implementation shape is being used instead.
+
+## Capability intake for Incan work
+
+Do not plan around assumptions about what Incan cannot do. Incan is moving fast, and local repo examples/tests are more reliable than memory.
+
+For language, stdlib, examples, or `.incn` implementation work, inspect current capability before choosing a design:
+
+- search local `.incn` stdlib/examples/tests for the construct you think may be unavailable;
+- check parser/typechecker/codegen tests for recently added syntax or lowering support;
+- prefer a small source-level probe or focused fixture over guessing;
+- only claim “Incan cannot express this” after recording the checked evidence and the specific failing construct;
+- if a fallback to Rust interop or backend support is needed, state the primitive gap narrowly rather than treating the whole feature as impossible.
+
+Plans for Incan work should include the checked capability evidence or explicitly say `capability evidence: not yet checked` and keep the design provisional.
 
 ## TDD (default when tests exist)
 
