@@ -78,10 +78,23 @@ fn std_uuid_namespace_stays_source_stdlib_only() {
     };
 
     assert_eq!(ns.feature, None, "std.uuid must not activate a Cargo feature");
-    assert!(
-        ns.extra_crate_deps.is_empty(),
-        "std.uuid primitive crate handoffs should be visible as inline source imports, not hidden namespace metadata"
+    assert_eq!(
+        ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>(),
+        vec!["md5", "rand", "sha1"],
+        "std.uuid crate dependencies should stay limited to source-visible Rust imports"
     );
+
+    let source_path = std::path::Path::new("crates/incan_stdlib/stdlib/uuid.incn");
+    let source = std::fs::read_to_string(source_path).expect("std.uuid source should exist");
+    for dep in ns.extra_crate_deps {
+        let import_prefix = format!("from rust::{}", dep.crate_name);
+        assert!(
+            source.contains(&import_prefix),
+            "`{}` must be visible as an inline std.uuid source import",
+            dep.crate_name
+        );
+    }
+
     assert!(
         ns.submodules.is_empty(),
         "std.uuid should resolve as a leaf stdlib source module"
