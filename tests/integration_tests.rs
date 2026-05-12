@@ -5515,6 +5515,20 @@ async def main() -> None:
 
     #[test]
     fn test_run_std_uuid_surface() -> Result<(), Box<dyn std::error::Error>> {
+        // Keep std.uuid's generated-project dependencies in the root Cargo graph so CI fetches them before this smoke
+        // runs the generated project under CARGO_NET_OFFLINE.
+        assert_eq!(
+            format!("{:x}", md5::compute(b"incan")),
+            "961ceabd8ca87ad661c395fe29eea66e"
+        );
+        use sha1::{Digest, Sha1};
+        let mut hasher = Sha1::new();
+        hasher.update(b"incan");
+        assert_eq!(
+            format!("{:x}", hasher.finalize()),
+            "31ca742c61904659722b650c4d8f6c4a7b09dd30"
+        );
+
         let output = Command::new(incan_debug_binary())
             .args(["run", "tests/fixtures/valid/std_uuid_surface.incn"])
             .env("CARGO_NET_OFFLINE", "true")
