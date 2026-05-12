@@ -1155,6 +1155,8 @@
       
         
       
+        
+      
     
     
       
@@ -1491,6 +1493,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/working_with_uuids/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with UUIDs
   </span>
   
 
@@ -2002,6 +2025,8 @@
       
         
       
+        
+      
     
     
       
@@ -2201,6 +2226,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/uuid/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.uuid
   </span>
   
 
@@ -6134,6 +6180,7 @@ metadata-proven body-less <code>rusttype</code> forwarding without emitting inva
 <li><strong>Language/Compiler</strong>: List and dict comprehensions now accept tuple-unpack iteration targets such as <code>for idx, name in enumerate(xs)</code>, matching ordinary <code>for</code> loop binding syntax (#483).</li>
 <li><strong>Language/Compiler</strong>: RFC 006 adds lazy <code>Generator[T]</code> values, including <code>yield</code>-based generator functions, full-clause generator expressions, iteration-protocol compatibility, and the minimum helper surface <code>.map()</code>, <code>.filter()</code>, <code>.take()</code>, and <code>.collect()</code> (#324, RFC 006).</li>
 <li><strong>Language/Stdlib</strong>: RFC 069 adds import-free <code>list.repeat(value, count)</code> for fixed-length list initialization. The compiler infers <code>list[T]</code>, enforces clone-compatible repeated values and <code>count: int</code>, lowers recognized calls to the stdlib helper, and raises <code>ValueError</code> with the bad count for negative runtime counts (#385, RFC 069).</li>
+<li><strong>Language/Stdlib</strong>: <code>std.uuid</code> adds source-defined UUID values with parsing, canonical formatting, <code>u128</code> and RFC/network-order byte conversion, nil/max and namespace constants, version/variant inspection, and generation helpers for UUID versions 1, 3, 4, 5, 6, 7, and 8 while keeping UUID layout semantics in Incan source (#338, RFC 060).</li>
 <li><strong>Language/Compiler</strong>: <code>List[T].clone()</code> now typechecks when <code>T</code> satisfies <code>Clone</code>, returns <code>List[T]</code>, and emits the same element-cloning container copy that Rust <code>Vec&lt;T&gt;::clone()</code> provides (#363).</li>
 <li><strong>Language/Interop</strong>: Direct <code>list[T]</code> arguments passed to external Rust functions or methods can now satisfy <code>Vec&lt;U&gt;</code> parameters by mapping elements through Rust <code>.into()</code> at the call boundary, covering APIs such as Polars constructors that accept <code>Vec&lt;Column&gt;</code> from <code>Series</code> values (#128).</li>
 <li><strong>Language/Compiler</strong>: Multi-file web builds now retain private route-decorated handlers and the private models they use in dependency modules, so route registration works without forcing those declarations public (#117).</li>
@@ -6190,6 +6237,7 @@ metadata-proven body-less <code>rusttype</code> forwarding without emitting inva
 <li>Formatter vertical spacing buckets: <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a></li>
 <li>Path-centric filesystem APIs: <a href="/dev/RFCs/closed/implemented/055_std_fs">RFC 055</a></li>
 <li><code>std.datetime</code> temporal values and intervals: <a href="/dev/RFCs/closed/implemented/058_std_datetime">RFC 058</a></li>
+<li>UUID parsing, formatting, inspection, and generation: <a href="../../RFCs/closed/implemented/060_std_uuid/">RFC 060</a></li>
 <li>Targeted generated-Rust lint suppression: <a href="/dev/RFCs/closed/implemented/057_rust_allow_targeted_lint_suppression">RFC 057</a></li>
 <li>Protocol hooks for core syntax: <a href="/dev/RFCs/closed/implemented/068_protocol_hooks_for_core_language_syntax">RFC 068</a></li>
 <li>Fixed-length list initialization with <code>list.repeat</code>: <a href="/dev/RFCs/closed/implemented/069_list_repeat_std_helper">RFC 069</a></li>

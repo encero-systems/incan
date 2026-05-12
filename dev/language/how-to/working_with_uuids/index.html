@@ -11,21 +11,25 @@
       
       
       
+        <link rel="prev" href="../string_processing/">
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+        <link rel="next" href="../performance/">
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFC 060: std.uuid — UUID parsing, generation, and formatting - Incan Documentation</title>
+        <title>Working with UUIDs - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,11 +48,11 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
       <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-060-stduuid-uuid-parsing-generation-and-formatting" class="md-skip">
+        <a href="#working-with-uuids" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +98,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 060: std.uuid — UUID parsing, generation, and formatting
+              Working with UUIDs
             
           </span>
         </div>
@@ -212,7 +216,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -241,7 +245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -292,7 +296,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../start_here/" class="md-nav__link ">
+            <a href="../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -325,7 +329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -346,7 +350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -367,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -388,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -445,7 +449,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../comparisons/" class="md-nav__link ">
+            <a href="../../../comparisons/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -478,7 +482,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/python/" class="md-nav__link">
+      <a href="../../../comparisons/python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -499,7 +503,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/rust/" class="md-nav__link">
+      <a href="../../../comparisons/rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -520,7 +524,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/python_compatibility_tools/" class="md-nav__link">
+      <a href="../../../comparisons/python_compatibility_tools/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -545,6 +549,8 @@
       
   
   
+    
+  
   
   
     
@@ -570,16 +576,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -596,7 +602,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             Language
@@ -707,7 +713,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -740,7 +746,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -761,7 +767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -782,7 +788,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -803,7 +809,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -824,7 +830,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -845,7 +851,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -866,7 +872,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -887,7 +893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -908,7 +914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -929,7 +935,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -950,7 +956,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -971,7 +977,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -992,7 +998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1021,7 +1027,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/dates_and_times/" class="md-nav__link">
+      <a href="../../tutorials/dates_and_times/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1042,7 +1048,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1063,7 +1069,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../../tutorials/fallible_and_infallible_paths/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1084,7 +1090,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1110,8 +1116,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1151,16 +1159,18 @@
       
         
       
+        
+      
     
     
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" checked>
         
           
           <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
@@ -1174,7 +1184,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4_3">
             <span class="md-nav__icon md-icon"></span>
             How-to
@@ -1188,7 +1198,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1209,7 +1219,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1230,7 +1240,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/dates_and_times/" class="md-nav__link">
+      <a href="../dates_and_times/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1251,7 +1261,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1272,7 +1282,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1293,7 +1303,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1314,7 +1324,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/generators/" class="md-nav__link">
+      <a href="../generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1335,7 +1345,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1356,7 +1366,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1377,7 +1387,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_collections/" class="md-nav__link">
+      <a href="../choosing_collections/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1398,7 +1408,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+      <a href="../choosing_numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1419,7 +1429,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1440,7 +1450,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+      <a href="../project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1461,7 +1471,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1482,7 +1492,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1500,10 +1510,152 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Working with UUIDs
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Working with UUIDs
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#choose-a-uuid-version" class="md-nav__link">
+    <span class="md-ellipsis">
+      Choose a UUID Version
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-there-is-no-uuidv2-generator" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why There Is No UUIDv2 Generator
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#generate-new-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generate New IDs
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#parse-user-or-protocol-input" class="md-nav__link">
+    <span class="md-ellipsis">
+      Parse User or Protocol Input
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#format-for-logs-urls-and-protocols" class="md-nav__link">
+    <span class="md-ellipsis">
+      Format for Logs, URLs, and Protocols
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#build-deterministic-namespace-ids" class="md-nav__link">
+    <span class="md-ellipsis">
+      Build Deterministic Namespace IDs
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#round-trip-bytes-and-integers" class="md-nav__link">
+    <span class="md-ellipsis">
+      Round-Trip Bytes and Integers
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#inspect-version-and-variant" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inspect Version and Variant
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      See Also
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/performance/" class="md-nav__link">
+      <a href="../performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1524,7 +1676,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1545,7 +1697,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1649,7 +1801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/language/" class="md-nav__link">
+      <a href="../../reference/language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1670,7 +1822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../reference/code_style/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1691,7 +1843,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/functions/" class="md-nav__link">
+      <a href="../../reference/functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1712,7 +1864,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/generators/" class="md-nav__link">
+      <a href="../../reference/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1733,7 +1885,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+      <a href="../../reference/symbol_aliases/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1754,7 +1906,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/callable_presets/" class="md-nav__link">
+      <a href="../../reference/callable_presets/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1775,7 +1927,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../reference/glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1796,7 +1948,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../reference/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1817,7 +1969,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../reference/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1838,7 +1990,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../reference/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1859,7 +2011,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../reference/numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1880,7 +2032,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+      <a href="../../reference/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1901,7 +2053,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/strings/" class="md-nav__link">
+      <a href="../../reference/strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1922,7 +2074,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../reference/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1943,7 +2095,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../reference/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1998,6 +2150,8 @@
       
         
       
+        
+      
     
     
       
@@ -2012,7 +2166,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../../reference/stdlib/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2045,7 +2199,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../../reference/stdlib/async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2066,7 +2220,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/collections/" class="md-nav__link">
+      <a href="../../reference/stdlib/collections/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2087,7 +2241,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../../reference/stdlib/derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2108,7 +2262,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/datetime/" class="md-nav__link">
+      <a href="../../reference/stdlib/datetime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2129,7 +2283,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
+      <a href="../../reference/stdlib/fs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2150,7 +2304,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/graph/" class="md-nav__link">
+      <a href="../../reference/stdlib/graph/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2171,7 +2325,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/io/" class="md-nav__link">
+      <a href="../../reference/stdlib/io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2192,7 +2346,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/logging/" class="md-nav__link">
+      <a href="../../reference/stdlib/logging/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2213,7 +2367,28 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/tempfile/" class="md-nav__link">
+      <a href="../../reference/stdlib/uuid/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.uuid
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/tempfile/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2234,7 +2409,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../../reference/stdlib/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2255,7 +2430,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/result/" class="md-nav__link">
+      <a href="../../reference/stdlib/result/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2276,7 +2451,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../../reference/stdlib/traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2297,7 +2472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../../reference/stdlib/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2318,7 +2493,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../../reference/stdlib/math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2381,7 +2556,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../reference/stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2414,7 +2589,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2435,7 +2610,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2456,7 +2631,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2477,7 +2652,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/awaitable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2498,7 +2673,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2519,7 +2694,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2540,7 +2715,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2620,7 +2795,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../reference/derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2641,7 +2816,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../reference/derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2662,7 +2837,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../reference/derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2683,7 +2858,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../reference/derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2704,7 +2879,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../reference/derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2725,7 +2900,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../reference/derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2845,7 +3020,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2866,7 +3041,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2887,7 +3062,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2908,7 +3083,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+      <a href="../../explanation/compile_time_and_runtime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2929,7 +3104,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+      <a href="../../explanation/rust_shaped_confidence/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2950,7 +3125,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2971,7 +3146,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/callable_presets/" class="md-nav__link">
+      <a href="../../explanation/callable_presets/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2992,7 +3167,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/closures/" class="md-nav__link">
+      <a href="../../explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3013,7 +3188,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/consts/" class="md-nav__link">
+      <a href="../../explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3034,7 +3209,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/generators/" class="md-nav__link">
+      <a href="../../explanation/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3055,7 +3230,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3076,7 +3251,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+      <a href="../../explanation/numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3097,7 +3272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/datetime_model/" class="md-nav__link">
+      <a href="../../explanation/datetime_model/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3118,7 +3293,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3139,7 +3314,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3160,7 +3335,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3181,7 +3356,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/enums/" class="md-nav__link">
+      <a href="../../explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3202,7 +3377,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3223,7 +3398,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3268,7 +3443,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3301,7 +3476,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3322,7 +3497,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3351,7 +3526,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3372,7 +3547,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3439,7 +3614,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tooling/" class="md-nav__link ">
+            <a href="../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3517,7 +3692,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3538,7 +3713,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3559,7 +3734,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3643,7 +3818,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3664,7 +3839,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3685,7 +3860,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3706,7 +3881,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3727,7 +3902,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3748,7 +3923,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3769,7 +3944,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3790,7 +3965,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3862,7 +4037,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3883,7 +4058,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3961,7 +4136,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3982,7 +4157,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+      <a href="../../../tooling/reference/contract_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4003,7 +4178,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+      <a href="../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4024,7 +4199,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4045,7 +4220,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4106,7 +4281,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../whitepapers/" class="md-nav__link ">
+            <a href="../../../whitepapers/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4139,7 +4314,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+      <a href="../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4207,7 +4382,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/" class="md-nav__link ">
+            <a href="../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4317,7 +4492,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4350,7 +4525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4371,7 +4546,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4392,7 +4567,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4413,7 +4588,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4434,7 +4609,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4455,7 +4630,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4476,7 +4651,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4497,7 +4672,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4583,7 +4758,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4604,7 +4779,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4625,7 +4800,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4646,7 +4821,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4667,7 +4842,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4747,7 +4922,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4768,7 +4943,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+      <a href="../../../contributing/explanation/duckborrowing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4789,7 +4964,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4810,7 +4985,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+      <a href="../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4831,7 +5006,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4852,7 +5027,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4881,7 +5056,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../../RFCs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4938,7 +5113,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../release_notes/" class="md-nav__link ">
+            <a href="../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4971,7 +5146,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_3/" class="md-nav__link">
+      <a href="../../../release_notes/0_3/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4992,7 +5167,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5013,7 +5188,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5041,7 +5216,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../roadmap/" class="md-nav__link">
+      <a href="../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5061,7 +5236,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stability/" class="md-nav__link">
+      <a href="../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5101,246 +5276,81 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#choose-a-uuid-version" class="md-nav__link">
     <span class="md-ellipsis">
-      Summary
+      Choose a UUID Version
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#motivation" class="md-nav__link">
+  <a href="#why-there-is-no-uuidv2-generator" class="md-nav__link">
     <span class="md-ellipsis">
-      Motivation
+      Why There Is No UUIDv2 Generator
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
+  <a href="#generate-new-ids" class="md-nav__link">
     <span class="md-ellipsis">
-      Goals
+      Generate New IDs
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
+  <a href="#parse-user-or-protocol-input" class="md-nav__link">
     <span class="md-ellipsis">
-      Non-Goals
+      Parse User or Protocol Input
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#guide-level-explanation" class="md-nav__link">
+  <a href="#format-for-logs-urls-and-protocols" class="md-nav__link">
     <span class="md-ellipsis">
-      Guide-level explanation
+      Format for Logs, URLs, and Protocols
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#reference-level-explanation" class="md-nav__link">
+  <a href="#build-deterministic-namespace-ids" class="md-nav__link">
     <span class="md-ellipsis">
-      Reference-level explanation
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Reference-level explanation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#module-scope" class="md-nav__link">
-    <span class="md-ellipsis">
-      Module scope
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#capability-areas" class="md-nav__link">
-    <span class="md-ellipsis">
-      Capability areas
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#api-direction" class="md-nav__link">
-    <span class="md-ellipsis">
-      API direction
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#public-api-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Public API surface
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-details" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design details
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Design details">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#why-uuid-deserves-a-first-class-type" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why UUID deserves a first-class type
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#rfc-9562-baseline" class="md-nav__link">
-    <span class="md-ellipsis">
-      RFC 9562 baseline
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#substrait-compatibility-and-arbitrary-128-bit-values" class="md-nav__link">
-    <span class="md-ellipsis">
-      Substrait compatibility and arbitrary 128-bit values
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#parsing-and-formatting" class="md-nav__link">
-    <span class="md-ellipsis">
-      Parsing and formatting
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#bytes-and-u128" class="md-nav__link">
-    <span class="md-ellipsis">
-      Bytes and u128
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#comparison-and-ordering" class="md-nav__link">
-    <span class="md-ellipsis">
-      Comparison and ordering
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#generation-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Generation surface
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#namespaces-and-constants" class="md-nav__link">
-    <span class="md-ellipsis">
-      Namespaces and constants
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#simple-inspection-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      Simple inspection model
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-existing-features" class="md-nav__link">
-    <span class="md-ellipsis">
-      Interaction with existing features
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compatibility-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compatibility / migration
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      Alternatives considered
+      Build Deterministic Namespace IDs
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#drawbacks" class="md-nav__link">
+  <a href="#round-trip-bytes-and-integers" class="md-nav__link">
     <span class="md-ellipsis">
-      Drawbacks
+      Round-Trip Bytes and Integers
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#layers-affected" class="md-nav__link">
+  <a href="#inspect-version-and-variant" class="md-nav__link">
     <span class="md-ellipsis">
-      Layers affected
+      Inspect Version and Variant
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#design-decisions" class="md-nav__link">
+  <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
-      Design Decisions
+      See Also
     </span>
   </a>
   
@@ -5364,298 +5374,160 @@
   
 
 
-<h1 id="rfc-060-stduuid-uuid-parsing-generation-and-formatting">RFC 060: <code>std.uuid</code> — UUID parsing, generation, and formatting<a class="headerlink" href="#rfc-060-stduuid-uuid-parsing-generation-and-formatting" title="Permanent link">&para;</a></h1>
+<h1 id="working-with-uuids">Working with UUIDs<a class="headerlink" href="#working-with-uuids" title="Permanent link">&para;</a></h1>
+<p>Use <code>std.uuid.UUID</code> when application code needs stable identifiers, request IDs, namespace-derived IDs, or wire-format UUID<sup id="fnref:uuid"><a class="footnote-ref" href="#fn:uuid">1</a></sup> values. UUID operations that parse text, decode bytes, generate values, or inspect layout return <code>Result</code>, so malformed input and host failures stay visible at the boundary.</p>
+<div class="admonition note">
+<p class="admonition-title">What a UUID is</p>
+<p>A UUID is a 128-bit identifier: 16 bytes commonly rendered as text such as <code>550e8400-e29b-41d4-a716-446655440000</code>. It is designed to be generated without a central coordinator. Different UUID versions define how those 16 bytes are produced or interpreted.</p>
+</div>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NAMESPACE_DNS</span><span class="p">,</span> <span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span><span class="p">,</span> <span class="nc">UuidVariant</span><span class="p">,</span> <span class="nc">UuidVersion</span>
+</code></pre></div>
+<h2 id="choose-a-uuid-version">Choose a UUID Version<a class="headerlink" href="#choose-a-uuid-version" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Need</th>
+<th>Use</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>A random identifier for records, messages, or resources</td>
+<td><code>UUID.v4()</code></td>
+</tr>
+<tr>
+<td>A sortable timestamp-shaped request or event ID</td>
+<td><code>UUID.v7()</code></td>
+</tr>
+<tr>
+<td>A deterministic ID from a namespace and name</td>
+<td><code>UUID.v5(namespace, name)</code></td>
+</tr>
+<tr>
+<td>A legacy MD5 namespace ID for protocol compatibility</td>
+<td><code>UUID.v3(namespace, name)</code></td>
+</tr>
+<tr>
+<td>A Gregorian time-based ID for systems that require v1 layout</td>
+<td><code>UUID.v1()</code></td>
+</tr>
+<tr>
+<td>A sortable Gregorian time-based ID for systems that require v6 layout</td>
+<td><code>UUID.v6()</code></td>
+</tr>
+<tr>
+<td>A vendor-defined payload with RFC 9562 version and variant bits applied</td>
+<td><code>UUID.v8(raw)</code></td>
+</tr>
+</tbody>
+</table>
+<p>In short:</p>
 <ul>
-<li><strong>Status:</strong> Planned</li>
-<li><strong>Created:</strong> 2026-04-14</li>
-<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong><ul>
-<li>RFC 009 (sized numeric types and <code>u128</code>)</li>
-<li>RFC 022 (namespaced stdlib modules and compiler handoff)</li>
-<li>RFC 023 (compilable stdlib and Rust module binding)</li>
-<li>RFC 056 (<code>std.io</code> in-memory byte streams and binary parsing helpers)</li>
+<li>Prefer <code>v7()</code> for new event-style identifiers that benefit from time ordering.</li>
+<li>Prefer <code>v4()</code> when ordering does not matter and the caller only needs an opaque random identifier.</li>
+<li>Use <code>v5()</code> for deterministic identifiers that must be regenerated from the same namespace and name.</li>
 </ul>
-</li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/338</li>
-<li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.2</li>
-<li><strong>Shipped in:</strong> —</li>
-</ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC defines <code>std.uuid</code> as Incan's standard library module for working with UUIDs, using RFC 9562 as the normative baseline for canonical formatting and generation while remaining compatible with binary-first interoperability surfaces such as Substrait. It provides a first-class <code>UUID</code> type together with parsing, formatting, byte and <code>u128</code> conversion, version and variant inspection, standard constants, and generation helpers for the RFC-defined UUID versions that have portable generation rules. The goal is to treat UUIDs as real values rather than as loose strings, ad hoc byte arrays, or database-specific conventions.</p>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>UUIDs show up everywhere: APIs, databases, event streams, object storage keys, distributed systems, and migration tooling. Without a dedicated stdlib type, users pass them around as strings, bytes, or loosely documented conventions, which makes validation, formatting, and version-aware behavior harder than it should be.</p>
-<p>This matters for several reasons:</p>
-<ul>
-<li>typed UUID values are clearer than free-form strings;</li>
-<li>parsing and formatting should be standardized rather than reimplemented in every codebase;</li>
-<li>binary formats and network protocols often need byte-level UUID access;</li>
-<li>analytics and data systems often benefit from lossless numeric UUID handling via <code>u128</code>;</li>
-<li>generation helpers are a common enough need to deserve a standard path.</li>
-</ul>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Provide a first-class <code>UUID</code> type in <code>std.uuid</code>.</li>
-<li>Follow RFC 9562 as the normative UUID baseline.</li>
-<li>Support parsing from canonical textual forms and common interoperable textual forms.</li>
-<li>Support conversion to and from the 16-byte binary representation and lossless <code>u128</code> representation.</li>
-<li>Remain compatible with Substrait-style binary UUID interchange.</li>
-<li>Standardize UUID constants, version and variant inspection, and generation helpers.</li>
-<li>Make the standard library UUID story stronger than ecosystems that only treat UUIDs as strings or opaque framework helpers.</li>
-</ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Standardizing every UUID-adjacent identifier format in this RFC.</li>
-<li>Turning UUID generation into a cryptography RFC.</li>
-<li>Standardizing lossy UUID-to-<code>BIGINT</code> surrogate hashing for database-specific performance workarounds.</li>
-<li>Solving database-specific ID generation or ordering strategies beyond what UUID versions already provide.</li>
-<li>Replacing application-specific identifier types where stronger domain modeling is warranted.</li>
-</ul>
-<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>Authors should be able to parse, compare, format, inspect, and generate UUIDs directly.</p>
+<h2 id="why-there-is-no-uuidv2-generator">Why There Is No UUIDv2 Generator<a class="headerlink" href="#why-there-is-no-uuidv2-generator" title="Permanent link">&para;</a></h2>
+<p><code>std.uuid</code> deliberately omits a UUIDv2 generator. It can parse and inspect UUIDv2 values for interoperability, but it does not generate new ones. UUIDv2 is the DCE<sup id="fnref:dce"><a class="footnote-ref" href="#fn:dce">2</a></sup> Security UUID layout: it embeds local domain identifiers such as POSIX user IDs or group IDs into a UUIDv1-shaped value. RFC 9562 documents version 2 as a known layout, but leaves DCE Security generation outside the core UUID generation algorithms.</p>
+<p>For new code, use <code>UUID.v7()</code> for sortable generated IDs, <code>UUID.v4()</code> for opaque random IDs, or <code>UUID.v5(...)</code> for deterministic namespace IDs. Only preserve UUIDv2 values when interoperating with an existing system that already emits them.</p>
+<h2 id="generate-new-ids">Generate New IDs<a class="headerlink" href="#generate-new-ids" title="Permanent link">&para;</a></h2>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">create_request_id</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">v7</span><span class="p">()</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">create_record_id</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">v4</span><span class="p">()</span>
+</code></pre></div>
+<p>Generation returns <code>Result</code> because clock access, randomness, and byte assembly are fallible operations. Use <code>?</code> when the caller already returns <code>Result</code>.</p>
+<h2 id="parse-user-or-protocol-input">Parse User or Protocol Input<a class="headerlink" href="#parse-user-or-protocol-input" title="Permanent link">&para;</a></h2>
+<p><code>UUID.parse(...)</code> accepts canonical text, simple 32-digit hex, braced UUIDs, and <code>urn:uuid:</code> values. Normalize once at the boundary, then pass <code>UUID</code> values through the rest of the program.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">parse_header</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">print_uuid</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">UuidError</span><span class="p">]:</span>
+    <span class="n">uuid</span> <span class="o">=</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">value</span><span class="p">)</span><span class="o">?</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">canonical</span><span class="p">()</span><span class="o">?</span><span class="p">)</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p>Use <code>match</code> when the caller can recover from malformed input:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">UUID</span>
 
-<span class="n">user_id</span> <span class="o">=</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="s2">&quot;550e8400-e29b-41d4-a716-446655440000&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="nb">println</span><span class="p">(</span><span class="nb">str</span><span class="p">(</span><span class="n">user_id</span><span class="p">))</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">user_id</span><span class="o">.</span><span class="n">version</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">print_optional_uuid</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="k">match</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">value</span><span class="p">):</span>
+        <span class="nb">Ok</span><span class="p">(</span><span class="n">uuid</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="nb">to_string</span><span class="p">())</span>
+        <span class="nb">Err</span><span class="p">(</span><span class="n">err</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="n">err</span><span class="o">.</span><span class="n">message</span><span class="p">())</span>
 </code></pre></div>
+<h2 id="format-for-logs-urls-and-protocols">Format for Logs, URLs, and Protocols<a class="headerlink" href="#format-for-logs-urls-and-protocols" title="Permanent link">&para;</a></h2>
+<p>Use <code>canonical()</code> or <code>to_string()</code> for the familiar lower-case <code>8-4-4-4-12</code> form. Use <code>to_hex()</code> for compact storage without hyphens and <code>to_urn()</code> for protocols that require the UUID URN spelling.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span><span class="n">uuid</span><span class="p">:</span> <span class="nc">UUID</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">UuidError</span><span class="p">]:</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">canonical</span><span class="p">()</span><span class="o">?</span><span class="p">)</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">to_hex</span><span class="p">())</span>
+    <span class="nb">println</span><span class="p">(</span><span class="n">uuid</span><span class="o">.</span><span class="n">to_urn</span><span class="p">())</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p><code>canonical()</code> returns <code>Result</code> because it formats through the UUID byte layout. <code>to_string()</code>, <code>to_hex()</code>, and <code>to_urn()</code> are convenience methods for common text output.</p>
+<h2 id="build-deterministic-namespace-ids">Build Deterministic Namespace IDs<a class="headerlink" href="#build-deterministic-namespace-ids" title="Permanent link">&para;</a></h2>
+<p>Use namespace UUIDs when the same logical name should always produce the same UUID. DNS, URL, OID, and X.500 namespaces are provided as constants.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NAMESPACE_DNS</span><span class="p">,</span> <span class="nc">NAMESPACE_URL</span><span class="p">,</span> <span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">service_id</span><span class="p">(</span><span class="n">hostname</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">v5</span><span class="p">(</span><span class="nc">NAMESPACE_DNS</span><span class="p">,</span> <span class="n">hostname</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">route_id</span><span class="p">(</span><span class="n">url</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span><span class="p">]:</span>
+    <span class="k">return</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">v5</span><span class="p">(</span><span class="nc">NAMESPACE_URL</span><span class="p">,</span> <span class="n">url</span><span class="p">)</span>
+</code></pre></div>
+<p><code>v5()</code> uses SHA-1 namespace UUIDs and is the default deterministic choice. Keep <code>v3()</code> for compatibility with systems that specifically require MD5 namespace UUIDs.</p>
+<h2 id="round-trip-bytes-and-integers">Round-Trip Bytes and Integers<a class="headerlink" href="#round-trip-bytes-and-integers" title="Permanent link">&para;</a></h2>
+<p>Use <code>to_bytes()</code> and <code>from_bytes(...)</code> for binary protocols. The byte order is the RFC/network-order layout used by UUID text formatting.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">roundtrip_bytes</span><span class="p">(</span><span class="n">raw</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">bytes</span><span class="p">,</span> <span class="nc">UuidError</span><span class="p">]:</span>
+    <span class="n">uuid</span> <span class="o">=</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">from_bytes</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span><span class="o">?</span>
+    <span class="k">return</span> <span class="n">uuid</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">()</span>
+</code></pre></div>
+<p>Use <code>to_int()</code> and <code>from_int(...)</code> when a database or index stores UUIDs as unsigned 128-bit values:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">UUID</span>
 
-<span class="n">request_id</span> <span class="o">=</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">v7</span><span class="p">()</span><span class="o">?</span>
-<span class="n">raw</span> <span class="o">=</span> <span class="n">request_id</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">()</span>
-<span class="n">round_tripped</span> <span class="o">=</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">from_bytes</span><span class="p">(</span><span class="n">raw</span><span class="p">)</span><span class="o">?</span>
-<span class="n">number</span> <span class="o">=</span> <span class="n">request_id</span><span class="o">.</span><span class="n">to_int</span><span class="p">()</span>
-<span class="n">same_id</span> <span class="o">=</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">from_int</span><span class="p">(</span><span class="n">number</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">restore</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="kt">u128</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">UUID</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">from_int</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>
 </code></pre></div>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">UUID</span>
+<p>The integer form preserves the exact UUID bits. It does not validate version or variant by itself.</p>
+<h2 id="inspect-version-and-variant">Inspect Version and Variant<a class="headerlink" href="#inspect-version-and-variant" title="Permanent link">&para;</a></h2>
+<p>Use <code>version()</code> and <code>variant()</code> when protocol code needs to reject unsupported UUID layouts.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span><span class="p">,</span> <span class="nc">UuidVariant</span><span class="p">,</span> <span class="nc">UuidVersion</span>
 
-<span class="n">report_id</span> <span class="o">=</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">v5</span><span class="p">(</span><span class="nc">UUID</span><span class="o">.</span><span class="nc">NAMESPACE_URL</span><span class="p">,</span> <span class="s2">&quot;https://example.com/reports/2026/04/14&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">report_id</span><span class="o">.</span><span class="n">to_urn</span><span class="p">())</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">require_v7</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span><span class="p">]:</span>
+    <span class="n">uuid</span> <span class="o">=</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">text</span><span class="p">)</span><span class="o">?</span>
+    <span class="k">if</span> <span class="n">uuid</span><span class="o">.</span><span class="n">version</span><span class="p">()</span><span class="o">?</span> <span class="o">!=</span> <span class="nc">UuidVersion</span><span class="o">.</span><span class="nc">V7</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">UuidError</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="s2">&quot;unsupported_version&quot;</span><span class="p">,</span> <span class="n">detail</span><span class="o">=</span><span class="s2">&quot;expected a UUIDv7 value&quot;</span><span class="p">))</span>
+    <span class="k">if</span> <span class="n">uuid</span><span class="o">.</span><span class="n">variant</span><span class="p">()</span><span class="o">?</span> <span class="o">!=</span> <span class="nc">UuidVariant</span><span class="o">.</span><span class="nc">Rfc9562</span><span class="p">:</span>
+        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">UuidError</span><span class="p">(</span><span class="n">kind</span><span class="o">=</span><span class="s2">&quot;unsupported_variant&quot;</span><span class="p">,</span> <span class="n">detail</span><span class="o">=</span><span class="s2">&quot;expected an RFC 9562 UUID&quot;</span><span class="p">))</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">uuid</span><span class="p">)</span>
 </code></pre></div>
-<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="module-scope">Module scope<a class="headerlink" href="#module-scope" title="Permanent link">&para;</a></h3>
-<p><code>std.uuid</code> must provide:</p>
+<p>Nil and max UUIDs have special version results because they are sentinel values rather than ordinary generated UUIDs.</p>
+<h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li>a <code>UUID</code> value type;</li>
-<li>a module-owned <code>UuidError</code> error type for parsing, byte-length, and generation failures;</li>
-<li>module-owned <code>UuidVersion</code> and <code>UuidVariant</code> inspection values;</li>
-<li>parse and format helpers;</li>
-<li>binary and numeric conversion helpers;</li>
-<li>constants for Nil, Max, and the standard namespace UUIDs;</li>
-<li>version and variant inspection;</li>
-<li>generation helpers for the RFC 9562 UUID versions with portable generation rules.</li>
+<li><a href="../../reference/stdlib/uuid/"><code>std.uuid</code> reference</a></li>
+<li><a href="../../explanation/error_handling/">Error handling</a></li>
+<li><a href="../choosing_numeric_types/">Choosing numeric types</a></li>
 </ul>
-<h3 id="capability-areas">Capability areas<a class="headerlink" href="#capability-areas" title="Permanent link">&para;</a></h3>
-<p>The contract must cover:</p>
-<ul>
-<li>parsing RFC 9562 UUID values across supported textual forms;</li>
-<li>accepting arbitrary 128-bit UUID payloads through bytes and <code>u128</code> conversion, even when the bit pattern is not an RFC 9562-generated value;</li>
-<li>formatting in canonical lowercase hyphenated form;</li>
-<li>equality and ordering semantics;</li>
-<li>conversion to and from 16-byte binary representations;</li>
-<li>conversion to and from <code>u128</code>;</li>
-<li>helpers to inspect the UUID version and variant without rejecting non-standard bit patterns that entered through binary or numeric construction;</li>
-<li>generation helpers for UUID versions 1, 3, 4, 5, 6, 7, and 8;</li>
-<li>explicit handling of version 2 as parseable and inspectable but not generatable in core stdlib because RFC 9562 leaves its definition outside the scope of the specification.</li>
-</ul>
-<h3 id="api-direction">API direction<a class="headerlink" href="#api-direction" title="Permanent link">&para;</a></h3>
-<p>The module should treat UUIDs as structured identifier values, not just as strings with validation. The public contract should be explicit about:</p>
-<ul>
-<li>canonical string formatting;</li>
-<li>exact byte ordering for <code>to_bytes()</code> and <code>from_bytes(...)</code>;</li>
-<li>lossless <code>u128</code> conversion via <code>to_int()</code> and <code>from_int(...)</code>;</li>
-<li>how ordering works;</li>
-<li>which UUID versions can be generated directly;</li>
-<li>which UUID versions are supported only for parsing and inspection.</li>
-</ul>
-<p>The module should remain simple. It should not turn UUIDs into a protocol-forensics API with version-specific raw field extraction as part of the core standard-library surface.</p>
-<h3 id="public-api-surface">Public API surface<a class="headerlink" href="#public-api-surface" title="Permanent link">&para;</a></h3>
-<p>The north-star surface should include:</p>
-<ul>
-<li><code>UUID.parse(text: str) -&gt; Result[UUID, UuidError]</code></li>
-<li><code>UUID.from_bytes(raw: bytes) -&gt; Result[UUID, UuidError]</code></li>
-<li><code>UUID.from_int(value: u128) -&gt; UUID</code></li>
-<li><code>UUID.v1() -&gt; Result[UUID, UuidError]</code></li>
-<li><code>UUID.v3(namespace: UUID, name: str | bytes) -&gt; Result[UUID, UuidError]</code></li>
-<li><code>UUID.v4() -&gt; Result[UUID, UuidError]</code></li>
-<li><code>UUID.v5(namespace: UUID, name: str | bytes) -&gt; Result[UUID, UuidError]</code></li>
-<li><code>UUID.v6() -&gt; Result[UUID, UuidError]</code></li>
-<li><code>UUID.v7() -&gt; Result[UUID, UuidError]</code></li>
-<li><code>UUID.v8(raw: bytes) -&gt; Result[UUID, UuidError]</code></li>
-<li><code>uuid.to_string() -&gt; str</code></li>
-<li><code>uuid.to_hex() -&gt; str</code></li>
-<li><code>uuid.to_urn() -&gt; str</code></li>
-<li><code>uuid.to_bytes() -&gt; bytes</code></li>
-<li><code>uuid.to_int() -&gt; u128</code></li>
-</ul>
-<p>The type should also expose read-only information and constants:</p>
-<ul>
-<li><code>uuid.version -&gt; UuidVersion</code></li>
-<li><code>uuid.variant -&gt; UuidVariant</code></li>
-<li><code>UUID.NIL</code></li>
-<li><code>UUID.MAX</code></li>
-<li><code>UUID.NAMESPACE_DNS</code></li>
-<li><code>UUID.NAMESPACE_URL</code></li>
-<li><code>UUID.NAMESPACE_OID</code></li>
-<li><code>UUID.NAMESPACE_X500</code></li>
-</ul>
-<p><code>UuidVersion</code> must represent at least <code>Nil</code>, <code>V1</code>, <code>V2</code>, <code>V3</code>, <code>V4</code>, <code>V5</code>, <code>V6</code>, <code>V7</code>, <code>V8</code>, <code>Max</code>, and <code>Unknown(int)</code>. <code>UuidVariant</code> must represent at least <code>Ncs</code>, <code>Rfc9562</code>, <code>Microsoft</code>, <code>Future</code>, and <code>Unknown</code>. Generated UUIDs must use the RFC 9562 variant. UUIDs introduced through <code>from_bytes(...)</code> or <code>from_int(...)</code> may report non-RFC variants rather than being rejected.</p>
-<p><code>UuidError</code> must distinguish at least invalid text, invalid byte length, unavailable randomness, unavailable clock state, and invalid version-specific generation input. The error type may carry spans or source text later, but this RFC only commits to these semantic categories.</p>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="why-uuid-deserves-a-first-class-type">Why UUID deserves a first-class type<a class="headerlink" href="#why-uuid-deserves-a-first-class-type" title="Permanent link">&para;</a></h3>
-<p>Using <code>str</code> for UUIDs works until it doesn't. Parsing, validation, formatting, version inspection, and byte conversion all become repeated ad hoc logic. A dedicated type makes the API clearer, allows version-aware helpers, and gives the language a consistent interoperability story across text, bytes, and <code>u128</code>.</p>
-<h3 id="rfc-9562-baseline">RFC 9562 baseline<a class="headerlink" href="#rfc-9562-baseline" title="Permanent link">&para;</a></h3>
-<p>RFC 9562 is the normative baseline for this module. In practice, that means:</p>
-<ul>
-<li>UUIDs are 128-bit values.</li>
-<li>Binary conversion uses the RFC/network byte order.</li>
-<li>Nil and Max UUIDs are standard constants.</li>
-<li>versions 1, 3, 4, 5, 6, 7, and 8 are real RFC-defined UUID versions;</li>
-<li>version 2 is reserved for DCE Security UUIDs, but the RFC leaves its definition outside the scope of the specification.</li>
-</ul>
-<p>Following RFC 9562 does not mean every UUID version should be treated as equally good for new application design. The stdlib should support the full RFC 9562 value space while still documenting preferred usage:</p>
-<ul>
-<li>prefer <code>v7</code> for time-sortable UUID generation;</li>
-<li>prefer <code>v4</code> for simple random identifiers;</li>
-<li>prefer <code>v5</code> over <code>v3</code> for deterministic namespace-based identifiers;</li>
-<li>treat <code>v8</code> as advanced or vendor-specific.</li>
-</ul>
-<h3 id="substrait-compatibility-and-arbitrary-128-bit-values">Substrait compatibility and arbitrary 128-bit values<a class="headerlink" href="#substrait-compatibility-and-arbitrary-128-bit-values" title="Permanent link">&para;</a></h3>
-<p>Substrait UUID values are looser than RFC 9562 text-format UUIDs: the binary type is a 128-bit UUID payload and does not require every value to be a canonical RFC-generated UUID. To stay compatible with that model:</p>
-<ul>
-<li><code>UUID.from_bytes(...)</code> must accept any 16-byte payload;</li>
-<li><code>UUID.from_int(...)</code> must accept every <code>u128</code> value and therefore does not need to return <code>Result</code>;</li>
-<li><code>UUID.parse(...)</code> remains the textual RFC-oriented parser for standard UUID string forms.</li>
-</ul>
-<p>This means <code>std.uuid</code> is RFC 9562-aware rather than RFC 9562-validity-gated. The type supports canonical RFC generation and formatting, but binary and numeric interchange remain fully 128-bit-compatible.</p>
-<h3 id="parsing-and-formatting">Parsing and formatting<a class="headerlink" href="#parsing-and-formatting" title="Permanent link">&para;</a></h3>
-<p>Canonical formatting is the lowercase hyphenated form:</p>
-<ul>
-<li><code>550e8400-e29b-41d4-a716-446655440000</code></li>
-</ul>
-<p>Parsing should accept the common interoperable forms as well:</p>
-<ul>
-<li>lowercase or uppercase hexadecimal digits;</li>
-<li>canonical hyphenated form;</li>
-<li>bare 32-character hexadecimal form;</li>
-<li>surrounding braces;</li>
-<li><code>urn:uuid:</code> prefixed form.</li>
-</ul>
-<p>Regardless of input form, canonical stringification should render lowercase hyphenated output.</p>
-<p>When a <code>UUID</code> is converted to <code>str</code>, it should produce the same canonical lowercase hyphenated form.</p>
-<h3 id="bytes-and-u128">Bytes and <code>u128</code><a class="headerlink" href="#bytes-and-u128" title="Permanent link">&para;</a></h3>
-<p><code>UUID.to_bytes()</code> and <code>UUID.from_bytes(...)</code> must use the RFC 9562 byte ordering only. The standard library should not standardize platform- or vendor-specific alternate byte layouts such as COM/GUID little-endian field permutations.</p>
-<p><code>UUID.to_int()</code> and <code>UUID.from_int(...)</code> should be part of the core contract. This gives Incan a lossless numeric UUID representation that is stronger than ecosystems which fall back to strings or narrower integer surrogates when UUID columns are inconvenient to store natively.</p>
-<p>The public numeric representation is <code>u128</code>, not <code>i128</code>. UUIDs are 128-bit identifier values, not signed numbers. The implementation may store the bits however it likes internally, but the public contract should standardize <code>u128</code> as the lossless numeric view.</p>
-<h3 id="comparison-and-ordering">Comparison and ordering<a class="headerlink" href="#comparison-and-ordering" title="Permanent link">&para;</a></h3>
-<p>UUID values should support equality and ordering by raw UUID value, equivalent to comparison by their <code>u128</code> representation or RFC/network-order bytes.</p>
-<p>This gives the language a single deterministic total ordering for all UUID values. The RFC should still state clearly that only some versions have meaningful chronological ordering semantics:</p>
-<ul>
-<li><code>v6</code> and <code>v7</code> are designed to sort well as raw bytes;</li>
-<li>RFC 9562 explicitly recommends <code>v7</code> over <code>v1</code> and <code>v6</code> where possible;</li>
-<li>ordering all UUIDs is useful as a language and data-structure property, but it should not be confused with domain-specific creation-time ordering for every UUID version.</li>
-</ul>
-<h3 id="generation-surface">Generation surface<a class="headerlink" href="#generation-surface" title="Permanent link">&para;</a></h3>
-<p>Core stdlib generation should follow RFC 9562 directly:</p>
-<ul>
-<li><code>UUID.v1()</code> for Gregorian time-based UUIDs;</li>
-<li><code>UUID.v3(namespace, name)</code> for MD5 namespace-based UUIDs;</li>
-<li><code>UUID.v4()</code> for random UUIDs;</li>
-<li><code>UUID.v5(namespace, name)</code> for SHA-1 namespace-based UUIDs;</li>
-<li><code>UUID.v6()</code> for reordered Gregorian time-based UUIDs;</li>
-<li><code>UUID.v7()</code> for Unix-epoch time-based UUIDs;</li>
-<li><code>UUID.v8(raw)</code> for vendor-specific UUID construction from a 16-byte payload, with the RFC 9562 version and variant bits applied by the constructor.</li>
-</ul>
-<p>Version 2 is the exception. RFC 9562 identifies it as DCE Security UUIDs but leaves its definition outside the scope of the RFC, so <code>std.uuid</code> should parse and inspect version 2 UUID values but should not promise a <code>UUID.v2()</code> generator in the core standard library contract.</p>
-<h3 id="namespaces-and-constants">Namespaces and constants<a class="headerlink" href="#namespaces-and-constants" title="Permanent link">&para;</a></h3>
-<p>Because name-based UUIDs are part of the committed surface, the standard namespace identifiers should be exposed directly:</p>
-<ul>
-<li><code>UUID.NAMESPACE_DNS</code></li>
-<li><code>UUID.NAMESPACE_URL</code></li>
-<li><code>UUID.NAMESPACE_OID</code></li>
-<li><code>UUID.NAMESPACE_X500</code></li>
-</ul>
-<p>The special constants should also be public:</p>
-<ul>
-<li><code>UUID.NIL</code></li>
-<li><code>UUID.MAX</code></li>
-</ul>
-<h3 id="simple-inspection-model">Simple inspection model<a class="headerlink" href="#simple-inspection-model" title="Permanent link">&para;</a></h3>
-<p>Core stdlib inspection should stop at:</p>
-<ul>
-<li><code>uuid.version</code></li>
-<li><code>uuid.variant</code></li>
-</ul>
-<p>That is enough for most application, analytics, and interoperability use cases. The standard library does not need to expose every version-specific internal field of time-based UUID layouts just because those fields exist in the wire format.</p>
-<p>For non-RFC bit patterns introduced through <code>from_bytes(...)</code> or <code>from_int(...)</code>, these inspection views should reflect the bits when they map cleanly onto known UUID variant/version classifications and otherwise indicate an unknown or non-standard value.</p>
-<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>std.io</code> can support reading and writing UUID bytes once a canonical byte-ordering contract exists.</li>
-<li>future JSON and database-related code can serialize UUIDs via their standard text form or <code>u128</code> form where that is more appropriate;</li>
-<li>future Substrait support can expose UUID values through their standard 16-byte binary representation without changing the <code>UUID</code> model;</li>
-<li>Rust interop remains the escape hatch for specialized UUID features not standardized here.</li>
-</ul>
-<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>This feature is additive. Existing string-based code keeps working, but new APIs should prefer <code>UUID</code> over loose string conventions where an identifier is semantically a UUID. Existing legacy UUIDs remain interoperable because the module parses and inspects the full RFC 9562 UUID value space, including older versions.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
+<!-- footnotes -->
+<div class="footnote">
+<hr />
 <ol>
-<li><strong>Strings only</strong></li>
-<li>
-<p>Too weak and too easy to misuse.</p>
+<li id="fn:uuid">
+<p><code>UUID</code> means <code>Universally Unique Identifier</code>.&#160;<a class="footnote-backref" href="#fnref:uuid" title="Jump back to footnote 1 in the text">&#8617;</a></p>
 </li>
-<li>
-<p><strong>Bytes only</strong></p>
+<li id="fn:dce">
+<p>Distributed Computing Environment, an older OSF/Open Group distributed systems stack.&#160;<a class="footnote-backref" href="#fnref:dce" title="Jump back to footnote 2 in the text">&#8617;</a></p>
 </li>
-<li>
-<p>Too low-level for common API and storage use cases.</p>
-</li>
-<li>
-<p><strong>Rust interop only</strong></p>
-</li>
-<li>
-<p>Too implementation-shaped for ordinary application code.</p>
-</li>
-<li>
-<p><strong>Expose only a narrow generator subset</strong></p>
-</li>
-<li>Cleaner on paper, but too restrictive for interoperability-heavy application and migration work that still encounters legacy UUID versions.</li>
 </ol>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
-<ul>
-<li>A complete UUID module needs careful decisions about version support, text permissiveness, and binary/text canonicalization.</li>
-<li>A first-class UUID type adds one more value kind for users to learn.</li>
-<li>Supporting legacy and vendor-specific UUID generation in core stdlib increases the size of the API surface.</li>
-<li><code>v8</code> in particular is easy to misuse if the documentation does not make its vendor-specific nature explicit.</li>
-</ul>
-<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Stdlib / runtime</strong>: must provide the UUID type, parsing, formatting, and generation semantics.</li>
-<li><strong>Language surface</strong>: the module and value type must be available as specified.</li>
-<li><strong>Execution handoff</strong>: implementations must preserve parsing, formatting, and byte-conversion behavior without backend leakage.</li>
-<li><strong>Docs / tooling</strong>: should standardize UUID examples and canonical formatting expectations.</li>
-<li><strong>Numeric/runtime interop</strong>: must align <code>UUID.to_int()</code> and <code>UUID.from_int(...)</code> with RFC 009 <code>u128</code> semantics.</li>
-</ul>
-<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>std.uuid</code> follows RFC 9562 as its normative UUID baseline.</li>
-<li><code>UUID</code> is a first-class value type with parsing, formatting, binary conversion, and <code>u128</code> conversion.</li>
-<li><code>UUID.from_bytes(...)</code> and <code>UUID.from_int(...)</code> accept arbitrary 128-bit UUID payloads for compatibility with binary-first systems such as Substrait.</li>
-<li>Parsing accepts canonical hyphenated text plus common interoperable forms such as bare hex, braces, and URN-prefixed UUID text.</li>
-<li>Canonical formatting is lowercase hyphenated text.</li>
-<li><code>UUID.to_bytes()</code> and <code>UUID.from_bytes(...)</code> use RFC/network byte order only.</li>
-<li><code>UUID.to_int()</code> and <code>UUID.from_int(...)</code> are part of the core contract and depend on RFC 009 <code>u128</code>; <code>from_int(...)</code> accepts every <code>u128</code> value and returns <code>UUID</code> directly.</li>
-<li><code>str(uuid)</code> renders the canonical lowercase hyphenated text form.</li>
-<li><code>UUID</code> values support equality and total ordering by raw UUID value.</li>
-<li><code>UUID.NIL</code>, <code>UUID.MAX</code>, and the four standard namespace constants are part of the public surface.</li>
-<li>Core stdlib generation includes <code>v1</code>, <code>v3</code>, <code>v4</code>, <code>v5</code>, <code>v6</code>, <code>v7</code>, and <code>v8</code>.</li>
-<li>Core stdlib does not promise <code>UUID.v2()</code> generation, because RFC 9562 leaves version 2 outside the scope of the specification.</li>
-<li><code>UuidError</code>, <code>UuidVersion</code>, and <code>UuidVariant</code> are module-owned public types rather than backend-specific implementation leaks.</li>
-<li>Core inspection is intentionally small and stops at <code>version</code> and <code>variant</code>.</li>
-<li><code>UUID.parse(...) -&gt; Result[UUID, UuidError]</code> is the parsing entry point; there is no separate <code>try_parse(...)</code> alias.</li>
-<li>The public numeric UUID representation is <code>u128</code>; internal storage is not part of the public contract.</li>
-<li>The module should remain compatible with Substrait-style 16-byte UUID interchange.</li>
-<li>Documentation should recommend <code>v7</code> for ordered IDs, <code>v4</code> for simple random IDs, and <code>v5</code> over <code>v3</code> for deterministic namespace-based IDs.</li>
-</ul>
+</div>
 
 
 
@@ -5704,18 +5576,18 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>
