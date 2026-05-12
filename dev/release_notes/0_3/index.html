@@ -1868,6 +1868,8 @@
       
         
       
+        
+      
     
     
       
@@ -2046,6 +2048,27 @@
   
   <span class="md-ellipsis">
     std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.logging
   </span>
   
 
@@ -4896,6 +4919,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#rfc-072-stdlogging" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 072 std.logging
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfc-009-numeric-type-system" class="md-nav__link">
     <span class="md-ellipsis">
       RFC 009 numeric type system
@@ -5338,6 +5370,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#rfc-072-stdlogging" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 072 std.logging
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfc-009-numeric-type-system" class="md-nav__link">
     <span class="md-ellipsis">
       RFC 009 numeric type system
@@ -5647,7 +5688,7 @@
 
 <h1 id="release-03">Release 0.3<a class="headerlink" href="#release-03" title="Permanent link">&para;</a></h1>
 <p>Incan 0.3 is the current development release. It picks up after the <code>0.2</code> line, which made the language surface more explicit around stdlib imports, Rust interop, library manifests, module state, and call-site generics.</p>
-<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, Rust trait adoption from Incan-owned wrappers, graph, collections, and datetime stdlib surfaces, iterator adapter chains, Result combinators, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 030 adds <code>std.collections</code> for specialized collection semantics; RFC 047 adds <code>std.graph</code> for explicit in-memory dependency and plan graphs; RFC 050 lets enums declare methods and adopt traits; RFC 043 starts Rust trait implementation authoring from Incan source with <code>with Trait</code>, method-level <code>for Trait</code>, and associated type declarations on newtypes and rusttypes; RFC 088 standardizes lazy iterator adapters and terminal consumers; RFC 070 adds Rust-shaped <code>Result[T, E]</code> composition with <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>; RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points; and RFC 058 adds Rust-backed runtime timing plus source-defined civil temporal values, fixed UTC offsets, Python-shaped parsing/formatting, and interval arithmetic.</p>
+<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, Rust trait adoption from Incan-owned wrappers, graph, collections, datetime, and logging stdlib surfaces, iterator adapter chains, Result combinators, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 030 adds <code>std.collections</code> for specialized collection semantics; RFC 047 adds <code>std.graph</code> for explicit in-memory dependency and plan graphs; RFC 050 lets enums declare methods and adopt traits; RFC 043 starts Rust trait implementation authoring from Incan source with <code>with Trait</code>, method-level <code>for Trait</code>, and associated type declarations on newtypes and rusttypes; RFC 088 standardizes lazy iterator adapters and terminal consumers; RFC 070 adds Rust-shaped <code>Result[T, E]</code> composition with <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>; RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points; RFC 058 adds Rust-backed runtime timing plus source-defined civil temporal values, fixed UTC offsets, Python-shaped parsing/formatting, and interval arithmetic; and RFC 072 adds source-defined structured logging.</p>
 <p>This page will grow as more <code>0.3</code> work lands. If you are looking for the shipped <code>0.2</code> story, start with <a href="../0_2/">Release 0.2</a>.</p>
 <p>For numeric guidance, start with <a href="../../language/how-to/choosing_numeric_types/">Choosing numeric types</a> and <a href="../../language/reference/numeric_semantics/">Numeric semantics</a>. For the current control-flow guidance, start with <a href="../../language/explanation/control_flow/">Control Flow</a>. For the current source-layout contract, start with the <a href="../../language/reference/code_style/">Incan Code Style Guide</a>. Use <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a> for the tool behavior. <a href="/dev/RFCs/closed/implemented/009_sized_integers">RFC 009</a>, <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a>, and <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a> record the design snapshots behind those behaviors.</p>
 <h2 id="what-03-is-about">What 0.3 is about<a class="headerlink" href="#what-03-is-about" title="Permanent link">&para;</a></h2>
@@ -5671,6 +5712,7 @@
 <li><code>Result</code> pipelines should support branch-local transforms, fallible chaining, recovery, and inspection taps without requiring repetitive nested <code>match</code> scaffolding</li>
 <li>ownership and generated-runtime ergonomics should improve structurally, not through one-off <code>.clone()</code> or <code>.as_ref()</code> patches</li>
 <li>standard-library filesystem workflows should distinguish ordinary path/file operations from temporary resource acquisition and cleanup</li>
+<li>application and library logging should use one structured stdlib vocabulary instead of pushing ordinary Incan code through Rust logging interop</li>
 </ul>
 <h2 id="migrating-from-02">Migrating from 0.2<a class="headerlink" href="#migrating-from-02" title="Permanent link">&para;</a></h2>
 <p>There are no required source migrations for ordinary <code>int</code> and <code>float</code> code. Those spellings remain valid and keep their <code>i64</code> / <code>f64</code> representations.</p>
@@ -5679,6 +5721,24 @@
 <p>Projects that gate on <code>incan fmt --check</code> should expect one-time vertical-spacing diffs when adopting a formatter that implements RFC 053. Those diffs are intentional: top-level <code>def</code> / <code>model</code> / <code>type</code>-like declarations get exactly two blank lines around them, following body-bearing members inside type bodies get exactly one blank line, and other same-scope transitions stay in the zero-or-one bucket.</p>
 <p><code>if let</code> and <code>while let</code> are additive. Existing <code>match</code> code keeps working unchanged; the new forms are available when a single successful pattern matters and the non-match path should do nothing.</p>
 <h2 id="major-additions">Major additions<a class="headerlink" href="#major-additions" title="Permanent link">&para;</a></h2>
+<h3 id="rfc-072-stdlogging">RFC 072 <code>std.logging</code><a class="headerlink" href="#rfc-072-stdlogging" title="Permanent link">&para;</a></h3>
+<p>Incan now has a <code>std.logging</code> module for ordinary structured logging. Code can emit through the ambient <code>log</code> surface
+for the current module's default logger, acquire explicit named loggers with <code>get_logger(...)</code>, and attach structured
+primitive fields or <code>std.telemetry.core.TelemetryValue</code> fields at each call site.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Level</span><span class="p">,</span> <span class="n">basic_config</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">basic_config</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="nc">Level</span><span class="o">.</span><span class="nc">INFO</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="s2">&quot;stdout&quot;</span><span class="p">)</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;started&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;component&quot;</span><span class="p">:</span> <span class="s2">&quot;worker&quot;</span><span class="p">})</span>
+</code></pre></div>
+<p>Logger values, validated <code>LoggerName</code> and <code>OutputTarget</code> values, source-level configuration, level filtering, bound
+context, human rendering, and JSON rendering are implemented in Incan stdlib source. Log records use the
+<code>std.telemetry.core</code> data model and OpenTelemetry log data model aliases for JSON output; <code>Level.WARN</code> and <code>Level.FATAL</code>
+are canonical, with <code>WARNING</code> and <code>CRITICAL</code> as enum variant aliases. The module uses <code>std.datetime</code> for timestamps and
+ordinary <code>rust::std::io</code> imports for stdout/stderr delivery without adding a logging-specific Rust backing module.
+Project defaults, environment overrides, CLI logging flags, and colorized terminal policy remain future host-boundary
+work.</p>
+<p>See also: <a href="../../language/reference/stdlib/logging/"><code>std.logging</code></a>, <a href="/dev/RFCs/closed/implemented/072_std_logging">RFC 072</a>.</p>
 <h3 id="rfc-009-numeric-type-system">RFC 009 numeric type system<a class="headerlink" href="#rfc-009-numeric-type-system" title="Permanent link">&para;</a></h3>
 <p>Incan now has a registry-backed numeric type system instead of only the broad <code>int</code> and <code>float</code> spellings. Use <code>int</code> and <code>float</code> for ordinary Incan-owned logic, then opt into exact widths when the number crosses a contract boundary.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">attempts</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span>
@@ -5901,6 +5961,17 @@ metadata-proven body-less <code>rusttype</code> forwarding without emitting inva
 </ul>
 <h3 id="parser-and-syntax">Parser and syntax<a class="headerlink" href="#parser-and-syntax" title="Permanent link">&para;</a></h3>
 <ul>
+<li><strong>Language/Compiler</strong>: Enum bodies now support same-enum variant aliases such as <code>WARNING = alias WARN</code>, letting value
+  enums expose compatibility or readability spellings without creating duplicate raw values or extra runtime variants
+  (#392, RFC 072).</li>
+<li><strong>Language/Stdlib</strong>: RFC 072 introduces <code>std.logging</code> with source-defined <code>Level</code>, <code>Logger</code>, <code>LogFormat</code>,
+  <code>LogStyle</code>, <code>ColorPolicy</code>, <code>LogRecord</code>, <code>basic_config(...)</code>, <code>get_logger(...)</code>, and the shadowable ambient <code>log</code>
+  surface. Logger methods preserve structured primitive and <code>TelemetryValue</code> fields, support bound context and child
+  names, infer source-module logger names where metadata exists, and implement filtering plus human/JSON rendering in
+  Incan source. JSON records use <code>std.telemetry.core</code> values with OpenTelemetry log data model aliases, <code>Level.WARN</code> and
+  <code>Level.FATAL</code> are canonical with <code>WARNING</code> and <code>CRITICAL</code> as aliases, timestamps flow through <code>std.datetime</code>, and
+  stdout/stderr delivery uses ordinary <code>rust::std::io</code> imports rather than a logging-specific Rust module (#392, RFC
+  072).</li>
 <li><strong>Language/Stdlib</strong>: <code>std.graph</code> adds explicit in-memory graph values with direct <code>DiGraph[T]()</code>, <code>Dag[T]()</code>, and <code>MultiDiGraph[T]()</code> construction, acyclicity-enforcing DAGs, stable <code>EdgeId</code> values for parallel multigraph edges, stable <code>NodeId</code> values, typed node payloads, node and edge removal, adjacency queries, roots and sinks, BFS/DFS traversal helpers, and cycle-reporting topological order for dependency and plan graphs (#204, RFC 047).</li>
 <li><strong>Language/Stdlib</strong>: <code>std.datetime</code> adds Rust <code>std::time</code>-backed <code>Duration</code>, <code>Instant</code>, and <code>SystemTime</code>, plus source-defined Incan civil values for dates, times, naive datetimes, fixed UTC offsets, fixed-offset datetimes, UTC civil clock factories, day/time intervals, year/month intervals, compound datetime intervals, ISO-style parsing/formatting, Python-shaped <code>strftime</code> / <code>strptime</code> with nanosecond <code>%f</code>, deterministic calendar arithmetic, and interval normalization (#292, RFC 058).</li>
 <li><strong>Language/Stdlib</strong>: <code>std.collections</code> adds explicit specialized collection types for double-ended queues, multisets, default-valued maps, ordered maps and sets, sorted maps and sets, layered maps, and priority queues. The namespace is registered as an ordinary source stdlib module with no feature gate, no extra Cargo dependencies, and no Rust-backed stdlib dispatch (#164, RFC 030).</li>
@@ -5954,6 +6025,7 @@ metadata-proven body-less <code>rusttype</code> forwarding without emitting inva
 <li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.43</code>.</li>
 <li><strong>Compiler internals</strong>: Typechecker lowering metadata is grouped into explicit semantic artifact families instead of one flat <code>TypeCheckInfo</code> payload, narrowing the backend-facing contract without changing language behavior (#283).</li>
 <li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.44</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.45</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>

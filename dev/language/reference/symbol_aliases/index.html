@@ -1700,6 +1700,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#enum-variant-aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enum Variant Aliases
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#overloads-and-signatures" class="md-nav__link">
     <span class="md-ellipsis">
       Overloads and signatures
@@ -1993,6 +2002,8 @@
       
         
       
+        
+      
     
     
       
@@ -2171,6 +2182,27 @@
   
   <span class="md-ellipsis">
     std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.logging
   </span>
   
 
@@ -5120,6 +5152,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#enum-variant-aliases" class="md-nav__link">
+    <span class="md-ellipsis">
+      Enum Variant Aliases
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#overloads-and-signatures" class="md-nav__link">
     <span class="md-ellipsis">
       Overloads and signatures
@@ -5261,6 +5302,16 @@
         <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">value</span>
 </code></pre></div>
 <p>Method aliases are same-type only. They cannot point at a method on another type, a free function, or a field.</p>
+<h2 id="enum-variant-aliases">Enum Variant Aliases<a class="headerlink" href="#enum-variant-aliases" title="Permanent link">&para;</a></h2>
+<p>Inside an enum body, a variant alias gives an existing variant another name without creating a second runtime variant:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">enum</span> <span class="nc">Level</span><span class="p">(</span><span class="nb">str</span><span class="p">):</span>
+    <span class="nc">WARN</span> <span class="o">=</span> <span class="s2">&quot;WARN&quot;</span>
+    <span class="nc">FATAL</span> <span class="o">=</span> <span class="s2">&quot;FATAL&quot;</span>
+    <span class="nc">WARNING</span> <span class="o">=</span> <span class="n">alias</span> <span class="nc">WARN</span>
+    <span class="nc">CRITICAL</span> <span class="o">=</span> <span class="n">alias</span> <span class="nc">FATAL</span>
+</code></pre></div>
+<p>Variant aliases are useful when an enum has a compact canonical wire spelling but also wants a longer source spelling.
+For value enums, the alias reuses the target variant's raw value and does not bypass duplicate raw-value validation.</p>
 <h2 id="overloads-and-signatures">Overloads and signatures<a class="headerlink" href="#overloads-and-signatures" title="Permanent link">&para;</a></h2>
 <p>A method alias projects the target method surface. The alias keeps the target receiver, parameters, return type, async status, generic parameters, and overload set.</p>
 <p>If the target method is overloaded, the alias exposes the same overload group under the alias name. Call resolution still uses the target signatures; the alias does not introduce another implementation body.</p>

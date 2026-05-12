@@ -11,21 +11,25 @@
       
       
       
+        <link rel="prev" href="../io/">
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+        <link rel="next" href="../tempfile/">
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFC 072: Ambient log Surface with Tracing-Backed Runtime Policy - Incan Documentation</title>
+        <title>std.logging - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,11 +48,11 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
     
       <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-072-ambient-log-surface-with-tracing-backed-runtime-policy" class="md-skip">
+        <a href="#stdlogging" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +98,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 072: Ambient log Surface with Tracing-Backed Runtime Policy
+              std.logging
             
           </span>
         </div>
@@ -212,7 +216,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -241,7 +245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -292,7 +296,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../start_here/" class="md-nav__link ">
+            <a href="../../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -325,7 +329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -346,7 +350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -367,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -388,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -413,6 +417,8 @@
       
   
   
+    
+  
   
   
     
@@ -438,16 +444,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -464,7 +470,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3">
             <span class="md-nav__icon md-icon"></span>
             Language
@@ -575,7 +581,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -608,7 +614,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -629,7 +635,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -650,7 +656,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -671,7 +677,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -692,7 +698,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -713,7 +719,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -734,7 +740,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -755,7 +761,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -776,7 +782,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -797,7 +803,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -818,7 +824,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -839,7 +845,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -860,7 +866,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -889,7 +895,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/dates_and_times/" class="md-nav__link">
+      <a href="../../../tutorials/dates_and_times/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -910,7 +916,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -931,7 +937,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../../../tutorials/fallible_and_infallible_paths/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -952,7 +958,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1056,7 +1062,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../../how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1077,7 +1083,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../../how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1098,7 +1104,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/dates_and_times/" class="md-nav__link">
+      <a href="../../../how-to/dates_and_times/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1119,7 +1125,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../../how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1140,7 +1146,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../../how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1161,7 +1167,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../../how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1182,7 +1188,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/generators/" class="md-nav__link">
+      <a href="../../../how-to/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1203,7 +1209,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../../how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1224,7 +1230,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../../how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1245,7 +1251,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_collections/" class="md-nav__link">
+      <a href="../../../how-to/choosing_collections/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1266,7 +1272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+      <a href="../../../how-to/choosing_numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1287,7 +1293,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../../how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1308,7 +1314,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+      <a href="../../../how-to/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1329,7 +1335,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../../how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1350,7 +1356,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../../how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1371,7 +1377,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/performance/" class="md-nav__link">
+      <a href="../../../how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1392,7 +1398,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../../how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1413,7 +1419,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../../how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1439,8 +1445,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1485,11 +1493,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4" checked>
         
           
           <label class="md-nav__link" for="__nav_3_4" id="__nav_3_4_label" tabindex="0">
@@ -1503,7 +1511,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_3_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4">
             <span class="md-nav__icon md-icon"></span>
             Reference
@@ -1517,7 +1525,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/language/" class="md-nav__link">
+      <a href="../../language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1538,7 +1546,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../code_style/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1559,7 +1567,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/functions/" class="md-nav__link">
+      <a href="../../functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1580,7 +1588,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/generators/" class="md-nav__link">
+      <a href="../../generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1601,7 +1609,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+      <a href="../../symbol_aliases/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1622,7 +1630,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/callable_presets/" class="md-nav__link">
+      <a href="../../callable_presets/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1643,7 +1651,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1664,7 +1672,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1685,7 +1693,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1706,7 +1714,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1727,7 +1735,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1748,7 +1756,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+      <a href="../../project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1769,7 +1777,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/strings/" class="md-nav__link">
+      <a href="../../strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1790,7 +1798,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1811,7 +1819,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1829,6 +1837,8 @@
                 
   
   
+    
+  
   
   
     
@@ -1864,21 +1874,23 @@
       
         
       
+        
+      
     
     
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3_4_16" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -1895,7 +1907,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_3_4_16_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_3_4_16">
             <span class="md-nav__icon md-icon"></span>
             Standard library
@@ -1911,7 +1923,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1932,7 +1944,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/collections/" class="md-nav__link">
+      <a href="../collections/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1953,7 +1965,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1974,7 +1986,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/datetime/" class="md-nav__link">
+      <a href="../datetime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1995,7 +2007,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
+      <a href="../fs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2016,7 +2028,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/graph/" class="md-nav__link">
+      <a href="../graph/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2037,7 +2049,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/io/" class="md-nav__link">
+      <a href="../io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2055,10 +2067,107 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    std.logging
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    std.logging
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#logger-acquisition" class="md-nav__link">
+    <span class="md-ellipsis">
+      Logger Acquisition
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#structured-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      Structured Fields
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      Levels
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#configuration" class="md-nav__link">
+    <span class="md-ellipsis">
+      Configuration
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/tempfile/" class="md-nav__link">
+      <a href="../tempfile/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2079,7 +2188,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2100,7 +2209,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/result/" class="md-nav__link">
+      <a href="../result/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2121,7 +2230,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2142,7 +2251,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2163,7 +2272,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2226,7 +2335,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2259,7 +2368,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2280,7 +2389,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2301,7 +2410,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2322,7 +2431,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+      <a href="../../stdlib_traits/awaitable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2343,7 +2452,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2364,7 +2473,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2385,7 +2494,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2465,7 +2574,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2486,7 +2595,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2507,7 +2616,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2528,7 +2637,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2549,7 +2658,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2570,7 +2679,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2690,7 +2799,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../../explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2711,7 +2820,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../../explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2732,7 +2841,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../../explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2753,7 +2862,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+      <a href="../../../explanation/compile_time_and_runtime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2774,7 +2883,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+      <a href="../../../explanation/rust_shaped_confidence/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2795,7 +2904,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../../explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2816,7 +2925,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/callable_presets/" class="md-nav__link">
+      <a href="../../../explanation/callable_presets/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2837,7 +2946,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/closures/" class="md-nav__link">
+      <a href="../../../explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2858,7 +2967,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/consts/" class="md-nav__link">
+      <a href="../../../explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2879,7 +2988,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/generators/" class="md-nav__link">
+      <a href="../../../explanation/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2900,7 +3009,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../../explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2921,7 +3030,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+      <a href="../../../explanation/numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2942,7 +3051,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/datetime_model/" class="md-nav__link">
+      <a href="../../../explanation/datetime_model/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2963,7 +3072,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2984,7 +3093,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../../explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3005,7 +3114,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../../explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3026,7 +3135,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/enums/" class="md-nav__link">
+      <a href="../../../explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3047,7 +3156,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../../explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3068,7 +3177,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../../explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3113,7 +3222,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../../explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3146,7 +3255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3167,7 +3276,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3196,7 +3305,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../../explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3217,7 +3326,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../../explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3284,7 +3393,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tooling/" class="md-nav__link ">
+            <a href="../../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3362,7 +3471,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3383,7 +3492,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3404,7 +3513,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3488,7 +3597,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3509,7 +3618,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3530,7 +3639,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3551,7 +3660,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3572,7 +3681,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3593,7 +3702,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3614,7 +3723,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3635,7 +3744,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3707,7 +3816,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3728,7 +3837,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3806,7 +3915,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3827,7 +3936,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/contract_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3848,7 +3957,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3869,7 +3978,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3890,7 +3999,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3951,7 +4060,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../whitepapers/" class="md-nav__link ">
+            <a href="../../../../whitepapers/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3984,7 +4093,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+      <a href="../../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4052,7 +4161,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/" class="md-nav__link ">
+            <a href="../../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4162,7 +4271,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4195,7 +4304,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4216,7 +4325,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4237,7 +4346,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4258,7 +4367,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4279,7 +4388,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4300,7 +4409,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4321,7 +4430,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4342,7 +4451,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4428,7 +4537,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4449,7 +4558,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4470,7 +4579,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4491,7 +4600,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4512,7 +4621,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4592,7 +4701,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4613,7 +4722,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/duckborrowing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4634,7 +4743,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4655,7 +4764,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4676,7 +4785,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4697,7 +4806,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4726,7 +4835,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../../../RFCs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4783,7 +4892,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../release_notes/" class="md-nav__link ">
+            <a href="../../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4816,7 +4925,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_3/" class="md-nav__link">
+      <a href="../../../../release_notes/0_3/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4837,7 +4946,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4858,7 +4967,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4886,7 +4995,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../roadmap/" class="md-nav__link">
+      <a href="../../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4906,7 +5015,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stability/" class="md-nav__link">
+      <a href="../../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4946,166 +5055,24 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#logger-acquisition" class="md-nav__link">
     <span class="md-ellipsis">
-      Summary
+      Logger Acquisition
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#core-model" class="md-nav__link">
+  <a href="#structured-fields" class="md-nav__link">
     <span class="md-ellipsis">
-      Core model
+      Structured Fields
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#motivation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Motivation
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Non-Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#guide-level-explanation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Guide-level explanation
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Guide-level explanation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#basic-use" class="md-nav__link">
-    <span class="md-ellipsis">
-      Basic use
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#scoped-operations" class="md-nav__link">
-    <span class="md-ellipsis">
-      Scoped operations
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#nested-work" class="md-nav__link">
-    <span class="md-ellipsis">
-      Nested work
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#runtime-overrides-vs-project-defaults" class="md-nav__link">
-    <span class="md-ellipsis">
-      Runtime overrides vs project defaults
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#color-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      Color policy
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#renderer-templates" class="md-nav__link">
-    <span class="md-ellipsis">
-      Renderer templates
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#human-output-styles" class="md-nav__link">
-    <span class="md-ellipsis">
-      Human output styles
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#machine-oriented-output" class="md-nav__link">
-    <span class="md-ellipsis">
-      Machine-oriented output
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#custom-presentation-and-delivery" class="md-nav__link">
-    <span class="md-ellipsis">
-      Custom presentation and delivery
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reference-level-explanation" class="md-nav__link">
-    <span class="md-ellipsis">
-      Reference-level explanation
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Reference-level explanation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#ambient-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Ambient surface
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
   <a href="#levels" class="md-nav__link">
     <span class="md-ellipsis">
       Levels
@@ -5113,238 +5080,11 @@
   </a>
   
 </li>
-        
-          <li class="md-nav__item">
-  <a href="#event-records" class="md-nav__link">
-    <span class="md-ellipsis">
-      Event records
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#structured-field-syntax" class="md-nav__link">
-    <span class="md-ellipsis">
-      Structured field syntax
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#spans" class="md-nav__link">
-    <span class="md-ellipsis">
-      Spans
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#human-renderers" class="md-nav__link">
-    <span class="md-ellipsis">
-      Human renderers
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#machine-format" class="md-nav__link">
-    <span class="md-ellipsis">
-      Machine format
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#project-defaults-vs-runtime-overrides" class="md-nav__link">
-    <span class="md-ellipsis">
-      Project defaults vs runtime overrides
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#future-export-compatibility" class="md-nav__link">
-    <span class="md-ellipsis">
-      Future export compatibility
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#custom-renderers-and-sinks" class="md-nav__link">
-    <span class="md-ellipsis">
-      Custom renderers and sinks
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#color-handling" class="md-nav__link">
-    <span class="md-ellipsis">
-      Color handling
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
       
         <li class="md-nav__item">
-  <a href="#design-details" class="md-nav__link">
+  <a href="#configuration" class="md-nav__link">
     <span class="md-ellipsis">
-      Design details
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Design details">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#why-there-is-no-get_logger" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why there is no get_logger(...)
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-the-source-surface-stays-method-shaped" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why the source surface stays method-shaped
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-structured-fields-use-keyword-arguments" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why structured fields use keyword arguments
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-spans-exist-separately-from-trace-level-logs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why spans exist separately from trace-level logs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-human-output-is-message-first" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why human output is message-first
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-json-is-not-a-style" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why JSON is not a style
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-project-defaults-and-runtime-policy-are-separate" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why project defaults and runtime policy are separate
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-export-is-split-into-a-follow-up-rfc" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why export is split into a follow-up RFC
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-custom-renderers-are-allowed" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why custom renderers are allowed
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-color-is-runtime-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why color is runtime policy
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      Alternatives considered
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#drawbacks" class="md-nav__link">
-    <span class="md-ellipsis">
-      Drawbacks
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#implementation-architecture" class="md-nav__link">
-    <span class="md-ellipsis">
-      Implementation architecture
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layers-affected" class="md-nav__link">
-    <span class="md-ellipsis">
-      Layers affected
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Unresolved questions
+      Configuration
     </span>
   </a>
   
@@ -5368,364 +5108,105 @@
   
 
 
-<h1 id="rfc-072-ambient-log-surface-with-tracing-backed-runtime-policy">RFC 072: Ambient <code>log</code> Surface with Tracing-Backed Runtime Policy<a class="headerlink" href="#rfc-072-ambient-log-surface-with-tracing-backed-runtime-policy" title="Permanent link">&para;</a></h1>
-<ul>
-<li><strong>Status:</strong> Draft</li>
-<li><strong>Created:</strong> 2026-04-23</li>
-<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong><ul>
-<li>RFC 022 (namespaced stdlib modules and compiler handoff)</li>
-<li>RFC 023 (compilable stdlib and Rust module binding)</li>
-<li>RFC 033 (<code>ctx</code> typed configuration context)</li>
-<li>RFC 041 (first-class Rust interop authoring)</li>
-<li>RFC 063 (<code>std.process</code> process spawning and command execution)</li>
-<li>RFC 066 (<code>std.http</code> HTTP client surface)</li>
-</ul>
-</li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/392</li>
-<li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.2</li>
-<li><strong>Shipped in:</strong> —</li>
-</ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes a built-in ambient <code>log</code> surface for Incan. Users should write <code>log.info(...)</code>, <code>log.warning(...)</code>, <code>log.error(...)</code>, and optionally scoped operations through <code>with log.span(...)</code> without importing or constructing logger objects. The emitted diagnostics model is language-level and backend-agnostic, while the reference Rust runtime maps it onto <code>tracing</code> and <code>tracing-subscriber</code>. Project defaults live in <code>incan.toml</code>, runtime overrides come from CLI flags and environment variables, and built-in human renderers prioritize terminal readability over prefix-heavy verbosity. The canonical event/span model defined here must remain rich enough for a follow-up RFC to add OpenTelemetry export without changing the source-level API.</p>
-<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
-<p>Read this RFC as one foundation plus five mechanisms:</p>
-<ol>
-<li><strong>Foundation:</strong> Logging is an ambient language surface, not an imported stdlib logger object and not a Rust interop recipe.</li>
-<li><strong>Mechanism A:</strong> Ordinary code emits events through <code>log.info(...)</code>, <code>log.debug(...)</code>, <code>log.warning(...)</code>, <code>log.error(...)</code>, <code>log.critical(...)</code>, and <code>log.trace(...)</code>.</li>
-<li><strong>Mechanism B:</strong> Scoped units of work may be expressed through <code>with log.span(...)</code>, which groups nested events, carries inherited metadata, and enables duration-aware tracing.</li>
-<li><strong>Mechanism C:</strong> Runtime policy is separate from emission. CLI flags and environment variables control what is rendered or exported for a given run, while <code>incan.toml</code> provides project defaults.</li>
-<li><strong>Mechanism D:</strong> The runtime records structured events and spans even when human output is compact. Human renderers, JSON output, and future external exporters are presentation and delivery concerns over one canonical payload.</li>
-<li><strong>Mechanism E:</strong> The reference Rust runtime should use <code>tracing</code> and <code>tracing-subscriber</code> internally, but those crates must not define the Incan source-language contract.</li>
-</ol>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Logging is one of the first places where a language either feels credible for real applications or falls back to awkward glue. CLIs, services, automation scripts, libraries, test helpers, and future query-language surfaces all need one coherent diagnostics story. Today, the escape hatch is Rust interop. That proves capability, but not language design. It leaks Rust crate names, backend assumptions, and macro-shaped habits into code that should stay ordinary Incan.</p>
-<p>The ordinary Python answer is also not sufficient. Python's logging module gets the basics right for many users, but it assumes a runtime world that Incan is not obligated to copy. Incan is not constrained to threadlocals, ad hoc adapters, or logger-object plumbing. It can deliberately choose a simpler source surface because the compiler and runtime can cooperate.</p>
-<p>The real use-cases also go beyond plain text logging. Purpose-built libraries, pipeline frameworks, query systems, and future application surfaces will need correlation identifiers, operation boundaries, and nested work visibility. That means the design has to separate the easy source surface from the richer runtime model. Plain log messages are not enough if the end-state includes trace-capable spans and future external observability integration.</p>
-<p>Prior art points in two directions. Rust's <code>log</code> crate gives a facade, while <code>tracing</code> models events and spans explicitly. Frameworks such as Koheesio show that users care as much about how logs are consumed as how they are emitted: rich default context, automatic operation grouping, and low boilerplate at call sites matter more than whether a module is named <code>logging</code>. Incan should therefore optimize for an ambient, language-native event surface with a tracing-capable runtime behind it.</p>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Provide an ambient <code>log</code> surface that exists by default with no <code>get_logger(...)</code> or import ceremony in ordinary code.</li>
-<li>Keep the call-site model simple and unsurprising: <code>log.info(...)</code>, <code>log.warning(...)</code>, and similar method calls.</li>
-<li>Support scoped operation grouping through <code>with log.span(...)</code> so nested work, duration, and correlation can be represented cleanly.</li>
-<li>Distinguish emission semantics from runtime policy, project defaults, and future external export.</li>
-<li>Provide built-in human renderers that are readable in terminals, with <code>short</code> as the default.</li>
-<li>Provide a machine-oriented JSON mode without forcing JSON as the default terminal experience.</li>
-<li>Allow custom renderers and sinks over the canonical structured event/span payload.</li>
-<li>Keep the source-language contract backend-agnostic while making a <code>tracing</code>-backed Rust runtime the recommended implementation architecture.</li>
-<li>Leave room for typed ambient context, including possible <code>ctx</code> integration, without requiring <code>ctx</code> just to log.</li>
-</ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Requiring users to create or acquire logger objects through <code>get_logger(...)</code>.</li>
-<li>Exposing Rust crate names such as <code>tracing</code>, <code>log</code>, or OpenTelemetry packages in ordinary Incan source code.</li>
-<li>Defining a full distributed tracing surface area or exporter configuration matrix in the first version.</li>
-<li>Standardizing every knob of <code>tracing-subscriber</code> or every backend-specific formatter and transport.</li>
-<li>Making JSON the default human-facing terminal output.</li>
-<li>Making the logging surface dependent on <code>ctx</code>; <code>ctx</code> integration is additive, not foundational.</li>
-<li>Treating the first version as a text-only <code>print</code> replacement with no structured event model underneath.</li>
-</ul>
-<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="basic-use">Basic use<a class="headerlink" href="#basic-use" title="Permanent link">&para;</a></h3>
-<p>Logging should exist by default. Ordinary code should not need imports or logger construction:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Starting session&quot;</span><span class="p">)</span>
-</code></pre></div>
-<p>The common path is intentionally boring:</p>
-<ul>
-<li><code>log.trace(...)</code> for very low-priority diagnostic events</li>
-<li><code>log.debug(...)</code> for development-oriented detail</li>
-<li><code>log.info(...)</code> for ordinary operational messages</li>
-<li><code>log.warning(...)</code> for degraded-but-continuing behavior</li>
-<li><code>log.error(...)</code> for failures in the current operation</li>
-<li><code>log.critical(...)</code> for severe failures</li>
-</ul>
-<h3 id="scoped-operations">Scoped operations<a class="headerlink" href="#scoped-operations" title="Permanent link">&para;</a></h3>
-<p>Some work is more than one message. Query execution, pipeline steps, request handling, and export jobs all have a start, nested work, and an end. Those should be expressible as a scoped operation:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">run_query</span><span class="p">(</span><span class="n">query</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">ResultFrame</span><span class="p">:</span>
-    <span class="k">with</span> <span class="n">log</span><span class="o">.</span><span class="n">span</span><span class="p">(</span><span class="s2">&quot;run_query&quot;</span><span class="p">):</span>
-        <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Parsing query&quot;</span><span class="p">)</span>
-        <span class="n">parsed</span> <span class="o">=</span> <span class="n">parse_query</span><span class="p">(</span><span class="n">query</span><span class="p">)</span>
+<h1 id="stdlogging"><code>std.logging</code><a class="headerlink" href="#stdlogging" title="Permanent link">&para;</a></h1>
+<p><code>std.logging</code> provides source-defined structured logging for ordinary Incan programs. The logger types, configuration
+state, level filtering, bound context, human rendering, and JSON rendering are implemented in Incan stdlib source.
+<code>std.logging</code> uses the pure <code>std.telemetry.core</code> data model for log records so simple logs are OpenTelemetry-shaped
+without requiring users to configure exporters or the full <code>std.telemetry</code> provider.</p>
+<p>The implementation uses <code>std.datetime</code> for timestamps. It does not use a Rust backing module or <code>@rust.extern</code> logging
+helpers.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Level</span><span class="p">,</span> <span class="n">basic_config</span>
 
-        <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Planning query&quot;</span><span class="p">)</span>
-        <span class="n">plan</span> <span class="o">=</span> <span class="n">build_plan</span><span class="p">(</span><span class="n">parsed</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">basic_config</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="nc">Level</span><span class="o">.</span><span class="nc">INFO</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="s2">&quot;stdout&quot;</span><span class="p">)</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;started&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;component&quot;</span><span class="p">:</span> <span class="s2">&quot;worker&quot;</span><span class="p">})</span>
+</code></pre></div>
+<h2 id="logger-acquisition">Logger Acquisition<a class="headerlink" href="#logger-acquisition" title="Permanent link">&para;</a></h2>
+<p>Use <code>get_logger(name: Option[str] = None) -&gt; Logger</code> to acquire a logger.</p>
+<p>For the common default logger, use ambient <code>log</code>. It behaves like binding <code>log = get_logger()</code> in the current module
+when no local <code>log</code> binding exists.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;ready&quot;</span><span class="p">)</span>
+</code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
 
-        <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Executing query&quot;</span><span class="p">)</span>
-        <span class="k">return</span> <span class="n">execute_plan</span><span class="p">(</span><span class="n">plan</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">load</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;etl.loader&quot;</span><span class="p">)</span>
+    <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;loading&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="n">path</span><span class="p">})</span>
 </code></pre></div>
-<p>The value of the span is not syntax cleverness. The value is that the runtime can group those events under one operation, measure duration, and preserve a trace-capable structure for human renderers, JSON output, and future export integrations.</p>
-<h3 id="nested-work">Nested work<a class="headerlink" href="#nested-work" title="Permanent link">&para;</a></h3>
-<p>Scoped operations may nest:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">compile_query</span><span class="p">(</span><span class="n">plan</span><span class="p">:</span> <span class="nc">Plan</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">CompiledQuery</span><span class="p">:</span>
-    <span class="k">with</span> <span class="n">log</span><span class="o">.</span><span class="n">span</span><span class="p">(</span><span class="s2">&quot;compile_query&quot;</span><span class="p">):</span>
-        <span class="k">with</span> <span class="n">log</span><span class="o">.</span><span class="n">span</span><span class="p">(</span><span class="s2">&quot;lower_plan&quot;</span><span class="p">):</span>
-            <span class="n">lowered</span> <span class="o">=</span> <span class="n">lower_plan</span><span class="p">(</span><span class="n">plan</span><span class="p">)</span>
+<p>Logger names are represented by the validated <code>LoggerName</code> newtype. Names are dot-separated and must not be empty, start
+or end with <code>.</code>, or contain empty segments such as <code>app..loader</code>. Calling <code>get_logger()</code> without a name uses the current
+source module name when the compiler has source metadata; command snippets and other metadata-free entry points fall
+back to <code>"root"</code>.</p>
+<p>Use <code>child(...)</code> for hierarchical names:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">root</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;etl&quot;</span><span class="p">)</span>
+    <span class="n">loader</span> <span class="o">=</span> <span class="n">root</span><span class="o">.</span><span class="n">child</span><span class="p">(</span><span class="s2">&quot;loader&quot;</span><span class="p">)</span>
+    <span class="n">loader</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;loading&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="n">path</span><span class="p">})</span>
+</code></pre></div>
+<h2 id="structured-fields">Structured Fields<a class="headerlink" href="#structured-fields" title="Permanent link">&para;</a></h2>
+<p>Event fields are passed as a structured dictionary:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;loaded rows&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;dataset&quot;</span><span class="p">:</span> <span class="s2">&quot;users&quot;</span><span class="p">,</span> <span class="s2">&quot;rows&quot;</span><span class="p">:</span> <span class="mi">42</span><span class="p">,</span> <span class="s2">&quot;cached&quot;</span><span class="p">:</span> <span class="k">true</span><span class="p">})</span>
+</code></pre></div>
+<p>Event methods accept primitive structured values such as strings, booleans, integers, floats, and <code>None</code>. They also
+accept <code>std.telemetry.core.TelemetryValue</code> for nested arrays, maps, encoded bytes, or values that have already crossed a
+telemetry boundary. JSON output stores fields as structured <code>std.telemetry.core.Attributes</code> values instead of
+concatenating them into the message text.</p>
+<p>Dotted semantic keys such as <code>http.request.method</code>, <code>db.system.name</code>, <code>gen_ai.request.model</code>, or <code>mcp.method.name</code> are
+preserved as ordinary field keys. External telemetry conventions are not interpreted by <code>std.logging</code> itself.</p>
+<p>Internally, logging events are represented as OpenTelemetry-aligned <code>LogRecord</code> values. Incan source uses snake_case
+field names such as <code>severity_text</code> and <code>instrumentation_scope</code>; wire-oriented serialization can use official
+OpenTelemetry aliases such as <code>SeverityText</code> and <code>InstrumentationScope</code>.</p>
+<p>Use <code>bind(...)</code> for repeated context:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">handle</span><span class="p">(</span><span class="n">request_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">elapsed_ms</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">request_log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;api.request&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">bind</span><span class="p">({</span><span class="s2">&quot;request_id&quot;</span><span class="p">:</span> <span class="n">request_id</span><span class="p">})</span>
+    <span class="n">request_log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;accepted&quot;</span><span class="p">)</span>
+    <span class="n">request_log</span><span class="o">.</span><span class="n">warning</span><span class="p">(</span><span class="s2">&quot;slow upstream&quot;</span><span class="p">,</span> <span class="n">fields</span><span class="o">=</span><span class="p">{</span><span class="s2">&quot;elapsed_ms&quot;</span><span class="p">:</span> <span class="n">elapsed_ms</span><span class="p">})</span>
+</code></pre></div>
+<p>Event fields override bound fields with the same key for that event.</p>
+<h2 id="levels">Levels<a class="headerlink" href="#levels" title="Permanent link">&para;</a></h2>
+<p><code>Level</code> is a value enum:</p>
+<ul>
+<li><code>Level.TRACE</code></li>
+<li><code>Level.DEBUG</code></li>
+<li><code>Level.INFO</code></li>
+<li><code>Level.WARN</code></li>
+<li><code>Level.ERROR</code></li>
+<li><code>Level.FATAL</code></li>
+</ul>
+<p><code>Level.WARNING</code> aliases <code>Level.WARN</code>, and <code>Level.CRITICAL</code> aliases <code>Level.FATAL</code> for readability at call sites that
+prefer the longer names.</p>
+<p>A configured threshold emits events at that level or above. <code>Logger.is_enabled(level)</code> reports whether a level is
+enabled for the current source-level policy.</p>
+<h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
+<p>Application entrypoints can configure logging with <code>basic_config(...)</code>:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Level</span><span class="p">,</span> <span class="nc">LogFormat</span><span class="p">,</span> <span class="nc">LogStyle</span><span class="p">,</span> <span class="n">basic_config</span>
 
-        <span class="k">with</span> <span class="n">log</span><span class="o">.</span><span class="n">span</span><span class="p">(</span><span class="s2">&quot;emit_sql&quot;</span><span class="p">):</span>
-            <span class="n">sql</span> <span class="o">=</span> <span class="n">emit_sql</span><span class="p">(</span><span class="n">lowered</span><span class="p">)</span>
-
-        <span class="k">return</span> <span class="nc">CompiledQuery</span><span class="p">(</span><span class="n">sql</span><span class="o">=</span><span class="n">sql</span><span class="p">)</span>
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">basic_config</span><span class="p">(</span>
+        <span class="n">level</span><span class="o">=</span><span class="nc">Level</span><span class="o">.</span><span class="nc">INFO</span><span class="p">,</span>
+        <span class="nb">format</span><span class="o">=</span><span class="nc">LogFormat</span><span class="o">.</span><span class="nc">JSON</span><span class="p">,</span>
+        <span class="n">style</span><span class="o">=</span><span class="nc">LogStyle</span><span class="o">.</span><span class="nc">SHORT</span><span class="p">,</span>
+        <span class="n">target</span><span class="o">=</span><span class="s2">&quot;stdout&quot;</span><span class="p">,</span>
+    <span class="p">)</span>
 </code></pre></div>
-<p>The human renderer should make that hierarchy visible, while structured output should preserve the full parent-child relationship.</p>
-<h3 id="runtime-overrides-vs-project-defaults">Runtime overrides vs project defaults<a class="headerlink" href="#runtime-overrides-vs-project-defaults" title="Permanent link">&para;</a></h3>
-<p>Project defaults belong in <code>incan.toml</code>:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[logging]</span>
-<span class="n">default_level</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;warning&quot;</span>
-<span class="n">default_style</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;short&quot;</span>
-<span class="n">default_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;human&quot;</span>
-<span class="n">timestamp_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;%H:%M:%S&quot;</span>
-<span class="n">color</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span>
-</code></pre></div>
-<p>Runtime overrides belong to the run command or the environment:</p>
-<div class="language-text highlight"><pre><span></span><code>incan run --log-level=debug
-incan run --log-style=complete
-INCAN_LOG_LEVEL=debug incan run
-INCAN_LOG_STYLE=minimal incan run
-</code></pre></div>
-<p>The runtime values override the project defaults. A project can declare a sensible baseline without taking control away from operators or developers running the program.</p>
-<h3 id="color-policy">Color policy<a class="headerlink" href="#color-policy" title="Permanent link">&para;</a></h3>
-<p>Color belongs to the human renderer layer, not to the canonical event/span payload. Human renderers should support color policies such as <code>auto</code>, <code>always</code>, and <code>never</code>.</p>
-<p>Illustrative shape:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[logging]</span>
-<span class="n">default_level</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;warning&quot;</span>
-<span class="n">default_style</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;short&quot;</span>
-<span class="n">default_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;human&quot;</span>
-<span class="n">color</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;auto&quot;</span>
-</code></pre></div>
-<p><code>auto</code> should enable color in interactive terminal contexts and disable it when the output is redirected or consumed as plain text. JSON output should remain colorless regardless of the human renderer color policy.</p>
-<h3 id="renderer-templates">Renderer templates<a class="headerlink" href="#renderer-templates" title="Permanent link">&para;</a></h3>
-<p>Human renderers should be configured through templates in the runtime policy layer rather than through language syntax. Built-in human styles and custom house styles should use the same renderer template system.</p>
-<p>Illustrative shape:</p>
-<div class="language-toml highlight"><pre><span></span><code><span class="k">[logging]</span>
-<span class="n">default_level</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;warning&quot;</span>
-<span class="n">default_style</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;short&quot;</span>
-<span class="n">default_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;human&quot;</span>
-
-<span class="k">[logging.renderers.minimal]</span>
-<span class="n">template</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;[{level}] {message}&quot;</span>
-
-<span class="k">[logging.renderers.short]</span>
-<span class="n">template</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;{timestamp} {tree_prefix}[{level}] {message}&quot;</span>
-<span class="n">timestamp_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;%H:%M:%S&quot;</span>
-
-<span class="k">[logging.renderers.complete]</span>
-<span class="n">template</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;{timestamp} {tree_prefix}[{level}] {message}&quot;</span>
-<span class="n">timestamp_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;%Y-%m-%dT%H:%M:%S.%fZ&quot;</span>
-
-<span class="k">[logging.renderers.verbose]</span>
-<span class="n">template</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;{timestamp} {tree_prefix}[{level}] {message}</span><span class="se">\n</span><span class="s2">  target={target} trace={trace_id} span={span_id} run={run_id}&quot;</span>
-<span class="n">timestamp_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;%Y-%m-%dT%H:%M:%S.%fZ&quot;</span>
-
-<span class="k">[logging.renderers.house_style]</span>
-<span class="n">template</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;[{run_id}] [{timestamp}] [{level}] [{target}] {{{file}:{function}:{line}}} - {message}&quot;</span>
-<span class="n">timestamp_format</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;%Y-%m-%d %H:%M:%S&quot;</span>
-</code></pre></div>
-<p>The template language should borrow the familiar named-placeholder model used by Python formatters, but it may extend that model with logging-specific fields such as <code>{tree_prefix}</code>, <code>{trace_id}</code>, <code>{span_id}</code>, and other structured diagnostics metadata. Projects that need to match an existing ecosystem's house style, such as Koheesio, should do so through a project-defined renderer profile rather than by making that external name part of the built-in contract.</p>
-<h3 id="human-output-styles">Human output styles<a class="headerlink" href="#human-output-styles" title="Permanent link">&para;</a></h3>
-<p>The runtime must provide built-in human styles. <code>short</code> should be the default because it keeps timestamps and hierarchy without overwhelming the terminal. Those built-in styles are named defaults over the same renderer-template mechanism available to custom project renderers.</p>
-<p>Illustrative shapes:</p>
-<p><code>minimal</code></p>
-<div class="language-text highlight"><pre><span></span><code>[INFO] starting query
-└─ [INFO] lowering plan
-└─ [INFO] emitting sql
-└─ [INFO] query complete
-</code></pre></div>
-<p><code>short</code></p>
-<div class="language-text highlight"><pre><span></span><code>21:18:04 [INFO] starting query
-21:18:04 └─ [INFO] lowering plan
-21:18:04 └─ [INFO] emitting sql
-21:18:04 └─ [INFO] query complete
-</code></pre></div>
-<p><code>complete</code></p>
-<div class="language-text highlight"><pre><span></span><code>2026-04-23T21:18:04.221Z [INFO] starting query
-2026-04-23T21:18:04.228Z └─ [INFO] lowering plan
-2026-04-23T21:18:04.240Z └─ [INFO] emitting sql
-2026-04-23T21:18:04.261Z └─ [INFO] query complete
-</code></pre></div>
-<p><code>verbose</code></p>
-<div class="language-text highlight"><pre><span></span><code>2026-04-23T21:18:04.221Z [INFO] starting query
-  target=sample_query.query trace=7f9c span=01 run=abc123
-2026-04-23T21:18:04.228Z └─ [INFO] lowering plan
-  target=sample_query.query.lowering trace=7f9c span=02 parent=01 run=abc123
-</code></pre></div>
-<p>The exact spacing and glyphs are renderer choices, but the first line must stay message-first and terminal-readable. Human styles should not sacrifice readability for metadata density.</p>
-<h3 id="machine-oriented-output">Machine-oriented output<a class="headerlink" href="#machine-oriented-output" title="Permanent link">&para;</a></h3>
-<p>JSON output is a format choice, not a style. It is appropriate for machine consumers, collectors, and ingestion pipelines, not as the default human terminal experience.</p>
-<div class="language-text highlight"><pre><span></span><code>incan run --log-format=json
-</code></pre></div>
-<h3 id="custom-presentation-and-delivery">Custom presentation and delivery<a class="headerlink" href="#custom-presentation-and-delivery" title="Permanent link">&para;</a></h3>
-<p>Teams that want a house style should be able to define custom renderers and sinks. That extensibility belongs at the runtime presentation and delivery layer, not in the source-level emission API. Ordinary Incan code should keep using the standard <code>log</code> surface regardless of how a project renders or exports its diagnostics.</p>
-<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="ambient-surface">Ambient surface<a class="headerlink" href="#ambient-surface" title="Permanent link">&para;</a></h3>
-<p>The language must provide an ambient <code>log</code> surface in every ordinary execution context. Users must not need to import a logging module or call <code>get_logger(...)</code> before emitting events.</p>
-<p>The ambient surface must provide, at minimum:</p>
+<p>Available renderer policy enums:</p>
 <ul>
-<li><code>log.trace(message, ...)</code></li>
-<li><code>log.debug(message, ...)</code></li>
-<li><code>log.info(message, ...)</code></li>
-<li><code>log.warning(message, ...)</code></li>
-<li><code>log.error(message, ...)</code></li>
-<li><code>log.critical(message, ...)</code></li>
-<li><code>with log.span(name, ...)</code></li>
+<li><code>LogFormat.HUMAN</code></li>
+<li><code>LogFormat.JSON</code></li>
+<li><code>LogStyle.MINIMAL</code></li>
+<li><code>LogStyle.SHORT</code></li>
+<li><code>LogStyle.COMPLETE</code></li>
+<li><code>LogStyle.VERBOSE</code></li>
+<li><code>ColorPolicy.AUTO</code></li>
+<li><code>ColorPolicy.ALWAYS</code></li>
+<li><code>ColorPolicy.NEVER</code></li>
 </ul>
-<p>The first argument to each event method must be a message expression. Additional named arguments on <code>log.info(...)</code>, <code>log.debug(...)</code>, and the other event methods must be treated as structured event fields. Additional named arguments on <code>with log.span(...)</code> must be treated as structured span fields. The runtime payload must preserve those fields as structured data rather than flattening them into one interpolated string.</p>
-<h3 id="levels">Levels<a class="headerlink" href="#levels" title="Permanent link">&para;</a></h3>
-<p>The standard level set must include:</p>
-<ul>
-<li><code>TRACE</code></li>
-<li><code>DEBUG</code></li>
-<li><code>INFO</code></li>
-<li><code>WARNING</code></li>
-<li><code>ERROR</code></li>
-<li><code>CRITICAL</code></li>
-</ul>
-<p>User-facing APIs must expose <code>warning</code>, not only <code>warn</code>.</p>
-<h3 id="event-records">Event records<a class="headerlink" href="#event-records" title="Permanent link">&para;</a></h3>
-<p>Every emitted event record must preserve, at minimum:</p>
-<ul>
-<li>timestamp</li>
-<li>level</li>
-<li>message</li>
-<li>source identity sufficient for human rendering and debugging</li>
-<li>any structured fields provided at the call site</li>
-<li>active operation context, if the event is emitted inside a span</li>
-</ul>
-<p>The runtime may record more metadata than a human renderer shows. Human rendering must be a projection of the structured event, not the event itself.</p>
-<h3 id="structured-field-syntax">Structured field syntax<a class="headerlink" href="#structured-field-syntax" title="Permanent link">&para;</a></h3>
-<p>Structured fields must use keyword-style arguments at the call site.</p>
-<p>Illustrative shapes:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Loaded dataset rows&quot;</span><span class="p">,</span> <span class="n">dataset</span><span class="o">=</span><span class="n">dataset</span><span class="p">,</span> <span class="n">rows</span><span class="o">=</span><span class="n">row_count</span><span class="p">)</span>
-
-<span class="k">with</span> <span class="n">log</span><span class="o">.</span><span class="n">span</span><span class="p">(</span><span class="s2">&quot;run_query&quot;</span><span class="p">,</span> <span class="n">query_id</span><span class="o">=</span><span class="n">query_id</span><span class="p">,</span> <span class="n">dataset</span><span class="o">=</span><span class="n">dataset_name</span><span class="p">):</span>
-    <span class="o">...</span>
-</code></pre></div>
-<p>The runtime must preserve these named arguments as structured event or span fields. It must not treat them as mere string interpolation aids.</p>
-<h3 id="spans">Spans<a class="headerlink" href="#spans" title="Permanent link">&para;</a></h3>
-<p><code>with log.span(...)</code> must represent a scoped unit of work with a beginning and an end. Events emitted inside a span must be associated with that span. Nested spans must preserve parent-child structure.</p>
-<p>The runtime must preserve, at minimum:</p>
-<ul>
-<li>span name</li>
-<li>start time</li>
-<li>end time or duration</li>
-<li>parent span identity, when nested</li>
-<li>active contextual metadata inherited by nested events</li>
-</ul>
-<p>The runtime must not flatten spans into ordinary standalone log lines that lose structural information.</p>
-<h3 id="human-renderers">Human renderers<a class="headerlink" href="#human-renderers" title="Permanent link">&para;</a></h3>
-<p>The runtime must provide built-in human renderers with at least the following style names:</p>
-<ul>
-<li><code>minimal</code></li>
-<li><code>short</code></li>
-<li><code>complete</code></li>
-<li><code>verbose</code></li>
-</ul>
-<p><code>short</code> must be the default human style.</p>
-<p>Normative rendering expectations:</p>
-<ul>
-<li><code>minimal</code> must omit timestamps.</li>
-<li><code>short</code> must render a compact time-of-day prefix.</li>
-<li><code>complete</code> must render a full datetime prefix.</li>
-<li><code>verbose</code> may render one additional metadata continuation line per event or span, but it must remain human-readable and message-first.</li>
-</ul>
-<p>The runtime must allow built-in human styles to be expressed through the same renderer-template mechanism available to custom renderers. Timestamp rendering must be configurable separately from the surrounding message template through a standard timestamp-format setting.</p>
-<p>Hierarchy in human renderers should be visible through lightweight layout cues such as glyphs or guides rather than long repeated target prefixes. The renderer does not need to reproduce the exact finalized tree glyph topology in a live stream as long as nesting remains visually obvious.</p>
-<h3 id="machine-format">Machine format<a class="headerlink" href="#machine-format" title="Permanent link">&para;</a></h3>
-<p>The runtime must support a machine-oriented JSON output format that preserves the canonical structured event/span payload. JSON is a format choice and must not replace the built-in human styles as the default terminal experience.</p>
-<h3 id="project-defaults-vs-runtime-overrides">Project defaults vs runtime overrides<a class="headerlink" href="#project-defaults-vs-runtime-overrides" title="Permanent link">&para;</a></h3>
-<p>Project defaults may be declared in <code>incan.toml</code>. Runtime overrides may be provided through CLI flags and environment variables.</p>
-<p>The precedence order must be:</p>
-<ol>
-<li>CLI flags</li>
-<li>environment variables</li>
-<li>project defaults from <code>incan.toml</code></li>
-<li>built-in runtime default</li>
-</ol>
-<p>At minimum, the runtime must support policy control over:</p>
-<ul>
-<li>log level</li>
-<li>human style</li>
-<li>output format</li>
-<li>renderer template selection</li>
-<li>timestamp format</li>
-<li>color policy</li>
-</ul>
-<p>The exact option names may vary, but the distinction between project defaults and runtime overrides must remain explicit.</p>
-<h3 id="future-export-compatibility">Future export compatibility<a class="headerlink" href="#future-export-compatibility" title="Permanent link">&para;</a></h3>
-<p>The canonical structured event/span payload defined by this RFC must preserve enough information that a follow-up RFC can add structured export and OpenTelemetry-compatible tracing without changing the source-level <code>log</code> API. The language-level contract must remain backend-agnostic.</p>
-<h3 id="custom-renderers-and-sinks">Custom renderers and sinks<a class="headerlink" href="#custom-renderers-and-sinks" title="Permanent link">&para;</a></h3>
-<p>The runtime must allow custom renderers and sinks to consume the canonical structured event/span payload. Projects may define custom presentation and delivery behavior, including renderer templates that match surrounding house styles such as Koheesio, but they must not change the meaning of the source-level <code>log</code> API.</p>
-<h3 id="color-handling">Color handling<a class="headerlink" href="#color-handling" title="Permanent link">&para;</a></h3>
-<p>The canonical structured event/span payload must be colorless. Color is a presentation concern of human renderers only.</p>
-<p>The runtime must support, at minimum:</p>
-<ul>
-<li><code>auto</code></li>
-<li><code>always</code></li>
-<li><code>never</code></li>
-</ul>
-<p>When color is enabled, the renderer may colorize level markers, hierarchy glyphs, timestamps, or other human-facing fragments, but it must not encode color into JSON output.</p>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="why-there-is-no-get_logger">Why there is no <code>get_logger(...)</code><a class="headerlink" href="#why-there-is-no-get_logger" title="Permanent link">&para;</a></h3>
-<p>Logger-object acquisition is ceremony that ordinary Incan code does not need. It is inherited from library-shaped ecosystems, not a necessary property of logging itself. Since Incan controls both the language surface and the runtime boundary, it can provide an ambient <code>log</code> surface directly and avoid forcing users to thread logger values or repeat boilerplate in every module.</p>
-<h3 id="why-the-source-surface-stays-method-shaped">Why the source surface stays method-shaped<a class="headerlink" href="#why-the-source-surface-stays-method-shaped" title="Permanent link">&para;</a></h3>
-<p>The design deliberately keeps <code>log.info(...)</code> and similar method calls rather than introducing a floating statement form. The dot-method shape is familiar, readable, and easy to extend without creating a special DSL that feels isolated from the rest of the language.</p>
-<h3 id="why-structured-fields-use-keyword-arguments">Why structured fields use keyword arguments<a class="headerlink" href="#why-structured-fields-use-keyword-arguments" title="Permanent link">&para;</a></h3>
-<p>Keyword-style arguments are the most direct and readable way to attach named metadata to events and spans. They preserve Python familiarity, avoid an extra <code>fields={...}</code> wrapper, and keep the call-site model simple while still producing a structured payload underneath.</p>
-<h3 id="why-spans-exist-separately-from-trace-level-logs">Why spans exist separately from trace-level logs<a class="headerlink" href="#why-spans-exist-separately-from-trace-level-logs" title="Permanent link">&para;</a></h3>
-<p><code>trace</code> as a severity level and spans as scoped operations are different concepts. Reusing one word for both would be confusing. <code>log.trace(...)</code> should remain the very low-severity event level, while <code>with log.span(...)</code> should represent scoped work and hierarchy.</p>
-<h3 id="why-human-output-is-message-first">Why human output is message-first<a class="headerlink" href="#why-human-output-is-message-first" title="Permanent link">&para;</a></h3>
-<p>Rich metadata is valuable, but not if it obscures the actual log stream in a terminal. The built-in human renderers should therefore keep the message as the primary unit the eye reads first. Timestamps, hierarchy markers, and optional metadata lines support the message rather than competing with it.</p>
-<h3 id="why-json-is-not-a-style">Why JSON is not a style<a class="headerlink" href="#why-json-is-not-a-style" title="Permanent link">&para;</a></h3>
-<p>JSON is a serialization format for machine consumers, not a human terminal style. Treating it as just another style would blur the line between terminal UX and structured export and would encourage noisy defaults in interactive environments.</p>
-<h3 id="why-project-defaults-and-runtime-policy-are-separate">Why project defaults and runtime policy are separate<a class="headerlink" href="#why-project-defaults-and-runtime-policy-are-separate" title="Permanent link">&para;</a></h3>
-<p>Projects need a baseline policy, but operators and developers still need per-run control. That makes <code>incan.toml</code> an appropriate home for defaults and CLI/env an appropriate home for runtime overrides. The runtime must not collapse those into one opaque setting source.</p>
-<h3 id="why-export-is-split-into-a-follow-up-rfc">Why export is split into a follow-up RFC<a class="headerlink" href="#why-export-is-split-into-a-follow-up-rfc" title="Permanent link">&para;</a></h3>
-<p>OpenTelemetry and similar systems are about transporting and correlating diagnostics across processes and systems. They are real requirements, but they add enough propagation and backend-contract detail to deserve a follow-up RFC. This RFC therefore defines the source-level event/span model and runtime policy boundaries that the follow-up export RFC will build on.</p>
-<h3 id="why-custom-renderers-are-allowed">Why custom renderers are allowed<a class="headerlink" href="#why-custom-renderers-are-allowed" title="Permanent link">&para;</a></h3>
-<p>Different applications and teams will want different human output surfaces. Built-in styles are necessary, but not sufficient. Allowing custom renderers over the canonical structured payload gives flexibility without fragmenting the source-language API. Using one template system for both built-in and custom human renderers keeps that flexibility coherent instead of creating two different formatting worlds.</p>
-<h3 id="why-color-is-runtime-policy">Why color is runtime policy<a class="headerlink" href="#why-color-is-runtime-policy" title="Permanent link">&para;</a></h3>
-<p>Color improves terminal readability, but it is not part of the meaning of an event. The same event may be rendered with color in an interactive terminal, without color in redirected output, and as structured JSON for machines. That makes color a renderer/theme concern rather than part of the language or payload contract.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Python-style <code>get_logger(...)</code> plus <code>basic_config(...)</code></strong></li>
-<li>Rejected because it keeps logger-object ceremony that Incan does not need and over-anchors the design to Python's runtime assumptions.</li>
-<li><strong>Rust-style logging crates as the public surface</strong></li>
-<li>Rejected because ordinary Incan code should not need to know about <code>log</code>, <code>tracing</code>, subscriber layers, or exporter crates.</li>
-<li><strong>A floating statement syntax such as <code>log info "message"</code></strong></li>
-<li>Rejected for now because it reads like a narrow DSL and does not buy enough over <code>log.info(...)</code>.</li>
-<li><strong>Plain text logging with no span model</strong></li>
-<li>Rejected because the end-state includes nested work and trace-capable diagnostics, and must remain compatible with future export.</li>
-<li><strong>A stdlib-only formatting API with no custom renderer hook</strong></li>
-<li>Rejected because real applications will need house styles and custom delivery behavior.</li>
-</ul>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Making logging ambient is a stronger language commitment than shipping another stdlib module.</li>
-<li><code>with log.span(...)</code> introduces a scoped operation concept that will need careful syntax and formatter support.</li>
-<li>The runtime architecture is richer than plain console logging, which raises implementation complexity.</li>
-<li>The style system can sprawl if the built-in options are not kept disciplined and clearly differentiated.</li>
-<li>Keeping the runtime model export-compatible without specifying the export layer here leaves some future integration details intentionally deferred.</li>
-</ul>
-<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p><em>(Non-normative.)</em> A sensible Rust runtime implementation lowers ambient Incan events and spans into <code>tracing</code> events and spans and configures rendering through <code>tracing-subscriber</code>. Human renderers should operate over one canonical internal event/span model rather than each sink inventing its own interpretation. Project defaults should be loaded from <code>incan.toml</code> before CLI and environment overrides are applied. A follow-up RFC can then define how that canonical model maps onto OpenTelemetry export and propagation.</p>
-<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Language surface</strong>: ambient <code>log</code> availability and scoped <code>with log.span(...)</code> behavior.</li>
-<li><strong>Parser / AST</strong>: support for the chosen <code>with log.span(...)</code> scoped syntax and any structured field-passing syntax that the language standardizes.</li>
-<li><strong>Typechecker / Symbol resolution</strong>: resolving the ambient <code>log</code> surface, validating event/span call shapes, and enforcing any structured field contracts.</li>
-<li><strong>IR Lowering</strong>: preserving event/span structure, nesting, and metadata through lowering.</li>
-<li><strong>Emission</strong>: mapping the canonical diagnostics model onto the target runtime without losing hierarchy or structured data.</li>
-<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: human renderers, JSON output, runtime policy loading, custom sink/renderer extension points, and a canonical internal event/span model that remains export-compatible.</li>
-<li><strong>Formatter</strong>: predictable formatting for scoped span blocks and any structured log field syntax.</li>
-<li><strong>LSP / Tooling</strong>: completions, hover docs, and diagnostics for the ambient <code>log</code> surface and runtime configuration.</li>
-<li><strong>Documentation</strong>: guides and references for emission, styles, policy, and runtime/export behavior.</li>
-</ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
-<ul>
-<li>How much theme/color customization should built-in human renderers expose beyond <code>auto</code>, <code>always</code>, and <code>never</code>?</li>
-</ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
+<p><code>basic_config(...)</code> controls the generated program's source-level logging state. Project defaults in <code>incan.toml</code>,
+<code>INCAN_LOG_*</code> environment overrides, and <code>incan run --log-*</code> flags are not implemented yet.</p>
+<p><code>ColorPolicy</code> is accepted as part of the committed configuration shape, but the current source renderer is colorless.</p>
+<p>The <code>target</code> argument accepts <code>"stdout"</code> and <code>"stderr"</code>. Internally, the setting is stored as the validated
+<code>OutputTarget</code> newtype, which owns writing rendered log lines to the selected standard stream.</p>
+<p>Libraries should acquire loggers and emit events, but should not call <code>basic_config(...)</code>.</p>
 
 
 
@@ -5774,18 +5255,18 @@ INCAN_LOG_STYLE=minimal incan run
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>

@@ -2317,6 +2317,8 @@
       
         
       
+        
+      
     
     
       
@@ -2495,6 +2497,27 @@
   
   <span class="md-ellipsis">
     std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.logging
   </span>
   
 
@@ -6508,6 +6531,18 @@ If it looks wrong/outdated, regenerate it from source and commit the result.</p>
 <td>-</td>
 </tr>
 <tr>
+<td><code>std.logging</code></td>
+<td>-</td>
+<td>-</td>
+<td>-</td>
+</tr>
+<tr>
+<td><code>std.telemetry</code></td>
+<td>-</td>
+<td><code>std.telemetry.core</code></td>
+<td>-</td>
+</tr>
+<tr>
 <td><code>std.async</code></td>
 <td><code>async</code></td>
 <td><code>std.async.time</code>, <code>std.async.task</code>, <code>std.async.channel</code>, <code>std.async.race</code>, <code>std.async.sync</code>, <code>std.async.prelude</code></td>
@@ -7256,7 +7291,7 @@ and <code>@requires</code> keep their existing special behavior.</p>
 <tr>
 <td>From</td>
 <td><code>From</code></td>
-<td></td>
+<td><code>ConvertFrom</code></td>
 <td>Trait for conversions.</td>
 <td>RFC 000</td>
 <td>0.1</td>
@@ -7265,7 +7300,7 @@ and <code>@requires</code> keep their existing special behavior.</p>
 <tr>
 <td>Into</td>
 <td><code>Into</code></td>
-<td></td>
+<td><code>ConvertInto</code></td>
 <td>Trait for conversions.</td>
 <td>RFC 000</td>
 <td>0.1</td>
@@ -7274,7 +7309,7 @@ and <code>@requires</code> keep their existing special behavior.</p>
 <tr>
 <td>TryFrom</td>
 <td><code>TryFrom</code></td>
-<td></td>
+<td><code>ConvertTryFrom</code></td>
 <td>Trait for fallible conversions.</td>
 <td>RFC 000</td>
 <td>0.1</td>
@@ -7283,7 +7318,7 @@ and <code>@requires</code> keep their existing special behavior.</p>
 <tr>
 <td>TryInto</td>
 <td><code>TryInto</code></td>
-<td></td>
+<td><code>ConvertTryInto</code></td>
 <td>Trait for fallible conversions.</td>
 <td>RFC 000</td>
 <td>0.1</td>
