@@ -70,7 +70,7 @@ impl<'a> IrEmitter<'a> {
     ) -> Result<TokenStream, EmitError> {
         let callback_tokens = self.emit_expr(callback)?;
         if matches!(callback.ty, IrType::Function { .. }) {
-            Ok(quote! { #callback_tokens(#payload_tokens) })
+            Ok(quote! { (#callback_tokens)(#payload_tokens) })
         } else {
             Ok(quote! { #callback_tokens.__call__(#payload_tokens) })
         }
@@ -90,7 +90,7 @@ impl<'a> IrEmitter<'a> {
         match &callback.kind {
             _ if matches!(callback.ty, IrType::Function { .. }) => {
                 let callback_tokens = self.emit_expr(callback)?;
-                Ok(quote! { #callback_tokens(#borrowed_payload) })
+                Ok(quote! { (#callback_tokens)(#borrowed_payload) })
             }
             _ => {
                 let callback_tokens = self.emit_expr(callback)?;
@@ -171,6 +171,12 @@ impl<'a> IrEmitter<'a> {
                     let callback_tokens = self.emit_expr(callback)?;
                     return Ok(quote! {
                         crate::__incan_std::result::#method_ident(#receiver_tokens, #callback_tokens)
+                    });
+                }
+                if matches!(callback.kind, IrExprKind::Closure { .. }) {
+                    let callback_tokens = self.emit_expr(callback)?;
+                    return Ok(quote! {
+                        #receiver_tokens.#method_ident(#callback_tokens)
                     });
                 }
                 let body = self.emit_result_callback_call(callback, quote! { __incan_result_value })?;

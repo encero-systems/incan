@@ -22,6 +22,7 @@ use incan_core::{NumericTy, result_numeric_type};
 use super::TypeChecker;
 use crate::frontend::typechecker::helpers::{collection_type_id, is_str_like};
 use incan_core::lang::types::collections::CollectionTypeId;
+use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 
 /// Check whether a resolved type is a runtime `List[T]` with one element slot.
 fn is_runtime_list(ty: &ResolvedType) -> bool {
@@ -41,6 +42,23 @@ fn runtime_list_elem_type(ty: &ResolvedType) -> Option<&ResolvedType> {
             args.first()
         }
         _ => None,
+    }
+}
+
+/// Return the exact-width unsigned integer id for a resolved type.
+fn exact_unsigned_integer_type_id(ty: &ResolvedType) -> Option<NumericTypeId> {
+    match ty {
+        ResolvedType::Numeric(id) if numerics::info_for(*id).family == NumericFamily::UnsignedInteger => Some(*id),
+        _ => None,
+    }
+}
+
+/// Return whether an AST expression is a non-negative integer literal.
+fn non_negative_integer_literal(expr: &Spanned<Expr>) -> bool {
+    match &expr.node {
+        Expr::Literal(Literal::Int(_)) => true,
+        Expr::Paren(inner) => non_negative_integer_literal(inner),
+        _ => false,
     }
 }
 
@@ -128,6 +146,65 @@ fn derives_support_comparison_operator(derives: &[String], op: BinaryOp) -> bool
 }
 
 impl TypeChecker {
+    /// Type-check exact-width unsigned modulo and floor division without erasing the unsigned type.
+    fn check_exact_unsigned_integer_binary(
+        &mut self,
+        left: &Spanned<Expr>,
+        op: BinaryOp,
+        right: &Spanned<Expr>,
+        left_ty: &ResolvedType,
+        right_ty: &ResolvedType,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        if !matches!(op, BinaryOp::FloorDiv | BinaryOp::Mod) {
+            return None;
+        }
+
+        let left_unsigned = exact_unsigned_integer_type_id(left_ty);
+        let right_unsigned = exact_unsigned_integer_type_id(right_ty);
+        match (left_unsigned, right_unsigned) {
+            (None, None) => None,
+            (Some(left_id), Some(right_id)) if left_id == right_id => Some(left_ty.clone()),
+            (Some(_), Some(_)) => {
+                let expected = left_ty.to_string();
+                self.errors
+                    .push(errors::type_mismatch(&expected, &right_ty.to_string(), span));
+                Some(ResolvedType::Unknown)
+            }
+            (Some(_), None) if matches!(right_ty, ResolvedType::Int) => {
+                if non_negative_integer_literal(right) {
+                    Some(left_ty.clone())
+                } else {
+                    self.errors.push(errors::type_mismatch(
+                        &format!("{} or a non-negative integer literal", left_ty),
+                        &right_ty.to_string(),
+                        span,
+                    ));
+                    Some(ResolvedType::Unknown)
+                }
+            }
+            (None, Some(_)) if matches!(left_ty, ResolvedType::Int) => {
+                if non_negative_integer_literal(left) {
+                    Some(right_ty.clone())
+                } else {
+                    self.errors.push(errors::type_mismatch(
+                        &format!("{} or a non-negative integer literal", right_ty),
+                        &left_ty.to_string(),
+                        span,
+                    ));
+                    Some(ResolvedType::Unknown)
+                }
+            }
+            (Some(_), None) if matches!(right_ty, ResolvedType::Unknown | ResolvedType::RustPath(_)) => {
+                Some(left_ty.clone())
+            }
+            (None, Some(_)) if matches!(left_ty, ResolvedType::Unknown | ResolvedType::RustPath(_)) => {
+                Some(right_ty.clone())
+            }
+            (Some(_), None) | (None, Some(_)) => None,
+        }
+    }
+
     /// Type-check a binary operation and return its result type.
     pub(in crate::frontend::typechecker::check_expr) fn check_binary(
         &mut self,
@@ -246,6 +323,11 @@ impl TypeChecker {
 
                 match (lhs_num, rhs_num) {
                     (Some(lhs), Some(rhs)) => {
+                        if let Some(result_ty) =
+                            self.check_exact_unsigned_integer_binary(left, op, right, &left_ty, &right_ty, span)
+                        {
+                            return result_ty;
+                        }
                         let Some(num_op) = numeric_op_from_ast(&op) else {
                             self.errors
                                 .push(errors::type_mismatch("numeric operator", &op.to_string(), span));

@@ -3653,6 +3653,45 @@ def main() -> None:
     }
 
     #[test]
+    fn test_result_method_closure_callbacks_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def main() -> None:
+    prefix = "uuid"
+    value: Result[int, str] = Err("bad")
+    mapped = value.map_err((err) => f"{prefix}: {err}")
+    match mapped:
+        Ok(number) => println(number)
+        Err(error) => println(error)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Result method closure callback regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["uuid: bad"],
+            "unexpected Result method closure callback output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_collection_literal_spreads_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([
@@ -5472,6 +5511,54 @@ async def main() -> None:
             output.status,
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn test_run_std_uuid_surface() -> Result<(), Box<dyn std::error::Error>> {
+        // Keep std.uuid's generated-project dependencies in the root Cargo graph so CI fetches them before this smoke
+        // runs the generated project under CARGO_NET_OFFLINE.
+        assert_eq!(
+            format!("{:x}", md5::compute(b"incan")),
+            "961ceabd8ca87ad661c395fe29eea66e"
+        );
+        use sha1::{Digest, Sha1};
+        let mut hasher = Sha1::new();
+        hasher.update(b"incan");
+        assert_eq!(
+            format!("{:x}", hasher.finalize()),
+            "31ca742c61904659722b650c4d8f6c4a7b09dd30"
+        );
+
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/std_uuid_surface.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "incan run std_uuid_surface failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "std.uuid ok");
+        Ok(())
+    }
+
+    #[test]
+    fn test_run_u128_modulo_floor_div() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/u128_modulo_floor_div.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "incan run u128_modulo_floor_div failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "u128 modulo ok");
+        Ok(())
     }
 
     #[test]

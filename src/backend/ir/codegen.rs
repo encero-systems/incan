@@ -1885,7 +1885,8 @@ def main() -> None:
     #[test]
     fn generated_use_analysis_keeps_only_selected_same_name_rust_extension_trait_import() {
         use crate::backend::ir::decl::{
-            FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, IrRustTraitImport, Visibility,
+            FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, IrRustTraitImport, IrStruct,
+            Visibility,
         };
         use crate::backend::ir::expr::{IrExprKind, IrMethodDispatch, MethodCallArgPolicy, VarAccess, VarRefKind};
         use crate::backend::ir::{IrDecl, IrDeclKind, IrProgram, IrStmt, IrStmtKind, IrType, Mutability, TypedExpr};
@@ -1916,14 +1917,18 @@ def main() -> None:
                         methods: vec![String::from("render")],
                     }),
                 },
-                IrImportItem {
-                    name: String::from("widget"),
-                    alias: None,
-                    rust_trait_import: None,
-                },
             ],
         }));
-        let widget_ty = IrType::Struct(String::from("demo::Widget"));
+        program.declarations.push(IrDecl::new(IrDeclKind::Struct(IrStruct {
+            name: String::from("Widget"),
+            fields: Vec::new(),
+            derives: Vec::new(),
+            visibility: Visibility::Private,
+            type_params: Vec::new(),
+            derive_rust_modules: std::collections::HashMap::new(),
+            lint_allows: Vec::new(),
+        })));
+        let widget_ty = IrType::Struct(String::from("Widget"));
         program.declarations.push(IrDecl::new(IrDeclKind::Function(IrFunction {
             name: String::from("main"),
             params: Vec::<FunctionParam>::new(),
@@ -1935,10 +1940,9 @@ def main() -> None:
                     type_annotation: None,
                     mutability: Mutability::Immutable,
                     value: TypedExpr::new(
-                        IrExprKind::Var {
-                            name: String::from("widget"),
-                            access: VarAccess::Copy,
-                            ref_kind: VarRefKind::ExternalRustName,
+                        IrExprKind::Struct {
+                            name: String::from("Widget"),
+                            fields: Vec::new(),
                         },
                         widget_ty.clone(),
                     ),
@@ -2776,6 +2780,47 @@ def main() -> None:
         assert!(
             !testing_code.contains("RuntimeFuture"),
             "std.testing wrapper should not inherit std.async.time.timeout bounds; got:\n{testing_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn imported_stdlib_trait_default_expands_in_dependency_impl() -> Result<(), Box<dyn std::error::Error>> {
+        let main_module = parse_program_result(
+            r#"
+from std.io import BytesIO
+
+def main() -> None:
+  return
+"#,
+        )?;
+        let io_module = read_stdlib_program("crates/incan_stdlib/stdlib/io.incn")?;
+        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn")?;
+
+        let io_path = vec!["__incan_std".to_string(), "io".to_string()];
+        let traits_error_path = vec!["__incan_std".to_string(), "traits".to_string(), "error".to_string()];
+
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("__incan_std_io", &io_module, io_path.clone());
+        codegen.add_module_with_path_segments(
+            "__incan_std_traits_error",
+            &traits_error_module,
+            traits_error_path.clone(),
+        );
+
+        let (_main_code, rust_modules) =
+            codegen.try_generate_multi_file_nested(&main_module, &[io_path.clone(), traits_error_path])?;
+        let io_code = rust_modules
+            .get(&io_path)
+            .ok_or_else(|| std::io::Error::other("missing generated std.io module"))?;
+
+        assert!(
+            io_code.contains("impl Error for IoError"),
+            "expected IoError to adopt std.traits.error.Error; got:\n{io_code}"
+        );
+        assert!(
+            io_code.contains("fn source(&self) -> Option<String>"),
+            "expected imported Error.source default method to expand into IoError impl; got:\n{io_code}"
         );
         Ok(())
     }

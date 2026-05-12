@@ -46,6 +46,7 @@ use crate::frontend::symbols::NewtypePrimitiveConstraint;
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::conventions;
+use incan_core::lang::stdlib;
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
@@ -1637,8 +1638,18 @@ impl AstLowering {
     fn alias_imported_dependency_trait_decls(&mut self) {
         let existing = self.trait_decls.clone();
         for (alias, path) in self.import_aliases.clone() {
-            let module_key = path.join(".");
-            if let Some(decl) = existing.get(&module_key) {
+            let mut canonical_path = crate::frontend::module::canonicalize_source_module_segments(&path);
+            if canonical_path
+                .first()
+                .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
+            {
+                canonical_path[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
+            }
+            let module_key = canonical_path.join(".");
+            if let Some(decl) = existing
+                .get(&module_key)
+                .filter(|decl| Self::trait_decl_has_lowerable_defaults(decl))
+            {
                 self.trait_decls.entry(alias.clone()).or_insert_with(|| decl.clone());
             }
             let prefix = format!("{module_key}.");
@@ -1646,11 +1657,19 @@ impl AstLowering {
                 let Some(trait_name) = qualified.strip_prefix(&prefix) else {
                     continue;
                 };
+                if !Self::trait_decl_has_lowerable_defaults(decl) {
+                    continue;
+                }
                 self.trait_decls
                     .entry(format!("{alias}.{trait_name}"))
                     .or_insert_with(|| decl.clone());
             }
         }
+    }
+
+    /// Return whether an imported trait declaration needs aliasing for default-body expansion.
+    fn trait_decl_has_lowerable_defaults(decl: &ast::TraitDecl) -> bool {
+        decl.methods.iter().any(|method| method.node.body.is_some())
     }
 
     /// Propagate serde Rust derives from structs to enum/newtype field types.

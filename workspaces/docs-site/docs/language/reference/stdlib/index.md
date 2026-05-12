@@ -14,6 +14,7 @@ Pages in this section are curated and checked into the repository.
 - [`std.graph`](graph.md) (curated)
 - [`std.io`](io.md) (curated)
 - [`std.logging`](logging.md) (curated)
+- [`std.uuid`](uuid.md) (curated)
 - [`std.tempfile`](tempfile.md) (curated)
 - [`std.reflection`](reflection.md) (curated)
 - [`std.result`](result.md) (curated)

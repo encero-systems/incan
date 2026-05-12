@@ -2737,6 +2737,42 @@ fn test_std_graph_import_codegen() {
     insta::assert_snapshot!("std_graph_import", rust_code);
 }
 
+/// RFC 060: compile `std.uuid` declarations from `.incn` source.
+#[test]
+fn test_std_uuid_compiled_codegen() -> Result<(), Box<dyn std::error::Error>> {
+    let path = "crates/incan_stdlib/stdlib/uuid.incn";
+    let source = fs::read_to_string(path)?;
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("pubstructUUID(pubu128);"),
+        "expected UUID to remain a source-defined u128 newtype; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("uuid::Uuid::") && !rust_code.contains("uuid::Uuid;"),
+        "std.uuid must not lower to a Rust uuid::Uuid-backed type; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("std_uuid_compiled", rust_code);
+    Ok(())
+}
+
+/// RFC 060: verify `std.uuid` imports and method calls lower without a Rust-backed UUID type.
+#[test]
+fn test_std_uuid_import_codegen() {
+    let source = load_test_file("std_uuid_import");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("UUID::parse"),
+        "expected parse call to route through the source-defined UUID type; generated:\n{rust_code}"
+    );
+    assert!(
+        !rust_code.contains("uuid::Uuid::") && !rust_code.contains("uuid::Uuid;"),
+        "std.uuid import path must not introduce a Rust uuid::Uuid-backed type; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("std_uuid_import", rust_code);
+}
+
 /// RFC 023 (#303): explicit `with Serialize` adoption should expand the stdlib default `to_json` body into the
 /// generated impl while also forwarding the Rust serde derive.
 #[test]
