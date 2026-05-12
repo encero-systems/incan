@@ -75,10 +75,21 @@ impl<'a> IrEmitter<'a> {
                 }
             }
 
-            let Some(field_names) = self.struct_field_names.get(name) else {
-                // Unknown struct to the emitter; fall back to emitting only provided fields.
-                // This can occur for cross-crate types or if struct wasn't registered during lowering.
-                tracing::debug!(struct_name = %name, "struct field metadata not found, emitting provided fields only");
+            let field_names = if self.ambiguous_type_names.contains(name) {
+                None
+            } else {
+                self.struct_field_names.get(name)
+            };
+
+            let Some(field_names) = field_names else {
+                // Unknown or ambiguous struct to the emitter; fall back to emitting only provided fields. Ambiguous
+                // dependency names can refer to multiple nominal types with different fields, so using short-name
+                // metadata here is worse than using the fields already validated by the typechecker.
+                tracing::debug!(
+                    struct_name = %name,
+                    ambiguous = self.ambiguous_type_names.contains(name),
+                    "struct field metadata unavailable, emitting provided fields only"
+                );
                 if fields.is_empty() {
                     return Ok(quote! { #n {} });
                 }

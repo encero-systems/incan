@@ -52,7 +52,7 @@ Good Incan source should have:
 - top-down structure that exposes the public contract before implementation details;
 - names that describe domain concepts rather than backend mechanics;
 - small helpers that remove real complexity;
-- direct `?`, `if let`, early return, and value-enum/model usage where those make the code simpler;
+- direct `?`, `if let`, RFC 070 `Result` combinators, early return, and value-enum/model usage where those make the code simpler;
 - public docstrings with `std.fs`-style shape: summary, semantic notes, and `Args`, `Returns`, or `Example` sections where useful;
 - comments for bit layouts, protocol invariants, compiler boundary workarounds, or surprising tradeoffs;
 - ordinary Rust interop only where it imports existing primitives/crates and the `.incn` source still owns the behavior.
@@ -64,6 +64,7 @@ Flag Incan source that has:
 - design narrowing or backend fallback justified by “Incan cannot do this” without local examples, tests, or probe evidence;
 - sentinel initialization such as `value = 0` only to satisfy later branch assignment;
 - verbose `match` blocks that just rewrap a `Result` where `?` would read naturally;
+- verbose `match` blocks that only transform one `Result` branch where RFC 070 combinators such as `map`, `map_err`, `and_then`, or `or_else` would state the intent directly;
 - unnecessary type noise when inference or a local helper would be clearer;
 - Rust-shaped names, ownership workarounds, `.clone()`, `.to_string()`, or manual conversion scaffolding leaking into `.incn`;
 - helpers that hide one obvious operation without adding meaning;

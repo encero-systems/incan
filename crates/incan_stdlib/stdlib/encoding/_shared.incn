@@ -1,0 +1,254 @@
+"""
+Shared std.encoding error surface.
+"""
+
+from std.traits.error import Error
+from std.fs import Path
+from std.io import BytesIO, _BytesIO
+
+
+const _ASCII_PRINTABLE: str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+const _BYTE_VALUES: bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
+
+
+@derive(Clone)
+pub model EncodingError with Error:
+    """
+    Stable decode/encode failure for `std.encoding`.
+    """
+
+    pub encoding: str
+    pub kind: str
+    pub detail: str
+    pub position: int
+
+    def message(self) -> str:
+        """
+        Return the human-readable error detail.
+        """
+        return self.detail
+
+    def source(self) -> Option[str]:
+        """
+        Encoding errors do not currently wrap a structured source error.
+        """
+        return None
+
+
+pub def _encoding_error(encoding: str, kind: str, detail: str, position: int) -> EncodingError:
+    """
+    Build the common structured error value used by all codec modules.
+    """
+    return EncodingError(encoding=encoding, kind=kind, detail=detail, position=position)
+
+
+pub def _invalid_length(encoding: str, detail: str) -> EncodingError:
+    """
+    Return a length validation error without a precise source position.
+    """
+    return _encoding_error(encoding, "invalid_length", detail, -1)
+
+
+pub def _invalid_padding(encoding: str, detail: str, position: int = -1) -> EncodingError:
+    """
+    Return a padding validation error at `position` when one is known.
+    """
+    return _encoding_error(encoding, "invalid_padding", detail, position)
+
+
+pub def _invalid_character(encoding: str, character: str, position: int) -> EncodingError:
+    """
+    Return an alphabet validation error for one input character.
+    """
+    return _encoding_error(encoding, "invalid_character", f"invalid {encoding} character: {character}", position)
+
+
+pub def _invalid_checksum(encoding: str, detail: str) -> EncodingError:
+    """
+    Return a checksum validation error for checksum-bearing encodings.
+    """
+    return _encoding_error(encoding, "invalid_checksum", detail, -1)
+
+
+pub def _invalid_input(encoding: str, detail: str) -> EncodingError:
+    """
+    Return an argument validation error for source/sink helper inputs.
+    """
+    return _encoding_error(encoding, "invalid_input", detail, -1)
+
+
+pub def _io_boundary_error(encoding: str, detail: str, position: int) -> EncodingError:
+    """
+    Return an I/O boundary error while preserving the codec family name.
+    """
+    return _encoding_error(encoding, "io", detail, position)
+
+
+pub def _read_stream_bytes(encoding: str, source: _BytesIO) -> Result[bytes, EncodingError]:
+    """
+    Read all bytes from an in-memory stream and shape I/O failures as `EncodingError`.
+
+    Args:
+        encoding: Codec name to include in returned errors.
+        source: `BytesIO` stream positioned at the first byte to encode or decode.
+
+    Returns:
+        Remaining bytes from `source`, or `Err(EncodingError)` for I/O failures.
+    """
+    match source.read(-1):
+        Ok(data) => return Ok(data)
+        Err(err) => return Err(_io_boundary_error(encoding, err.message(), source.tell()))
+
+
+pub def _write_stream_bytes(encoding: str, target: _BytesIO, data: bytes) -> Result[None, EncodingError]:
+    """
+    Write bytes to an in-memory stream and shape I/O failures as `EncodingError`.
+
+    Args:
+        encoding: Codec name to include in returned errors.
+        target: `BytesIO` stream that receives encoded or decoded bytes.
+        data: Bytes to write at the target's current cursor.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for I/O failures.
+    """
+    match target.write_bytes(data):
+        Ok(_) => return Ok(None)
+        Err(err) => return Err(_io_boundary_error(encoding, err.message(), target.tell()))
+
+
+def _read_path_bytes(encoding: str, source: Path) -> Result[bytes, EncodingError]:
+    """
+    Read a finite path source and map filesystem errors into codec errors.
+    """
+    return source.read_bytes().map_err((err) => _io_boundary_error(encoding, err.message(), -1))
+
+
+def _write_path_bytes(encoding: str, target: Path, data: bytes) -> Result[None, EncodingError]:
+    """
+    Write bytes to a finite path sink and map filesystem errors into codec errors.
+    """
+    return target.write_bytes(data).map_err((err) => _io_boundary_error(encoding, err.message(), -1))
+
+
+pub def _read_source_bytes(
+    encoding: str,
+    source: Union[bytes, _BytesIO, Path],
+    chunk_size: int,
+) -> Result[bytes, EncodingError]:
+    """
+    Read bytes from an in-memory value, byte stream, or finite path source.
+
+    Args:
+        encoding: Codec name to include in returned errors.
+        source: Bytes, `BytesIO`, or `Path` to read.
+        chunk_size: Positive chunk-size hint for source/sink APIs.
+
+    Returns:
+        Source bytes, or `Err(EncodingError)` for invalid arguments or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_invalid_input(encoding, "chunk_size must be positive"))
+    if isinstance(source, bytes):
+        return Ok(source)
+    elif isinstance(source, _BytesIO):
+        return _read_stream_bytes(encoding, source)
+    elif isinstance(source, Path):
+        return _read_path_bytes(encoding, source)
+
+
+pub def _read_source_text(
+    encoding: str,
+    source: Union[str, _BytesIO, Path],
+    chunk_size: int,
+) -> Result[str, EncodingError]:
+    """
+    Read encoded representation text from a string, byte stream, or finite path source.
+
+    Args:
+        encoding: Codec name to include in returned errors.
+        source: Text, `BytesIO`, or `Path` containing printable ASCII representation bytes.
+        chunk_size: Positive chunk-size hint for source/sink APIs.
+
+    Returns:
+        Encoded text, or `Err(EncodingError)` for invalid arguments, non-ASCII bytes, or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_invalid_input(encoding, "chunk_size must be positive"))
+    if isinstance(source, str):
+        return Ok(source)
+    elif isinstance(source, _BytesIO):
+        return _ascii_text(encoding, _read_stream_bytes(encoding, source)?)
+    elif isinstance(source, Path):
+        return _ascii_text(encoding, _read_path_bytes(encoding, source)?)
+
+
+pub def _write_sink_bytes(
+    encoding: str,
+    target: Union[_BytesIO, Path],
+    data: bytes,
+) -> Result[None, EncodingError]:
+    """
+    Write bytes to a byte stream or finite path sink.
+
+    Args:
+        encoding: Codec name to include in returned errors.
+        target: `BytesIO` or `Path` sink.
+        data: Bytes to write.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for I/O failures.
+    """
+    if isinstance(target, _BytesIO):
+        return _write_stream_bytes(encoding, target, data)
+    elif isinstance(target, Path):
+        return _write_path_bytes(encoding, target, data)
+
+
+pub def _ascii_bytes(encoding: str, text: str) -> Result[bytes, EncodingError]:
+    """
+    Convert printable ASCII text to bytes for stream encoders.
+
+    Args:
+        encoding: Codec name to include in returned errors.
+        text: Encoded representation text.
+
+    Returns:
+        Printable ASCII bytes, or `Err(EncodingError)` if `text` contains a non-printable character.
+    """
+    out = BytesIO(b"")
+    for index, ch in enumerate(text):
+        code = _ascii_code(encoding, ch, index)?
+        match out.write_bytes(_BYTE_VALUES[code:code + 1]):
+            Ok(_) => pass
+            Err(err) => return Err(_io_boundary_error(encoding, err.message(), index))
+    return Ok(out.getvalue())
+
+
+pub def _ascii_text(encoding: str, data: bytes) -> Result[str, EncodingError]:
+    """
+    Convert printable ASCII bytes from a stream decoder into text.
+
+    Args:
+        encoding: Codec name to include in returned errors.
+        data: Bytes read from an encoded representation stream.
+
+    Returns:
+        Text representation, or `Err(EncodingError)` if `data` contains non-printable bytes.
+    """
+    mut out = ""
+    for index, code in enumerate(data):
+        if code < 32 or code > 126:
+            return Err(_encoding_error(encoding, "invalid_character", "stream input must contain printable ASCII", index))
+        out += _ASCII_PRINTABLE[code - 32:code - 31]
+    return Ok(out)
+
+
+def _ascii_code(encoding: str, ch: str, position: int) -> Result[int, EncodingError]:
+    """
+    Return the printable ASCII byte value for a one-character string.
+    """
+    for index, character in enumerate(_ASCII_PRINTABLE):
+        if character == ch:
+            return Ok(index + 32)
+    return Err(_encoding_error(encoding, "invalid_character", "text contains a non-printable ASCII character", position))

@@ -1866,7 +1866,7 @@ impl<'a> IrEmitter<'a> {
         }
         if uses_stdlib_error_trait {
             let std_namespace = Self::rust_ident(incan_core::lang::stdlib::INCAN_STD_NAMESPACE);
-            items.push(quote! { use crate::#std_namespace::traits::error::Error; });
+            items.push(quote! { use crate::#std_namespace::traits::error::Error as _IncanErrorTrait; });
         }
         let needs_json_serialize_trait_scope = emitted_declarations.iter().any(|decl| {
             matches!(

@@ -173,6 +173,12 @@ impl<'a> IrEmitter<'a> {
                         crate::__incan_std::result::#method_ident(#receiver_tokens, #callback_tokens)
                     });
                 }
+                if matches!(callback.kind, IrExprKind::Closure { .. }) {
+                    let callback_tokens = self.emit_expr(callback)?;
+                    return Ok(quote! {
+                        #receiver_tokens.#method_ident(#callback_tokens)
+                    });
+                }
                 let body = self.emit_result_callback_call(callback, quote! { __incan_result_value })?;
                 quote! {
                     #receiver_tokens.#method_ident(|__incan_result_value| #body)

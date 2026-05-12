@@ -1,0 +1,418 @@
+"""
+Base85 binary-text encoding helpers.
+
+Supported families are ASCII85 (`a85*`), Git/Base85 (`b85*`), and Z85 (`z85*`). The implementation is written in
+Incan source and uses integer block arithmetic plus byte-table slicing for decoded output.
+"""
+
+from std.encoding._shared import (
+    EncodingError,
+    _ascii_bytes,
+    _ascii_text,
+    _encoding_error,
+    _read_source_bytes,
+    _read_source_text,
+    _read_stream_bytes,
+    _write_sink_bytes,
+    _write_stream_bytes,
+)
+from std.fs import Path
+from std.io import BytesIO, _BytesIO
+
+const _A85_ALPHABET: str = "!\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstu"
+const _B85_ALPHABET: str = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz!#$%&()*+-;<=>?@^_`{|}~"
+const _Z85_ALPHABET: str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ.-:+=^!/*?&<>()[]{}@%$#"
+const _BYTE_TABLE: bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
+
+
+pub def a85encode(data: bytes) -> str:
+    """
+    Encode bytes with Adobe ASCII85 syntax, including the `z` zero-quantum shortcut.
+
+    Returns:
+        ASCII85 text without Adobe `<~` and `~>` framing markers.
+    """
+    return _encode_base85(data, _A85_ALPHABET, true, false)
+
+
+pub def a85decode(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode strict ASCII85 text.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` for invalid length, shortcut placement, or alphabet characters.
+    """
+    return _decode_base85(_strip_adobe_markers(text), _A85_ALPHABET, "base85.a85", true, false)
+
+
+pub def a85decode_lenient(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode ASCII85 after removing ASCII whitespace.
+    """
+    return _decode_base85(_strip_adobe_markers(text), _A85_ALPHABET, "base85.a85", true, true)
+
+
+pub def b85encode(data: bytes) -> str:
+    """
+    Encode bytes with the Git/Base85 alphabet.
+
+    Returns:
+        Base85 text using the Git alphabet.
+    """
+    return _encode_base85(data, _B85_ALPHABET, false, false)
+
+
+pub def encode(
+    source: Union[bytes, _BytesIO, Path],
+    target: Union[_BytesIO, Path],
+    chunk_size: int = 65536,
+) -> Result[str, EncodingError]:
+    """
+    Encode bytes from a value, byte stream, or path with the Git/Base85 alphabet.
+
+    Args:
+        source: Bytes, `BytesIO`, or `Path` to encode.
+        target: `BytesIO` or `Path` sink for encoded ASCII bytes.
+        chunk_size: Positive chunk-size hint for source/sink calls.
+
+    Returns:
+        Encoded text, or `Err(EncodingError)` for invalid arguments or I/O failures.
+    """
+    data = _read_source_bytes("base85.b85", source, chunk_size)?
+    text = b85encode(data)
+    _write_sink_bytes("base85.b85", target, _ascii_bytes("base85.b85", text)?)?
+    return Ok(text)
+
+
+pub def b85decode(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode strict Git/Base85 text.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` for invalid length or alphabet characters.
+    """
+    return _decode_base85(text, _B85_ALPHABET, "base85.b85", false, false)
+
+
+pub def decode(
+    source: Union[str, _BytesIO, Path],
+    target: Union[_BytesIO, Path],
+    chunk_size: int = 65536,
+) -> Result[bytes, EncodingError]:
+    """
+    Decode Git/Base85 from text, a byte stream, or path.
+
+    Args:
+        source: Text, `BytesIO`, or `Path` containing printable Base85 bytes.
+        target: `BytesIO` or `Path` sink for decoded bytes.
+        chunk_size: Positive chunk-size hint for source/sink calls.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` for invalid text, arguments, or I/O failures.
+    """
+    text = _read_source_text("base85.b85", source, chunk_size)?
+    data = b85decode(text)?
+    _write_sink_bytes("base85.b85", target, data)?
+    return Ok(data)
+
+
+pub def b85decode_lenient(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode Git/Base85 after removing ASCII whitespace.
+    """
+    return _decode_base85(text, _B85_ALPHABET, "base85.b85", false, true)
+
+
+pub def decode_lenient(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode Git/Base85 using the module's lenient whitespace rules.
+    """
+    return b85decode_lenient(text)
+
+
+pub def z85encode(data: bytes) -> Result[str, EncodingError]:
+    """
+    Encode bytes with the ZeroMQ Z85 alphabet.
+
+    Returns:
+        Z85 text, or `Err(EncodingError)` when the byte length is not divisible by four.
+    """
+    if len(data) % 4 != 0:
+        return Err(_error("base85.z85", "invalid_length", "z85 input bytes must be a multiple of 4", len(data)))
+    return Ok(_encode_base85(data, _Z85_ALPHABET, false, true))
+
+
+pub def z85decode(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode strict Z85 text.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` when the text length is not divisible by five.
+    """
+    if len(text) % 5 != 0:
+        return Err(_error("base85.z85", "invalid_length", "z85 text length must be a multiple of 5", len(text)))
+    return _decode_base85(text, _Z85_ALPHABET, "base85.z85", false, false)
+
+
+pub def a85encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read bytes from `source`, encode ASCII85, and write ASCII bytes to `target`.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_error("base85.a85", "invalid_input", "chunk_size must be positive", -1))
+    data = _read_stream_bytes("base85.a85", source)?
+    return _write_stream_bytes("base85.a85", target, _ascii_bytes("base85.a85", a85encode(data))?)
+
+
+pub def a85decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read ASCII85 bytes from `source`, decode them, and write bytes to `target`.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments, invalid text, or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_error("base85.a85", "invalid_input", "chunk_size must be positive", -1))
+    text = _ascii_text("base85.a85", _read_stream_bytes("base85.a85", source)?)?
+    return _write_stream_bytes("base85.a85", target, a85decode(text)?)
+
+
+pub def b85encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read bytes from `source`, encode Git/Base85, and write ASCII bytes to `target`.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_error("base85.b85", "invalid_input", "chunk_size must be positive", -1))
+    data = _read_stream_bytes("base85.b85", source)?
+    return _write_stream_bytes("base85.b85", target, _ascii_bytes("base85.b85", b85encode(data))?)
+
+
+pub def encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Alias `b85encode_stream` as the default Base85 stream encoder.
+    """
+    return b85encode_stream(source, target, chunk_size)
+
+
+pub def b85decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read Git/Base85 bytes from `source`, decode them, and write bytes to `target`.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments, invalid text, or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_error("base85.b85", "invalid_input", "chunk_size must be positive", -1))
+    text = _ascii_text("base85.b85", _read_stream_bytes("base85.b85", source)?)?
+    return _write_stream_bytes("base85.b85", target, b85decode(text)?)
+
+
+pub def decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Alias `b85decode_stream` as the default Base85 stream decoder.
+    """
+    return b85decode_stream(source, target, chunk_size)
+
+
+pub def z85encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read bytes from `source`, encode Z85, and write ASCII bytes to `target`.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments, invalid input length, or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_error("base85.z85", "invalid_input", "chunk_size must be positive", -1))
+    data = _read_stream_bytes("base85.z85", source)?
+    return _write_stream_bytes("base85.z85", target, _ascii_bytes("base85.z85", z85encode(data)?)?)
+
+
+pub def z85decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read Z85 bytes from `source`, decode them, and write bytes to `target`.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments, invalid text, or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_error("base85.z85", "invalid_input", "chunk_size must be positive", -1))
+    text = _ascii_text("base85.z85", _read_stream_bytes("base85.z85", source)?)?
+    return _write_stream_bytes("base85.z85", target, z85decode(text)?)
+
+
+def _encode_base85(data: bytes, alphabet: str, zero_shortcut: bool, require_full_blocks: bool) -> str:
+    """
+    Encode bytes as Base85 text with the selected alphabet and final-block policy.
+    """
+    mut out = ""
+    block_count = (len(data) + 3) // 4
+    for block_index in range(block_count):
+        index = block_index * 4
+        remaining = len(data) - index
+        if require_full_blocks and remaining < 4:
+            return out
+        mut b0 = int(data[index])
+        mut b1 = 0
+        mut b2 = 0
+        mut b3 = 0
+        if remaining > 1:
+            b1 = int(data[index + 1])
+        if remaining > 2:
+            b2 = int(data[index + 2])
+        if remaining > 3:
+            b3 = int(data[index + 3])
+        n = b0 * 16777216 + b1 * 65536 + b2 * 256 + b3
+        if zero_shortcut and remaining >= 4 and n == 0:
+            out += "z"
+        else:
+            block = _base85_block(n, alphabet)
+            if remaining >= 4:
+                out += block
+            else:
+                out += block[0:remaining + 1]
+    return out
+
+
+def _decode_base85(text: str, alphabet: str, codec: str, zero_shortcut: bool, lenient: bool) -> Result[bytes, EncodingError]:
+    """
+    Decode Base85 text by validating each quantum and writing decoded bytes to a buffer.
+    """
+    clean = _clean_input(text, lenient)
+    out = BytesIO(b"")
+    mut block = ""
+    for index, ch in enumerate(clean):
+        if zero_shortcut and ch == "z":
+            if len(block) != 0:
+                return Err(_error(codec, "invalid_character", "ascii85 z shortcut must appear between quanta", index))
+            _write_byte(out, 0, codec)?
+            _write_byte(out, 0, codec)?
+            _write_byte(out, 0, codec)?
+            _write_byte(out, 0, codec)?
+        else:
+            _decode_char(ch, alphabet, codec, index)?
+            block += ch
+            if len(block) == 5:
+                _write_bytes(out, _decode_base85_block(block, alphabet, codec, index - 4, 4)?, codec)?
+                block = block[0:0]
+    if len(block) == 1:
+        return Err(_error(codec, "invalid_length", "base85 trailing quantum cannot contain exactly one character", len(clean) - 1))
+    if len(block) > 1:
+        block_len = len(block)
+        mut padded = block
+        while len(padded) < 5:
+            padded += alphabet[84:85]
+        _write_bytes(out, _decode_base85_block(padded, alphabet, codec, len(clean) - block_len, block_len - 1)?, codec)?
+    return Ok(out.getvalue())
+
+
+def _base85_block(value: int, alphabet: str) -> str:
+    """
+    Convert one 32-bit integer quantum to five Base85 digits.
+    """
+    mut n = value
+    mut chars: list[str] = ["", "", "", "", ""]
+    for offset in range(5):
+        index = 4 - offset
+        digit = n % 85
+        chars[index] = alphabet[digit:digit + 1]
+        n = n // 85
+    return chars[0] + chars[1] + chars[2] + chars[3] + chars[4]
+
+
+def _decode_base85_block(block: str, alphabet: str, codec: str, position: int, bytes_to_emit: int) -> Result[bytes, EncodingError]:
+    """
+    Convert one padded Base85 text quantum into the requested number of bytes.
+    """
+    mut value = 0
+    for index, ch in enumerate(block):
+        digit = _decode_char(ch, alphabet, codec, position + index)?
+        value = value * 85 + digit
+    if value > 4294967295:
+        return Err(_error(codec, "overflow", "base85 quantum overflows 32 bits", position))
+    out = BytesIO(b"")
+    if bytes_to_emit >= 1:
+        _write_byte(out, (value // 16777216) % 256, codec)?
+    if bytes_to_emit >= 2:
+        _write_byte(out, (value // 65536) % 256, codec)?
+    if bytes_to_emit >= 3:
+        _write_byte(out, (value // 256) % 256, codec)?
+    if bytes_to_emit >= 4:
+        _write_byte(out, value % 256, codec)?
+    return Ok(out.getvalue())
+
+
+def _decode_char(ch: str, alphabet: str, codec: str, position: int) -> Result[int, EncodingError]:
+    """
+    Map one Base85 alphabet character to its numeric value.
+    """
+    for index, character in enumerate(alphabet):
+        if character == ch:
+            return Ok(index)
+    return Err(_error(codec, "invalid_character", "character is not in the selected base85 alphabet", position))
+
+
+def _strip_adobe_markers(text: str) -> str:
+    """
+    Remove optional Adobe ASCII85 framing markers from a text value.
+    """
+    if len(text) >= 4 and text[0:2] == "<~" and text[len(text) - 2:] == "~>":
+        return text[2:len(text) - 2]
+    return text
+
+
+def _clean_input(text: str, lenient: bool) -> str:
+    """
+    Return text unchanged for strict mode or without ASCII whitespace in lenient mode.
+    """
+    if not lenient:
+        return text
+    mut out = ""
+    for ch in text:
+        if not _is_ascii_whitespace(ch):
+            out += ch
+    return out
+
+
+def _byte(value: int) -> bytes:
+    """
+    Return a one-byte `bytes` value for an integer in the byte range.
+    """
+    return _BYTE_TABLE[value:value + 1]
+
+
+def _write_byte(out: _BytesIO, value: int, codec: str) -> Result[None, EncodingError]:
+    """
+    Append one decoded byte to an in-memory buffer.
+    """
+    match out.write_bytes(_byte(value)):
+        Ok(_) => return Ok(None)
+        Err(err) => return Err(_error(codec, "io", err.message(), -1))
+
+
+def _write_bytes(out: _BytesIO, data: bytes, codec: str) -> Result[None, EncodingError]:
+    """
+    Append decoded bytes to an in-memory buffer.
+    """
+    match out.write_bytes(data):
+        Ok(_) => return Ok(None)
+        Err(err) => return Err(_error(codec, "io", err.message(), -1))
+
+
+def _is_ascii_whitespace(ch: str) -> bool:
+    """
+    Return whether `ch` is ASCII whitespace accepted by lenient mode.
+    """
+    return ch == " " or ch == "\n" or ch == "\r" or ch == "\t"
+
+
+def _error(codec: str, kind: str, detail: str, position: int) -> EncodingError:
+    """
+    Build a Base85-family error with the selected codec name.
+    """
+    return _encoding_error(codec, kind, detail, position)

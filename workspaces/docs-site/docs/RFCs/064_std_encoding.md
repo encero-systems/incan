@@ -1,6 +1,6 @@
 # RFC 064: `std.encoding` — binary-text encoding and decoding utilities
 
-- **Status:** Planned
+- **Status:** In Progress
 - **Created:** 2026-04-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -16,7 +16,7 @@
 
 ## Summary
 
-This RFC proposes `std.encoding` as Incan's standard library module for binary-text representation transforms. The module standardizes explicit encoding and decoding across the major text-safe binary encodings, provides one-shot and streaming APIs, and keeps Python-familiar surface naming first-class while preserving strict-by-default decoding semantics.
+This RFC proposes `std.encoding` as Incan's standard library module for binary-text representation transforms. The module standardizes explicit encoding and decoding across the major text-safe binary encodings, provides value and finite source/sink APIs through the same canonical verbs, and keeps Python-familiar surface naming first-class while preserving strict-by-default decoding semantics.
 
 ## Motivation
 
@@ -27,7 +27,7 @@ Incan should provide one coherent language-level encoding surface rather than fo
 ## Goals
 
 - Provide a complete north-star binary-text encoding surface in `std.encoding`.
-- Include one-shot and streaming encode/decode APIs in the contract.
+- Include value and finite source/sink encode/decode APIs in the contract.
 - Keep strict-vs-lenient decoding behavior explicit and deterministic.
 - Keep format and alphabet choices explicit where multiple variants exist.
 - Make Python-familiar naming first-class to reduce adoption friction.
@@ -48,8 +48,8 @@ from std.encoding import base64, hex
 token = base64.urlsafe_b64encode(payload)
 raw = base64.urlsafe_b64decode(token)?
 
-fingerprint = hex.encode(raw)
-digest = hex.decode(fingerprint)?
+fingerprint = hex.hexlify(raw)
+digest = hex.unhexlify(fingerprint)?
 ```
 
 ```incan
@@ -65,9 +65,9 @@ human_readable, words = bech32.bech32_decode(address)?
 from std.encoding import base64
 from std.fs import Path
 
-source = Path("payload.bin").open("rb")?
-target = Path("payload.b64").open("wb")?
-base64.b64encode_stream(source, target)?
+source = Path("payload.bin")
+target = Path("payload.b64")
+base64.encode(source, target)?
 ```
 
 ## Reference-level explanation
@@ -85,10 +85,8 @@ base64.b64encode_stream(source, target)?
 
 ### Core model
 
-- one-shot encode APIs accept `bytes` and return `str`;
-- one-shot decode APIs accept `str` and return `Result[bytes, EncodingError]`;
-- stream encode APIs read binary bytes and write ASCII representation bytes to a binary writer;
-- stream decode APIs read ASCII representation bytes from a binary reader and write decoded binary bytes to a binary writer;
+- encode APIs accept in-memory `bytes` or a finite binary source and write encoded ASCII bytes to a finite binary sink;
+- decode APIs accept in-memory `str`, encoded ASCII stream bytes, or an encoded path source and write decoded bytes to a finite binary sink;
 - decode errors are structured;
 - strict decode is default;
 - lenient decode is explicit and separately named;
@@ -98,19 +96,18 @@ base64.b64encode_stream(source, target)?
 
 Per encoding family, the contract must include:
 
-- one-shot encode/decode
-- streaming encode/decode
+- Python-shaped one-shot value helpers where the ecosystem has established names
+- source/sink encode/decode through the same canonical verb
 - explicit variant-specific functions where needed
 
 Baseline shape:
 
-- `encode(data: bytes) -> str`
-- `decode(text: str) -> Result[bytes, EncodingError]`
+- `encode(source: bytes | Path | BytesIO, target: Path | BytesIO, chunk_size: int = 65536) -> Result[str, EncodingError]`
+- `decode(source: str | Path | BytesIO, target: Path | BytesIO, chunk_size: int = 65536) -> Result[bytes, EncodingError]`
 - `decode_lenient(text: str) -> Result[bytes, EncodingError]` where leniency is meaningful
-- `encode_stream(source: File | BytesIO, target: File | BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]`
-- `decode_stream(source: File | BytesIO, target: File | BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]`
+- value helpers such as `hexlify(data)`, `unhexlify(text)`, `b64encode(data)`, and `b64decode(text)` where names are already conventional
 
-Stream APIs operate on binary streams even when the representation is textual. Encoders write ASCII bytes so callers can pipe encoded output to files and transports without requiring a text-mode writer. Decoders must reject non-ASCII input bytes before alphabet-specific validation.
+The source/sink form is the I/O primitive. A finite file path is just a bounded stream endpoint: implementations open it and flow through the same transform path instead of adding a separate batch-file algorithm. Encoders write ASCII bytes so callers can pipe encoded output to files and transports without requiring a text-mode writer. Decoders must reject non-ASCII input bytes before alphabet-specific validation.
 
 ## Design details
 
@@ -133,7 +130,7 @@ Python-shaped naming must be first-class API surface, not compatibility aftertho
 - `b32encode`, `b32decode`
 - `a85encode`, `a85decode`, `b85encode`, `b85decode`
 
-Incan may also expose canonical parallel names (`encode`, `decode`) as long as behavior is identical and documentation keeps naming clear.
+Canonical names (`encode`, `decode`) should be the preferred API in new docs. Python-shaped names remain first-class compatibility spellings for variant clarity and migration familiarity.
 
 ### Strictness policy
 
@@ -162,9 +159,9 @@ Default helper names are allowed only when the default is a widely recognized fa
 
 Streaming encode/decode is part of this RFC's north-star contract, not a follow-on.
 
-Stream APIs must compose directly with `std.fs.File` and `std.io.BytesIO` and define consistent chunking/error behavior.
+The canonical encode/decode APIs must compose directly with `std.fs.Path` and `std.io.BytesIO` and define consistent chunking/error behavior. Path values are opened as finite binary sources or sinks and use the same source/sink transform path as in-memory byte streams.
 
-Partial stream failures must be reported as errors. Implementations may have already written earlier chunks to the target by the time an error occurs, so the docs must not promise transactional stream output.
+Partial source/sink failures must be reported as errors. Implementations may have already written earlier chunks to the target by the time an error occurs, so the docs must not promise transactional output.
 
 ### Error model
 
@@ -174,8 +171,8 @@ Partial stream failures must be reported as errors. Implementations may have alr
 - invalid length;
 - invalid or missing padding where padding is required;
 - checksum or separator failure for checksum-bearing formats such as Bech32;
-- non-ASCII representation bytes in stream decode;
-- I/O failure in stream workflows.
+- non-ASCII representation bytes in source/sink decode;
+- I/O failure in source/sink workflows.
 
 Family-specific detail may be carried as metadata, but callers must be able to handle the stable error categories without depending on backend crate messages.
 
@@ -215,10 +212,84 @@ Those belong to dedicated modules (`std.compression`, `std.archive`, and future 
 
 ## Layers affected
 
-- **Stdlib / runtime**: encoding implementations, stream adapters, and error surfaces.
+- **Stdlib / runtime**: encoding implementations, source/sink adapters, and error surfaces.
 - **Language surface**: the module and submodule families must be available as specified.
 - **Execution handoff**: implementations must preserve deterministic transformation behavior.
-- **Docs / examples**: strict/lenient guidance, variant choice guidance, and streaming patterns.
+- **Docs / examples**: strict/lenient guidance, variant choice guidance, and source/sink patterns.
+
+## Implementation Plan
+
+### Phase 1: Registry + module scaffolding
+
+- Register `std.encoding` and its submodules in the stdlib namespace registry.
+- Add `.incn` source modules for `encoding/prelude`, `hex`, `base32`, `base64`, `base85`, `base58`, and `bech32`.
+- Define the source-owned `EncodingError` boundary and shared helpers in Incan.
+
+### Phase 2: Pure Incan one-shot algorithms
+
+- Implement strict one-shot encode/decode for the required encoding families in `.incn` source.
+- Keep Python-shaped helper names first-class and map canonical helper names to the same behavior.
+- Implement lenient decode helpers only where the normalization rule is documented and deterministic.
+- Avoid `rust.extern` type implementations for the encoding API surface; if a compiler/runtime limitation blocks pure Incan implementation, record the limitation and keep the public contract source-owned.
+
+### Phase 3: Stream composition
+
+- Implement source/sink helpers over `std.fs.Path` and `std.io.BytesIO` by composing the encoding algorithms with existing binary read/write APIs.
+- Preserve the RFC's non-transactional partial-write behavior for source/sink errors.
+- Reject non-ASCII representation bytes before alphabet-specific source/sink decode validation.
+
+### Phase 4: Tests, docs, and release metadata
+
+- Add focused stdlib registry, typechecker, codegen, and end-to-end tests for imports, value behavior, strict errors, lenient behavior, variants, and source/sink calls.
+- Add user-facing stdlib reference docs and examples for `std.encoding`.
+- Update release notes and development version metadata for the active `0.3` line.
+
+## Progress Checklist
+
+### Spec / lifecycle
+
+- [x] Move RFC 064 to `Planned` after design review.
+- [x] Move RFC 064 to `In Progress` when implementation starts.
+- [x] Keep the RFC checklist aligned with completed implementation slices.
+
+### Registry / source modules
+
+- [x] Register `std.encoding` with required submodules in `STDLIB_NAMESPACES`.
+- [x] Add source-owned `std.encoding` prelude and shared error/helper surface.
+- [x] Add `hex`, `base32`, `base64`, `base85`, `base58`, and `bech32` `.incn` modules.
+
+### One-shot algorithms
+
+- [x] Implement strict hex/base16 encode and decode.
+- [x] Implement strict Base32 and documented lenient Base32 decode behavior.
+- [x] Implement strict standard and URL-safe Base64 helpers.
+- [x] Implement Base85 family helpers for `a85`, `b85`, and `z85`.
+- [x] Implement Bitcoin-alphabet Base58 helpers.
+- [x] Implement Bech32 and Bech32m helpers with checksum validation.
+
+### Streams
+
+- [x] Implement `std.io.BytesIO` source/sink encode helpers for byte-oriented supported families: hex, Base32, Base64, Base85, and Base58.
+- [x] Implement `std.io.BytesIO` source/sink decode helpers for byte-oriented supported families: hex, Base32, Base64, Base85, and Base58.
+- [x] Implement `std.fs.Path` finite source/sink helpers by opening binary files and using the same transform path.
+- [x] Cover `std.io.BytesIO` source/sink composition in RFC behavior tests.
+- [x] Cover `std.fs.Path` source/sink composition in RFC behavior tests.
+
+### Tests
+
+- [x] Add registry/typechecker coverage for `std.encoding` imports and unknown submodules.
+- [x] Add codegen/stdlib source snapshot coverage for the new modules.
+- [x] Add end-to-end one-shot tests for representative valid values.
+- [ ] Add strict error tests for invalid alphabet, length, padding, checksum, and non-ASCII source input. Current coverage includes invalid length, invalid character, and Bech32 checksum paths.
+- [x] Add lenient decode tests where leniency is exposed.
+- [x] Add source/sink round-trip tests for the implemented byte-oriented surfaces.
+
+### Docs / release
+
+- [x] Add authored `std.encoding` reference docs.
+- [x] Link `std.encoding` from stdlib reference navigation/index pages.
+- [x] Add `0.3` release notes entry.
+- [x] Bump the active development version from `0.3.0-dev.44`.
 
 ## Design Decisions
 
@@ -226,8 +297,8 @@ Those belong to dedicated modules (`std.compression`, `std.archive`, and future 
 - Python-shaped naming is first-class API surface.
 - Strict decode is default.
 - Lenient decode is explicit and separately named.
-- One-shot and streaming APIs are both in scope in this RFC.
+- Value convenience and finite source/sink APIs are both in scope in this RFC.
 - Variant ambiguity is avoided by explicit function-family naming.
-- Stream APIs operate on binary streams and use ASCII representation bytes for encoded text.
+- Source/sink APIs operate on binary streams and use ASCII representation bytes for encoded text.
 - `EncodingError` is the stable module error type and must expose family-neutral error categories.
 - Media codecs and compression codecs are explicitly out of scope for this module.

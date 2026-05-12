@@ -47,7 +47,72 @@ fn is_frozen_collection_named_generic(ty: &IrType) -> bool {
     .any(|id| is_named_generic(ty, collections::as_str(*id)))
 }
 
+/// Return whether `ty` lowers to a Rust string-like value with `.chars()`.
+fn is_string_iterable_type(ty: &IrType) -> bool {
+    match ty {
+        IrType::String | IrType::StaticStr | IrType::StrRef => true,
+        IrType::Ref(inner) | IrType::RefMut(inner) => is_string_iterable_type(inner),
+        _ => false,
+    }
+}
+
+/// Return whether `ty` lowers to a `FrozenStr` wrapper that must be unwrapped before iteration.
+fn is_frozen_string_iterable_type(ty: &IrType) -> bool {
+    match ty {
+        IrType::FrozenStr => true,
+        IrType::Ref(inner) | IrType::RefMut(inner) => is_frozen_string_iterable_type(inner),
+        _ => false,
+    }
+}
+
+/// Return whether `ty` lowers to a byte vector or byte slice that yields Incan integer items.
+fn is_bytes_iterable_type(ty: &IrType) -> bool {
+    match ty {
+        IrType::Bytes | IrType::StaticBytes => true,
+        IrType::Ref(inner) | IrType::RefMut(inner) => is_bytes_iterable_type(inner),
+        _ => false,
+    }
+}
+
+/// Return whether `ty` lowers to a `FrozenBytes` wrapper that must be unwrapped before iteration.
+fn is_frozen_bytes_iterable_type(ty: &IrType) -> bool {
+    match ty {
+        IrType::FrozenBytes => true,
+        IrType::Ref(inner) | IrType::RefMut(inner) => is_frozen_bytes_iterable_type(inner),
+        _ => false,
+    }
+}
+
 impl<'a> IrEmitter<'a> {
+    /// Emit the iterator expression for `enumerate(arg)`.
+    ///
+    /// The frontend models `str` iteration as one-character `str` values and `bytes` iteration as Incan `int`
+    /// values, so this helper materializes those language-level item types instead of leaking Rust `char`, `u8`,
+    /// or reference items into generated code.
+    pub(in super::super) fn emit_enumerate_iter(
+        &self,
+        arg: &TypedExpr,
+        clone_list_items: bool,
+    ) -> Result<TokenStream, EmitError> {
+        let a = self.emit_expr(arg)?;
+        let tokens = if is_string_iterable_type(&arg.ty) {
+            quote! { (#a).chars().enumerate().map(|(idx, value)| (idx as i64, value.to_string())) }
+        } else if is_frozen_string_iterable_type(&arg.ty) {
+            quote! { (#a).as_str().chars().enumerate().map(|(idx, value)| (idx as i64, value.to_string())) }
+        } else if is_bytes_iterable_type(&arg.ty) {
+            quote! { (#a).iter().enumerate().map(|(idx, value)| (idx as i64, (*value) as i64)) }
+        } else if is_frozen_bytes_iterable_type(&arg.ty) {
+            quote! { (#a).as_slice().iter().enumerate().map(|(idx, value)| (idx as i64, (*value) as i64)) }
+        } else if list_elem_type(&arg.ty).is_copy() {
+            quote! { #a.iter().copied().enumerate().map(|(idx, value)| (idx as i64, value)) }
+        } else if clone_list_items {
+            quote! { #a.iter().enumerate().map(|(idx, value)| (idx as i64, value.clone())) }
+        } else {
+            quote! { #a.iter().enumerate().map(|(idx, value)| (idx as i64, value)) }
+        };
+        Ok(tokens)
+    }
+
     /// Emit a builtin function call using enum-based dispatch.
     ///
     /// This handles calls that have been lowered to `IrExprKind::BuiltinCall`.
@@ -196,8 +261,7 @@ impl<'a> IrEmitter<'a> {
                 .map(|opt| opt.unwrap_or_else(|| quote! { 0..0 })),
             BuiltinFn::Enumerate => {
                 if let Some(arg) = args.first() {
-                    let a = self.emit_expr(arg)?;
-                    Ok(quote! { #a.iter().enumerate().map(|(idx, value)| (idx as i64, value)) })
+                    self.emit_enumerate_iter(arg, false)
                 } else {
                     Ok(quote! { std::iter::empty::<(i64, ())>() })
                 }
@@ -438,10 +502,7 @@ impl<'a> IrEmitter<'a> {
             BuiltinFnId::Range => self.emit_range_call(args),
             BuiltinFnId::Enumerate => {
                 if let Some(arg) = args.first() {
-                    let a = self.emit_expr(arg)?;
-                    Ok(Some(
-                        quote! { #a.iter().enumerate().map(|(idx, value)| (idx as i64, value)) },
-                    ))
+                    self.emit_enumerate_iter(arg, false).map(Some)
                 } else {
                     Ok(None)
                 }

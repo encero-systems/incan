@@ -2960,6 +2960,26 @@ def main() -> None:
     }
 
     #[test]
+    fn test_string_and_bytes_iteration_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = run_incan_source(
+            "def main() -> None:\n  mut out = \"\"\n  for ch in \"Az\":\n    out += ch\n  for index, ch in enumerate(\"xy\"):\n    out += f\"{index}{ch}\"\n  mut total = 0\n  for byte in b\"Az\":\n    total += byte\n  for index, byte in enumerate(b\"\\x01\\x02\"):\n    total += index + byte\n  println(out)\n  println(total)\n",
+        );
+
+        assert!(
+            output.status.success(),
+            "incan run string/bytes iteration regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(lines, vec!["Az0x1y", "191"]);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_std_fs_compile_and_run_path_file_and_tree_operations() -> Result<(), Box<dyn std::error::Error>> {
         let base = std::env::temp_dir().join(format!("incan_std_fs_integration_{}", std::process::id()));
         let root = base.join("root");
@@ -3195,6 +3215,40 @@ def main() -> None:
                 "0"
             ],
             "unexpected std.io output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_std_encoding_hex_compile_and_run_strict_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/std_encoding_hex_surface.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run std.encoding.hex smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec![
+                "417a00",
+                "3",
+                "417a00",
+                "417a00",
+                "FF",
+                "10",
+                "00",
+                "7f",
+                "invalid_length",
+                "invalid_character"
+            ],
+            "unexpected std.encoding.hex output:\n{stdout}"
         );
         Ok(())
     }
@@ -3649,6 +3703,115 @@ def main() -> None:
             vec!["4", "error: bad", "14"],
             "unexpected Result method std.result helper output:\n{stdout}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_map_err_accepts_callable_object_trait_adoption() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from std.traits.callable import Callable1
+
+model Prefixer with Callable1[str, str]:
+    prefix: str
+
+    def __call__(self, error: str) -> str:
+        return f"{self.prefix}: {error}"
+
+def main() -> None:
+    value: Result[int, str] = Err("bad")
+    match value.map_err(Prefixer(prefix="error")):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Result.map_err callable-object regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["error: bad"],
+            "unexpected callable-object output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_map_err_accepts_capturing_inline_closure() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def main() -> None:
+    prefix = "error"
+    value: Result[int, str] = Err("bad")
+    match value.map_err((error) => f"{prefix}: {error}"):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Result.map_err inline closure regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(lines, vec!["error: bad"], "unexpected inline closure output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_static_str_index_and_slice_use_string_helpers() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+const ALPHABET: str = "abcdef"
+
+def main() -> None:
+    println(ALPHABET[1])
+    println(ALPHABET[2:5])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "static str index/slice regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["b", "cde"], "unexpected static str output:\n{stdout}");
         Ok(())
     }
 
@@ -5471,6 +5634,32 @@ async def main() -> None:
             "incan run rfc030_std_collections_behavior failed: status={:?} stderr={}",
             output.status,
             String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[test]
+    fn test_run_rfc064_std_encoding_behavior() {
+        let Ok(output) = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/rfc064_std_encoding_behavior.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan run rfc064_std_encoding_behavior failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("strict-padding-error")
+                && stdout.contains("bech32-checksum-error")
+                && stdout.contains("rfc064-encoding-ok"),
+            "expected strict error markers and success marker; got:\n{}",
+            stdout
         );
     }
 
