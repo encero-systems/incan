@@ -49,7 +49,7 @@ This is why we need:
 This is the standard Rust pattern. Examples from the ecosystem:
 
 - `serde` + `serde_derive`
-- `tokio` + `tokio_macros`  
+- `tokio` + `tokio_macros`
 - `diesel` + `diesel_derives`
 
 ## What Each Crate Does

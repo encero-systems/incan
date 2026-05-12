@@ -27,8 +27,8 @@ As AI tools generate more code, those constraints matter more. Incan gives devel
 
 ## Status
 
-> **⚠️ Beta Software ⚠️**  
-> Incan is in active development. The language, compiler, and APIs may still change, although we will try to keep it stable as much as possible.  
+> **⚠️ Beta Software ⚠️**
+> Incan is in active development. The language, compiler, and APIs may still change, although we will try to keep it stable as much as possible.
 > Feedback and contributions are of course welcome!
 
 Docs policy: [Stability policy](workspaces/docs-site/docs/stability.md)

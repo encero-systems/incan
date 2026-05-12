@@ -16,7 +16,7 @@ description: Drafts a GitHub issue title and body using the target repository's 
    - Feature → `feature_request.yml`
    - Refactor / CI / deps / cleanup → `chore.yml`
    - Docs → `documentation.yml`
-   - RFC / large language or tooling change → `rfc_proposal.yml`  
+   - RFC / large language or tooling change → `rfc_proposal.yml`
    If multiple fit or none fit, list the available `name` values and ask the user to pick.
 
 4. **Read the selected YAML** — Parse the form from disk. Do not assume field names or area dropdowns match another repository; **InQL, Incan, and other repos differ** (e.g. "Area" options).

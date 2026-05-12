@@ -7,7 +7,7 @@ body:
       value: |
         Use this issue to propose an RFC topic and get early alignment.
         If accepted, we’ll typically ask for a PR adding an RFC document under `docs/RFCs/` based on the RFC template.
-        
+
         RFCs are **user-facing only** (language features, documentation, CLI/tooling, runtime surface area).
         If your proposal is about Rust internals/compiler architecture, please open a bug/chore/feature issue instead.
   - type: dropdown
