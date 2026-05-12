@@ -137,6 +137,7 @@ nav:
           - Project lifecycle: language/how-to/project_lifecycle.md
           - Testing: language/how-to/testing_stdlib.md
           - String processing: language/how-to/string_processing.md
+          - Working with UUIDs: language/how-to/working_with_uuids.md
           - Performance: language/how-to/performance.md
           - Rust interop: language/how-to/rust_interop.md
           - Rust types (coming from Python): language/how-to/rust_types_for_python_devs.md
@@ -167,6 +168,7 @@ nav:
               - std.graph: language/reference/stdlib/graph.md
               - std.io: language/reference/stdlib/io.md
               - std.logging: language/reference/stdlib/logging.md
+              - std.uuid: language/reference/stdlib/uuid.md
               - std.tempfile: language/reference/stdlib/tempfile.md
               - std.reflection: language/reference/stdlib/reflection.md
               - std.result: language/reference/stdlib/result.md

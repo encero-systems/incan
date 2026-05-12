@@ -914,6 +914,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrExprKind::None
             | IrExprKind::Bool(_)
             | IrExprKind::Int(_)
+            | IrExprKind::IntLiteral(_)
             | IrExprKind::Float(_)
             | IrExprKind::Decimal(_)
             | IrExprKind::String(_)
@@ -1056,13 +1057,13 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         method: &str,
         dispatch: Option<&IrMethodDispatch>,
     ) {
-        if !self.receiver_can_use_rust_extension_trait(receiver) {
-            return;
-        }
         if let Some(IrMethodDispatch::RustExtensionTraitImport { binding }) = dispatch {
             if self.rust_extension_trait_imports.contains_key(binding) {
                 self.analysis.used_extension_trait_imports.insert(binding.clone());
             }
+            return;
+        }
+        if !self.receiver_can_use_rust_extension_trait(receiver) {
             return;
         }
         self.mark_unambiguous_rust_extension_trait_import(method);
@@ -1440,6 +1441,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::None
             | IrExprKind::Bool(_)
             | IrExprKind::Int(_)
+            | IrExprKind::IntLiteral(_)
             | IrExprKind::Float(_)
             | IrExprKind::Decimal(_)
             | IrExprKind::String(_)
@@ -1866,7 +1868,7 @@ impl<'a> IrEmitter<'a> {
         }
         if uses_stdlib_error_trait {
             let std_namespace = Self::rust_ident(incan_core::lang::stdlib::INCAN_STD_NAMESPACE);
-            items.push(quote! { use crate::#std_namespace::traits::error::Error as _IncanErrorTrait; });
+            items.push(quote! { use crate::#std_namespace::traits::error::Error as _; });
         }
         let needs_json_serialize_trait_scope = emitted_declarations.iter().any(|decl| {
             matches!(

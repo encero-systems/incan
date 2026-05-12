@@ -771,6 +771,7 @@ fn expr_uses_binding_name(expr: &super::super::expr::IrExpr, binding_name: &str)
         | IrExprKind::None
         | IrExprKind::Bool(_)
         | IrExprKind::Int(_)
+        | IrExprKind::IntLiteral(_)
         | IrExprKind::Float(_)
         | IrExprKind::Decimal(_)
         | IrExprKind::String(_)

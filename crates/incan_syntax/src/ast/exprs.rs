@@ -192,16 +192,18 @@ pub enum FStringPart {
 ///
 /// [`IntLiteral::repr`] is the exact `source[start..end]` span from the lexer (including `_` numeric separators).
 ///
-/// [`PartialEq`] compares only [`IntLiteral::value`] so AST equality tests do not depend on `repr`.
+/// [`PartialEq`] ignores only [`IntLiteral::repr`] so AST equality tests do not depend on source spelling.
 #[derive(Debug, Clone)]
 pub struct IntLiteral {
     pub value: i64,
+    pub magnitude: u128,
     pub repr: String,
 }
 
 impl PartialEq for IntLiteral {
+    /// Compare numeric meaning while ignoring spelling differences such as separators.
     fn eq(&self, other: &Self) -> bool {
-        self.value == other.value
+        self.magnitude == other.magnitude
     }
 }
 
@@ -210,8 +212,14 @@ impl IntLiteral {
     pub fn synthetic(value: i64) -> Self {
         Self {
             value,
+            magnitude: value.unsigned_abs().into(),
             repr: value.to_string(),
         }
+    }
+
+    /// Returns `true` when the literal fit in the default signed integer representation at lex time.
+    pub fn fits_i64(&self) -> bool {
+        self.magnitude <= i64::MAX as u128
     }
 }
 
