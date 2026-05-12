@@ -1,8 +1,14 @@
 """
 Binary-text encoding utilities.
+
+Importing `std.encoding` exposes the shared `EncodingError` and keeps the family submodules loadable from the root
+namespace. The `_anchor` imports below are intentionally private: they make the compiler include each source-owned
+submodule when the prelude is loaded, while users continue to call explicit families such as `std.encoding.base64`.
 """
 
 from std.encoding._shared import EncodingError
+
+# Keep family modules attached to the root namespace without flattening all helpers into the prelude.
 from std.encoding.hex import encode as _hex_encode_anchor
 from std.encoding.hex import decode as _hex_decode_anchor
 from std.encoding.hex import decode_lenient as _hex_decode_lenient_anchor

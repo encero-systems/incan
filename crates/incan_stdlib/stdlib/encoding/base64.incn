@@ -3,6 +3,9 @@ Base64 binary-text encoding.
 
 This module exposes the standard and URL-safe RFC 4648 alphabets. Strict decoders require complete padded input;
 lenient decoders remove ASCII whitespace and may add missing trailing padding for copied or wrapped text.
+
+Base64 packs three bytes into four six-bit symbols. The public helpers below stay Python-shaped, while the private
+codec helpers make the bit packing and padding rules explicit enough to audit without knowing the Rust backend.
 """
 
 from std.encoding._shared import (
@@ -24,9 +27,14 @@ const _URLSAFE_ALPHABET: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuv
 const _BYTE_TABLE: bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
 
 
+# Public value helpers
+
 pub def b64encode(data: bytes) -> str:
     """
     Encode bytes with the standard Base64 alphabet and `=` padding.
+
+    Use this when you need the RFC 4648 `+` and `/` alphabet. For URL path or query components, use
+    `urlsafe_b64encode` so the alphabet choice is visible at the call site.
 
     Returns:
         Base64 text using `+` and `/`.
@@ -41,6 +49,9 @@ pub def encode(
 ) -> Result[str, EncodingError]:
     """
     Encode bytes from a value, byte stream, or path with the standard Base64 alphabet.
+
+    The return value mirrors the bytes written to `target`, but as text. The target receives ASCII representation
+    bytes so it can be a `BytesIO` or binary file path.
 
     Args:
         source: Bytes, `BytesIO`, or `Path` to encode.
@@ -59,6 +70,8 @@ pub def encode(
 pub def standard_b64encode(data: bytes) -> str:
     """
     Alias `b64encode` with an explicit standard-alphabet name.
+
+    This spelling is useful in code that also imports URL-safe helpers and wants both alphabet choices to be obvious.
     """
     return b64encode(data)
 
@@ -66,6 +79,8 @@ pub def standard_b64encode(data: bytes) -> str:
 pub def urlsafe_b64encode(data: bytes) -> str:
     """
     Encode bytes with the URL-safe Base64 alphabet and `=` padding.
+
+    URL-safe Base64 changes only the alphabet characters for values 62 and 63: `+` becomes `-`, and `/` becomes `_`.
 
     Returns:
         Base64 text using `-` and `_`.
@@ -76,6 +91,9 @@ pub def urlsafe_b64encode(data: bytes) -> str:
 pub def b64decode(text: str) -> Result[bytes, EncodingError]:
     """
     Decode strict standard Base64 text.
+
+    Strict mode requires valid alphabet characters, a valid input length, and correctly placed padding. It is the right
+    default for protocol boundaries where malformed input should be rejected rather than repaired.
 
     Returns:
         Decoded bytes, or `Err(EncodingError)` for invalid length, padding, or alphabet characters.
@@ -90,6 +108,9 @@ pub def decode(
 ) -> Result[bytes, EncodingError]:
     """
     Decode standard Base64 from text, a byte stream, or path.
+
+    Byte-stream inputs are first checked for printable ASCII. Alphabet and padding validation then happens through the
+    same strict decoder used by `b64decode`.
 
     Args:
         source: Text, `BytesIO`, or `Path` containing printable Base64 bytes.
@@ -126,6 +147,9 @@ pub def b64decode_lenient(text: str) -> Result[bytes, EncodingError]:
     """
     Decode standard Base64 after removing ASCII whitespace.
 
+    Lenient mode is for copied or wrapped representation text. It removes ASCII whitespace and fills missing trailing
+    padding when the cleaned length makes that unambiguous; it does not switch alphabets.
+
     Returns:
         Decoded bytes, or `Err(EncodingError)` if the cleaned input is still malformed.
     """
@@ -142,9 +166,14 @@ pub def decode_lenient(text: str) -> Result[bytes, EncodingError]:
 pub def urlsafe_b64decode_lenient(text: str) -> Result[bytes, EncodingError]:
     """
     Decode URL-safe Base64 after removing ASCII whitespace.
+
+    This is the URL-safe counterpart to `b64decode_lenient`; it keeps the `-` and `_` alphabet and never accepts `+`
+    or `/` as substitutes.
     """
     return _decode_base64(text, _URLSAFE_ALPHABET, true)
 
+
+# BytesIO convenience helpers
 
 pub def b64encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
     """
@@ -224,9 +253,15 @@ pub def urlsafe_b64decode_stream(source: _BytesIO, target: _BytesIO, chunk_size:
     return _write_stream_bytes("base64", target, urlsafe_b64decode(text)?)
 
 
+# Codec implementation
+
 def _encode_base64(data: bytes, alphabet: str) -> str:
     """
     Encode bytes as padded Base64 text using the selected alphabet.
+
+    The loop reads up to three bytes at a time, combines them into one 24-bit number, and then slices that number into
+    four six-bit alphabet indexes. Short final blocks keep zero-filled placeholder bits but emit `=` for the missing
+    source bytes.
     """
     mut out = ""
     block_count = (len(data) + 2) // 3
@@ -240,6 +275,7 @@ def _encode_base64(data: bytes, alphabet: str) -> str:
             b1 = int(data[index + 1])
         if remaining > 2:
             b2 = int(data[index + 2])
+        # Three bytes form one 24-bit lane. Division keeps the bit extraction readable in Incan source.
         n = b0 * 65536 + b1 * 256 + b2
         out += _alphabet_char(alphabet, n // 262144)
         out += _alphabet_char(alphabet, (n // 4096) % 64)
@@ -257,6 +293,10 @@ def _encode_base64(data: bytes, alphabet: str) -> str:
 def _decode_base64(text: str, alphabet: str, lenient: bool) -> Result[bytes, EncodingError]:
     """
     Decode Base64 text by validating padding and emitting bytes per quartet.
+
+    Decode runs in the reverse shape of `_encode_base64`: four alphabet characters rebuild a 24-bit lane, then one to
+    three bytes are emitted depending on padding. Padding checks happen before alphabet lookup so malformed `=` usage
+    gets a stable `invalid_padding` error.
     """
     clean = _clean_input(text, lenient)
     if len(clean) == 0:
@@ -296,6 +336,7 @@ def _decode_base64(text: str, alphabet: str, lenient: bool) -> Result[bytes, Enc
         if not pad3:
             v3 = _decode_char(c3, alphabet, index + 3)?
 
+        # The two `=` positions decide how many bytes are real; the zero defaults only fill unused lane bits.
         n = v0 * 262144 + v1 * 4096 + v2 * 64 + v3
         _write_byte(out, n // 65536)?
         if not pad2:

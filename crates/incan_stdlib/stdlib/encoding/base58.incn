@@ -6,6 +6,10 @@ digits with carry propagation. Decode uses the inverse conversion back to base-2
 
 The implementation does not convert the whole payload to one integer first. That keeps arbitrary-length byte strings
 independent of machine-sized integer limits and avoids requiring a separate big-integer backend.
+
+The code below deliberately mirrors the schoolbook conversion people use by hand: carry each new base-256 digit across
+the existing base-58 digit list. That is slower than a specialized host library, but it keeps the stdlib behavior
+auditable and fully source-owned.
 """
 
 from std.encoding._shared import (
@@ -26,9 +30,14 @@ const _BITCOIN_ALPHABET: str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnop
 const _BYTE_TABLE: bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
 
 
+# Public value helpers
+
 pub def b58encode(data: bytes) -> str:
     """
     Encode bytes with the Bitcoin Base58 alphabet.
+
+    Leading zero bytes are not part of the numeric conversion; they are represented directly as leading `1`
+    characters, matching the Bitcoin alphabet convention.
 
     Returns:
         Base58 text with leading zero bytes represented as leading `1` characters.
@@ -43,6 +52,9 @@ pub def encode(
 ) -> Result[str, EncodingError]:
     """
     Encode bytes from a value, byte stream, or path with the Bitcoin Base58 alphabet.
+
+    The target receives the same ASCII representation bytes as the returned text. This helper is the finite
+    source/sink form of `b58encode`.
 
     Args:
         source: Bytes, `BytesIO`, or `Path` to encode.
@@ -61,6 +73,8 @@ pub def encode(
 pub def bitcoin_b58encode(data: bytes) -> str:
     """
     Alias `b58encode` with an explicit Bitcoin alphabet name.
+
+    Keep this spelling when code may later grow support for additional Base58 alphabets.
     """
     return b58encode(data)
 
@@ -68,6 +82,9 @@ pub def bitcoin_b58encode(data: bytes) -> str:
 pub def b58decode(text: str) -> Result[bytes, EncodingError]:
     """
     Decode strict Bitcoin Base58 text.
+
+    Strict mode rejects characters outside the Bitcoin alphabet, including visually ambiguous characters such as `0`,
+    `O`, `I`, and `l`.
 
     Returns:
         Decoded bytes, or `Err(EncodingError)` when `text` contains a non-alphabet character.
@@ -82,6 +99,9 @@ pub def decode(
 ) -> Result[bytes, EncodingError]:
     """
     Decode Bitcoin Base58 from text, a byte stream, or path.
+
+    Stream and path inputs are ASCII representation bytes. Non-ASCII bytes fail at the shared stream boundary before
+    this module checks the Base58 alphabet.
 
     Args:
         source: Text, `BytesIO`, or `Path` containing printable Base58 bytes.
@@ -108,6 +128,9 @@ pub def b58decode_lenient(text: str) -> Result[bytes, EncodingError]:
     """
     Decode Bitcoin Base58 after removing ASCII whitespace.
 
+    Lenient mode is for copied or wrapped Base58 text only. It does not accept alternate alphabets or ambiguous
+    characters that Bitcoin Base58 intentionally omits.
+
     Returns:
         Decoded bytes, or `Err(EncodingError)` if the cleaned text is malformed.
     """
@@ -120,6 +143,8 @@ pub def decode_lenient(text: str) -> Result[bytes, EncodingError]:
     """
     return b58decode_lenient(text)
 
+
+# BytesIO convenience helpers
 
 pub def b58encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
     """
@@ -161,9 +186,14 @@ pub def decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 6553
     return b58decode_stream(source, target, chunk_size)
 
 
+# Codec implementation
+
 def _encode_base58(data: bytes, alphabet: str) -> str:
     """
     Convert base-256 bytes into Base58 digits while preserving leading zeroes.
+
+    `digits` is little-endian: the least-significant Base58 digit is at index `0`. That makes carry propagation cheap
+    because each new byte only walks the existing list from least to most significant.
     """
     if len(data) == 0:
         return ""
@@ -180,6 +210,7 @@ def _encode_base58(data: bytes, alphabet: str) -> str:
         mut carry = int(data[index])
         mut digit_index = 0
         while digit_index < len(digits):
+            # Existing Base58 digits represent the previous number; multiply by 256 and add the new byte via carry.
             carry += digits[digit_index] * 256
             digits[digit_index] = carry % 58
             carry = carry // 58
@@ -200,6 +231,9 @@ def _encode_base58(data: bytes, alphabet: str) -> str:
 def _decode_base58(text: str, alphabet: str, lenient: bool) -> Result[bytes, EncodingError]:
     """
     Convert Base58 text back into base-256 bytes while preserving leading zeroes.
+
+    This is the inverse of `_encode_base58`: each input digit multiplies the current byte list by 58 and carries the new
+    digit through a little-endian base-256 representation.
     """
     clean = _clean_input(text, lenient)
     if len(clean) == 0:
@@ -219,6 +253,7 @@ def _decode_base58(text: str, alphabet: str, lenient: bool) -> Result[bytes, Enc
         mut carry = value
         mut byte_index = 0
         while byte_index < len(bytes_le):
+            # Carry through base-256 bytes, again least-significant first.
             carry += bytes_le[byte_index] * 58
             bytes_le[byte_index] = carry % 256
             carry = carry // 256

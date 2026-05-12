@@ -1,5 +1,9 @@
 """
-Shared std.encoding error surface.
+Shared `std.encoding` source/sink and error helpers.
+
+The encoding modules intentionally keep their algorithms in Incan source. This file only centralizes the boring
+boundary work: turn `Path` and `BytesIO` into finite byte values, convert encoded text to printable ASCII bytes, and
+shape all I/O failures into the stable `EncodingError` model.
 """
 
 from std.traits.error import Error
@@ -14,7 +18,11 @@ const _BYTE_VALUES: bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r
 @derive(Clone)
 pub model EncodingError with Error:
     """
-    Stable decode/encode failure for `std.encoding`.
+    Stable failure value returned by every `std.encoding` codec.
+
+    `encoding` names the family that failed, such as `hex`, `base64`, or `bech32`. `kind` is the machine-readable
+    category callers should branch on. `detail` is intentionally human-readable, and `position` is the best known
+    input offset or `-1` when the error is not tied to one character.
     """
 
     pub encoding: str
@@ -146,6 +154,9 @@ pub def _read_source_bytes(
     """
     Read bytes from an in-memory value, byte stream, or finite path source.
 
+    Source/sink codecs treat files as bounded byte streams. The implementation reads the finite source into memory
+    today, but callers still use the stream-shaped API and receive the same errors they would receive from `BytesIO`.
+
     Args:
         encoding: Codec name to include in returned errors.
         source: Bytes, `BytesIO`, or `Path` to read.
@@ -171,6 +182,9 @@ pub def _read_source_text(
 ) -> Result[str, EncodingError]:
     """
     Read encoded representation text from a string, byte stream, or finite path source.
+
+    Binary streams and files carry encoded text as ASCII bytes. This helper performs the ASCII boundary check before
+    codec-specific alphabet validation so each codec can focus on its own grammar.
 
     Args:
         encoding: Codec name to include in returned errors.
@@ -198,6 +212,9 @@ pub def _write_sink_bytes(
     """
     Write bytes to a byte stream or finite path sink.
 
+    Writes are deliberately not transactional. If a later codec operation fails, bytes written earlier may already be
+    visible in the sink, matching ordinary stream behavior.
+
     Args:
         encoding: Codec name to include in returned errors.
         target: `BytesIO` or `Path` sink.
@@ -215,6 +232,9 @@ pub def _write_sink_bytes(
 pub def _ascii_bytes(encoding: str, text: str) -> Result[bytes, EncodingError]:
     """
     Convert printable ASCII text to bytes for stream encoders.
+
+    Encoders produce printable representation text. The stream APIs write those characters as bytes so users can pipe
+    encoded output into files, sockets, and `BytesIO` without a separate text writer.
 
     Args:
         encoding: Codec name to include in returned errors.
@@ -235,6 +255,10 @@ pub def _ascii_bytes(encoding: str, text: str) -> Result[bytes, EncodingError]:
 pub def _ascii_text(encoding: str, data: bytes) -> Result[str, EncodingError]:
     """
     Convert printable ASCII bytes from a stream decoder into text.
+
+    Bytes above `0x7e` are reported as `non_ascii`; control bytes inside the ASCII range are reported as
+    `invalid_character`. The split gives callers a stable way to distinguish transport encoding problems from
+    alphabet mistakes.
 
     Args:
         encoding: Codec name to include in returned errors.

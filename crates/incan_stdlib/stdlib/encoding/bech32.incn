@@ -2,6 +2,10 @@
 Bech32 and Bech32m helpers.
 
 The checksum implementation is pure Incan source using ordinary integer arithmetic and bitwise operators.
+
+Bech32 is split into a human-readable prefix, a separator, five-bit payload values, and a six-value checksum. The
+public helpers keep Bech32 and Bech32m explicit because the two checksum constants are intentionally not
+interchangeable.
 """
 
 from std.encoding._shared import EncodingError, _encoding_error
@@ -15,9 +19,14 @@ const _ASCII_UPPER: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
 const _ASCII_LOWER: str = "abcdefghijklmnopqrstuvwxyz"
 
 
+# Public types
+
 pub enum Bech32Variant:
     """
     Checksum family used by a decoded Bech32 payload.
+
+    `Bech32` is the original BIP-0173 checksum constant. `Bech32m` is the later BIP-0350 constant used by newer witness
+    versions. The enum keeps that distinction visible after generic `decode`.
     """
 
     Bech32
@@ -27,6 +36,9 @@ pub enum Bech32Variant:
 pub model Decoded:
     """
     Decoded Bech32 payload with checksum family.
+
+    `data` excludes the six checksum values. Callers that need to round-trip the exact checksum family can inspect
+    `variant`; callers that require one family should use `bech32_decode` or `bech32m_decode`.
     """
 
     pub hrp: str
@@ -34,9 +46,14 @@ pub model Decoded:
     pub variant: Bech32Variant
 
 
+# Public helpers
+
 pub def bech32_encode(hrp: str, data: list[int]) -> Result[str, EncodingError]:
     """
     Encode a human-readable prefix and five-bit data values with the Bech32 checksum.
+
+    `data` must already be grouped into five-bit values. Use `convertbits(raw_bytes, 8, 5)` before this call when
+    encoding byte payloads.
 
     Returns:
         Bech32 text, or `Err(EncodingError)` for invalid HRP or data values.
@@ -55,6 +72,9 @@ pub def bech32m_encode(hrp: str, data: list[int]) -> Result[str, EncodingError]:
     """
     Encode a human-readable prefix and five-bit data values with the Bech32m checksum.
 
+    Bech32m differs only in the checksum constant. Keeping the name explicit avoids accepting one address family as the
+    other.
+
     Returns:
         Bech32m text, or `Err(EncodingError)` for invalid HRP or data values.
     """
@@ -64,6 +84,8 @@ pub def bech32m_encode(hrp: str, data: list[int]) -> Result[str, EncodingError]:
 pub def bech32_decode(text: str) -> Result[tuple[str, list[int]], EncodingError]:
     """
     Decode text and require a Bech32 checksum.
+
+    Use generic `decode` when you want to accept either checksum family and branch on `Decoded.variant`.
 
     Returns:
         `(hrp, data)` when the checksum variant is Bech32.
@@ -78,6 +100,8 @@ pub def bech32m_decode(text: str) -> Result[tuple[str, list[int]], EncodingError
     """
     Decode text and require a Bech32m checksum.
 
+    This rejects a valid Bech32 checksum with `invalid_checksum` instead of silently returning the payload.
+
     Returns:
         `(hrp, data)` when the checksum variant is Bech32m.
     """
@@ -90,6 +114,9 @@ pub def bech32m_decode(text: str) -> Result[tuple[str, list[int]], EncodingError
 pub def decode(text: str) -> Result[Decoded, EncodingError]:
     """
     Decode Bech32 or Bech32m text.
+
+    Decode normalizes case, validates the human-readable prefix, converts payload characters to five-bit values, and
+    then identifies the checksum family from the polymod result.
 
     Returns:
         Decoded HRP, five-bit data payload, and detected checksum variant.
@@ -111,6 +138,7 @@ pub def decode(text: str) -> Result[Decoded, EncodingError]:
     for index in range(separator + 1, len(normalized)):
         values.append(_charset_value(normalized[index:index + 1], index)?)
 
+    # Polymod over HRP expansion plus payload+checksum tells us which checksum constant was used.
     check = _polymod(_hrp_expand(hrp) + values)
     mut variant = Bech32Variant.Bech32
     if check == _BECH32_CONST:
@@ -129,6 +157,10 @@ pub def decode(text: str) -> Result[Decoded, EncodingError]:
 pub def convertbits(data: list[int], from_bits: int, to_bits: int, pad: bool = true) -> Result[list[int], EncodingError]:
     """
     Regroup integer bit fields between source and target widths.
+
+    This helper is the bridge between ordinary bytes and Bech32's five-bit payload values. For example,
+    `convertbits(bytes_as_ints, 8, 5)` prepares bytes for encoding, and `convertbits(words, 5, 8, pad=false)` recovers
+    bytes after decoding.
 
     Args:
         data: Input values, each fitting in `from_bits`.
@@ -153,6 +185,7 @@ pub def convertbits(data: list[int], from_bits: int, to_bits: int, pad: bool = t
         bits += from_bits
         while bits >= to_bits:
             bits -= to_bits
+            # Emit the highest complete output group currently in the accumulator.
             out.append((acc // _pow2(bits)) % _pow2(to_bits))
     if pad:
         if bits > 0:
@@ -162,9 +195,14 @@ pub def convertbits(data: list[int], from_bits: int, to_bits: int, pad: bool = t
     return Ok(out)
 
 
+# Codec implementation
+
 def _encode(hrp: str, data: list[int], variant: Bech32Variant) -> Result[str, EncodingError]:
     """
     Validate payload values and assemble Bech32 text with the selected checksum family.
+
+    The HRP and data validation happen before checksum construction so malformed inputs get precise error categories
+    instead of a later checksum failure.
     """
     if len(hrp) < 1:
         return Err(_error("invalid_hrp", "human-readable prefix must not be empty", 0))
@@ -190,6 +228,9 @@ def _encode(hrp: str, data: list[int], variant: Bech32Variant) -> Result[str, En
 def _create_checksum(hrp: str, data: list[int], variant: Bech32Variant) -> list[int]:
     """
     Compute the six checksum values for a human-readable prefix and data payload.
+
+    Six zero values reserve the checksum space. XORing with the selected family constant turns the polymod remainder
+    into the concrete checksum digits appended to the output.
     """
     mut values = _hrp_expand(hrp) + data + list.repeat(0, 6)
     mut constant = _BECH32_CONST
@@ -207,6 +248,9 @@ def _create_checksum(hrp: str, data: list[int], variant: Bech32Variant) -> list[
 def _hrp_expand(hrp: str) -> list[int]:
     """
     Expand a human-readable prefix into high-bit and low-bit checksum fields.
+
+    Bech32 checksums mix the HRP into the checksum without placing HRP characters in the payload alphabet. Each
+    printable ASCII code is split into high five bits and low five bits with a zero separator.
     """
     mut out: list[int] = []
     for ch in hrp:
@@ -220,6 +264,9 @@ def _hrp_expand(hrp: str) -> list[int]:
 def _polymod(values: list[int]) -> int:
     """
     Run the Bech32 polymod checksum recurrence over five-bit values.
+
+    This is the checksum state machine from the Bech32 spec. The generator constants are fixed taps; when a top bit is
+    set, the corresponding generator is XORed into the new state.
     """
     mut chk = 1
     for value in values:

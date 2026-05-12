@@ -3,6 +3,9 @@ Base85 binary-text encoding helpers.
 
 Supported families are ASCII85 (`a85*`), Git/Base85 (`b85*`), and Z85 (`z85*`). The implementation is written in
 Incan source and uses integer block arithmetic plus byte-table slicing for decoded output.
+
+Base85 packs four bytes into five printable characters. The variants differ mostly in alphabet and framing rules, so
+public helpers keep those names explicit while private helpers share the block conversion.
 """
 
 from std.encoding._shared import (
@@ -25,9 +28,14 @@ const _Z85_ALPHABET: str = "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOP
 const _BYTE_TABLE: bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
 
 
+# Public value helpers
+
 pub def a85encode(data: bytes) -> str:
     """
     Encode bytes with Adobe ASCII85 syntax, including the `z` zero-quantum shortcut.
+
+    The output is the bare payload form used by Python's `base64.a85encode` with framing disabled. Use
+    `a85decode_lenient` when accepting Adobe `<~ ... ~>` wrappers.
 
     Returns:
         ASCII85 text without Adobe `<~` and `~>` framing markers.
@@ -39,6 +47,9 @@ pub def a85decode(text: str) -> Result[bytes, EncodingError]:
     """
     Decode strict ASCII85 text.
 
+    Strict ASCII85 accepts the `z` shortcut only when it stands for a complete zero quantum. Whitespace is not ignored
+    unless callers opt into `a85decode_lenient`.
+
     Returns:
         Decoded bytes, or `Err(EncodingError)` for invalid length, shortcut placement, or alphabet characters.
     """
@@ -48,6 +59,9 @@ pub def a85decode(text: str) -> Result[bytes, EncodingError]:
 pub def a85decode_lenient(text: str) -> Result[bytes, EncodingError]:
     """
     Decode ASCII85 after removing ASCII whitespace.
+
+    This lenient form also tolerates Adobe `<~` and `~>` framing markers because those wrappers are common in copied
+    ASCII85 payloads.
     """
     return _decode_base85(_strip_adobe_markers(text), _A85_ALPHABET, "base85.a85", true, true)
 
@@ -55,6 +69,9 @@ pub def a85decode_lenient(text: str) -> Result[bytes, EncodingError]:
 pub def b85encode(data: bytes) -> str:
     """
     Encode bytes with the Git/Base85 alphabet.
+
+    This is the module default because Git/Base85 is the compact byte-oriented family without ASCII85 framing rules or
+    Z85's four-byte length requirement.
 
     Returns:
         Base85 text using the Git alphabet.
@@ -69,6 +86,8 @@ pub def encode(
 ) -> Result[str, EncodingError]:
     """
     Encode bytes from a value, byte stream, or path with the Git/Base85 alphabet.
+
+    The target receives ASCII bytes for the same Git/Base85 text returned by this function.
 
     Args:
         source: Bytes, `BytesIO`, or `Path` to encode.
@@ -88,6 +107,9 @@ pub def b85decode(text: str) -> Result[bytes, EncodingError]:
     """
     Decode strict Git/Base85 text.
 
+    Git/Base85 allows a short final quantum. The decoder pads that final quantum internally only to recover the exact
+    number of source bytes.
+
     Returns:
         Decoded bytes, or `Err(EncodingError)` for invalid length or alphabet characters.
     """
@@ -101,6 +123,8 @@ pub def decode(
 ) -> Result[bytes, EncodingError]:
     """
     Decode Git/Base85 from text, a byte stream, or path.
+
+    Stream and path sources are decoded as printable ASCII bytes, then passed through the strict `b85decode` grammar.
 
     Args:
         source: Text, `BytesIO`, or `Path` containing printable Base85 bytes.
@@ -119,6 +143,9 @@ pub def decode(
 pub def b85decode_lenient(text: str) -> Result[bytes, EncodingError]:
     """
     Decode Git/Base85 after removing ASCII whitespace.
+
+    Lenient mode is whitespace-only. It keeps the Git/Base85 alphabet and does not accept ASCII85 or Z85-specific
+    syntax.
     """
     return _decode_base85(text, _B85_ALPHABET, "base85.b85", false, true)
 
@@ -134,6 +161,9 @@ pub def z85encode(data: bytes) -> Result[str, EncodingError]:
     """
     Encode bytes with the ZeroMQ Z85 alphabet.
 
+    Z85 represents exactly four source bytes as five characters, so it cannot encode arbitrary final byte tails. Callers
+    must supply a byte length divisible by four.
+
     Returns:
         Z85 text, or `Err(EncodingError)` when the byte length is not divisible by four.
     """
@@ -146,6 +176,8 @@ pub def z85decode(text: str) -> Result[bytes, EncodingError]:
     """
     Decode strict Z85 text.
 
+    Z85 text must be a multiple of five characters because every five-character group maps to exactly four bytes.
+
     Returns:
         Decoded bytes, or `Err(EncodingError)` when the text length is not divisible by five.
     """
@@ -153,6 +185,8 @@ pub def z85decode(text: str) -> Result[bytes, EncodingError]:
         return Err(_error("base85.z85", "invalid_length", "z85 text length must be a multiple of 5", len(text)))
     return _decode_base85(text, _Z85_ALPHABET, "base85.z85", false, false)
 
+
+# BytesIO convenience helpers
 
 pub def a85encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
     """
@@ -246,9 +280,14 @@ pub def z85decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 6
     return _write_stream_bytes("base85.z85", target, z85decode(text)?)
 
 
+# Codec implementation
+
 def _encode_base85(data: bytes, alphabet: str, zero_shortcut: bool, require_full_blocks: bool) -> str:
     """
     Encode bytes as Base85 text with the selected alphabet and final-block policy.
+
+    Four bytes become one 32-bit value, then five Base85 digits. ASCII85 and Git/Base85 allow a short final block; Z85
+    requires the caller to pass only full four-byte groups.
     """
     mut out = ""
     block_count = (len(data) + 3) // 4
@@ -267,6 +306,7 @@ def _encode_base85(data: bytes, alphabet: str, zero_shortcut: bool, require_full
             b2 = int(data[index + 2])
         if remaining > 3:
             b3 = int(data[index + 3])
+        # The four-byte lane is encoded from most-significant byte to least-significant byte.
         n = b0 * 16777216 + b1 * 65536 + b2 * 256 + b3
         if zero_shortcut and remaining >= 4 and n == 0:
             out += "z"
@@ -275,6 +315,7 @@ def _encode_base85(data: bytes, alphabet: str, zero_shortcut: bool, require_full
             if remaining >= 4:
                 out += block
             else:
+                # A partial input of N bytes emits N + 1 Base85 characters.
                 out += block[0:remaining + 1]
     return out
 
@@ -282,6 +323,9 @@ def _encode_base85(data: bytes, alphabet: str, zero_shortcut: bool, require_full
 def _decode_base85(text: str, alphabet: str, codec: str, zero_shortcut: bool, lenient: bool) -> Result[bytes, EncodingError]:
     """
     Decode Base85 text by validating each quantum and writing decoded bytes to a buffer.
+
+    The decoder accumulates five-character quanta. ASCII85's `z` shortcut bypasses that path and writes a full zero
+    block, but only when no partial quantum is already open.
     """
     clean = _clean_input(text, lenient)
     out = BytesIO(b"")
@@ -298,6 +342,7 @@ def _decode_base85(text: str, alphabet: str, codec: str, zero_shortcut: bool, le
             _decode_char(ch, alphabet, codec, index)?
             block += ch
             if len(block) == 5:
+                # A full five-character quantum always emits four bytes.
                 _write_bytes(out, _decode_base85_block(block, alphabet, codec, index - 4, 4)?, codec)?
                 block = block[0:0]
     if len(block) == 1:
@@ -307,6 +352,7 @@ def _decode_base85(text: str, alphabet: str, codec: str, zero_shortcut: bool, le
         mut padded = block
         while len(padded) < 5:
             padded += alphabet[84:85]
+        # RFC-style partial quanta are decoded by padding with the largest digit and emitting only the real bytes.
         _write_bytes(out, _decode_base85_block(padded, alphabet, codec, len(clean) - block_len, block_len - 1)?, codec)?
     return Ok(out.getvalue())
 
@@ -314,6 +360,8 @@ def _decode_base85(text: str, alphabet: str, codec: str, zero_shortcut: bool, le
 def _base85_block(value: int, alphabet: str) -> str:
     """
     Convert one 32-bit integer quantum to five Base85 digits.
+
+    Digits are produced from right to left because repeated modulo finds the least-significant Base85 digit first.
     """
     mut n = value
     mut chars: list[str] = ["", "", "", "", ""]
@@ -328,6 +376,9 @@ def _base85_block(value: int, alphabet: str) -> str:
 def _decode_base85_block(block: str, alphabet: str, codec: str, position: int, bytes_to_emit: int) -> Result[bytes, EncodingError]:
     """
     Convert one padded Base85 text quantum into the requested number of bytes.
+
+    `bytes_to_emit` lets strict and partial final quanta share the same conversion while preserving the original byte
+    length.
     """
     mut value = 0
     for index, ch in enumerate(block):

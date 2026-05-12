@@ -3,6 +3,10 @@ Hexadecimal binary-text encoding.
 
 This module provides strict base16 helpers plus Python-compatible aliases. Strict decoders require even-length
 hexadecimal text; lenient decoders remove ASCII whitespace before applying the same validation.
+
+Hex is byte-aligned, so the implementation is intentionally direct: each byte becomes two four-bit digits, and each
+input pair becomes one byte. The stream and path helpers reuse those same one-shot conversions instead of carrying a
+separate file-specific algorithm.
 """
 
 from std.encoding._shared import (
@@ -28,6 +32,8 @@ const _HEX_LOWER: str = "0123456789abcdef"
 const _HEX_UPPER: str = "0123456789ABCDEF"
 
 
+# Source/sink helpers
+
 pub def encode(
     source: Union[bytes, _BytesIO, Path],
     target: Union[_BytesIO, Path],
@@ -35,6 +41,9 @@ pub def encode(
 ) -> Result[str, EncodingError]:
     """
     Encode bytes from a value, byte stream, or path as lowercase hexadecimal text.
+
+    This is the canonical finite source/sink helper. It accepts the same bounded input shapes as the other encoding
+    families and writes printable ASCII bytes to the target.
 
     Args:
         source: Bytes, `BytesIO`, or `Path` to encode.
@@ -50,17 +59,6 @@ pub def encode(
     return Ok(text)
 
 
-def _encode_bytes(data: bytes) -> str:
-    """
-    Encode bytes as lowercase hexadecimal text.
-    """
-    mut out = ""
-    for value in data:
-        number = int(value)
-        out = out + _hex_digit(number // 16) + _hex_digit(number % 16)
-    return out
-
-
 pub def decode(
     source: Union[str, _BytesIO, Path],
     target: Union[_BytesIO, Path],
@@ -68,6 +66,9 @@ pub def decode(
 ) -> Result[bytes, EncodingError]:
     """
     Decode strict hexadecimal text from a string, byte stream, or path.
+
+    The byte-stream and path forms must contain printable ASCII representation bytes. Once text is recovered, strict
+    decode applies the same even-length and character rules as `unhexlify`.
 
     Args:
         source: Text, `BytesIO`, or `Path` containing even-length hexadecimal representation.
@@ -85,9 +86,14 @@ pub def decode(
     return Ok(data)
 
 
+# Public value helpers
+
 pub def decode_lenient(text: str) -> Result[bytes, EncodingError]:
     """
     Decode hexadecimal text after removing ASCII whitespace.
+
+    Lenient mode exists for copied or wrapped hex dumps. It does not ignore any non-whitespace character and still
+    requires an even number of hex digits after cleanup.
 
     Args:
         text: Hexadecimal representation that may include spaces, tabs, carriage returns, or newlines.
@@ -115,6 +121,9 @@ pub def b16encode(data: bytes) -> str:
 pub def b16decode(text: str) -> Result[bytes, EncodingError]:
     """
     Decode strict base16 text.
+
+    `b16decode` accepts uppercase or lowercase A-F. The `b16` name exists for Python familiarity; the validation rules
+    are the same as `unhexlify`.
 
     Returns:
         Decoded bytes, or `Err(EncodingError)` for invalid length or characters.
@@ -152,6 +161,8 @@ pub def unhexlify(text: str) -> Result[bytes, EncodingError]:
     return _decode_text(text)
 
 
+# BytesIO convenience helpers
+
 pub def encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
     """
     Read bytes from `source`, encode them as lowercase hex, and write ASCII bytes to `target`.
@@ -188,9 +199,28 @@ pub def decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 6553
     return _write_stream_bytes("hex", target, _decode_text(text)?)
 
 
+# Codec implementation
+
+def _encode_bytes(data: bytes) -> str:
+    """
+    Encode bytes as lowercase hexadecimal text.
+
+    Each byte splits cleanly into a high nibble and a low nibble. Keeping that logic here makes `hexlify`, `encode`,
+    and `encode_stream` obvious wrappers around the same operation.
+    """
+    mut out = ""
+    for value in data:
+        number = int(value)
+        out = out + _hex_digit(number // 16) + _hex_digit(number % 16)
+    return out
+
+
 def _decode_text(text: str) -> Result[bytes, EncodingError]:
     """
     Validate strict hex length and decode character pairs.
+
+    The length check is separate from pair decoding so every public strict decoder reports the same
+    `invalid_length` category before looking at individual characters.
     """
     if len(text) % 2 != 0:
         return Err(_invalid_length("hex", "hex input must contain an even number of characters"))
@@ -204,6 +234,7 @@ def _decode_pairs(text: str) -> Result[bytes, EncodingError]:
     out = BytesIO(b"")
     for pair_index in range(len(text) // 2):
         index = pair_index * 2
+        # Two four-bit digits become one byte. Positions point back to the exact bad digit when validation fails.
         high = _hex_value(_char_at(text, index), index)?
         low = _hex_value(_char_at(text, index + 1), index + 1)?
         byte_index = high * 16 + low
