@@ -42,6 +42,19 @@ fn parse_program(source: &str, context: &str) -> crate::frontend::ast::Program {
     parser::parse(&tokens).unwrap_or_else(|errs| panic!("{context} parse failed: {errs:?}"))
 }
 
+#[test]
+fn stdlib_module_function_calls_accept_default_arguments() -> Result<(), String> {
+    let source = r#"
+from std.encoding import hex
+from std.io import BytesIO
+
+def main(payload: bytes) -> None:
+  target = BytesIO()
+  encoded = hex.encode(payload, target)
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
 fn check_str_err(source: &str, context: &str) -> Vec<CompileError> {
     match check_str(source) {
         Err(errs) => errs,

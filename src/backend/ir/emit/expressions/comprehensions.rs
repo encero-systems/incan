@@ -71,8 +71,7 @@ impl<'a> IrEmitter<'a> {
                 args,
             } => {
                 let iter = if let Some(arg) = args.first() {
-                    let arg_tokens = self.emit_expr(arg)?;
-                    quote! { (#arg_tokens).clone().into_iter().enumerate().map(|(idx, value)| (idx as i64, value)) }
+                    self.emit_enumerate_iter(arg, true)?
                 } else {
                     quote! { std::iter::empty::<(i64, ())>() }
                 };
@@ -272,10 +271,7 @@ impl<'a> IrEmitter<'a> {
     /// type.
     fn emit_owned_enumerate_iter(&self, args: &[TypedExpr]) -> Result<TokenStream, EmitError> {
         if let Some(arg) = args.first() {
-            let a = self.emit_expr(arg)?;
-            Ok(quote! {
-                #a.iter().enumerate().map(|(idx, value)| (idx as i64, value.clone()))
-            })
+            self.emit_enumerate_iter(arg, true)
         } else {
             Ok(quote! { std::iter::empty::<(i64, ())>() })
         }

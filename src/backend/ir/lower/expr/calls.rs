@@ -97,6 +97,34 @@ impl AstLowering {
         }
     }
 
+    /// Rebuild a callable signature directly from a stdlib function declaration so default expressions survive import
+    /// metadata boundaries.
+    fn callable_signature_from_stdlib_function_decl(&mut self, func: &ast::FunctionDecl) -> FunctionSignature {
+        FunctionSignature {
+            params: func
+                .params
+                .iter()
+                .map(|param| {
+                    let base_ty = self.lower_type(&param.node.ty.node);
+                    let ty = Self::lower_param_container_type(param.node.kind, base_ty);
+                    FunctionParam {
+                        name: param.node.name.clone(),
+                        ty,
+                        mutability: super::super::super::types::Mutability::Immutable,
+                        is_self: false,
+                        kind: param.node.kind,
+                        default: param
+                            .node
+                            .default
+                            .as_ref()
+                            .and_then(|default_expr| self.lower_expr_spanned(default_expr).ok()),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_type(&func.return_type.node),
+        }
+    }
+
     /// Resolve an imported stdlib type method signature by loading the owning stdlib stub AST.
     ///
     /// Function metadata already has a direct stdlib lookup path, but type-member calls such as `App.run()` arrive as
@@ -124,7 +152,7 @@ impl AstLowering {
     /// cache. Attaching the exact module-qualified signature here lets codegen apply normal Incan argument conversion
     /// rules without merging same-named helpers from unrelated stdlib modules.
     pub(in crate::backend::ir::lower) fn callable_signature_for_imported_stdlib_path(
-        &self,
+        &mut self,
         path: &[String],
     ) -> Option<FunctionSignature> {
         if path.len() < 2 || path.first().map(String::as_str) != Some(incan_core::lang::stdlib::STDLIB_ROOT) {
@@ -133,8 +161,8 @@ impl AstLowering {
         let function_name = path.last()?;
         let module_path = &path[..path.len() - 1];
         let mut cache = crate::frontend::typechecker::stdlib_loader::StdlibAstCache::new();
-        let info = cache.lookup_function(module_path, function_name)?;
-        Some(self.callable_signature_from_params(&info.params, &info.return_type))
+        let func = cache.lookup_function_decl(module_path, function_name)?;
+        Some(self.callable_signature_from_stdlib_function_decl(&func))
     }
 
     /// Resolve a callable signature from the callee expression's type information.
