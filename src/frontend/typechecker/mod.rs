@@ -3755,6 +3755,7 @@ impl TypeChecker {
             (ResolvedType::Ref(a), ResolvedType::Ref(b))
             | (ResolvedType::RefMut(a), ResolvedType::Ref(b))
             | (ResolvedType::RefMut(a), ResolvedType::RefMut(b)) => self.types_compatible(a, b),
+            (actual, ResolvedType::Ref(expected)) => self.types_compatible(actual, expected),
             (ResolvedType::FrozenStr, ResolvedType::Str | ResolvedType::FrozenStr) => true,
             // `FrozenStr` is a read-only string wrapper; allow it where `str` is expected.
             (ResolvedType::Named(name), ResolvedType::Str)

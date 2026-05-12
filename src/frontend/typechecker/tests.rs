@@ -883,6 +883,18 @@ def main() -> None:
 }
 
 #[test]
+fn owned_value_can_satisfy_shared_ref_parameter() -> Result<(), String> {
+    let source = r#"
+def borrowed(data: &bytes) -> None:
+  return
+
+def main(data: bytes) -> None:
+  borrowed(data)
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
 fn rfc009_binary_float_literals_are_checked_for_f32_targets() {
     let ok = r#"
 def main() -> None:
