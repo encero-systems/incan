@@ -310,7 +310,20 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
         name: "uuid",
         feature: None,
-        extra_crate_deps: &[],
+        extra_crate_deps: &[
+            StdlibExtraCrateDep {
+                crate_name: "md5",
+                source: StdlibExtraCrateSource::Version("0.8"),
+            },
+            StdlibExtraCrateDep {
+                crate_name: "rand",
+                source: StdlibExtraCrateSource::Version("0.8"),
+            },
+            StdlibExtraCrateDep {
+                crate_name: "sha1",
+                source: StdlibExtraCrateSource::Version("0.10"),
+            },
+        ],
         submodules: &[],
         typechecker_only: false,
     },
@@ -711,7 +724,10 @@ mod tests {
         assert_eq!(graph_ns.map(|ns| ns.feature), Some(None));
         assert_eq!(graph_ns.map(|ns| ns.submodules.is_empty()), Some(true));
         assert_eq!(uuid_ns.map(|ns| ns.feature), Some(None));
-        assert_eq!(uuid_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
+        assert_eq!(
+            uuid_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
+            Some(vec!["md5", "rand", "sha1"])
+        );
         assert_eq!(uuid_ns.map(|ns| ns.submodules.is_empty()), Some(true));
         assert_eq!(uuid_ns.map(|ns| ns.typechecker_only), Some(false));
         assert_eq!(collections_ns.map(|ns| ns.feature), Some(None));
