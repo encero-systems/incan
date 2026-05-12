@@ -681,6 +681,7 @@ impl AstLowering {
             return core_traits::method_names(trait_id);
         }
         match short_name {
+            "Callable0" | "Callable1" | "Callable2" => &["__call__"],
             "Serialize" | "JsonSerialize" => &["to_json"],
             "Deserialize" | "JsonDeserialize" => &["from_json"],
             _ => &[],

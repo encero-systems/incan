@@ -1,0 +1,129 @@
+"""RFC 064: Public behavior checks for std.encoding."""
+
+from std.encoding import base32, base58, base64, base85, bech32, hex, EncodingError
+from std.fs import Path
+from std.io import BytesIO
+
+
+def fs_error(detail: str) -> EncodingError:
+    return EncodingError(encoding="fixture", kind="io", detail=detail, position=-1)
+
+
+def exercise() -> Result[None, EncodingError]:
+    payload = b"hello?"
+
+    assert hex.hexlify(payload) == "68656c6c6f3f"
+    assert hex.unhexlify("68656c6c6f3f")? == payload
+    assert hex.decode_lenient("68 65 6c 6c 6f 3f")? == payload
+
+    assert base32.b32encode(b"hello") == "NBSWY3DP"
+    assert base32.b32decode("NBSWY3DP")? == b"hello"
+    assert base32.b32decode_lenient("nbsw y3dp")? == b"hello"
+
+    assert base64.b64encode(payload) == "aGVsbG8/"
+    assert base64.b64decode("aGVsbG8/")? == payload
+    assert base64.b64decode_lenient("aGVs bG8/\n")? == payload
+    assert base64.urlsafe_b64encode(payload) == "aGVsbG8_"
+    assert base64.urlsafe_b64decode("aGVsbG8_")? == payload
+
+    match base64.b64decode("aGVsbG8"):
+        Ok(_) => println("accepted-missing-padding")
+        Err(_) => println("strict-padding-error")
+
+    assert base85.a85encode(b"hello") == "BOu!rDZ"
+    assert base85.a85decode("BOu!rDZ")? == b"hello"
+    assert base85.b85encode(b"hello") == "Xk~0{Zv"
+    assert base85.b85decode("Xk~0{Zv")? == b"hello"
+    assert base85.z85encode(b"test")? == "By/Jn"
+    assert base85.z85decode("By/Jn")? == b"test"
+
+    assert base58.b58encode(b"hello") == "Cn8eVZg"
+    assert base58.b58decode("Cn8eVZg")? == b"hello"
+
+    assert bech32.bech32_encode("a", [])? == "a12uel5l"
+    assert bech32.bech32m_encode("a", [])? == "a1lqfn3a"
+    match bech32.bech32_decode("a12uel5m"):
+        Ok(_) => println("accepted-bad-bech32-checksum")
+        Err(_) => println("bech32-checksum-error")
+
+    hex_encode_source = BytesIO(payload)
+    hex_encode_target = BytesIO()
+    hex.encode(hex_encode_source, hex_encode_target, chunk_size=2)?
+    assert hex_encode_target.into_bytes() == b"68656c6c6f3f"
+
+    hex_decode_source = BytesIO(b"68656c6c6f3f")
+    hex_decode_target = BytesIO()
+    hex.decode(hex_decode_source, hex_decode_target, chunk_size=2)?
+    assert hex_decode_target.into_bytes() == payload
+
+    hex_path_source = Path("target/rfc064_hex_source.bin")
+    hex_path_encoded = Path("target/rfc064_hex_encoded.txt")
+    hex_path_decoded = Path("target/rfc064_hex_decoded.bin")
+    match hex_path_source.write_bytes(payload):
+        Ok(_) => pass
+        Err(err) => return Err(fs_error(err.message()))
+    hex.encode(hex_path_source, hex_path_encoded, chunk_size=2)?
+    assert hex.decode(hex_path_encoded, hex_path_decoded, chunk_size=2)? == payload
+    match hex_path_encoded.read_bytes():
+        Ok(data) => assert data == b"68656c6c6f3f"
+        Err(err) => return Err(fs_error(err.message()))
+    match hex_path_decoded.read_bytes():
+        Ok(data) => assert data == payload
+        Err(err) => return Err(fs_error(err.message()))
+    match hex_path_source.unlink():
+        Ok(_) => pass
+        Err(_) => pass
+    match hex_path_encoded.unlink():
+        Ok(_) => pass
+        Err(_) => pass
+    match hex_path_decoded.unlink():
+        Ok(_) => pass
+        Err(_) => pass
+
+    base32_encode_source = BytesIO(b"hello")
+    base32_encode_target = BytesIO()
+    base32.encode(base32_encode_source, base32_encode_target, chunk_size=2)?
+    assert base32_encode_target.into_bytes() == b"NBSWY3DP"
+
+    base32_decode_source = BytesIO(b"NBSWY3DP")
+    base32_decode_target = BytesIO()
+    base32.decode(base32_decode_source, base32_decode_target, chunk_size=2)?
+    assert base32_decode_target.into_bytes() == b"hello"
+
+    base64_encode_source = BytesIO(payload)
+    base64_encode_target = BytesIO()
+    base64.encode(base64_encode_source, base64_encode_target, chunk_size=2)?
+    assert base64_encode_target.into_bytes() == b"aGVsbG8/"
+
+    base64_decode_source = BytesIO(b"aGVsbG8/")
+    base64_decode_target = BytesIO()
+    base64.decode(base64_decode_source, base64_decode_target, chunk_size=2)?
+    assert base64_decode_target.into_bytes() == payload
+
+    base85_encode_source = BytesIO(b"hello")
+    base85_encode_target = BytesIO()
+    base85.encode(base85_encode_source, base85_encode_target, chunk_size=2)?
+    assert base85_encode_target.into_bytes() == b"Xk~0{Zv"
+
+    base85_decode_source = BytesIO(b"Xk~0{Zv")
+    base85_decode_target = BytesIO()
+    base85.decode(base85_decode_source, base85_decode_target, chunk_size=2)?
+    assert base85_decode_target.into_bytes() == b"hello"
+
+    base58_encode_source = BytesIO(b"hello")
+    base58_encode_target = BytesIO()
+    base58.encode(base58_encode_source, base58_encode_target, chunk_size=2)?
+    assert base58_encode_target.into_bytes() == b"Cn8eVZg"
+
+    base58_decode_source = BytesIO(b"Cn8eVZg")
+    base58_decode_target = BytesIO()
+    base58.decode(base58_decode_source, base58_decode_target, chunk_size=2)?
+    assert base58_decode_target.into_bytes() == b"hello"
+
+    return Ok(None)
+
+
+def main() -> None:
+    match exercise():
+        Ok(_) => println("rfc064-encoding-ok")
+        Err(err) => println(err.message())

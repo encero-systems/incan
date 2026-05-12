@@ -100,7 +100,10 @@ impl<'a> IrEmitter<'a> {
         };
 
         // Strings: delegate to stdlib helper (Unicode-scalar indexing with bounds/negative support).
-        if matches!(obj_ty, IrType::String | IrType::FrozenStr) {
+        if matches!(
+            obj_ty,
+            IrType::String | IrType::FrozenStr | IrType::StaticStr | IrType::StrRef
+        ) {
             let idx_tokens = self.emit_expr(index)?;
             return Ok(quote! { incan_stdlib::strings::str_index(&#o, (#idx_tokens) as i64) });
         }
@@ -156,7 +159,10 @@ impl<'a> IrEmitter<'a> {
             other => other,
         };
 
-        if matches!(obj_ty, IrType::String | IrType::FrozenStr) {
+        if matches!(
+            obj_ty,
+            IrType::String | IrType::FrozenStr | IrType::StaticStr | IrType::StrRef
+        ) {
             // Strings: delegate to stdlib, which calls into incan_core for policy/alignment.
             let s_tokens = quote! { #t_raw };
             let start_expr = if let Some(s) = start {

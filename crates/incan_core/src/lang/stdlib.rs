@@ -325,6 +325,15 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "encoding",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &[
+            "_shared", "prelude", "hex", "base32", "base64", "base85", "base58", "bech32",
+        ],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "tempfile",
         feature: None,
         extra_crate_deps: &[],
@@ -510,6 +519,14 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil", "offset"])));
         assert!(is_known_stdlib_module(&segs(&["std", "graph"])));
         assert!(is_known_stdlib_module(&segs(&["std", "io"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "encoding"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "_shared"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "hex"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base32"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base64"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base85"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base58"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "encoding", "bech32"])));
         assert!(is_known_stdlib_module(&segs(&["std", "tempfile"])));
         assert!(is_known_stdlib_module(&segs(&["std", "collections"])));
         assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
@@ -579,6 +596,14 @@ mod tests {
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "io"])),
             Some("stdlib/io.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "encoding"])),
+            Some("stdlib/encoding/prelude.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "encoding", "base64"])),
+            Some("stdlib/encoding/base64.incn".to_string())
         );
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "tempfile"])),

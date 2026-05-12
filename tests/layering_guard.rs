@@ -70,3 +70,27 @@ fn std_collections_source_has_no_rust_backed_dispatch_markers_when_present() {
         );
     }
 }
+
+#[test]
+fn std_encoding_source_stays_incan_authored_without_rust_externs() {
+    let source_root = std::path::Path::new("crates/incan_stdlib/stdlib/encoding");
+    let Ok(entries) = std::fs::read_dir(source_root) else {
+        return;
+    };
+
+    for entry in entries {
+        let entry = entry.expect("encoding stdlib directory entries should be readable");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("incn") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).expect("encoding stdlib source should be readable");
+        for forbidden in ["rust.module", "@rust.extern", "from rust::"] {
+            assert!(
+                !source.contains(forbidden),
+                "`{forbidden}` is not allowed in Incan-authored std.encoding source: {}",
+                path.display()
+            );
+        }
+    }
+}

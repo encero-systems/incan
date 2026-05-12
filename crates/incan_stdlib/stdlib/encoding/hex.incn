@@ -1,0 +1,293 @@
+"""
+Hexadecimal binary-text encoding.
+
+This module provides strict base16 helpers plus Python-compatible aliases. Strict decoders require even-length
+hexadecimal text; lenient decoders remove ASCII whitespace before applying the same validation.
+"""
+
+from std.encoding._shared import (
+    EncodingError,
+    _ascii_bytes,
+    _ascii_text,
+    _invalid_character,
+    _invalid_input,
+    _invalid_length,
+    _io_boundary_error,
+    _read_source_bytes,
+    _read_source_text,
+    _read_stream_bytes,
+    _write_sink_bytes,
+    _write_stream_bytes,
+)
+from std.fs import Path
+from std.io import BytesIO, _BytesIO
+
+
+const _BYTE_VALUES: bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
+const _HEX_LOWER: str = "0123456789abcdef"
+const _HEX_UPPER: str = "0123456789ABCDEF"
+
+
+pub def encode(
+    source: Union[bytes, _BytesIO, Path],
+    target: Union[_BytesIO, Path],
+    chunk_size: int = 65536,
+) -> Result[str, EncodingError]:
+    """
+    Encode bytes from a value, byte stream, or path as lowercase hexadecimal text.
+
+    Args:
+        source: Bytes, `BytesIO`, or `Path` to encode.
+        target: `BytesIO` or `Path` sink for encoded ASCII bytes.
+        chunk_size: Positive chunk-size hint for source/sink calls.
+
+    Returns:
+        Encoded text, or `Err(EncodingError)` for invalid arguments or I/O failures.
+    """
+    data = _read_source_bytes("hex", source, chunk_size)?
+    text = _encode_bytes(data)
+    _write_sink_bytes("hex", target, _ascii_bytes("hex", text)?)?
+    return Ok(text)
+
+
+def _encode_bytes(data: bytes) -> str:
+    """
+    Encode bytes as lowercase hexadecimal text.
+    """
+    mut out = ""
+    for value in data:
+        number = int(value)
+        out = out + _hex_digit(number // 16) + _hex_digit(number % 16)
+    return out
+
+
+pub def decode(
+    source: Union[str, _BytesIO, Path],
+    target: Union[_BytesIO, Path],
+    chunk_size: int = 65536,
+) -> Result[bytes, EncodingError]:
+    """
+    Decode strict hexadecimal text from a string, byte stream, or path.
+
+    Args:
+        source: Text, `BytesIO`, or `Path` containing even-length hexadecimal representation.
+        target: `BytesIO` or `Path` sink for decoded bytes.
+        chunk_size: Positive chunk-size hint for source/sink calls.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` for invalid length or characters.
+    """
+    text = _read_source_text("hex", source, chunk_size)?
+    if len(text) % 2 != 0:
+        return Err(_invalid_length("hex", "hex input must contain an even number of characters"))
+    data = _decode_text(text)?
+    _write_sink_bytes("hex", target, data)?
+    return Ok(data)
+
+
+pub def decode_lenient(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode hexadecimal text after removing ASCII whitespace.
+
+    Args:
+        text: Hexadecimal representation that may include spaces, tabs, carriage returns, or newlines.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` after whitespace is removed.
+    """
+    return _decode_text(_strip_ascii_whitespace(text))
+
+
+pub def b16encode(data: bytes) -> str:
+    """
+    Encode bytes as uppercase base16 text.
+
+    Returns:
+        Two uppercase hexadecimal characters for each input byte.
+    """
+    mut out = ""
+    for value in data:
+        number = int(value)
+        out = out + _hex_digit_upper(number // 16) + _hex_digit_upper(number % 16)
+    return out
+
+
+pub def b16decode(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode strict base16 text.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` for invalid length or characters.
+    """
+    return _decode_text(text)
+
+
+pub def b16decode_lenient(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode base16 text after removing ASCII whitespace.
+
+    Returns:
+        The same result as `decode_lenient(text)`.
+    """
+    return decode_lenient(text)
+
+
+pub def hexlify(data: bytes) -> str:
+    """
+    Encode bytes as lowercase hexadecimal text.
+
+    Returns:
+        Lowercase hexadecimal text.
+    """
+    return _encode_bytes(data)
+
+
+pub def unhexlify(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode strict hexadecimal text.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` for invalid length or characters.
+    """
+    return _decode_text(text)
+
+
+pub def encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read bytes from `source`, encode them as lowercase hex, and write ASCII bytes to `target`.
+
+    Args:
+        source: `BytesIO` stream positioned at the bytes to encode.
+        target: `BytesIO` stream that receives encoded ASCII bytes.
+        chunk_size: Positive chunk-size hint reserved for bounded streaming implementations.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_invalid_input("hex", "chunk_size must be positive"))
+    data = _read_stream_bytes("hex", source)?
+    return _write_stream_bytes("hex", target, _ascii_bytes("hex", _encode_bytes(data))?)
+
+
+pub def decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read hexadecimal ASCII bytes from `source`, decode them, and write bytes to `target`.
+
+    Args:
+        source: `BytesIO` stream positioned at encoded ASCII bytes.
+        target: `BytesIO` stream that receives decoded bytes.
+        chunk_size: Positive chunk-size hint reserved for bounded streaming implementations.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments, invalid text, or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_invalid_input("hex", "chunk_size must be positive"))
+    text = _ascii_text("hex", _read_stream_bytes("hex", source)?)?
+    return _write_stream_bytes("hex", target, _decode_text(text)?)
+
+
+def _decode_text(text: str) -> Result[bytes, EncodingError]:
+    """
+    Validate strict hex length and decode character pairs.
+    """
+    if len(text) % 2 != 0:
+        return Err(_invalid_length("hex", "hex input must contain an even number of characters"))
+    return _decode_pairs(text)
+
+
+def _decode_pairs(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode already length-checked hexadecimal pairs into bytes.
+    """
+    out = BytesIO(b"")
+    for pair_index in range(len(text) // 2):
+        index = pair_index * 2
+        high = _hex_value(_char_at(text, index), index)?
+        low = _hex_value(_char_at(text, index + 1), index + 1)?
+        byte_index = high * 16 + low
+        match out.write_bytes(_BYTE_VALUES[byte_index:byte_index + 1]):
+            Ok(_) => pass
+            Err(err) => return Err(_io_boundary_error("hex", err.message(), index))
+    return Ok(out.getvalue())
+
+
+def _hex_digit(value: int) -> str:
+    """
+    Return one lowercase hexadecimal digit for a value in `0..15`.
+    """
+    return _HEX_LOWER[value:value + 1]
+
+
+def _hex_digit_upper(value: int) -> str:
+    """
+    Return one uppercase hexadecimal digit for a value in `0..15`.
+    """
+    return _HEX_UPPER[value:value + 1]
+
+
+def _hex_value(character: str, position: int) -> Result[int, EncodingError]:
+    """
+    Map one hexadecimal character to its four-bit value.
+    """
+    match character:
+        case "0":
+            return Ok(0)
+        case "1":
+            return Ok(1)
+        case "2":
+            return Ok(2)
+        case "3":
+            return Ok(3)
+        case "4":
+            return Ok(4)
+        case "5":
+            return Ok(5)
+        case "6":
+            return Ok(6)
+        case "7":
+            return Ok(7)
+        case "8":
+            return Ok(8)
+        case "9":
+            return Ok(9)
+        case "a" | "A":
+            return Ok(10)
+        case "b" | "B":
+            return Ok(11)
+        case "c" | "C":
+            return Ok(12)
+        case "d" | "D":
+            return Ok(13)
+        case "e" | "E":
+            return Ok(14)
+        case "f" | "F":
+            return Ok(15)
+        case other:
+            return Err(_invalid_character("hex", other, position))
+
+
+def _char_at(value: str, index: int) -> str:
+    """
+    Return the one-character string at a byte-indexed text position.
+    """
+    return value[index:index + 1]
+
+
+def _strip_ascii_whitespace(value: str) -> str:
+    """
+    Remove ASCII whitespace accepted by lenient hex decoding.
+    """
+    mut out = ""
+    for character in value:
+        if not _is_ascii_whitespace(character):
+            out = out + character
+    return out
+
+
+def _is_ascii_whitespace(character: str) -> bool:
+    """
+    Return whether `character` is ASCII whitespace accepted by lenient mode.
+    """
+    return character == " " or character == "\n" or character == "\r" or character == "\t"
