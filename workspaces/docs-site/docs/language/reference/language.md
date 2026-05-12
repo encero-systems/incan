@@ -100,6 +100,8 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 |---|---|---|---|
 | `std.web` | `web` | `std.web.app`, `std.web.routing`, `std.web.request`, `std.web.response`, `std.web.macros`, `std.web.prelude` | - |
 | `std.testing` | - | - | - |
+| `std.logging` | - | - | - |
+| `std.telemetry` | - | `std.telemetry.core` | - |
 | `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.race`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.serde` | `json` | `std.serde.json` | - |
 | `std.reflection` | - | - | - |
@@ -355,10 +357,10 @@ and `@requires` keep their existing special behavior.
 | Hash | `Hash` |  | Trait for hashing support. | RFC 000 | 0.1 | Stable |
 | Clone | `Clone` |  | Trait for cloning values. | RFC 000 | 0.1 | Stable |
 | Default | `Default` |  | Trait for default value construction. | RFC 000 | 0.1 | Stable |
-| From | `From` |  | Trait for conversions. | RFC 000 | 0.1 | Stable |
-| Into | `Into` |  | Trait for conversions. | RFC 000 | 0.1 | Stable |
-| TryFrom | `TryFrom` |  | Trait for fallible conversions. | RFC 000 | 0.1 | Stable |
-| TryInto | `TryInto` |  | Trait for fallible conversions. | RFC 000 | 0.1 | Stable |
+| From | `From` | `ConvertFrom` | Trait for conversions. | RFC 000 | 0.1 | Stable |
+| Into | `Into` | `ConvertInto` | Trait for conversions. | RFC 000 | 0.1 | Stable |
+| TryFrom | `TryFrom` | `ConvertTryFrom` | Trait for fallible conversions. | RFC 000 | 0.1 | Stable |
+| TryInto | `TryInto` | `ConvertTryInto` | Trait for fallible conversions. | RFC 000 | 0.1 | Stable |
 | Iterator | `Iterator` |  | Trait for iterator behavior. | RFC 000 | 0.1 | Stable |
 | IntoIterator | `IntoIterator` |  | Trait for conversion into iterators. | RFC 000 | 0.1 | Stable |
 | Error | `Error` |  | Trait for error-like values. | RFC 000 | 0.1 | Stable |

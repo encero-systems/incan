@@ -14,7 +14,8 @@ mod patterns;
 use super::super::TypedExpr;
 use super::super::expr::{
     BuiltinFn, CollectionMethodKind, IrCallArg, IrCallArgKind, IrDictEntry, IrExpr, IrExprKind, IrListEntry,
-    IrMethodDispatch, MethodCallArgPolicy, MethodKind, NumericResizePolicy, RaceArm, UnaryOp, VarAccess, VarRefKind,
+    IrMethodDispatch, Literal as IrLiteral, MethodCallArgPolicy, MethodKind, NumericResizePolicy, RaceArm, UnaryOp,
+    VarAccess, VarRefKind,
 };
 use super::super::types::IrType;
 use super::AstLowering;
@@ -31,6 +32,39 @@ use incan_core::lang::types::collections::{self as collection_types, CollectionT
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
+    /// Return the source-defined `std.logging.Logger.<method>` signature, including default expressions.
+    fn std_logging_logger_method_signature(&mut self, method: &str) -> Option<super::super::FunctionSignature> {
+        self.callable_signature_for_imported_stdlib_type_method_path(
+            &["std".to_string(), "logging".to_string(), "Logger".to_string()],
+            method,
+        )
+    }
+
+    /// Merge typechecker call-site metadata with the source-defined `std.logging.Logger` method declaration.
+    ///
+    /// The call-site snapshot carries the selected parameter types; the stdlib declaration carries source defaults such
+    /// as `fields={}`. Keeping the merge here lets emission stay independent from logging-specific method names.
+    fn std_logging_callable_signature_for_call(
+        &mut self,
+        span: ast::Span,
+        method: &str,
+    ) -> Option<super::super::FunctionSignature> {
+        let call_site = self.callable_signature_for_call_span(span);
+        let stdlib = self.std_logging_logger_method_signature(method);
+        match (call_site, stdlib) {
+            (Some(mut call_site), Some(stdlib)) => {
+                for (param, stdlib_param) in call_site.params.iter_mut().zip(stdlib.params.iter()) {
+                    if param.default.is_none() {
+                        param.default = stdlib_param.default.clone();
+                    }
+                }
+                Some(call_site)
+            }
+            (Some(call_site), None) => Some(call_site),
+            (None, stdlib) => stdlib,
+        }
+    }
+
     /// Lower `race for value:` to the IR race expression used by Rust emission.
     fn lower_race_for_expr(
         &mut self,
@@ -410,6 +444,47 @@ impl AstLowering {
             ast::Expr::Ident(name) => {
                 let lowered_name = self.symbol_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
                 let ty = self.lookup_var(&lowered_name);
+                if self
+                    .type_info
+                    .as_ref()
+                    .is_some_and(|info| info.is_ambient_logger_binding(expr_span))
+                {
+                    let logger_name = self.current_default_logger_name();
+                    let func = TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "get_logger".to_string(),
+                            access: VarAccess::Copy,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Unknown,
+                    );
+                    let arg = IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: TypedExpr::new(
+                            IrExprKind::Literal(IrLiteral::StaticStr(logger_name)),
+                            IrType::StaticStr,
+                        ),
+                    };
+                    return Ok(TypedExpr::new(
+                        IrExprKind::Call {
+                            func: Box::new(func),
+                            type_args: Vec::new(),
+                            args: vec![arg],
+                            callable_signature: self.callable_signature_for_imported_stdlib_path(&[
+                                "std".to_string(),
+                                "logging".to_string(),
+                                "get_logger".to_string(),
+                            ]),
+                            canonical_path: Some(vec![
+                                "std".to_string(),
+                                "logging".to_string(),
+                                "get_logger".to_string(),
+                            ]),
+                        },
+                        IrType::Struct("Logger".to_string()),
+                    ));
+                }
                 let access = self.select_var_access_for_ident(&lowered_name, &ty);
                 (
                     IrExprKind::Var {
@@ -724,7 +799,6 @@ impl AstLowering {
                         arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
                     }
                 }
-
                 let expr_ty = self
                     .type_info
                     .as_ref()
@@ -794,6 +868,30 @@ impl AstLowering {
                             }),
                             _ => None,
                         };
+                    let call_site_signature = self.callable_signature_for_call_span(expr_span);
+                    let std_logging_signature = if matches!(
+                        &receiver.ty,
+                        IrType::Struct(name) | IrType::NamedGeneric(name, _) if name.rsplit("::").next() == Some("Logger")
+                    ) {
+                        self.std_logging_callable_signature_for_call(expr_span, m)
+                    } else {
+                        None
+                    };
+                    let callable_signature = match (
+                        std_logging_signature.or(call_site_signature),
+                        imported_type_method_signature,
+                    ) {
+                        (Some(mut call_site), Some(imported)) => {
+                            for (param, imported_param) in call_site.params.iter_mut().zip(imported.params.iter()) {
+                                if param.default.is_none() {
+                                    param.default = imported_param.default.clone();
+                                }
+                            }
+                            Some(call_site)
+                        }
+                        (Some(call_site), None) => Some(call_site),
+                        (None, imported) => imported,
+                    };
                     // Unknown method - keep as string-based call
                     (
                         IrExprKind::MethodCall {
@@ -802,8 +900,7 @@ impl AstLowering {
                             dispatch,
                             type_args: lowered_type_args,
                             args: args_ir,
-                            callable_signature: imported_type_method_signature
-                                .or_else(|| self.callable_signature_for_call_span(expr_span)),
+                            callable_signature,
                             arg_policy,
                         },
                         expr_ty,

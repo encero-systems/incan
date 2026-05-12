@@ -10,6 +10,22 @@ New here? Start with: [Start here].
 [Language]:language/index.md
 [Contributing]:contributing/index.md
 [RFCs]:RFCs/index.md
+[Comparisons]:comparisons/index.md
+
+## Comparisons
+
+If you are evaluating whether Incan belongs in a project, start with the direct comparisons. They explain where Incan is
+trying to win, where it loses today, and when Python, Rust, or Python compatibility tools are the better choice.
+
+[Incan vs Python]:comparisons/python.md
+[Incan vs Rust]:comparisons/rust.md
+[Incan vs Python compatibility tools]:comparisons/python_compatibility_tools.md
+
+| Document | Description |
+| --- | --- |
+| [Incan vs Python] | Python-like ergonomics without Python's runtime and deployment model |
+| [Incan vs Rust] | Rust-native output without writing every application layer in Rust |
+| [Incan vs Python compatibility tools] | Why Incan is not RustPython, Codon, Nuitka, or Cython |
 
 ## Tooling & Setup
 

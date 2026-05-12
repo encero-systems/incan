@@ -404,6 +404,39 @@ impl<'a> IrEmitter<'a> {
         callable_signature: Option<&FunctionSignature>,
         canonical_path: Option<&[String]>,
     ) -> Result<TokenStream, EmitError> {
+        self.emit_call_expr_with_result_use(func, type_args, args, callable_signature, canonical_path, None)
+    }
+
+    /// Emit a call while preserving the surrounding value-use target for argument shaping.
+    pub(in super::super) fn emit_call_expr_for_use(
+        &self,
+        func: &TypedExpr,
+        type_args: &[IrType],
+        args: &[IrCallArg],
+        callable_signature: Option<&FunctionSignature>,
+        canonical_path: Option<&[String]>,
+        result_use_site: ValueUseSite<'_>,
+    ) -> Result<TokenStream, EmitError> {
+        self.emit_call_expr_with_result_use(
+            func,
+            type_args,
+            args,
+            callable_signature,
+            canonical_path,
+            Some(result_use_site),
+        )
+    }
+
+    /// Shared call emitter used by plain and target-aware call emission.
+    fn emit_call_expr_with_result_use(
+        &self,
+        func: &TypedExpr,
+        type_args: &[IrType],
+        args: &[IrCallArg],
+        callable_signature: Option<&FunctionSignature>,
+        canonical_path: Option<&[String]>,
+        result_use_site: Option<ValueUseSite<'_>>,
+    ) -> Result<TokenStream, EmitError> {
         if let Some(tokens) = self.try_emit_testing_assert_call(canonical_path, args)? {
             return Ok(tokens);
         }
@@ -414,11 +447,19 @@ impl<'a> IrEmitter<'a> {
         } else {
             None
         };
+        let result_target_ty = result_use_site.and_then(Self::use_site_target_ty);
+        let associated_signature = match &func.kind {
+            IrExprKind::AssociatedFunction { function_name, .. } => {
+                result_target_ty.and_then(|ty| self.specialized_method_signature_for_receiver(ty, function_name))
+            }
+            _ => None,
+        };
         let callee_name = local_name.or(canonical_name);
         let function_sig = local_name
             .and_then(|name| self.function_registry.get(name))
             .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name)))
-            .or(callable_signature);
+            .or(callable_signature)
+            .or(associated_signature.as_ref());
         // The checked-newtype lowering path emits a compiler-internal panic marker call. This remains the narrow,
         // explicitly-tracked generated `panic!` exemption that issue #351 left to a separate follow-up. Render it as
         // the Rust `panic!` macro so generated code stays valid without colliding with user-defined functions that may
@@ -537,6 +578,37 @@ impl<'a> IrEmitter<'a> {
                         IrType::Function { params, .. } => params.get(idx),
                         _ => None,
                     });
+                let sig_param = function_sig.and_then(|sig| sig.params.get(idx));
+                let in_return = *self.in_return_context.borrow();
+                let use_site = if let IrExprKind::Var { name, ref_kind, .. } = &func.kind {
+                    if matches!(ref_kind, VarRefKind::ExternalRustName) || self.external_rust_functions.contains(name) {
+                        ValueUseSite::ExternalCallArg { target_ty }
+                    } else {
+                        ValueUseSite::IncanCallArg {
+                            target_ty,
+                            callee_param: sig_param,
+                            in_return,
+                        }
+                    }
+                } else {
+                    ValueUseSite::IncanCallArg {
+                        target_ty,
+                        callee_param: sig_param,
+                        in_return,
+                    }
+                };
+                let aggregate_literal_arg = match &a.kind {
+                    IrExprKind::List(_) | IrExprKind::Dict(_) | IrExprKind::Set(_) | IrExprKind::Tuple(_) => true,
+                    IrExprKind::InteropCoerce { expr, .. } => {
+                        matches!(
+                            expr.kind,
+                            IrExprKind::List(_) | IrExprKind::Dict(_) | IrExprKind::Set(_) | IrExprKind::Tuple(_)
+                        )
+                    }
+                    _ => false,
+                };
+                let target_aware_aggregate_literal_arg =
+                    aggregate_literal_arg && !matches!(use_site, ValueUseSite::ExternalCallArg { .. });
                 let previous_qualify = if *from_default {
                     Some(self.qualify_internal_canonical_paths.replace(true))
                 } else {
@@ -559,9 +631,13 @@ impl<'a> IrEmitter<'a> {
                                 pub_library_union_qualifier.as_deref(),
                             )? {
                                 seed
+                            } else if target_aware_aggregate_literal_arg {
+                                self.emit_expr_for_use(a, use_site)?
                             } else {
                                 self.emit_expr(a)?
                             }
+                        } else if target_aware_aggregate_literal_arg {
+                            self.emit_expr_for_use(a, use_site)?
                         } else {
                             self.emit_expr(a)?
                         }
@@ -574,6 +650,8 @@ impl<'a> IrEmitter<'a> {
                             pub_library_union_qualifier.as_deref(),
                         )? {
                             seed
+                        } else if target_aware_aggregate_literal_arg {
+                            self.emit_expr_for_use(a, use_site)?
                         } else {
                             self.emit_expr(a)?
                         }
@@ -602,7 +680,6 @@ impl<'a> IrEmitter<'a> {
 
                 // Prefer explicit lowering access decisions, then derive obvious borrow requirements from parameter
                 // typing information.
-                let sig_param = function_sig.and_then(|sig| sig.params.get(idx));
                 if let Some(param) = sig_param {
                     match &param.ty {
                         IrType::Ref(_) => match &a.ty {
@@ -631,31 +708,15 @@ impl<'a> IrEmitter<'a> {
                     }
                 }
 
-                // Determine conversion context based on whether this is an Incan or Rust function
-                let in_return = *self.in_return_context.borrow();
-                let use_site = if let IrExprKind::Var { name, ref_kind, .. } = &func.kind {
-                    if matches!(ref_kind, VarRefKind::ExternalRustName) || self.external_rust_functions.contains(name) {
-                        ValueUseSite::ExternalCallArg { target_ty }
-                    } else {
-                        ValueUseSite::IncanCallArg {
-                            target_ty,
-                            callee_param: sig_param,
-                            in_return,
-                        }
-                    }
+                let mut tokens = if target_aware_aggregate_literal_arg {
+                    emitted
                 } else {
-                    ValueUseSite::IncanCallArg {
-                        target_ty,
-                        callee_param: sig_param,
-                        in_return,
+                    match use_site {
+                        ValueUseSite::ExternalCallArg { target_ty } => self
+                            .external_list_arg_element_coercion(a, target_ty, emitted.clone())
+                            .unwrap_or_else(|| plan_value_use(a, use_site).apply(emitted)),
+                        _ => plan_value_use(a, use_site).apply(emitted),
                     }
-                };
-
-                let mut tokens = match use_site {
-                    ValueUseSite::ExternalCallArg { target_ty } => self
-                        .external_list_arg_element_coercion(a, target_ty, emitted.clone())
-                        .unwrap_or_else(|| plan_value_use(a, use_site).apply(emitted)),
-                    _ => plan_value_use(a, use_site).apply(emitted),
                 };
                 if let Some(param) = sig_param
                     && incan_call_arg_needs_rust_mut_borrow(param)
@@ -1128,16 +1189,34 @@ impl<'a> IrEmitter<'a> {
         if let Some(adapter) = self.borrowed_function_adapter_arg(arg, target_ty) {
             return Ok(adapter);
         }
+        let in_return = *self.in_return_context.borrow();
+        let use_site = if let IrExprKind::Var { name, ref_kind, .. } = &func.kind {
+            if matches!(ref_kind, VarRefKind::ExternalRustName) || self.external_rust_functions.contains(name) {
+                ValueUseSite::ExternalCallArg { target_ty }
+            } else {
+                ValueUseSite::IncanCallArg {
+                    target_ty,
+                    callee_param: Some(param),
+                    in_return,
+                }
+            }
+        } else {
+            ValueUseSite::IncanCallArg {
+                target_ty,
+                callee_param: Some(param),
+                in_return,
+            }
+        };
         let emitted = if let Some(seed) = self.emit_inference_seeded_literal_arg(arg, &param.ty)? {
             seed
         } else if Self::is_unresolved_call_seed_type(&param.ty) {
             if let Some(seed) = self.emit_inference_seeded_literal_arg(arg, &arg.ty)? {
                 seed
             } else {
-                self.emit_expr(arg)?
+                self.emit_expr_for_use(arg, use_site)?
             }
         } else {
-            self.emit_expr(arg)?
+            self.emit_expr_for_use(arg, use_site)?
         };
 
         if let IrExprKind::Var { access, .. } = &arg.kind {
@@ -1162,30 +1241,11 @@ impl<'a> IrEmitter<'a> {
             _ => {}
         }
 
-        let in_return = *self.in_return_context.borrow();
-        let use_site = if let IrExprKind::Var { name, ref_kind, .. } = &func.kind {
-            if matches!(ref_kind, VarRefKind::ExternalRustName) || self.external_rust_functions.contains(name) {
-                ValueUseSite::ExternalCallArg { target_ty }
-            } else {
-                ValueUseSite::IncanCallArg {
-                    target_ty,
-                    callee_param: Some(param),
-                    in_return,
-                }
-            }
-        } else {
-            ValueUseSite::IncanCallArg {
-                target_ty,
-                callee_param: Some(param),
-                in_return,
-            }
-        };
-
         let mut tokens = match use_site {
             ValueUseSite::ExternalCallArg { target_ty } => self
                 .external_list_arg_element_coercion(arg, target_ty, emitted.clone())
-                .unwrap_or_else(|| plan_value_use(arg, use_site).apply(emitted)),
-            _ => plan_value_use(arg, use_site).apply(emitted),
+                .unwrap_or(emitted),
+            _ => emitted,
         };
         if incan_call_arg_needs_rust_mut_borrow(param) {
             match &arg.ty {

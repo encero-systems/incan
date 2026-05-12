@@ -10,10 +10,11 @@
     - RFC 034 (`incan.pub` registry)
 - **Written against:** v0.1
 - **Shipped in:** v0.2
+- **Amended:** 2026-05-08 — normalize library imports to `pub` namespace-root syntax for the next release.
 
 ## Summary
 
-Introduce Incan library dependencies so that one Incan project can depend on another, import its types, and compile against its generated Rust crate. Phase 1 (this RFC)covers the minimal local-only flow to serve as a foundation for later phases. This includes: `path` dependencies, a type manifest (`.incnlib`), a library build mode, `pub::` import syntax, optional vocab metadata for library-provided soft keywords, and Cargo wiring through ordinary path dependencies. The core abstractions here are intended to carry forward into later phases such as git dependencies and the `incan.pub` registry, even if some concrete CLI details or artifact layout choices evolve.
+Introduce Incan library dependencies so that one Incan project can depend on another, import its types, and compile against its generated Rust crate. Phase 1 covers the minimal local-only flow to serve as a foundation for later phases. This includes: `path` dependencies, a type manifest (`.incnlib`), a library build mode, `pub` namespace-root import syntax, optional vocab metadata for library-provided soft keywords, and Cargo wiring through ordinary path dependencies. The core abstractions here are intended to carry forward into later phases such as git dependencies and the `incan.pub` registry, even if some concrete CLI details or artifact layout choices evolve.
 
 RFC 034 captures the full library system, including git dependencies and the `incan.pub` registry.
 
@@ -37,7 +38,7 @@ The core insight is a **two-artifact model**: a library ships both a **type mani
 - Allow one Incan project to declare another as a dependency (via `path` reference) and import its exported types, functions, and soft keywords.
 - Introduce `incan build --lib` as the canonical command for building a library artifact: a type manifest (`.incnlib`) plus a generated Rust crate.
 - Allow a library project to declare optional vocab metadata for library-provided soft keywords so the consumer compiler can activate them from the built artifact rather than from source.
-- Establish `pub::` as the import namespace prefix for Incan library dependencies, parallel to `rust::` for Rust crates.
+- Establish `pub` as the import namespace root for Incan library dependencies, parallel to `std` for stdlib modules and `rust` for Rust crates.
 - Rename `[dependencies]` in `incan.toml` to `[rust-dependencies]` for Rust crate pass-through, freeing the unqualified `[dependencies]` key for Incan library dependencies.
 - Define the manifest schema and the consumer build flow (manifest loading → typechecking → Rust code emission → Cargo wiring) in sufficient normative detail for implementation.
 
@@ -103,19 +104,27 @@ Then imports and uses library types normally:
 
 ```incan
 # src/main.incn
-from pub::mylib import Widget
+from pub.mylib import Widget
 from local_models import AppState
 
 def build_ui(state: AppState) -> Widget:
     return Widget(title=state.name)
 ```
 
-The `pub::` prefix makes the import source unambiguous:
+The `pub` namespace root makes the import source unambiguous:
 
 ```incan
-from pub::mylib import Widget          # Incan library (from [dependencies])
-from rust::tokio import spawn          # Rust crate (from [rust-dependencies])
+from pub.mylib import Widget           # Incan library (from [dependencies])
+from rust.tokio import spawn           # Rust crate (from [rust-dependencies])
 from local_models import AppState      # Local project module
+```
+
+The library namespace itself can also be imported when a package-shaped API is clearer:
+
+```incan
+from pub import mylib
+
+widget = mylib.Widget(title="Home")
 ```
 
 `incan build` resolves the dependency, loads the manifest, typechecks against library types, and wires the library's Rust crate into the generated Cargo.toml. The consumer never touches library source.
@@ -187,18 +196,24 @@ Consumers use embedded `rust_abi` metadata before falling back to workspace insp
 
 The `.incnlib` manifest is intentionally a semantic surface artifact, not a transport or dependency-resolution artifact. It describes the checked public API plus optional vocab metadata; it does not describe where the generated Rust crate lives on disk, nor does it attempt to encode future git/registry/lockfile resolution data. For Phase 1, we mandate that the generated Rust crate name must match the library package name, and the crate's on-disk location is determined by the dependency transport (`target/lib/` for local builds, extracted package root for registry packages); the `.incnlib` file does not hold information about this (on purpose).
 
-### `pub::` import syntax
+### `pub` namespace import syntax
 
-The language recognises `pub::` as a library namespace prefix, parallel to the existing `rust::` prefix:
+The language recognises `pub` as a library namespace root, parallel to the `std` and `rust` roots:
 
 ```text
 import_stmt ::= "from" import_path "import" import_items
-import_path ::= "pub::" IDENT          # Incan library
-              | "rust::" rust_path      # Rust crate (existing)           |
-              | module_path             # Local project module (existing) |
+import_path ::= "pub"                  # Incan library namespace root
+              | "pub." IDENT           # Incan library package
+              | "rust"                 # Rust crate namespace root
+              | "rust." rust_path      # Rust crate
+              | "std"                  # Standard library namespace root
+              | "std." std_path        # Standard library module
+              | module_path             # Local project module (existing)
 ```
 
-Resolution: the compiler must look up the identifier after `pub::` in the loaded library manifests (populated from `[dependencies]` in `incan.toml`). If found, the imported names are resolved against the manifest's exports. If not found, a diagnostic is emitted.
+Resolution: the compiler must look up the first identifier under `pub` in the loaded library manifests (populated from `[dependencies]` in `incan.toml`). `from pub import mylib` imports the library namespace itself. `from pub.mylib import Widget` resolves `Widget` against `mylib`'s manifest exports. If the library or export is not found, a diagnostic is emitted.
+
+Amendment note: the initial v0.2 implementation used `pub::mylib` and `rust::crate` as special import prefixes. The intended public model is namespace-root import syntax: `pub`, `rust`, and `std` behave like ordinary import roots whose resolution is owned by the compiler.
 
 ### `incan.toml` changes
 
@@ -251,7 +266,7 @@ incan.toml
 
 ### Rust code emission
 
-For a consumer file importing `from pub::mylib import Widget`:
+For a consumer file importing `from pub.mylib import Widget`:
 
 ```rust
 // Generated Rust
@@ -275,19 +290,19 @@ The consumer only needs the generated library crate as a normal Cargo dependency
 
 Libraries that introduce soft keywords define them via RFC 027's vocab surface. The compiler extracts these declarations during `incan build --lib` and serializes them into the manifest. During consumer build, keyword activations are loaded from the manifest so imports can activate the relevant soft keywords without requiring access to library source.
 
-For Phase 1, activation remains **import-driven**, not project-wide. Depending on a library makes its vocabulary available for resolution, but the relevant `pub::...` imports are what activate the library's soft keywords, just as stdlib soft keywords are activated by the imports that bring their namespaces into scope.
+For Phase 1, activation remains **import-driven**, not project-wide. Depending on a library makes its vocabulary available for resolution, but the relevant `pub`-root imports are what activate the library's soft keywords, just as stdlib soft keywords are activated by the imports that bring their namespaces into scope.
 
 ### Interaction with existing features
 
-- **`rust::` imports (RFC 005)**: `pub::` and `rust::` are parallel namespace prefixes. They share the same import syntax, differing only in resolution mechanism (manifest lookup vs. Rust crate path).
-- **Stdlib namespaces (RFC 022/023)**: `std.*` imports are compiler-provided and always available. `pub::*` imports are user-declared and require `[dependencies]`. They coexist without overlap.
+- **`rust` imports (RFC 005)**: `pub` and `rust` are parallel namespace roots. They share the same import syntax, differing only in resolution mechanism (manifest lookup vs. Rust crate path).
+- **Stdlib namespaces (RFC 022/023)**: `std.*` imports are compiler-provided and always available. `pub.*` imports are user-declared and require `[dependencies]`. They coexist without overlap.
 - **Soft keywords (RFC 022)**: Library soft keywords use the same import-activated model as stdlib soft keywords. The language must not introduce a separate library-only activation rule.
 - **Vocab crate (RFC 027)**: `incan-vocab` defines the shared types (`VocabRegistration`, `DslSurface`, `DeclarationSurface`, `ClauseSurface`, lower-level keyword DTOs, and manifest metadata types) used by both library authors and the compiler. This RFC uses those types to populate the built library artifact.
 
 ### Compatibility / migration
 
 - **Breaking**: `[dependencies]` in `incan.toml` is renamed to `[rust-dependencies]` for Rust crate deps. A migration diagnostic guides users.
-- **Additive**: `pub::` import syntax, `[dependencies]` for Incan libraries, `src/lib.incn` convention, `incan build --lib` — all new.
+- **Additive**: `pub` namespace import syntax, `[dependencies]` for Incan libraries, `src/lib.incn` convention, `incan build --lib` — all new.
 
 ## Alternatives considered
 
@@ -299,9 +314,9 @@ The consumer would re-lex, re-parse, re-typecheck, and re-lower the entire libra
 
 Ship only the generated Rust crate, skip the manifest. The consumer gets Rust compilation but no Incan-level type checking — the compiler wouldn't know about library types' fields, methods, or type parameters. Rejected because it defeats the purpose of Incan's type system.
 
-### No `pub::` prefix (bare library imports)
+### No `pub` namespace root (bare library imports)
 
-`from mylib import Widget` without any prefix. Rejected because it's ambiguous — is `mylib` a local module or a library? The `pub::` prefix makes the source unambiguous, paralleling `rust::` for Rust crates.
+`from mylib import Widget` without any namespace root. Rejected because it's ambiguous — is `mylib` a local module or a library? The `pub` namespace root makes the source unambiguous, paralleling `rust` for Rust crates and `std` for standard library modules.
 
 ### Explicit `[exports]` table in `incan.toml`
 
@@ -322,7 +337,7 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 
 - **Project configuration and dependency declarations**: `incan.toml` gains a clear split between Incan library dependencies (`[dependencies]`) and Rust crate dependencies (`[rust-dependencies]`), plus an optional `[vocab]` section for library-provided keyword metadata.
 - **Library surface definition**: `src/lib.incn` becomes the public entrypoint for library exports, and `pub` re-exports define the checked API surface that is serialized into the manifest.
-- **Parsing and import resolution**: the language adds `pub::` as a distinct import namespace, and library-provided soft keywords follow the same import-driven activation model as existing soft keywords.
+- **Parsing and import resolution**: the language adds `pub` as a distinct import namespace root, and library-provided soft keywords follow the same import-driven activation model as existing soft keywords.
 - **Semantic analysis**: consumer projects resolve imported library items from manifests rather than from library source, so exported types, functions, and keyword metadata must be represented in a typechecker-readable artifact.
 - **Code generation and build orchestration**: `incan build --lib` must emit both the manifest and a generated Rust crate, while consumer builds must wire that crate into the generated Cargo dependency graph as a path dependency.
 - **Tooling and editor support**: the compiler and LSP should share the same manifest schema and validation rules so imported library symbols behave consistently in builds and editor workflows.
@@ -343,14 +358,14 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 
 ### Phase 3: Consumer import resolution and semantic integration
 
-- Add `pub::` namespace import resolution against loaded dependency manifests.
+- Add `pub` namespace import resolution against loaded dependency manifests.
 - Integrate manifest-provided symbols into semantic name resolution and typechecking without reparsing library source.
 - Emit precise diagnostics for missing libraries, missing exports, and import collisions with local symbols.
 
 ### Phase 4: Build orchestration, lowering, and Cargo wiring
 
 - Ensure `incan build --lib` emits both required artifacts: `.incnlib` and a generated Rust crate.
-- Ensure consumer builds emit Rust imports that map `pub::` symbols to the generated dependency crate.
+- Ensure consumer builds emit Rust imports that map `pub`-root symbols to the generated dependency crate.
 - Wire generated Cargo dependencies to library crate paths and rely on Cargo for transitive Rust dependency resolution.
 
 ### Phase 5: Vocab and soft-keyword pipeline alignment
@@ -382,7 +397,7 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 
 ### Parser and import resolution
 
-- [x] Support `pub::` import path handling as a first-class namespace prefix.
+- [x] Support manifest-backed library import path handling as a first-class namespace.
 - [x] Ensure import diagnostics distinguish unresolved library names vs unresolved exported symbols.
 - [x] Ensure namespace collision diagnostics suggest import aliasing patterns.
 
@@ -414,15 +429,15 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 ### LSP and tooling parity
 
 - [x] Reuse shared manifest parser/validator between compiler and LSP.
-- [x] Ensure editor diagnostics for `pub::` imports match compiler diagnostics.
+- [x] Ensure editor diagnostics for manifest-backed library imports match compiler diagnostics.
 - [x] Validate completion and hover behavior for manifest-backed library symbols.
 
 ### Tests and snapshots
 
-- [x] Add parser tests for `pub::` import forms and edge-case diagnostics.
+- [x] Add parser tests for library import forms and edge-case diagnostics.
 - [x] Add typechecker tests for valid/invalid manifest-backed imports.
 - [x] Add manifest IO tests for schema compatibility and bounds fidelity.
-- [x] Add codegen snapshot tests covering `pub::` usage in expression positions.
+- [x] Add codegen snapshot tests covering library import usage in expression positions.
 - [x] Add integration tests for library build + consumer build end-to-end flow.
 
 ### Docs and release notes
@@ -437,7 +452,7 @@ Package a compiled Rust library instead of generated Rust source. Rejected for P
 
 2. **Public surface completeness.** Phase 1 library exports include public nominal types and public free functions re-exported through `src/lib.incn`. Enum variants are represented as part of their exported enum definitions rather than as standalone exports, and trait implementations are not independently exportable manifest items.
 
-3. **Namespace collision handling.** A collision between an imported library symbol and a local symbol is a compile error. Phase 1 does not add new qualified-type syntax such as `mylib.Widget`; instead, diagnostics should suggest import-site aliasing such as `from pub::mylib import Widget as LibWidget`.
+3. **Namespace collision handling.** A collision between an imported library symbol and a local symbol is a compile error. Phase 1 does not add new qualified-type syntax such as `mylib.Widget`; instead, diagnostics should suggest import-site aliasing such as `from pub.mylib import Widget as LibWidget`.
 
 4. **Library Rust dependency handling.** The consumer depends on the generated library crate, not on each Rust crate that the library happens to use internally. The library crate's own `Cargo.toml` declares its Rust dependencies, and Cargo resolves them transitively in the normal way.
 

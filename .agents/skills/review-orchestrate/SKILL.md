@@ -35,6 +35,7 @@ This skill is only valid when it uses real subagents for reviewer slices. If the
 
 Core reviewer roles:
 
+- `review-incan-source-quality`
 - `review-rust-prose`
 - `review-docs-claims`
 - `review-test-style`
@@ -68,6 +69,7 @@ reports and let the canonical report point at it.
 Worker slice reports:
 
 - `.agents/state/review-report.rust-prose.md`
+- `.agents/state/review-report.incan-source-quality.md`
 - `.agents/state/review-report.docs-claims.md`
 - `.agents/state/review-report.test-style.md`
 - `.agents/state/review-report.scope.md`
@@ -85,6 +87,7 @@ Every worker slice report must identify the worker that produced it, and the can
 
 1. Derive review scope from the current dirty worktree.
 2. Decide which reviewer roles are needed. Use the lightest honest roster:
+   - touched `.incn` source -> `review-incan-source-quality`
    - touched `.rs` with prose comments -> `review-rust-prose`
    - touched user-facing `.md`, CLI help, examples, scaffolds, release notes -> `review-docs-claims`
    - touched tests or code implying coverage drift -> `review-test-style`
@@ -109,6 +112,7 @@ Every worker slice report must identify the worker that produced it, and the can
    - `rustdoc`
    - `test-gap`
    - `maintainability`
+   - `source-quality`
    - `design-tension`
 13. A finding may also carry a merge disposition:
    - `open`
@@ -225,5 +229,6 @@ If subagents cannot be used, do not pretend this skill ran successfully. Fall ba
 ## Relationship to other skills
 
 - Use `orchestrate-parallel-work` as the worker-spawning substrate when delegation is justified.
+- Use `review-incan-source-quality` for touched `.incn` source before treating a branch as stylistically clean.
 - Use `/fix` after `review-orchestrate` if the user wants findings repaired.
 - Use `/review-and-fix` only for smaller scopes or after narrowing the problem; for broad scopes, prefer `review-orchestrate` followed by `/fix`.

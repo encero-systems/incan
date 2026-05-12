@@ -2140,7 +2140,8 @@ impl TypeChecker {
                     && let Some(symbol) = self.lookup_symbol(type_name)
                     && let SymbolKind::Type(TypeInfo::Enum(info)) = &symbol.kind
                 {
-                    return info.variants.iter().any(|variant| variant == member);
+                    return info.variants.iter().any(|variant| variant == member)
+                        || info.variant_aliases.contains_key(member);
                 }
                 false
             }
@@ -3381,6 +3382,7 @@ impl TypeChecker {
         self.validate_awaitable_adoptions(&en.name, &resolved_trait_adoptions, &[], enum_type_param_bounds);
 
         self.check_value_enum_decl(en);
+        self.check_enum_variant_aliases(en);
         // Check variant field types exist
         for variant in &en.variants {
             for field_ty in &variant.node.fields {
@@ -3406,6 +3408,21 @@ impl TypeChecker {
         }
 
         self.symbols.exit_scope();
+    }
+
+    /// Validate enum variant aliases against the variant namespace.
+    fn check_enum_variant_aliases(&mut self, en: &EnumDecl) {
+        let variants: HashSet<&str> = en.variants.iter().map(|variant| variant.node.name.as_str()).collect();
+        let mut aliases: HashSet<&str> = HashSet::new();
+        for alias in &en.variant_aliases {
+            if variants.contains(alias.node.name.as_str()) || !aliases.insert(alias.node.name.as_str()) {
+                self.errors
+                    .push(errors::duplicate_definition(&alias.node.name, alias.span));
+            }
+            if !variants.contains(alias.node.target.as_str()) {
+                self.errors.push(errors::unknown_symbol(&alias.node.target, alias.span));
+            }
+        }
     }
 
     /// Validate explicit enum trait adoption using the same abstract-method contract as models/classes.

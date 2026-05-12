@@ -1035,6 +1035,11 @@ impl TypeChecker {
     /// Register an enum declaration and define symbols for each variant.
     fn collect_enum(&mut self, en: &EnumDecl, span: Span) {
         let variants: Vec<_> = en.variants.iter().map(|v| v.node.name.clone()).collect();
+        let variant_aliases: HashMap<_, _> = en
+            .variant_aliases
+            .iter()
+            .map(|alias| (alias.node.name.clone(), alias.node.target.clone()))
+            .collect();
         let derives = self.extract_derive_names(&en.decorators);
         let value_enum = en.value_type.as_ref().map(|value_type| ValueEnumInfo {
             value_type: value_enum_backing(value_type.node),
@@ -1060,6 +1065,7 @@ impl TypeChecker {
                 traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                 trait_adoptions,
                 variants: variants.clone(),
+                variant_aliases: variant_aliases.clone(),
                 value_enum,
                 derives,
                 methods: HashMap::new(),
@@ -1096,6 +1102,29 @@ impl TypeChecker {
                 span: variant.span,
                 scope: 0,
             });
+        }
+        for alias in &en.variant_aliases {
+            if let Some(target_variant) = en
+                .variants
+                .iter()
+                .find(|variant| variant.node.name == alias.node.target)
+            {
+                let fields: Vec<_> = target_variant
+                    .node
+                    .fields
+                    .iter()
+                    .map(|f| self.resolve_type_checked(f))
+                    .collect();
+                self.symbols.define(Symbol {
+                    name: alias.node.name.clone(),
+                    kind: SymbolKind::Variant(VariantInfo {
+                        enum_name: en.name.clone(),
+                        fields,
+                    }),
+                    span: alias.span,
+                    scope: 0,
+                });
+            }
         }
     }
 

@@ -16,6 +16,8 @@ Keep `orchestrate-parallel-work` generic. Use this skill as the opinionated wrap
 - Treat user-facing docs and versioning as part of implementation, not optional closeout polish.
 - Optimize for end-to-end correctness, not maximal concurrency.
 - Use clean worktrees for real implementation slices.
+- For language or stdlib work that is meant to be implemented in Incan, dogfood Incan rather than creating a thin `.incn` facade over a custom Rust backend. Direct `from rust::` imports of existing crates/primitives are acceptable when the `.incn` module still owns the behavior; bespoke `incan_stdlib::feature` Rust modules that hide the feature logic are not acceptable unless the maintainer explicitly asks for that backend boundary.
+- Do not let workers assume Incan cannot express something. Before choosing Rust/backend fallback or narrowing a design, workers must inspect current `.incn` precedents, parser/typechecker/codegen tests, or run a small probe and record the specific capability evidence.
 - Every implementation must land in a fresh worktree rooted under `/Users/danny/Development/encero/tmp` so VS Code picks it up; do not implement in `/tmp` or in the main repo checkout.
 - Treat each slice as a managed work packet with durable state on disk, not as a chat thread that has to remember its own scope.
 - Require every worker to plan, implement, verify, review, and fix within its owned slice.
@@ -23,6 +25,7 @@ Keep `orchestrate-parallel-work` generic. Use this skill as the opinionated wrap
 - Retire worker worktrees after their `done` output has been integrated and verified unless the orchestrator records a concrete reason to keep one.
 - Require the orchestrator to perform its own explicit plan -> do -> check -> act integration loop after collecting worker output.
 - Require workers and the orchestrator to maintain a persistent review report at `.agents/state/review-report.md` inside each worktree so findings survive across loops.
+- Require touched `.incn` source to pass `review-incan-source-quality`; Incan implementation work is not done when it merely compiles if the authored source reads like Rust-shaped scaffolding instead of well-written Python.
 - Do not commit, push, or open a PR unless the user explicitly asked for that. When not explicitly asked, still draft the commit message and PR description as ready-to-use artifacts.
 
 ## PDCA model
@@ -235,6 +238,7 @@ Each worker must perform this loop inside its slice:
 
 1. **Plan**
    - Build a short slice plan using `create-plan`.
+   - For `.incn`, stdlib, or language-surface work, perform capability intake before ruling out an Incan-native design. Record the local precedent, test, or probe result in `plan.md`.
    - Write `scope.md`, `plan.md`, `tasks.json`, and `tasks.md`.
    - Break the slice into concrete tasks inside `tasks.json` and keep `tasks.md` as the readable companion.
    - Set initial slice state in `status.md` as `planned`.
@@ -244,6 +248,7 @@ Each worker must perform this loop inside its slice:
    - Use `doing` as the active execution state.
 3. **Check**
    - Run targeted verification for the slice.
+   - Run `review-incan-source-quality` when the slice touches `.incn` source.
    - Run `review` on the slice in report-only mode, or `review-orchestrate` if the slice itself is broad enough to justify specialization.
    - Compare the delivered behavior against `scope.md`, not only against test output.
    - Use `checking` as the active verification/review state.
@@ -303,7 +308,7 @@ The orchestrator must:
 - run **Plan -> Do -> Check -> Act** on the integrated result:
   - **Plan**: confirm the combined slice outputs still satisfy the original end-state and create/update orchestrator task state in `.agents/state/ralph-loop/overview.md`
   - **Do**: integrate the accepted worker results
-  - **Check**: run verification plus `review` or `review-orchestrate` on the integrated result
+  - **Check**: run verification, `review-incan-source-quality` for touched `.incn` source, plus `review` or `review-orchestrate` on the integrated result
   - **Act**: run `fix` on actionable in-scope findings, or go back to planning if integration review shows that the original requested scope is still not satisfied
 - invoke `flag-compiler-bug` for real out-of-scope compiler defects found during integration
 - repeat until no actionable integrated items remain and the original scope is honestly satisfied
@@ -374,6 +379,7 @@ If the task teaches a durable lesson about orchestration, testing, or worktree h
 - `orchestrate-parallel-work`: use it for decomposition, worker ownership, and isolation
 - `review`: report-only detector for smaller worker slices and local integration checks
 - `review-orchestrate`: preferred detector for broad integrated outputs or slices that are themselves wide enough to justify specialized reviewers
+- `review-incan-source-quality`: required detector for touched `.incn` source; use it to enforce the well-written-Python readability bar and dogfooding integrity before declaring a slice or integration clean
 - `fix`: mandatory repair pass after review findings
 - `review-and-fix`: allowed as a convenience wrapper when a worker or the orchestrator wants the combined loop explicitly
 - `write-commit-message`: use for the final commit text
@@ -406,6 +412,7 @@ Do not recurse `ralph-loop` indefinitely. A child loop is a phase owner, not ano
 - [ ] The orchestrator checked `.agents/state/ralph-loop/STEERING.md` at each major iteration
 - [ ] Every slice kept explicit `scope.md`, `plan.md`, `tasks.json`, `tasks.md`, `status.md`, and `handoff.md`
 - [ ] Docs/version baseline was established from repo source-of-truth metadata before implementation
+- [ ] Incan-language/stdlib slices recorded capability evidence before ruling out Incan-native implementation
 - [ ] Every worker ran a real plan -> do -> check -> act loop
 - [ ] Every slice used only the allowed explicit states: `planned`, `doing`, `checking`, `replan_required`, `blocked`, `done`
 - [ ] Scope failures were routed back to planning instead of being treated as ordinary defect cleanup
@@ -414,6 +421,7 @@ Do not recurse `ralph-loop` indefinitely. A child loop is a phase owner, not ano
 - [ ] Completed worker worktrees were removed, or each kept worker worktree has a recorded reason
 - [ ] No accepted slice work exists only in a worker worktree or disposable worker branch
 - [ ] Every worker maintained `.agents/state/review-report.md` in its worktree
+- [ ] Every worker or orchestrator touching `.incn` source ran `review-incan-source-quality`
 - [ ] The orchestrator maintained `.agents/state/review-report.md` in the integration worktree
 - [ ] The orchestrator maintained `.agents/state/ralph-loop/overview.md`
 - [ ] User-visible behavior changes updated authored user docs, not only RFCs/release notes

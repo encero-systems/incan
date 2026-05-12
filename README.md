@@ -3,6 +3,14 @@
 Incan is a statically typed language for writing clear, high-level application code that compiles to native Rust.
 It aims to feel lightweight and expressive while keeping the things that matter in large codebases explicit: types, errors, and mutability.
 
+## Positioning
+
+Python won because it made application code readable and fast to write. Incan starts from that same readability premise, but changes the foundation: static types, explicit errors, explicit mutability, and Rust-native compilation.
+
+Incan is not a Python compatibility runtime or a faster Python interpreter. It is for new application code where teams want Python-like ergonomics without Python's runtime, packaging, and deployment tradeoffs.
+
+As AI tools generate more code, those constraints matter more. Incan gives developers and agents a smaller, typed, auditable language surface that compiles into the Rust ecosystem.
+
 ## Why Incan?
 
 - **Readable by default**: concise syntax for modeling data and writing “glue code” without ceremony.

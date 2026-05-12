@@ -831,6 +831,27 @@ fn validate_value_enum_exports(exports: &RawLibraryExports) -> Result<(), Librar
 
 /// Validate one exported enum's value metadata.
 fn validate_value_enum_export(enum_export: &EnumExport) -> Result<(), LibraryManifestError> {
+    let variant_names = enum_export
+        .variants
+        .iter()
+        .map(|variant| variant.name.as_str())
+        .collect::<HashSet<_>>();
+    let mut alias_names = HashSet::new();
+    for alias in &enum_export.variant_aliases {
+        if variant_names.contains(alias.name.as_str()) || !alias_names.insert(alias.name.as_str()) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "enum `{}` has duplicate variant alias `{}`",
+                enum_export.name, alias.name
+            )));
+        }
+        if !variant_names.contains(alias.target.as_str()) {
+            return Err(LibraryManifestError::Invalid(format!(
+                "enum `{}.{}` aliases unknown variant `{}`",
+                enum_export.name, alias.name, alias.target
+            )));
+        }
+    }
+
     let Some(value_type) = enum_export.value_type else {
         for variant in &enum_export.variants {
             if variant.value.is_some() {

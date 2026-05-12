@@ -83,6 +83,27 @@ impl TypeChecker {
         ));
     }
 
+    /// Validate a collection member against a contextual element type, or merge it into the inferred member type.
+    fn check_collection_member_type(
+        &mut self,
+        hinted_ty: Option<&ResolvedType>,
+        member_ty: &mut ResolvedType,
+        value_ty: ResolvedType,
+        span: Span,
+    ) {
+        if let Some(expected) = hinted_ty {
+            if !self.types_compatible(&value_ty, expected) {
+                self.errors.push(errors::type_mismatch(
+                    &expected.to_string(),
+                    &value_ty.to_string(),
+                    span,
+                ));
+            }
+            return;
+        }
+        self.merge_collection_member_type(member_ty, value_ty, span);
+    }
+
     /// Type-check a list literal with an optional destination-type hint.
     ///
     /// When a surrounding context already expects `List[T]`, empty lists adopt `T` directly and non-empty lists
@@ -100,23 +121,33 @@ impl TypeChecker {
             match elem {
                 ListEntry::Element(value) => {
                     let value_ty = self.check_expr_with_expected(value, hinted_elem_ty.as_ref());
-                    self.merge_collection_member_type(&mut elem_ty, value_ty, value.span);
+                    self.check_collection_member_type(hinted_elem_ty.as_ref(), &mut elem_ty, value_ty, value.span);
                 }
                 ListEntry::Spread(value) => {
                     let expected_spread = hinted_elem_ty.clone().map(list_ty);
                     let spread_ty = self.check_expr_with_expected(value, expected_spread.as_ref());
                     if let ResolvedType::Tuple(item_types) = spread_ty {
                         for item_ty in item_types {
-                            self.merge_collection_member_type(&mut elem_ty, item_ty, value.span);
+                            self.check_collection_member_type(
+                                hinted_elem_ty.as_ref(),
+                                &mut elem_ty,
+                                item_ty,
+                                value.span,
+                            );
                         }
                     } else if let ResolvedType::Generic(name, item_types) = &spread_ty
                         && collection_type_id(name.as_str()) == Some(CollectionTypeId::Tuple)
                     {
                         for item_ty in item_types {
-                            self.merge_collection_member_type(&mut elem_ty, item_ty.clone(), value.span);
+                            self.check_collection_member_type(
+                                hinted_elem_ty.as_ref(),
+                                &mut elem_ty,
+                                item_ty.clone(),
+                                value.span,
+                            );
                         }
                     } else if let Some(value_ty) = Self::list_spread_element_type(&spread_ty) {
-                        self.merge_collection_member_type(&mut elem_ty, value_ty, value.span);
+                        self.check_collection_member_type(hinted_elem_ty.as_ref(), &mut elem_ty, value_ty, value.span);
                     } else {
                         self.errors.push(errors::type_mismatch(
                             "List[_] or tuple[...]",
@@ -165,8 +196,13 @@ impl TypeChecker {
                 DictEntry::Pair(key, value) => {
                     let observed_key_ty = self.check_expr_with_expected(key, hinted_key_ty.as_ref());
                     let observed_value_ty = self.check_expr_with_expected(value, hinted_value_ty.as_ref());
-                    self.merge_collection_member_type(&mut key_ty, observed_key_ty, key.span);
-                    self.merge_collection_member_type(&mut val_ty, observed_value_ty, value.span);
+                    self.check_collection_member_type(hinted_key_ty.as_ref(), &mut key_ty, observed_key_ty, key.span);
+                    self.check_collection_member_type(
+                        hinted_value_ty.as_ref(),
+                        &mut val_ty,
+                        observed_value_ty,
+                        value.span,
+                    );
                 }
                 DictEntry::Spread(value) => {
                     let expected_spread = match (hinted_key_ty.clone(), hinted_value_ty.clone()) {
@@ -179,8 +215,13 @@ impl TypeChecker {
                             .push(errors::type_mismatch("Dict[_, _]", &spread_ty.to_string(), value.span));
                         continue;
                     };
-                    self.merge_collection_member_type(&mut key_ty, observed_key_ty, value.span);
-                    self.merge_collection_member_type(&mut val_ty, observed_value_ty, value.span);
+                    self.check_collection_member_type(hinted_key_ty.as_ref(), &mut key_ty, observed_key_ty, value.span);
+                    self.check_collection_member_type(
+                        hinted_value_ty.as_ref(),
+                        &mut val_ty,
+                        observed_value_ty,
+                        value.span,
+                    );
                 }
             }
         }

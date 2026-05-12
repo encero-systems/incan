@@ -206,6 +206,7 @@ impl<'a> Parser<'a> {
         if self.errors.is_empty() {
             Ok(Program {
                 declarations,
+                source_path: self.module_path.clone(),
                 rust_module_path,
                 warnings: self.warnings,
             })

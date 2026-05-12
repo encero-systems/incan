@@ -1,0 +1,260 @@
+"""
+Pure telemetry data model shared by observability-facing stdlib modules.
+
+This module contains data-only types. Importing it must not configure exporters, start background tasks, or install a
+process telemetry provider.
+"""
+
+from std.serde.json import Serialize
+
+
+pub enum TelemetryValueKind(str):
+    """Structured telemetry value kind."""
+
+    NONE = "none"
+    STRING = "string"
+    BOOL = "bool"
+    INT = "int"
+    FLOAT = "float"
+    BYTES = "bytes"
+    ARRAY = "array"
+    MAP = "map"
+
+
+@derive(Clone)
+pub type Timestamp = newtype str with Serialize:
+    """
+    UTC timestamp used by telemetry records.
+
+    Values are encoded as strings so stdlib modules can carry RFC 3339-style timestamps without committing this data
+    layer to one clock implementation.
+    """
+
+
+@derive(Clone)
+pub model TelemetryValue with Serialize:
+    """
+    Structured telemetry value.
+
+    Exactly one value slot should be populated for ordinary values. `array_value` and `map_value` allow nested telemetry
+    values, so callers do not need to silently stringify structured attributes before they reach the telemetry boundary.
+    """
+
+    pub kind [alias="Type", description="Telemetry value kind: none, string, bool, int, float, bytes, array, or map."]: TelemetryValueKind
+    pub string_value [alias="StringValue", description="String value when kind is string."]: Option[str]
+    pub bool_value [alias="BoolValue", description="Boolean value when kind is bool."]: Option[bool]
+    pub int_value [alias="IntValue", description="Integer value when kind is int."]: Option[int]
+    pub float_value [alias="FloatValue", description="Floating-point value when kind is float."]: Option[float]
+    pub bytes_value [alias="BytesValue", description="Encoded byte value when kind is bytes."]: Option[str]
+    pub array_value [alias="ArrayValue", description="Nested array values when kind is array."]: list[TelemetryValue]
+    pub map_value [alias="MapValue", description="Nested map values when kind is map."]: Dict[str, TelemetryValue]
+
+    @classmethod
+    def none(cls) -> Self:
+        """Return a telemetry null value."""
+        return cls(
+            kind=TelemetryValueKind.NONE,
+            string_value=None,
+            bool_value=None,
+            int_value=None,
+            float_value=None,
+            bytes_value=None,
+            array_value=[],
+            map_value={},
+        )
+
+    @classmethod
+    def string(cls, value: str) -> Self:
+        """Return a telemetry string value."""
+        return cls(
+            kind=TelemetryValueKind.STRING,
+            string_value=Some(value),
+            bool_value=None,
+            int_value=None,
+            float_value=None,
+            bytes_value=None,
+            array_value=[],
+            map_value={},
+        )
+
+    @classmethod
+    def bool(cls, value: bool) -> Self:
+        """Return a telemetry boolean value."""
+        return cls(
+            kind=TelemetryValueKind.BOOL,
+            string_value=None,
+            bool_value=Some(value),
+            int_value=None,
+            float_value=None,
+            bytes_value=None,
+            array_value=[],
+            map_value={},
+        )
+
+    @classmethod
+    def int(cls, value: int) -> Self:
+        """Return a telemetry integer value."""
+        return cls(
+            kind=TelemetryValueKind.INT,
+            string_value=None,
+            bool_value=None,
+            int_value=Some(value),
+            float_value=None,
+            bytes_value=None,
+            array_value=[],
+            map_value={},
+        )
+
+    @classmethod
+    def float(cls, value: float) -> Self:
+        """Return a telemetry floating-point value."""
+        return cls(
+            kind=TelemetryValueKind.FLOAT,
+            string_value=None,
+            bool_value=None,
+            int_value=None,
+            float_value=Some(value),
+            bytes_value=None,
+            array_value=[],
+            map_value={},
+        )
+
+    @classmethod
+    def bytes(cls, value: str) -> Self:
+        """
+        Return a telemetry bytes value from an encoded string.
+
+        The caller owns the encoding convention.
+        """
+        return cls(
+            kind=TelemetryValueKind.BYTES,
+            string_value=None,
+            bool_value=None,
+            int_value=None,
+            float_value=None,
+            bytes_value=Some(value),
+            array_value=[],
+            map_value={},
+        )
+
+    @classmethod
+    def array(cls, values: list[TelemetryValue]) -> Self:
+        """Return a telemetry array value."""
+        return cls(
+            kind=TelemetryValueKind.ARRAY,
+            string_value=None,
+            bool_value=None,
+            int_value=None,
+            float_value=None,
+            bytes_value=None,
+            array_value=values,
+            map_value={},
+        )
+
+    @classmethod
+    def map(cls, values: Dict[str, TelemetryValue]) -> Self:
+        """Return a telemetry map value."""
+        return cls(
+            kind=TelemetryValueKind.MAP,
+            string_value=None,
+            bool_value=None,
+            int_value=None,
+            float_value=None,
+            bytes_value=None,
+            array_value=[],
+            map_value=values,
+        )
+
+    def display_text(self) -> str:
+        """
+        Return a concise text representation for human-oriented output.
+
+        String values render as their underlying text. Structured values render through their JSON representation so
+        callers do not lose shape when displaying nested telemetry data.
+        """
+        match self.string_value:
+            Some(text) => return text
+            None => return self.to_json()
+
+
+@derive(Clone)
+pub type Attributes = newtype Dict[str, TelemetryValue] with Serialize:
+    """
+    String-keyed telemetry attributes.
+
+    Attribute keys may use OpenTelemetry semantic-convention names such as `service.name`, `http.request.method`, or
+    `gen_ai.request.model`. Values remain structured through the telemetry data-model boundary.
+    """
+
+    def from_string_fields(fields: Dict[str, str]) -> Attributes:
+        """
+        Convert string fields into structured telemetry attributes.
+
+        Args:
+            fields: String-valued field map from ordinary logging call sites.
+        """
+        return Attributes({key: TelemetryValue.string(fields[key]) for key in fields.keys()})
+
+
+@derive(Clone)
+pub type TraceId = newtype str with Serialize:
+    """
+    Trace identifier for a correlated telemetry record.
+
+    Values use the OpenTelemetry/W3C trace-id spelling when a provider supplies active trace context.
+    """
+
+
+@derive(Clone)
+pub type SpanId = newtype str with Serialize:
+    """
+    Span identifier for a correlated telemetry record.
+
+    Values use the OpenTelemetry/W3C span-id spelling when a provider supplies active span context.
+    """
+
+
+@derive(Clone)
+pub type TraceFlags = newtype str with Serialize:
+    """
+    W3C trace flags for a correlated span context.
+
+    The value is kept as its wire spelling so propagation code can preserve flags without lossy conversion.
+    """
+
+pub model Resource with Serialize:
+    """
+    Entity that produced telemetry.
+
+    Resource attributes describe the process, service, deployment, or runtime that emitted a record. The minimal source
+    model keeps attributes structured while full resource detection belongs to `std.telemetry`.
+    """
+
+    pub attributes [alias="Attributes", description="Resource attributes such as service.name or service.version."]: Attributes = Attributes(
+        {},
+    )
+
+
+pub model InstrumentationScope with Serialize:
+    """
+    Logical scope that emitted telemetry.
+
+    For `std.logging`, the scope name is the logger name. Future telemetry providers can add scope version and schema
+    metadata without changing ordinary logging call sites.
+    """
+
+    pub name [alias="Name", description="Instrumentation scope name."]: str
+    pub version [alias="Version", description="Instrumentation scope version, when known."]: Option[str] = None
+    pub schema_url [alias="SchemaUrl", description="Schema URL for scope metadata, when known."]: Option[str] = None
+
+
+pub model SpanContext with Serialize:
+    """
+    Serializable span context identifiers.
+
+    This value type is inert until a configured telemetry provider supplies an active span context.
+    """
+
+    pub trace_id [alias="TraceId", description="Trace identifier."]: TraceId
+    pub span_id [alias="SpanId", description="Span identifier."]: SpanId
+    pub trace_flags [alias="TraceFlags", description="W3C trace flags."]: Option[TraceFlags] = None

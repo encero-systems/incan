@@ -133,6 +133,21 @@ model Reading:
 
 Method aliases are same-type only. They cannot point at a method on another type, a free function, or a field.
 
+## Enum Variant Aliases
+
+Inside an enum body, a variant alias gives an existing variant another name without creating a second runtime variant:
+
+```incan
+enum Level(str):
+    WARN = "WARN"
+    FATAL = "FATAL"
+    WARNING = alias WARN
+    CRITICAL = alias FATAL
+```
+
+Variant aliases are useful when an enum has a compact canonical wire spelling but also wants a longer source spelling.
+For value enums, the alias reuses the target variant's raw value and does not bypass duplicate raw-value validation.
+
 ## Overloads and signatures
 
 A method alias projects the target method surface. The alias keeps the target receiver, parameters, return type, async status, generic parameters, and overload set.
