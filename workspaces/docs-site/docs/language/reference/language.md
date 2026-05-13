@@ -116,6 +116,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.collections` | - | - | - |
 | `std.io` | - | - | - |
 | `std.encoding` | - | `std.encoding._shared`, `std.encoding.prelude`, `std.encoding.hex`, `std.encoding.base32`, `std.encoding.base64`, `std.encoding.base85`, `std.encoding.base58`, `std.encoding.bech32` | - |
+| `std.hash` | - | `std.hash._core`, `std.hash._streaming`, `std.hash.prelude` | - |
 | `std.tempfile` | - | - | - |
 | `std.rust` | - | - | - |
 | `std.builtins` | - | - | - |
