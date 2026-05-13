@@ -110,9 +110,13 @@ wasmtime-wasi = { version = "44.0.1", default-features = false, features = ["p1"
 [dev-dependencies]
 # Runtime crate used by std.io generated-project offline smoke tests.
 byteorder = "1"
-# Runtime crates used by std.uuid generated-project offline smoke tests.
-md5 = "0.8"
+# Runtime crates used by std.hash generated-project offline smoke tests.
+blake2 = "0.10"
+blake3 = "1"
+md5_010 = { package = "md-5", version = "0.10" }
 sha1 = "0.10"
+sha3 = "0.10"
+xxhash_rust = { package = "xxhash-rust", version = "0.8", features = ["xxh3", "xxh32", "xxh64"] }
 # Snapshot testing for codegen
 insta = { version = "1.45", features = ["glob"] }
 # Property-based testing

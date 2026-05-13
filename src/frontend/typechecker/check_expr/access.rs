@@ -2542,6 +2542,21 @@ impl TypeChecker {
             self.check_call_args(args);
             return ResolvedType::Unknown;
         }
+        if method == "to_vec"
+            && args.is_empty()
+            && matches!(
+                base_ty,
+                ResolvedType::Ref(ref inner) | ResolvedType::RefMut(ref inner)
+                    if matches!(
+                        inner.as_ref(),
+                        ResolvedType::RustPath(path)
+                            if Self::rust_ref_to_vec_returns_bytes(path)
+                                || Self::rust_to_vec_receiver_is_known_byte_output(base)
+                    )
+            )
+        {
+            return ResolvedType::Bytes;
+        }
 
         if let Some((module_name, module_path)) = self.imported_module_for_expr(base) {
             if let Some(info) = self.resolve_imported_module_function_member(&module_path, method) {
@@ -2581,6 +2596,9 @@ impl TypeChecker {
         }
 
         if let Some(path) = self.rust_canonical_path_for_receiver_type(&base_ty) {
+            if let Some(ret) = Self::known_rust_path_method_return(path.as_str(), method) {
+                return ret;
+            }
             let Some(ret) = self.resolve_rust_path_method_call(&path, method, args, &arg_types, base.span, span) else {
                 // Metadata backend disabled/unavailable: preserve permissive RFC 005 behavior.
                 return ResolvedType::Unknown;
@@ -2701,6 +2719,9 @@ impl TypeChecker {
                 M::IsNan | M::IsInfinite | M::IsFinite => return ResolvedType::Bool,
                 _ => return ResolvedType::Float,
             }
+        }
+        if matches!(base_ty, ResolvedType::Bytes) && method == "as_slice" && args.is_empty() {
+            return ResolvedType::Bytes;
         }
 
         if matches!(base_ty, ResolvedType::Str)
@@ -3161,5 +3182,31 @@ impl TypeChecker {
                 .push(errors::missing_method(&base_ty.to_string(), method, span));
         }
         ResolvedType::Unknown
+    }
+
+    /// Return known method result types for Rust imports when rust-inspect metadata is not specific enough.
+    fn known_rust_path_method_return(path: &str, method: &str) -> Option<ResolvedType> {
+        use incan_core::lang::types::numerics::NumericTypeId as N;
+
+        match (path, method) {
+            ("xxhash_rust::xxh32::Xxh32", "digest") => Some(ResolvedType::Numeric(N::U32)),
+            ("xxhash_rust::xxh64::Xxh64", "digest") => Some(ResolvedType::Numeric(N::U64)),
+            ("xxhash_rust::xxh3::Xxh3Default", "digest") => Some(ResolvedType::Numeric(N::U64)),
+            ("xxhash_rust::xxh3::Xxh3Default", "digest128") => Some(ResolvedType::Numeric(N::U128)),
+            _ => None,
+        }
+    }
+
+    /// Return whether a borrowed Rust value's `to_vec` method produces Incan `bytes`.
+    fn rust_ref_to_vec_returns_bytes(path: &str) -> bool {
+        path.starts_with("[u8") || (path.contains("GenericArray") && (path.contains("<u8") || path.contains("u8,")))
+    }
+
+    /// Return whether a `to_vec` receiver shape is known to produce digest bytes even when rust-inspect erases it.
+    fn rust_to_vec_receiver_is_known_byte_output(base: &Spanned<Expr>) -> bool {
+        match &base.node {
+            Expr::MethodCall(_, method, _, _) => matches!(method.as_str(), "as_bytes" | "digest" | "finalize_reset"),
+            _ => false,
+        }
     }
 }

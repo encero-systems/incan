@@ -104,7 +104,7 @@ fn std_uuid_namespace_stays_source_stdlib_only() {
     assert_eq!(ns.feature, None, "std.uuid must not activate a Cargo feature");
     assert_eq!(
         ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>(),
-        vec!["md5", "rand", "sha1"],
+        vec!["rand"],
         "std.uuid crate dependencies should stay limited to source-visible Rust imports"
     );
 
@@ -118,6 +118,10 @@ fn std_uuid_namespace_stays_source_stdlib_only() {
             dep.crate_name
         );
     }
+    assert!(
+        source.contains("from std.hash import md5 as hash_md5, sha1 as hash_sha1"),
+        "std.uuid v3/v5 hashing should dogfood std.hash instead of direct digest crates"
+    );
 
     assert!(
         ns.submodules.is_empty(),

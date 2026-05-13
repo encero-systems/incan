@@ -1102,6 +1102,15 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         if matches!(
             &receiver.kind,
             IrExprKind::Var {
+                ref_kind: VarRefKind::ExternalRustName,
+                ..
+            }
+        ) {
+            return true;
+        }
+        if matches!(
+            &receiver.kind,
+            IrExprKind::Var {
                 ref_kind: VarRefKind::ExternalName | VarRefKind::ExternalRustName | VarRefKind::TypeName,
                 ..
             }
@@ -1737,6 +1746,7 @@ impl<'a> IrEmitter<'a> {
         let mut static_str_const_exprs: HashMap<String, TypedExpr> = HashMap::new();
         for decl in &program.declarations {
             if let IrDeclKind::Struct(s) = &decl.kind {
+                self.register_struct_constructor_metadata(s);
                 if !s.derives.is_empty() {
                     self.struct_derives.insert(s.name.clone(), s.derives.clone());
                 }

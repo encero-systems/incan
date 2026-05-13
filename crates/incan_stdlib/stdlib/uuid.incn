@@ -4,12 +4,10 @@ UUID parsing, formatting, inspection, and generation helpers.
 `UUID` stores the 128-bit value directly and exposes the common text, byte, integer, namespace, version, and variant operations expected from a UUID module. Generators cover RFC 9562 versions 1, 3, 4, 5, 6, 7, and 8.
 """
 
-# TODO(RFC 065/std.hash): switch UUIDv3/v5 hashing to std.hash once std.hash lands with MD5 and SHA-1.
-from rust::md5 @ "0.8" import compute as md5_compute
 from rust::rand import Rng, thread_rng
-from rust::sha1 @ "0.10" import Digest, Sha1
 from rust::std::string import String as RustString
 from std.datetime.runtime import SystemTime
+from std.hash import md5 as hash_md5, sha1 as hash_sha1
 from std.io import BytesIO, Endian, IoError, _BytesIO
 from std.traits.error import Error
 
@@ -728,11 +726,11 @@ def _name_uuid_md5(namespace: UUID, name: Union[str, bytes]) -> Result[UUID, Uui
         A UUIDv3 value.
     """
     message = _namespace_name_bytes(namespace, name)?
-    digest = md5_compute(message)
+    digest = hash_md5.digest(message)
     writer = _uuid_writer("v3")
 
     for index in range(16):
-        writer.u8(digest.0[index])?
+        writer.u8(digest[index])?
 
     return _uuid_from_versioned_bytes(writer.raw(), 3, "v3")
 
@@ -749,9 +747,7 @@ def _name_uuid_sha1(namespace: UUID, name: Union[str, bytes]) -> Result[UUID, Uu
         A UUIDv5 value.
     """
     message = _namespace_name_bytes(namespace, name)?
-    mut hasher = Sha1.new()
-    hasher.update(message)
-    digest = hasher.finalize()
+    digest = hash_sha1.digest(message)
     writer = _uuid_writer("v5")
 
     for index in range(16):

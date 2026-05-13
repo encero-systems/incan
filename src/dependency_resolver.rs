@@ -346,6 +346,7 @@ fn merge_inline_imports(
     resolved
 }
 
+/// Convert one inline `rust::` import annotation into the dependency spec emitted to generated Cargo manifests.
 fn inline_spec_from_import(import: &InlineRustImport) -> DependencySpec {
     DependencySpec {
         crate_name: import.crate_name.clone(),
@@ -354,9 +355,18 @@ fn inline_spec_from_import(import: &InlineRustImport) -> DependencySpec {
         default_features: true,
         source: DependencySource::Registry,
         optional: false,
-        package: None,
+        package: rust_crate_package_alias(&import.crate_name).map(str::to_string),
     }
     .normalized()
+}
+
+/// Return the published Cargo package name when it differs from the Rust crate import path.
+fn rust_crate_package_alias(crate_name: &str) -> Option<&'static str> {
+    match crate_name {
+        "md5" => Some("md-5"),
+        "xxhash_rust" => Some("xxhash-rust"),
+        _ => None,
+    }
 }
 
 fn merge_inline_spec(existing: &mut InlineMergedSpec, next: &InlineRustImport) -> Result<(), String> {
@@ -632,6 +642,22 @@ mod tests {
             "expected 'macros' feature"
         );
         assert!(tokio.features.contains(&"rt".to_string()), "expected 'rt' feature");
+        Ok(())
+    }
+
+    #[test]
+    fn inline_rust_import_can_resolve_known_package_renames() -> TestResult {
+        let imports = vec![
+            inline("md5", Some("0.10"), &[], false),
+            inline("xxhash_rust", Some("0.8"), &["xxh3"], false),
+        ];
+
+        let resolved = resolve_ok(None, &imports, false, &default_cargo_features())?;
+        let md5 = dependency(&resolved.dependencies, "md5")?;
+        let xxhash = dependency(&resolved.dependencies, "xxhash_rust")?;
+
+        assert_eq!(md5.package.as_deref(), Some("md-5"));
+        assert_eq!(xxhash.package.as_deref(), Some("xxhash-rust"));
         Ok(())
     }
 

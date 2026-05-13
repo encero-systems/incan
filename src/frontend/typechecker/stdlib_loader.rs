@@ -148,6 +148,11 @@ impl StdlibAstCache {
         lookup_function_decl_inner(module_path, function_name, &mut HashSet::new())
     }
 
+    /// Look up a stdlib trait declaration, following prelude re-exports.
+    pub(crate) fn lookup_trait_decl(&mut self, module_path: &[String], trait_name: &str) -> Option<ast::TraitDecl> {
+        lookup_trait_decl_inner(module_path, trait_name, &mut HashSet::new())
+    }
+
     /// List public type signatures in a stdlib module.
     pub fn list_types(&mut self, module_path: &[String]) -> Vec<(String, TypeInfo)> {
         self.ensure_loaded(module_path);
@@ -299,7 +304,7 @@ fn load_stdlib_module_data_unguarded(
         function_meta: &mut function_meta,
         trait_meta: &mut trait_meta,
     };
-    merge_reexported_metadata(&program, &mut reexport_targets, loading);
+    merge_reexported_metadata(module_path, &program, &mut reexport_targets, loading);
 
     Some(StdlibModuleData {
         functions,
@@ -325,9 +330,10 @@ struct ReexportMetadataTargets<'a> {
 
 /// Scan a program's import declarations and merge metadata from referenced stdlib submodules.
 ///
-/// For each `from std.<ns>.<sub> import name1, name2` statement, loads the submodule and copies the
+/// For each `from std... import name1, name2` statement, loads the referenced module and copies the
 /// corresponding function/trait signatures and metadata into the parent module's collections.
 fn merge_reexported_metadata(
+    current_module_path: &[String],
     program: &ast::Program,
     targets: &mut ReexportMetadataTargets<'_>,
     loading: &mut HashSet<String>,
@@ -344,7 +350,16 @@ fn merge_reexported_metadata(
         if module.segments.first().is_none_or(|s| s != stdlib::STDLIB_ROOT) {
             continue;
         }
-        if module.segments.len() < 3 {
+        if module.segments.len() < 2 {
+            continue;
+        }
+        if module.segments == [stdlib::STDLIB_ROOT] {
+            continue;
+        }
+        if current_module_path == module.segments.as_slice() {
+            continue;
+        }
+        if !is_stdlib_metadata_reexport(current_module_path, program, import) {
             continue;
         }
 
@@ -407,6 +422,39 @@ fn merge_reexported_metadata(
             }
         }
     }
+}
+
+/// Return whether a stdlib import should contribute public metadata to the containing module.
+///
+/// Existing stdlib prelude files are facade modules, so their imports define public module surface. Ordinary stdlib
+/// implementation modules should only expose explicit `pub from ... import ...` re-exports; otherwise private
+/// dependencies such as `std.io` importing `std.traits.error.Error` leak as user-visible stdlib members.
+fn is_stdlib_metadata_reexport(
+    current_module_path: &[String],
+    program: &ast::Program,
+    import: &ast::ImportDecl,
+) -> bool {
+    import.visibility == ast::Visibility::Public
+        || stdlib_module_uses_prelude_stub(current_module_path)
+        || stdlib_module_is_import_facade(program)
+}
+
+/// Return whether the stdlib registry resolves this module to a `prelude.incn` facade.
+fn stdlib_module_uses_prelude_stub(module_path: &[String]) -> bool {
+    stdlib::stdlib_stub_path(module_path)
+        .is_some_and(|path| path.ends_with("/prelude.incn") || path == "stdlib/prelude.incn")
+}
+
+/// Return whether a stdlib module is only an import facade.
+///
+/// Some public modules, such as `std.datetime.civil`, are real `.incn` files rather than `prelude.incn` registry
+/// stubs, but they still exist solely to aggregate submodules. Treating these import-only files as facades preserves
+/// that public surface without letting ordinary implementation modules leak their private dependencies.
+fn stdlib_module_is_import_facade(program: &ast::Program) -> bool {
+    program
+        .declarations
+        .iter()
+        .all(|decl| matches!(decl.node, ast::Declaration::Docstring(_) | ast::Declaration::Import(_)))
 }
 
 /// Find the absolute path for a stdlib file given its relative path (e.g. `"stdlib/testing.incn"`).
@@ -499,7 +547,7 @@ fn lookup_type_method_decl_inner(
     }
     let result = load_stdlib_program(module_path).and_then(|program| {
         find_method_decl_in_program(&program, type_name, method_name)
-            .or_else(|| find_reexported_type_method_decl(&program, type_name, method_name, loading))
+            .or_else(|| find_reexported_type_method_decl(module_path, &program, type_name, method_name, loading))
     });
     loading.remove(&key);
     result
@@ -517,7 +565,25 @@ fn lookup_function_decl_inner(
     }
     let result = load_stdlib_program(module_path).and_then(|program| {
         find_function_decl_in_program(&program, function_name)
-            .or_else(|| find_reexported_function_decl(&program, function_name, loading))
+            .or_else(|| find_reexported_function_decl(module_path, &program, function_name, loading))
+    });
+    loading.remove(&key);
+    result
+}
+
+/// Find a trait declaration in a stdlib module, following prelude-style re-exports.
+fn lookup_trait_decl_inner(
+    module_path: &[String],
+    trait_name: &str,
+    loading: &mut HashSet<String>,
+) -> Option<ast::TraitDecl> {
+    let key = module_path.join(".");
+    if !loading.insert(key.clone()) {
+        return None;
+    }
+    let result = load_stdlib_program(module_path).and_then(|program| {
+        find_trait_decl_in_program(&program, trait_name)
+            .or_else(|| find_reexported_trait_decl(module_path, &program, trait_name, loading))
     });
     loading.remove(&key);
     result
@@ -536,6 +602,14 @@ fn load_stdlib_program(module_path: &[String]) -> Option<ast::Program> {
 fn find_function_decl_in_program(program: &ast::Program, function_name: &str) -> Option<ast::FunctionDecl> {
     program.declarations.iter().find_map(|decl| match &decl.node {
         ast::Declaration::Function(func) if func.name == function_name => Some(func.clone()),
+        _ => None,
+    })
+}
+
+/// Find a top-level trait declaration directly in a parsed stdlib program.
+fn find_trait_decl_in_program(program: &ast::Program, trait_name: &str) -> Option<ast::TraitDecl> {
+    program.declarations.iter().find_map(|decl| match &decl.node {
+        ast::Declaration::Trait(trait_decl) if trait_decl.name == trait_name => Some(trait_decl.clone()),
         _ => None,
     })
 }
@@ -565,6 +639,7 @@ fn find_method_decl(methods: &[ast::Spanned<ast::MethodDecl>], method_name: &str
 
 /// Follow stdlib `from std.x.y import function` re-exports while searching for the owning function declaration.
 fn find_reexported_function_decl(
+    current_module_path: &[String],
     program: &ast::Program,
     function_name: &str,
     loading: &mut HashSet<String>,
@@ -579,6 +654,9 @@ fn find_reexported_function_decl(
         if module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
             return None;
         }
+        if !is_stdlib_metadata_reexport(current_module_path, program, import) {
+            return None;
+        }
         items.iter().find_map(|item| {
             let effective_name = item.alias.as_ref().unwrap_or(&item.name);
             if effective_name != function_name {
@@ -589,8 +667,39 @@ fn find_reexported_function_decl(
     })
 }
 
+/// Follow stdlib `from std.x.y import Trait` re-exports while searching for the owning trait declaration.
+fn find_reexported_trait_decl(
+    current_module_path: &[String],
+    program: &ast::Program,
+    trait_name: &str,
+    loading: &mut HashSet<String>,
+) -> Option<ast::TraitDecl> {
+    program.declarations.iter().find_map(|decl| {
+        let ast::Declaration::Import(import) = &decl.node else {
+            return None;
+        };
+        let ast::ImportKind::From { module, items } = &import.kind else {
+            return None;
+        };
+        if module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        if !is_stdlib_metadata_reexport(current_module_path, program, import) {
+            return None;
+        }
+        items.iter().find_map(|item| {
+            let effective_name = item.alias.as_ref().unwrap_or(&item.name);
+            if effective_name != trait_name {
+                return None;
+            }
+            lookup_trait_decl_inner(&module.segments, &item.name, loading)
+        })
+    })
+}
+
 /// Follow stdlib `from std.x.y import Type` re-exports while searching for the owning type declaration.
 fn find_reexported_type_method_decl(
+    current_module_path: &[String],
     program: &ast::Program,
     type_name: &str,
     method_name: &str,
@@ -604,6 +713,9 @@ fn find_reexported_type_method_decl(
             return None;
         };
         if module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        if !is_stdlib_metadata_reexport(current_module_path, program, import) {
             return None;
         }
         items.iter().find_map(|item| {

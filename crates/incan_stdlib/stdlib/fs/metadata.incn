@@ -1,7 +1,8 @@
 from rust::std::fs import Metadata as RustMetadata, metadata, symlink_metadata
 from rust::std::path import Path as RustPath
-from rust::std::time import SystemTime, UNIX_EPOCH
-from std.fs.path import Path, IoError, _io_error
+from rust::std::time import Duration, SystemTime as RustSystemTime, UNIX_EPOCH
+from std.fs.path import Path, _io_error
+from std.io import IoError
 
 
 @derive(Clone)
@@ -217,7 +218,7 @@ def _path_stat_metadata(path: Path, follow_symlinks: bool) -> Result[RustMetadat
         Err(err) => return Err(_io_error(path, err))
 
 
-def _system_time_to_unix(path: Path, value: SystemTime) -> Result[int, IoError]:
+def _system_time_to_unix(path: Path, value: RustSystemTime) -> Result[int, IoError]:
     """
     Convert a host timestamp to Unix seconds.
 

@@ -797,6 +797,14 @@ impl TypeChecker {
         let trimmed = rust_ty.trim();
         let no_lifetimes = trimmed.replace("'static ", "").replace("'_", "").replace(' ', "");
         let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        if let Some(Symbol {
+            kind: SymbolKind::RustItem(info),
+            ..
+        }) = self.lookup_symbol(normalized.as_str())
+            && !matches!(info.binding, RustImportBindingKind::CrateRoot)
+        {
+            return ResolvedType::RustPath(info.path.clone());
+        }
         match normalized.as_str() {
             "&str" => return ResolvedType::Str,
             "&[u8]" => return ResolvedType::Bytes,

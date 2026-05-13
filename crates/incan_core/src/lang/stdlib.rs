@@ -310,20 +310,10 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
         name: "uuid",
         feature: None,
-        extra_crate_deps: &[
-            StdlibExtraCrateDep {
-                crate_name: "md5",
-                source: StdlibExtraCrateSource::Version("0.8"),
-            },
-            StdlibExtraCrateDep {
-                crate_name: "rand",
-                source: StdlibExtraCrateSource::Version("0.8"),
-            },
-            StdlibExtraCrateDep {
-                crate_name: "sha1",
-                source: StdlibExtraCrateSource::Version("0.10"),
-            },
-        ],
+        extra_crate_deps: &[StdlibExtraCrateDep {
+            crate_name: "rand",
+            source: StdlibExtraCrateSource::Version("0.8"),
+        }],
         submodules: &[],
         typechecker_only: false,
     },
@@ -351,6 +341,13 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         submodules: &[
             "_shared", "prelude", "hex", "base32", "base64", "base85", "base58", "bech32",
         ],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: "hash",
+        feature: None,
+        extra_crate_deps: &[],
+        submodules: &["_core", "_streaming", "prelude"],
         typechecker_only: false,
     },
     StdlibNamespace {
@@ -548,6 +545,7 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base85"])));
         assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base58"])));
         assert!(is_known_stdlib_module(&segs(&["std", "encoding", "bech32"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "hash"])));
         assert!(is_known_stdlib_module(&segs(&["std", "tempfile"])));
         assert!(is_known_stdlib_module(&segs(&["std", "collections"])));
         assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
@@ -631,6 +629,10 @@ mod tests {
             Some("stdlib/encoding/base64.incn".to_string())
         );
         assert_eq!(
+            stdlib_stub_path(&segs(&["std", "hash"])),
+            Some("stdlib/hash/prelude.incn".to_string())
+        );
+        assert_eq!(
             stdlib_stub_path(&segs(&["std", "tempfile"])),
             Some("stdlib/tempfile.incn".to_string())
         );
@@ -660,6 +662,7 @@ mod tests {
         assert!(hint.contains(&"std.graph".to_string()));
         assert!(hint.contains(&"std.io".to_string()));
         assert!(hint.contains(&"std.uuid".to_string()));
+        assert!(hint.contains(&"std.hash".to_string()));
         assert!(hint.contains(&"std.tempfile".to_string()));
         assert!(hint.contains(&"std.rust".to_string()));
         assert!(hint.contains(&"std.web.app".to_string()));
@@ -730,6 +733,7 @@ mod tests {
         let math_ns = find_namespace("math");
         let graph_ns = find_namespace("graph");
         let uuid_ns = find_namespace("uuid");
+        let hash_ns = find_namespace("hash");
         let datetime_ns = find_namespace("datetime");
         let collections_ns = find_namespace("collections");
 
@@ -751,7 +755,7 @@ mod tests {
         assert_eq!(uuid_ns.map(|ns| ns.feature), Some(None));
         assert_eq!(
             uuid_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
-            Some(vec!["md5", "rand", "sha1"])
+            Some(vec!["rand"])
         );
         assert_eq!(uuid_ns.map(|ns| ns.submodules.is_empty()), Some(true));
         assert_eq!(uuid_ns.map(|ns| ns.typechecker_only), Some(false));
@@ -765,6 +769,12 @@ mod tests {
                 .map(|dep| dep.crate_name),
             Some("byteorder")
         );
+        assert_eq!(hash_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(hash_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
+        assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
+        assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_core")), Some(true));
+        assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_streaming")), Some(true));
+        assert_eq!(hash_ns.map(|ns| ns.typechecker_only), Some(false));
         assert_eq!(datetime_ns.map(|ns| ns.feature), Some(None));
         assert_eq!(datetime_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
         assert_eq!(datetime_ns.map(|ns| ns.submodules.contains(&"civil.naive")), Some(true));

@@ -1093,7 +1093,7 @@ impl TypeChecker {
                 .iter()
                 .map(|f| self.resolve_type_checked(f))
                 .collect();
-            self.symbols.define(Symbol {
+            self.symbols.define_preserving_existing_binding(Symbol {
                 name: variant.node.name.clone(),
                 kind: SymbolKind::Variant(VariantInfo {
                     enum_name: en.name.clone(),
@@ -1115,7 +1115,7 @@ impl TypeChecker {
                     .iter()
                     .map(|f| self.resolve_type_checked(f))
                     .collect();
-                self.symbols.define(Symbol {
+                self.symbols.define_preserving_existing_binding(Symbol {
                     name: alias.node.name.clone(),
                     kind: SymbolKind::Variant(VariantInfo {
                         enum_name: en.name.clone(),

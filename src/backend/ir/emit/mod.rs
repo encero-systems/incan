@@ -33,7 +33,8 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::decl::{IrDeclKind, VariantFields, Visibility};
+use super::decl::{IrDeclKind, IrStruct, VariantFields, Visibility};
+use super::expr::TypedExpr;
 use super::types::IrType;
 use super::{FunctionRegistry, FunctionSignature, IrProgram};
 use incan_core::lang::rust_keywords;
@@ -65,6 +66,49 @@ pub(super) struct GeneratedUseAnalysis {
     pub(super) result_observer_callable_types: HashSet<String>,
     /// Top-level function values adapted to a borrowed function-pointer parameter.
     pub(super) borrowed_function_adapters: HashSet<(String, Vec<usize>)>,
+}
+
+#[derive(Clone)]
+pub(super) struct StructConstructorMetadata {
+    fields: Vec<String>,
+    field_types: HashMap<String, IrType>,
+    field_defaults: HashMap<String, super::IrExpr>,
+}
+
+impl StructConstructorMetadata {
+    /// Build constructor-emission metadata from one lowered source-defined struct.
+    fn from_struct(s: &IrStruct) -> Self {
+        Self {
+            fields: s.fields.iter().map(|field| field.name.clone()).collect(),
+            field_types: s
+                .fields
+                .iter()
+                .map(|field| (field.name.clone(), field.ty.clone()))
+                .collect(),
+            field_defaults: s
+                .fields
+                .iter()
+                .filter_map(|field| {
+                    field
+                        .default
+                        .as_ref()
+                        .map(|default| (field.name.clone(), default.clone()))
+                })
+                .collect(),
+        }
+    }
+
+    /// Return whether every provided named field exists on this constructor variant.
+    fn supports_named_fields(&self, provided: &HashSet<&str>) -> bool {
+        provided.iter().all(|field| self.field_types.contains_key(*field))
+    }
+
+    /// Return whether provided fields plus declared defaults can construct this variant.
+    fn constructible_from(&self, provided: &HashSet<&str>) -> bool {
+        self.fields
+            .iter()
+            .all(|field| provided.contains(field.as_str()) || self.field_defaults.contains_key(field))
+    }
 }
 
 /// Emit Rust source code from typed IR.
@@ -113,6 +157,8 @@ pub struct IrEmitter<'a> {
     struct_field_descriptions: std::collections::HashMap<(String, String), Option<String>>,
     /// Struct field default expressions: (StructName, FieldName) -> default expr
     struct_field_defaults: std::collections::HashMap<(String, String), super::IrExpr>,
+    /// Constructor metadata variants for source-defined structs that share a simple name across modules.
+    struct_constructor_metadata: HashMap<String, Vec<StructConstructorMetadata>>,
     /// Incan `rusttype` aliases that should use compiler-owned call conversion rules at the surface boundary.
     rusttype_alias_names: HashSet<String>,
     /// Method signature lookup for Incan-owned nominal receivers, including imported modules.
@@ -214,6 +260,7 @@ impl<'a> IrEmitter<'a> {
             struct_field_aliases: std::collections::HashMap::new(),
             struct_field_descriptions: std::collections::HashMap::new(),
             struct_field_defaults: std::collections::HashMap::new(),
+            struct_constructor_metadata: HashMap::new(),
             rusttype_alias_names: HashSet::new(),
             method_signatures: HashMap::new(),
             method_signature_type_params: HashMap::new(),
@@ -490,9 +537,27 @@ impl<'a> IrEmitter<'a> {
     /// Multi-file emission creates one Rust module at a time, but constructor/default emission still needs the
     /// declared field list and default expressions for imported Incan types used by the current module.
     pub(crate) fn seed_nominal_metadata_from_program(&mut self, program: &IrProgram) {
+        self.seed_nominal_metadata_from_program_inner(program, false);
+    }
+
+    /// Seed dependency metadata while avoiding ambiguous short names.
+    ///
+    /// Dependency modules may export the same model name from different source modules, such as `std.fs.IoError` and
+    /// `std.io.IoError`. The IR currently stores constructor names as short names, so retaining field metadata for
+    /// ambiguous imported types can make one module validate a constructor against another module's fields.
+    pub(crate) fn seed_dependency_nominal_metadata_from_program(&mut self, program: &IrProgram) {
+        self.seed_nominal_metadata_from_program_inner(program, true);
+    }
+
+    /// Seed nominal metadata, optionally skipping ambiguous dependency names.
+    fn seed_nominal_metadata_from_program_inner(&mut self, program: &IrProgram, skip_ambiguous: bool) {
         for decl in &program.declarations {
             match &decl.kind {
                 IrDeclKind::Struct(s) => {
+                    if skip_ambiguous && self.ambiguous_type_names.contains(&s.name) {
+                        continue;
+                    }
+                    self.register_struct_constructor_metadata(s);
                     if !s.derives.is_empty() {
                         self.struct_derives.insert(s.name.clone(), s.derives.clone());
                     }
@@ -512,6 +577,9 @@ impl<'a> IrEmitter<'a> {
                     }
                 }
                 IrDeclKind::Enum(e) => {
+                    if skip_ambiguous && self.ambiguous_type_names.contains(&e.name) {
+                        continue;
+                    }
                     for v in &e.variants {
                         self.enum_variant_fields
                             .insert((e.name.clone(), v.name.clone()), v.fields.clone());
@@ -526,6 +594,9 @@ impl<'a> IrEmitter<'a> {
                     is_rusttype: true,
                     ..
                 } => {
+                    if skip_ambiguous && self.ambiguous_type_names.contains(name) {
+                        continue;
+                    }
                     self.rusttype_alias_names.insert(name.clone());
                 }
                 IrDeclKind::Impl(i) => {
@@ -546,6 +617,55 @@ impl<'a> IrEmitter<'a> {
                 _ => {}
             }
         }
+    }
+
+    /// Register one struct's constructor metadata unless an equivalent field layout is already known.
+    fn register_struct_constructor_metadata(&mut self, s: &IrStruct) {
+        let metadata = StructConstructorMetadata::from_struct(s);
+        let variants = self.struct_constructor_metadata.entry(s.name.clone()).or_default();
+        if !variants.iter().any(|existing| existing.fields == metadata.fields) {
+            variants.push(metadata);
+        }
+    }
+
+    /// Select the constructor metadata variant matching the named fields in one constructor expression.
+    pub(super) fn struct_constructor_metadata_for_fields(
+        &self,
+        name: &str,
+        fields: &[(String, TypedExpr)],
+    ) -> Option<&StructConstructorMetadata> {
+        let variants = self.struct_constructor_metadata.get(name)?;
+        if variants.len() == 1 {
+            return variants.first();
+        }
+
+        let provided = fields
+            .iter()
+            .filter_map(|(field, _)| (!field.is_empty()).then_some(field.as_str()))
+            .collect::<HashSet<_>>();
+        let candidates = variants
+            .iter()
+            .filter(|metadata| metadata.supports_named_fields(&provided))
+            .collect::<Vec<_>>();
+        if candidates.len() == 1 {
+            return candidates.first().copied();
+        }
+
+        let constructible = candidates
+            .iter()
+            .copied()
+            .filter(|metadata| metadata.constructible_from(&provided))
+            .collect::<Vec<_>>();
+        if constructible.len() == 1 {
+            return constructible.first().copied();
+        }
+
+        if let Some(current_fields) = self.struct_field_names.get(name)
+            && let Some(metadata) = variants.iter().find(|metadata| &metadata.fields == current_fields)
+        {
+            return Some(metadata);
+        }
+        candidates.first().copied().or_else(|| variants.first())
     }
 
     /// Return an Incan-owned method signature for a receiver type when typechecker call-site metadata is unavailable.

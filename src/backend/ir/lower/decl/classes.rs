@@ -40,8 +40,13 @@ impl AstLowering {
         let debug = derives::as_str(DeriveId::Debug);
         let clone = derives::as_str(DeriveId::Clone);
 
-        // Classes always get Debug and Clone by default
-        if !derives.iter().any(|d| d == debug) {
+        // Classes normally get Debug by default. Direct Rust state can be opaque to Debug, so private adapter classes
+        // with Rust-import fields opt out of the automatic derive unless the user requested it explicitly.
+        let has_opaque_rust_field = c.name.starts_with('_')
+            && c.fields
+                .iter()
+                .any(|f| self.field_uses_direct_rust_import(&f.node.ty.node));
+        if !has_opaque_rust_field && !derives.iter().any(|d| d == debug) {
             derives.push(debug.to_string());
         }
         if !derives.iter().any(|d| d == clone) {
@@ -65,6 +70,31 @@ impl AstLowering {
             derive_rust_modules,
             lint_allows: self.extract_rust_lint_allows(&c.decorators),
         })
+    }
+
+    /// Return whether a class field annotation names a direct Rust import.
+    fn field_uses_direct_rust_import(&self, ty: &ast::Type) -> bool {
+        match ty {
+            ast::Type::Simple(name) | ast::Type::ConstrainedPrimitive(name, _) => {
+                self.rust_import_aliases.contains_key(name)
+            }
+            ast::Type::Qualified(segments) => segments
+                .first()
+                .is_some_and(|name| self.rust_import_aliases.contains_key(name)),
+            ast::Type::Generic(base, args) => {
+                self.rust_import_aliases.contains_key(base)
+                    || args.iter().any(|arg| self.field_uses_direct_rust_import(&arg.node))
+            }
+            ast::Type::Function(params, ret) => {
+                params
+                    .iter()
+                    .any(|param| self.field_uses_direct_rust_import(&param.node))
+                    || self.field_uses_direct_rust_import(&ret.node)
+            }
+            ast::Type::Ref(inner) | ast::Type::RefMut(inner) => self.field_uses_direct_rust_import(&inner.node),
+            ast::Type::Tuple(items) => items.iter().any(|item| self.field_uses_direct_rust_import(&item.node)),
+            ast::Type::Unit | ast::Type::SelfType | ast::Type::IntLiteral(_) | ast::Type::Infer => false,
+        }
     }
 
     /// Recursively collect all inherited fields from parent classes.

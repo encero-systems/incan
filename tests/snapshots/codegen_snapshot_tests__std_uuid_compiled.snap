@@ -13,12 +13,12 @@ pub enum __IncanUniond83007a429c21b6f {
     V0(String),
     V1(Vec<u8>),
 }
-use md5::compute as md5_compute;
-use rand::Rng;
-use rand::thread_rng;
-use sha1::Sha1;
-use std::string::String as RustString;
+use ::rand::Rng;
+use ::rand::thread_rng;
+use ::std::string::String as RustString;
 pub use crate::__incan_std::datetime::runtime::SystemTime;
+pub use crate::__incan_std::hash::md5 as hash_md5;
+pub use crate::__incan_std::hash::sha1 as hash_sha1;
 pub use crate::__incan_std::io::BytesIO;
 pub use crate::__incan_std::io::Endian;
 pub use crate::__incan_std::io::IoError;
@@ -155,6 +155,10 @@ impl Error for UuidError {
     fn message(&self) -> String {
         "\n        Return the human-readable error detail.\n\n        Returns:\n            The detail text attached to the UUID failure.\n        ";
         return self.detail.clone();
+    }
+    fn source(&self) -> Option<String> {
+        "Optional: Return the underlying cause of this error";
+        return None::<_>;
     }
 }
 #[derive(Debug, Clone, Copy, Eq, Ord, Hash, PartialEq, PartialOrd)]
@@ -647,10 +651,10 @@ fn _name_uuid_md5(
 ) -> Result<UUID, UuidError> {
     "\n    Generate a version 3 namespace UUID using MD5.\n\n    Args:\n        namespace: Namespace UUID whose bytes prefix the name.\n        name: Text or raw bytes to hash.\n\n    Returns:\n        A UUIDv3 value.\n    ";
     let message = _namespace_name_bytes(namespace, name)?;
-    let digest = md5_compute(message);
+    let digest = hash_md5::digest(message);
     let writer = _uuid_writer("v3".to_string());
     for index in 0_i64..(16 as i64) {
-        writer.u8(digest.0[(index) as usize].clone())?;
+        writer.u8(digest[(index) as usize])?;
     }
     return _uuid_from_versioned_bytes(writer.raw(), 3, "v3".to_string());
 }
@@ -660,12 +664,10 @@ fn _name_uuid_sha1(
 ) -> Result<UUID, UuidError> {
     "\n    Generate a version 5 namespace UUID using SHA-1.\n\n    Args:\n        namespace: Namespace UUID whose bytes prefix the name.\n        name: Text or raw bytes to hash.\n\n    Returns:\n        A UUIDv5 value.\n    ";
     let message = _namespace_name_bytes(namespace, name)?;
-    let mut hasher = Sha1::new();
-    hasher.update(message);
-    let digest = hasher.finalize();
+    let digest = hash_sha1::digest(message);
     let writer = _uuid_writer("v5".to_string());
     for index in 0_i64..(16 as i64) {
-        writer.u8(digest[(index) as usize].clone())?;
+        writer.u8(digest[(index) as usize])?;
     }
     return _uuid_from_versioned_bytes(writer.raw(), 5, "v5".to_string());
 }

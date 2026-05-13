@@ -167,6 +167,7 @@ nav:
               - std.encoding: language/reference/stdlib/encoding.md
               - std.fs: language/reference/stdlib/fs.md
               - std.graph: language/reference/stdlib/graph.md
+              - std.hash: language/reference/stdlib/hash.md
               - std.io: language/reference/stdlib/io.md
               - std.logging: language/reference/stdlib/logging.md
               - std.uuid: language/reference/stdlib/uuid.md

@@ -27,10 +27,10 @@ from rust::std::path import Path as RustPath
 from rust::std::rc import Rc
 from rust::std::time import SystemTime
 from rust::rustix::fs @ "1.1" with ["fs"] import statvfs
-from std.traits.error import Error
 from std.fs.file import File, _decode_text, _encode_text, _open_file, _validate_open_options
 from std.fs.glob import matches
 from std.fs.metadata import DirEntry, PathStat, DiskUsage
+from std.io import IoError
 
 
 @derive(Clone)
@@ -577,7 +577,7 @@ pub type Path = newtype str:
             `Ok(None)` after recursive removal, or `Err(IoError)` if the path is a symlink or removal fails.
         """
         if self.is_symlink():
-            return Err(IoError(path=self, kind="invalid_input", detail="remove_tree refuses to follow symbolic links"))
+            return Err(_fs_error(self, "invalid_input", "remove_tree refuses to follow symbolic links"))
         match remove_dir_all(RustPath.new(self.0)):
             Ok(_) => return Ok(None)
             Err(err) => return Err(_io_error(self, err))
@@ -667,7 +667,7 @@ pub type Path = newtype str:
         if self.exists():
             # Match pathlib-style `touch`: existing paths are either rejected or timestamped in place.
             if not exist_ok:
-                return Err(IoError(path=self, kind="already_exists", detail="path already exists"))
+                return Err(_fs_error(self, "already_exists", "path already exists"))
             now = SystemTime.now()
             self._set_times(now, now)?
             return Ok(None)
@@ -848,46 +848,6 @@ pub type Path = newtype str:
             Err(err) => return Err(_io_error(Path("~"), err))
 
 
-@derive(Clone)
-pub model IoError with Error:
-    """
-    Filesystem failure with normalized kind and path context.
-
-    `kind` is intended for branching on common classes such as `not_found`, `permission_denied`, `already_exists`,
-    `invalid_input`, and `unexpected_eof`. `detail` preserves host-provided text when available.
-
-    Example:
-
-    ```incan
-    match Path("missing.txt").read_text(encoding="utf-8", errors="strict"):
-        Ok(text) => println(text)
-        Err(err) => println(f"{err.kind}: {err.message()}")
-    ```
-    """
-
-    pub path: Path
-    pub kind: str
-    pub detail: str
-
-    def message(self) -> str:
-        """
-        Return the human-readable error detail.
-
-        Returns:
-            The host error text preserved in `detail`.
-        """
-        return self.detail
-
-    def source(self) -> Option[str]:
-        """
-        Return the optional source error.
-
-        Returns:
-            `None`; `IoError` preserves host context in `detail` instead of chaining another error.
-        """
-        return None
-
-
 pub def _as_path(value: Union[Path, str]) -> Path:
     """
     Normalize path-like std.fs inputs to `Path`.
@@ -1037,9 +997,18 @@ pub def _io_error(path: Path, message: str) -> IoError:
         `IoError` with a stable `kind` where common host messages can be recognized.
     """
     if message.contains("No such file") or message.contains("not found"):
-        return IoError(path=path, kind="not_found", detail=message)
+        return _fs_error(path, "not_found", message)
     elif message.contains("Permission"):
-        return IoError(path=path, kind="permission_denied", detail=message)
+        return _fs_error(path, "permission_denied", message)
     elif message.contains("exists"):
-        return IoError(path=path, kind="already_exists", detail=message)
-    return IoError(path=path, kind="other", detail=message)
+        return _fs_error(path, "already_exists", message)
+    return _fs_error(path, "other", message)
+
+
+pub def _fs_error(path: Path, kind: str, detail: str) -> IoError:
+    """
+    Create a filesystem-flavored `std.io.IoError`.
+
+    The concrete error type lives in `std.io` so file handles can satisfy `BinaryReader` without adapter code.
+    """
+    return IoError(kind=kind, detail=detail, operation="fs", position=-1, path=Some(path.0))

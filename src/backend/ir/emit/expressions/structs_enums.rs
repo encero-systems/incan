@@ -75,20 +75,12 @@ impl<'a> IrEmitter<'a> {
                 }
             }
 
-            let field_names = if self.ambiguous_type_names.contains(name) {
-                None
-            } else {
-                self.struct_field_names.get(name)
-            };
-
-            let Some(field_names) = field_names else {
-                // Unknown or ambiguous struct to the emitter; fall back to emitting only provided fields. Ambiguous
-                // dependency names can refer to multiple nominal types with different fields, so using short-name
-                // metadata here is worse than using the fields already validated by the typechecker.
+            let Some(metadata) = self.struct_constructor_metadata_for_fields(name, fields) else {
+                // Unknown or ambiguous struct to the emitter; fall back to emitting only provided fields.
                 tracing::debug!(
                     struct_name = %name,
                     ambiguous = self.ambiguous_type_names.contains(name),
-                    "struct field metadata unavailable, emitting provided fields only"
+                    "struct constructor metadata unavailable, emitting provided fields only"
                 );
                 if fields.is_empty() {
                     return Ok(quote! { #n {} });
@@ -97,13 +89,13 @@ impl<'a> IrEmitter<'a> {
                     .iter()
                     .map(|(fname, fval)| {
                         let fn_ident = Self::rust_ident(fname);
-                        let target_type = self.struct_field_types.get(&(name.to_string(), fname.clone()));
-                        let fv = self.emit_expr_for_use(fval, ValueUseSite::StructField { target_ty: target_type })?;
+                        let fv = self.emit_expr_for_use(fval, ValueUseSite::StructField { target_ty: None })?;
                         Ok(quote! { #fn_ident: #fv })
                     })
                     .collect::<Result<_, EmitError>>()?;
                 return Ok(quote! { #n { #(#field_tokens),* } });
             };
+            let field_names = &metadata.fields;
 
             if field_names.is_empty() {
                 return Ok(quote! { #n {} });
@@ -112,11 +104,11 @@ impl<'a> IrEmitter<'a> {
             let mut out_fields: Vec<TokenStream> = Vec::new();
             for fname in field_names {
                 let fn_ident = Self::rust_ident(fname);
-                let target_type = self.struct_field_types.get(&(name.to_string(), fname.clone()));
+                let target_type = metadata.field_types.get(fname);
                 if let Some(fval) = provided.get(fname.as_str()) {
                     let fv = self.emit_expr_for_use(fval, ValueUseSite::StructField { target_ty: target_type })?;
                     out_fields.push(quote! { #fn_ident: #fv });
-                } else if let Some(default_expr) = self.struct_field_defaults.get(&(name.to_string(), fname.clone())) {
+                } else if let Some(default_expr) = metadata.field_defaults.get(fname) {
                     let fv =
                         self.emit_expr_for_use(default_expr, ValueUseSite::StructField { target_ty: target_type })?;
                     out_fields.push(quote! { #fn_ident: #fv });

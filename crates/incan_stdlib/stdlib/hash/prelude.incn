@@ -1,0 +1,37 @@
+"""
+Public `std.hash` surface.
+
+`std.hash` exposes algorithm namespaces for value hashing, plus path/file and `BinaryReader` helpers for incremental
+input. The implementation is split across focused source modules; this prelude keeps the import surface stable.
+"""
+
+from std.hash._core import (
+    DEFAULT_CHUNK_SIZE,
+    HashError,
+    ByteDigestHasher,
+    ShakeDigestHasher,
+    Hash32DigestHasher,
+    Hash64DigestHasher,
+    Hash128DigestHasher,
+    sha224,
+    sha256,
+    sha384,
+    sha512,
+    sha3_224,
+    sha3_256,
+    sha3_384,
+    sha3_512,
+    shake128,
+    shake256,
+    blake2b,
+    blake2s,
+    blake3,
+    md5,
+    sha1,
+    xxh32,
+    xxh64,
+    xxh3_64,
+    xxh3_128,
+)
+from std.hash._streaming import file_digest, file_hash_u32, file_hash_u64, file_hash_u128
+from std.hash._streaming import reader_digest, reader_hash_u32, reader_hash_u64, reader_hash_u128

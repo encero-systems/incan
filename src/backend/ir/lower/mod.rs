@@ -890,6 +890,7 @@ impl AstLowering {
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
+        self.seed_imported_stdlib_trait_decls(program);
         self.alias_imported_dependency_trait_decls();
         self.symbol_aliases = program
             .declarations
@@ -1663,6 +1664,46 @@ impl AstLowering {
                 self.trait_decls
                     .entry(format!("{alias}.{trait_name}"))
                     .or_insert_with(|| decl.clone());
+            }
+        }
+    }
+
+    /// Seed trait declarations imported from stdlib modules.
+    ///
+    /// Lowering needs the source trait body to decide which methods belong in generated `impl Trait for Type` blocks.
+    /// The typechecker already validates the import; this pass follows the same stdlib namespace graph so imported
+    /// traits such as `std.io.BinaryReader` lower without hardcoded method lists.
+    fn seed_imported_stdlib_trait_decls(&mut self, program: &ast::Program) {
+        for decl in &program.declarations {
+            let ast::Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            let ast::ImportKind::From { module, items } = &import.kind else {
+                continue;
+            };
+            if module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
+                continue;
+            }
+
+            for item in items {
+                let Some(mut trait_decl) = self.stdlib_cache.lookup_trait_decl(&module.segments, &item.name) else {
+                    continue;
+                };
+                let local_name = item.alias.as_ref().unwrap_or(&item.name).clone();
+                trait_decl.name = local_name.clone();
+                trait_decl.methods = Self::methods_with_partials(
+                    &trait_decl.methods,
+                    &trait_decl.method_aliases,
+                    &trait_decl.method_partials,
+                    decl.span,
+                );
+                let method_names = trait_decl
+                    .methods
+                    .iter()
+                    .map(|method| method.node.name.clone())
+                    .collect();
+                self.trait_methods.entry(local_name.clone()).or_insert(method_names);
+                self.trait_decls.entry(local_name).or_insert(trait_decl);
             }
         }
     }

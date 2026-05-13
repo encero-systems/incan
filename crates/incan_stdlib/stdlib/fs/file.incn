@@ -5,10 +5,11 @@ from rust::std::path import Path as RustPath
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
 from rust::encoding_rs @ "0.8" import Encoding
-from std.fs.path import Path, IoError, _as_path, _io_error
+from std.fs.path import Path, _as_path, _fs_error, _io_error
+from std.io import BinaryReader, IoError
 
 
-pub class File:
+pub class File with BinaryReader:
     """
     Open file handle returned by `Path.open()` or `OpenOptions.open()`.
 
@@ -78,9 +79,7 @@ pub class File:
         """
         chunk = self.read_bytes(size)?
         if len(chunk) != size:
-            return Err(
-                IoError(path=self.path, kind="unexpected_eof", detail="file ended before read_exact size"),
-            )
+            return Err(_fs_error(self.path, "unexpected_eof", "file ended before read_exact size"))
         return Ok(chunk)
 
     def write(self, data: str) -> Result[int, IoError]:
@@ -391,21 +390,21 @@ pub def _validate_open_options(
     """
     if buffering != -1 and buffering != 0:
         return Err(
-            IoError(
-                path=path,
-                kind="invalid_input",
-                detail="std.fs open currently supports default buffering (-1) or unbuffered binary mode (0)",
+            _fs_error(
+                path,
+                "invalid_input",
+                "std.fs open currently supports default buffering (-1) or unbuffered binary mode (0)",
             ),
         )
     if buffering == 0 and not _is_binary_open_file_mode(mode):
-        return Err(IoError(path=path, kind="invalid_input", detail="unbuffered std.fs open requires binary mode"))
+        return Err(_fs_error(path, "invalid_input", "unbuffered std.fs open requires binary mode"))
     if _is_binary_open_file_mode(mode):
         if let Some(_) = encoding:
-            return Err(IoError(path=path, kind="invalid_input", detail="binary std.fs open does not accept encoding"))
+            return Err(_fs_error(path, "invalid_input", "binary std.fs open does not accept encoding"))
         if let Some(_) = errors:
-            return Err(IoError(path=path, kind="invalid_input", detail="binary std.fs open does not accept errors"))
+            return Err(_fs_error(path, "invalid_input", "binary std.fs open does not accept errors"))
         if let Some(_) = newline:
-            return Err(IoError(path=path, kind="invalid_input", detail="binary std.fs open does not accept newline"))
+            return Err(_fs_error(path, "invalid_input", "binary std.fs open does not accept newline"))
         return Ok(None)
     if let Some(value) = encoding:
         _validate_text_encoding(path, value)?
@@ -428,7 +427,7 @@ def _validate_text_encoding(path: Path, encoding: str) -> Result[None, IoError]:
     label = RustString.from(encoding).into_bytes()
     match Encoding.for_label(label):
         Some(_) => return Ok(None)
-        None => return Err(IoError(path=path, kind="invalid_input", detail=f"unknown text encoding: {encoding}"))
+        None => return Err(_fs_error(path, "invalid_input", f"unknown text encoding: {encoding}"))
 
 
 def _validate_text_errors(path: Path, errors: str) -> Result[None, IoError]:
@@ -444,7 +443,7 @@ def _validate_text_errors(path: Path, errors: str) -> Result[None, IoError]:
     """
     if errors == "strict" or errors == "replace":
         return Ok(None)
-    return Err(IoError(path=path, kind="invalid_input", detail="std.fs text errors must be strict or replace"))
+    return Err(_fs_error(path, "invalid_input", "std.fs text errors must be strict or replace"))
 
 
 pub def _decode_text(path: Path, data: bytes, encoding: str, errors: str) -> Result[str, IoError]:
@@ -466,9 +465,9 @@ pub def _decode_text(path: Path, data: bytes, encoding: str, errors: str) -> Res
         Some(enc) =>
             decoded = enc.decode(data)
             if decoded.2 and errors == "strict":
-                return Err(IoError(path=path, kind="invalid_data", detail=f"text could not be decoded as {encoding}"))
+                return Err(_fs_error(path, "invalid_data", f"text could not be decoded as {encoding}"))
             return Ok(_normalize_newlines(decoded.0.to_string()))
-        None => return Err(IoError(path=path, kind="invalid_input", detail=f"unknown text encoding: {encoding}"))
+        None => return Err(_fs_error(path, "invalid_input", f"unknown text encoding: {encoding}"))
 
 
 pub def _encode_text(path: Path, data: str, encoding: str, errors: str) -> Result[bytes, IoError]:
@@ -490,9 +489,9 @@ pub def _encode_text(path: Path, data: str, encoding: str, errors: str) -> Resul
         Some(enc) =>
             encoded = enc.encode(data)
             if encoded.2 and errors == "strict":
-                return Err(IoError(path=path, kind="invalid_data", detail=f"text could not be encoded as {encoding}"))
+                return Err(_fs_error(path, "invalid_data", f"text could not be encoded as {encoding}"))
             return Ok(encoded.0.to_vec())
-        None => return Err(IoError(path=path, kind="invalid_input", detail=f"unknown text encoding: {encoding}"))
+        None => return Err(_fs_error(path, "invalid_input", f"unknown text encoding: {encoding}"))
 
 
 def _option_or_str(value: Option[str], fallback: str) -> str:
@@ -555,7 +554,7 @@ def _open_file_mode(path: Path, mode: str) -> Result[OpenFileMode, IoError]:
     """
     if let Some(spec) = OpenFileMode.from_value(_canonical_open_file_mode(mode)):
         return Ok(spec)
-    return Err(IoError(path=path, kind="invalid_input", detail=f"invalid file mode: {mode}"))
+    return Err(_fs_error(path, "invalid_input", f"invalid file mode: {mode}"))
 
 
 def _canonical_open_file_mode(mode: str) -> str:

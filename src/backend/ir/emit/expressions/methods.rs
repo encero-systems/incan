@@ -342,11 +342,21 @@ impl<'a> IrEmitter<'a> {
                 };
                 let external_param_planned =
                     matches!(arg_use_site, ValueUseSite::ExternalCallArg { target_ty: Some(_) });
-                let emitted = self.emit_expr_for_use(arg, arg_use_site);
+                let direct_mut_trait_receiver = external_method_shape
+                    && idx == 0
+                    && Self::external_trait_first_arg_needs_mut_borrow(receiver, method);
+                let emitted = if direct_mut_trait_receiver {
+                    self.emit_expr(arg)
+                } else {
+                    self.emit_expr_for_use(arg, arg_use_site)
+                };
                 if let Some(previous) = previous_qualify {
                     self.qualify_internal_canonical_paths.replace(previous);
                 }
                 let mut emitted = emitted?;
+                if direct_mut_trait_receiver {
+                    return Ok(quote! { &mut #emitted });
+                }
                 if idx == 0
                     && method == "take"
                     && matches!(arg.ty, IrType::Int)
@@ -432,6 +442,21 @@ impl<'a> IrEmitter<'a> {
             "read" | "read_to_end" | "read_exact" | "read_buf" | "read_buf_exact" => Self::is_byte_buffer_type(arg_ty),
             _ => false,
         }
+    }
+
+    /// Return whether an external Rust trait-style associated call needs `&mut` for its first argument.
+    fn external_trait_first_arg_needs_mut_borrow(receiver: &TypedExpr, method: &str) -> bool {
+        if !matches!(method, "update" | "finalize_xof_reset") {
+            return false;
+        }
+        matches!(
+            &receiver.kind,
+            IrExprKind::Var {
+                name,
+                ref_kind: VarRefKind::ExternalRustName,
+                ..
+            } if matches!(name.as_str(), "Digest" | "Update" | "ExtendableOutputReset")
+        )
     }
 
     /// Return whether an external Rust method's first argument should be emitted as a shared borrow.

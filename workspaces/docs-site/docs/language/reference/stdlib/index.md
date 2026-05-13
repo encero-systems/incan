@@ -13,6 +13,7 @@ Pages in this section are curated and checked into the repository.
 - [`std.encoding`](encoding.md) (curated)
 - [`std.fs`](fs.md) (curated)
 - [`std.graph`](graph.md) (curated)
+- [`std.hash`](hash.md) (curated)
 - [`std.io`](io.md) (curated)
 - [`std.logging`](logging.md) (curated)
 - [`std.uuid`](uuid.md) (curated)

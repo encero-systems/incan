@@ -1,0 +1,420 @@
+"""
+Streaming `std.hash` helpers for paths, files, and binary readers.
+
+The public helpers accept algorithm names as strings, then parse them once into `_Algorithm`. All dispatch below
+matches on that enum so string validation, unsupported-width errors, and streaming control flow remain separate.
+"""
+
+from std.fs import File, Path
+from std.io import BinaryReader
+from std.hash._core import (
+    DEFAULT_CHUNK_SIZE,
+    HashError,
+    ByteDigestHasher,
+    ShakeDigestHasher,
+    Hash32DigestHasher,
+    Hash64DigestHasher,
+    Hash128DigestHasher,
+    _Algorithm,
+    _invalid_error,
+    _io_error,
+    _unsupported_width_error,
+    sha224,
+    sha256,
+    sha384,
+    sha512,
+    sha3_224,
+    sha3_256,
+    sha3_384,
+    sha3_512,
+    shake128,
+    shake256,
+    blake2b,
+    blake2s,
+    blake3,
+    md5,
+    sha1,
+    xxh32,
+    xxh64,
+    xxh3_64,
+    xxh3_128,
+)
+
+
+pub def file_digest(
+    input: Union[Path, File],
+    algorithm: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    length: int = 0,
+) -> Result[bytes, HashError]:
+    """
+    Stream a path or open file through a hash algorithm and return digest bytes.
+
+    `algorithm` must be one of the `std.hash` algorithm names. SHAKE algorithms require a positive `length`; fixed
+    output algorithms ignore `length`. The helper reads at most `chunk_size` bytes per step and does not materialize the
+    full input.
+    """
+    parsed = _validate_digest_request(algorithm, chunk_size, length)?
+    if isinstance(input, File):
+        return _reader_digest_handle(input, parsed, chunk_size, length)
+
+    path = _hash_path(input)
+    match path.open("rb"):
+        Ok(file) => return _reader_digest_handle(file, parsed, chunk_size, length)
+        Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+pub def file_hash_u32(
+    input: Union[Path, File],
+    algorithm: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> Result[u32, HashError]:
+    """
+    Stream a path or open file through a 32-bit non-cryptographic hash.
+
+    Currently only `xxh32` has a native `u32` output. Other known algorithms return `unsupported_width`; unknown names
+    return `unknown_algorithm`.
+    """
+    parsed = _validate_hash_request(algorithm, chunk_size)?
+    if isinstance(input, File):
+        return _reader_hash_u32_handle(input, parsed, chunk_size)
+
+    path = _hash_path(input)
+    match path.open("rb"):
+        Ok(file) => return _reader_hash_u32_handle(file, parsed, chunk_size)
+        Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+pub def file_hash_u64(
+    input: Union[Path, File],
+    algorithm: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> Result[u64, HashError]:
+    """
+    Stream a path or open file through a 64-bit non-cryptographic hash.
+
+    `xxh64` and `xxh3_64` expose native `u64` output. Use `file_digest` when byte output is required instead.
+    """
+    parsed = _validate_hash_request(algorithm, chunk_size)?
+    if isinstance(input, File):
+        return _reader_hash_u64_handle(input, parsed, chunk_size)
+
+    path = _hash_path(input)
+    match path.open("rb"):
+        Ok(file) => return _reader_hash_u64_handle(file, parsed, chunk_size)
+        Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+pub def file_hash_u128(
+    input: Union[Path, File],
+    algorithm: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> Result[u128, HashError]:
+    """
+    Stream a path or open file through a 128-bit non-cryptographic hash.
+
+    Currently only `xxh3_128` has a native `u128` output. Use `file_digest` for little-endian byte output.
+    """
+    parsed = _validate_hash_request(algorithm, chunk_size)?
+    if isinstance(input, File):
+        return _reader_hash_u128_handle(input, parsed, chunk_size)
+
+    path = _hash_path(input)
+    match path.open("rb"):
+        Ok(file) => return _reader_hash_u128_handle(file, parsed, chunk_size)
+        Err(err) => return Err(_io_error(algorithm, err.kind, err.detail))
+
+
+pub def reader_digest[R with BinaryReader](
+    input: R,
+    algorithm: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    length: int = 0,
+) -> Result[bytes, HashError]:
+    """
+    Stream a `BinaryReader` through a hash algorithm and return digest bytes.
+
+    A successful zero-length read marks EOF. The helper keeps ownership of the streaming loop in Incan source so any
+    `BinaryReader` implementor can feed the same algorithm wrappers.
+    """
+    return _reader_digest_handle(input, _validate_digest_request(algorithm, chunk_size, length)?, chunk_size, length)
+
+
+pub def reader_hash_u32[R with BinaryReader](
+    input: R,
+    algorithm: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> Result[u32, HashError]:
+    """
+    Stream a `BinaryReader` and return a native `u32` non-cryptographic hash.
+    """
+    return _reader_hash_u32_handle(input, _validate_hash_request(algorithm, chunk_size)?, chunk_size)
+
+
+pub def reader_hash_u64[R with BinaryReader](
+    input: R,
+    algorithm: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> Result[u64, HashError]:
+    """
+    Stream a `BinaryReader` and return a native `u64` non-cryptographic hash.
+    """
+    return _reader_hash_u64_handle(input, _validate_hash_request(algorithm, chunk_size)?, chunk_size)
+
+
+pub def reader_hash_u128[R with BinaryReader](
+    input: R,
+    algorithm: str,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+) -> Result[u128, HashError]:
+    """
+    Stream a `BinaryReader` and return a native `u128` non-cryptographic hash.
+    """
+    return _reader_hash_u128_handle(input, _validate_hash_request(algorithm, chunk_size)?, chunk_size)
+
+
+def _reader_digest_handle[R with BinaryReader](
+    input: R,
+    algorithm: _Algorithm,
+    chunk_size: int,
+    length: int,
+) -> Result[bytes, HashError]:
+    """
+    Dispatch streaming digest byte output after request validation.
+    """
+    match algorithm:
+        _Algorithm.Sha224 => return _feed_digest_reader(sha224.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha256 => return _feed_digest_reader(sha256.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha384 => return _feed_digest_reader(sha384.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha512 => return _feed_digest_reader(sha512.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha3_224 => return _feed_digest_reader(sha3_224.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha3_256 => return _feed_digest_reader(sha3_256.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha3_384 => return _feed_digest_reader(sha3_384.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha3_512 => return _feed_digest_reader(sha3_512.new(), input, algorithm, chunk_size)
+        _Algorithm.Shake128 => return _feed_shake_reader(shake128.new(), input, algorithm, chunk_size, length)
+        _Algorithm.Shake256 => return _feed_shake_reader(shake256.new(), input, algorithm, chunk_size, length)
+        _Algorithm.Blake2b => return _feed_digest_reader(blake2b.new(), input, algorithm, chunk_size)
+        _Algorithm.Blake2s => return _feed_digest_reader(blake2s.new(), input, algorithm, chunk_size)
+        _Algorithm.Blake3 => return _feed_digest_reader(blake3.new(), input, algorithm, chunk_size)
+        _Algorithm.Md5 => return _feed_digest_reader(md5.new(), input, algorithm, chunk_size)
+        _Algorithm.Sha1 => return _feed_digest_reader(sha1.new(), input, algorithm, chunk_size)
+        _Algorithm.Xxh32 => return _feed_hash32_reader(xxh32.new(), input, algorithm, chunk_size)
+        _Algorithm.Xxh64 => return _feed_hash64_reader(xxh64.new(), input, algorithm, chunk_size)
+        _Algorithm.Xxh3_64 => return _feed_hash64_reader(xxh3_64.new(), input, algorithm, chunk_size)
+        _Algorithm.Xxh3_128 => return _feed_hash128_reader(xxh3_128.new(), input, algorithm, chunk_size)
+
+
+def _reader_hash_u32_handle[R with BinaryReader](
+    input: R,
+    algorithm: _Algorithm,
+    chunk_size: int,
+) -> Result[u32, HashError]:
+    """
+    Dispatch streaming native `u32` hash output for supported algorithms.
+    """
+    match algorithm:
+        _Algorithm.Xxh32 => return _feed_hash32_reader_value(xxh32.new(), input, algorithm, chunk_size)
+        _ => return Err(_unsupported_width_error(algorithm.name(), "u32"))
+
+
+def _reader_hash_u64_handle[R with BinaryReader](
+    input: R,
+    algorithm: _Algorithm,
+    chunk_size: int,
+) -> Result[u64, HashError]:
+    """
+    Dispatch streaming native `u64` hash output for supported algorithms.
+    """
+    match algorithm:
+        _Algorithm.Xxh3_64 => return _feed_hash64_reader_value(xxh3_64.new(), input, algorithm, chunk_size)
+        _Algorithm.Xxh64 => return _feed_hash64_reader_value(xxh64.new(), input, algorithm, chunk_size)
+        _ => return Err(_unsupported_width_error(algorithm.name(), "u64"))
+
+
+def _reader_hash_u128_handle[R with BinaryReader](
+    input: R,
+    algorithm: _Algorithm,
+    chunk_size: int,
+) -> Result[u128, HashError]:
+    """
+    Dispatch streaming native `u128` hash output for supported algorithms.
+    """
+    match algorithm:
+        _Algorithm.Xxh3_128 => return _feed_hash128_reader_value(xxh3_128.new(), input, algorithm, chunk_size)
+        _ => return Err(_unsupported_width_error(algorithm.name(), "u128"))
+
+
+def _feed_digest_reader[H with ByteDigestHasher, R with BinaryReader](
+    mut hasher: H,
+    input: R,
+    algorithm: _Algorithm,
+    chunk_size: int,
+) -> Result[bytes, HashError]:
+    """
+    Feed a bounded reader into a fixed-length digest hasher.
+    """
+    while true:
+        match input.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_bytes())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm.name(), err.kind, err.detail))
+
+
+def _feed_shake_reader[H with ShakeDigestHasher, R with BinaryReader](
+    mut hasher: H,
+    input: R,
+    algorithm: _Algorithm,
+    chunk_size: int,
+    length: int,
+) -> Result[bytes, HashError]:
+    """
+    Feed a bounded reader into a SHAKE hasher and finalize the requested output length.
+    """
+    while true:
+        match input.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return hasher.finalize_bytes(length)
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm.name(), err.kind, err.detail))
+
+
+def _feed_hash32_reader[H with Hash32DigestHasher, R with BinaryReader](
+    mut hasher: H,
+    input: R,
+    algorithm: _Algorithm,
+    chunk_size: int,
+) -> Result[bytes, HashError]:
+    """
+    Feed a bounded reader into a native-`u32` hasher and return little-endian digest bytes.
+    """
+    while true:
+        match input.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_bytes())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm.name(), err.kind, err.detail))
+
+
+def _feed_hash64_reader[H with Hash64DigestHasher, R with BinaryReader](
+    mut hasher: H,
+    input: R,
+    algorithm: _Algorithm,
+    chunk_size: int,
+) -> Result[bytes, HashError]:
+    """
+    Feed a bounded reader into a native-`u64` hasher and return little-endian digest bytes.
+    """
+    while true:
+        match input.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_bytes())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm.name(), err.kind, err.detail))
+
+
+def _feed_hash128_reader[H with Hash128DigestHasher, R with BinaryReader](
+    mut hasher: H,
+    input: R,
+    algorithm: _Algorithm,
+    chunk_size: int,
+) -> Result[bytes, HashError]:
+    """
+    Feed a bounded reader into a native-`u128` hasher and return little-endian digest bytes.
+    """
+    while true:
+        match input.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_bytes())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm.name(), err.kind, err.detail))
+
+
+def _feed_hash32_reader_value[H with Hash32DigestHasher, R with BinaryReader](
+    mut hasher: H,
+    input: R,
+    algorithm: _Algorithm,
+    chunk_size: int,
+) -> Result[u32, HashError]:
+    """
+    Feed a bounded reader into a native-`u32` hasher and return the integer hash.
+    """
+    while true:
+        match input.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_u32())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm.name(), err.kind, err.detail))
+
+
+def _feed_hash64_reader_value[H with Hash64DigestHasher, R with BinaryReader](
+    mut hasher: H,
+    input: R,
+    algorithm: _Algorithm,
+    chunk_size: int,
+) -> Result[u64, HashError]:
+    """
+    Feed a bounded reader into a native-`u64` hasher and return the integer hash.
+    """
+    while true:
+        match input.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_u64())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm.name(), err.kind, err.detail))
+
+
+def _feed_hash128_reader_value[H with Hash128DigestHasher, R with BinaryReader](
+    mut hasher: H,
+    input: R,
+    algorithm: _Algorithm,
+    chunk_size: int,
+) -> Result[u128, HashError]:
+    """
+    Feed a bounded reader into a native-`u128` hasher and return the integer hash.
+    """
+    while true:
+        match input.read_bytes(chunk_size):
+            Ok(chunk) =>
+                if len(chunk) == 0:
+                    return Ok(hasher.finalize_u128())
+                hasher.update(chunk)
+            Err(err) => return Err(_io_error(algorithm.name(), err.kind, err.detail))
+
+
+def _validate_digest_request(algorithm: str, chunk_size: int, length: int) -> Result[_Algorithm, HashError]:
+    """
+    Validate streaming digest arguments and return the parsed algorithm.
+    """
+    if chunk_size <= 0:
+        return Err(_invalid_error(algorithm, "invalid_chunk_size", "chunk_size must be positive"))
+    parsed = _Algorithm.from_str(algorithm)?
+    if parsed.is_shake() and length <= 0:
+        return Err(_invalid_error(algorithm, "invalid_length", "SHAKE digest length must be positive"))
+    return Ok(parsed)
+
+
+def _validate_hash_request(algorithm: str, chunk_size: int) -> Result[_Algorithm, HashError]:
+    """
+    Validate streaming integer-hash arguments and return the parsed algorithm.
+    """
+    if chunk_size <= 0:
+        return Err(_invalid_error(algorithm, "invalid_chunk_size", "chunk_size must be positive"))
+    return _Algorithm.from_str(algorithm)
+
+
+def _hash_path(input: Union[Path, File]) -> Path:
+    """
+    Return the filesystem path associated with a path-or-file hash input.
+    """
+    if isinstance(input, File):
+        return input.path
+    elif isinstance(input, Path):
+        return input

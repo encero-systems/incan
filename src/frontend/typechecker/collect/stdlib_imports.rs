@@ -1609,6 +1609,47 @@ impl TypeChecker {
             ],
             "std::io::Write" => &["write", "write_all", "write_fmt", "flush"],
             "std::io::Seek" => &["seek", "rewind", "stream_position", "seek_relative"],
+            "byteorder::ReadBytesExt" => &[
+                "read_u8",
+                "read_i8",
+                "read_u16",
+                "read_i16",
+                "read_u32",
+                "read_i32",
+                "read_u64",
+                "read_i64",
+                "read_u128",
+                "read_i128",
+                "read_f32",
+                "read_f64",
+            ],
+            "byteorder::WriteBytesExt" => &[
+                "write_u8",
+                "write_i8",
+                "write_u16",
+                "write_i16",
+                "write_u32",
+                "write_i32",
+                "write_u64",
+                "write_i64",
+                "write_u128",
+                "write_i128",
+                "write_f32",
+                "write_f64",
+            ],
+            "sha2::Digest" | "sha3::Digest" | "blake2::Digest" | "md5::Digest" | "sha1::Digest" => &[
+                "new",
+                "new_with_prefix",
+                "update",
+                "chain_update",
+                "finalize",
+                "finalize_into",
+                "finalize_reset",
+                "reset",
+                "output_size",
+                "digest",
+            ],
+            "blake2::digest::XofReader" | "sha3::digest::XofReader" => &["read"],
             "std::os::unix::fs::MetadataExt" => &[
                 "dev", "ino", "mode", "nlink", "uid", "gid", "rdev", "size", "atime", "mtime", "ctime", "blksize",
                 "blocks",
@@ -1617,11 +1658,12 @@ impl TypeChecker {
         }
     }
 
-    /// Define a symbol for a Rust crate import, skipping if a real definition exists.
+    /// Define a symbol for a Rust crate import.
+    ///
+    /// Explicit Rust imports must be allowed to shadow dependency-exported Incan types with the same simple name. This
+    /// matters for Rust metadata display types such as `Duration`, where the current module's `from rust::... import
+    /// Duration` is the only reliable hint that an unqualified metadata return type means `std::time::Duration`.
     fn define_rust_import_symbol(&mut self, name: Ident, info: RustItemInfo, span: Span) {
-        if self.has_non_builtin_real_definition(&name) {
-            return;
-        }
         self.symbols.define(Symbol {
             name,
             kind: SymbolKind::RustItem(info),
