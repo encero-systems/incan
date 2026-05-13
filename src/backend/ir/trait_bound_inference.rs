@@ -1055,6 +1055,7 @@ fn collect_backend_clone_bounds_in_expr(
         | IrExprKind::None
         | IrExprKind::Bool(_)
         | IrExprKind::Int(_)
+        | IrExprKind::IntLiteral(_)
         | IrExprKind::Float(_)
         | IrExprKind::Decimal(_)
         | IrExprKind::String(_)
@@ -1707,6 +1708,7 @@ fn scan_expr_for_bounds(
         | IrExprKind::None
         | IrExprKind::Bool(_)
         | IrExprKind::Int(_)
+        | IrExprKind::IntLiteral(_)
         | IrExprKind::Float(_)
         | IrExprKind::Decimal(_)
         | IrExprKind::String(_)

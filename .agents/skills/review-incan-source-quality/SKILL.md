@@ -110,6 +110,7 @@ Flag Incan source that has:
 - design narrowing or backend fallback justified by “Incan cannot do this” without local examples, tests, or probe evidence;
 - sentinel initialization such as `value = 0` only to satisfy later branch assignment;
 - verbose `match` blocks that just rewrap a `Result` where `?` would read naturally;
+- verbose `match` blocks that only transform one `Result` branch where RFC 070 combinators such as `map`, `map_err`, `and_then`, or `or_else` would state the intent directly;
 - unnecessary type noise when inference or a local helper would be clearer;
 - Rust-shaped names, ownership workarounds, `.clone()`, `.to_string()`, or manual conversion scaffolding leaking into `.incn`;
 - helpers that hide one obvious operation without adding meaning;

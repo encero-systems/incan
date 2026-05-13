@@ -1,0 +1,391 @@
+"""
+Base32 binary-text encoding.
+
+This module provides RFC 4648 standard Base32 plus the extended-hex alphabet. Strict decoders require valid padding;
+lenient decoders remove ASCII whitespace and accept lowercase alphabet characters.
+
+Base32 is less familiar than hex or Base64, so the implementation names the moving parts directly: source bytes feed a
+rolling bit buffer, five-bit groups become alphabet symbols, and `=` padding only appears at the end of the final
+eight-character quantum.
+"""
+
+from std.encoding._shared import (
+    EncodingError,
+    _ascii_bytes,
+    _ascii_text,
+    _encoding_error,
+    _read_source_bytes,
+    _read_source_text,
+    _read_stream_bytes,
+    _write_sink_bytes,
+    _write_stream_bytes,
+)
+from std.fs import Path
+from std.io import BytesIO, _BytesIO
+
+const _STD_ALPHABET: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+const _HEX_ALPHABET: str = "0123456789ABCDEFGHIJKLMNOPQRSTUV"
+const _LOWER_STD_ALPHABET: str = "abcdefghijklmnopqrstuvwxyz234567"
+const _LOWER_HEX_ALPHABET: str = "0123456789abcdefghijklmnopqrstuv"
+const _BYTE_TABLE: bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
+
+
+# Public value helpers
+
+pub def b32encode(data: bytes) -> str:
+    """
+    Encode bytes with the standard Base32 alphabet and `=` padding.
+
+    This is the Python-compatible spelling for RFC 4648 Base32. It always emits uppercase text and preserves padding
+    so strict decoders can validate complete quanta.
+
+    Returns:
+        Uppercase Base32 text.
+    """
+    return _encode_base32(data, _STD_ALPHABET, true)
+
+
+pub def encode(
+    source: Union[bytes, _BytesIO, Path],
+    target: Union[_BytesIO, Path],
+    chunk_size: int = 65536,
+) -> Result[str, EncodingError]:
+    """
+    Encode bytes from a value, byte stream, or path with the standard Base32 alphabet.
+
+    The target receives ASCII representation bytes. This keeps `Path` and `BytesIO` behavior aligned with the other
+    encoding families without inventing separate path-specific helpers.
+
+    Args:
+        source: Bytes, `BytesIO`, or `Path` to encode.
+        target: `BytesIO` or `Path` sink for encoded ASCII bytes.
+        chunk_size: Positive chunk-size hint for source/sink calls.
+
+    Returns:
+        Encoded text, or `Err(EncodingError)` for invalid arguments or I/O failures.
+    """
+    data = _read_source_bytes("base32", source, chunk_size)?
+    text = b32encode(data)
+    _write_sink_bytes("base32", target, _ascii_bytes("base32", text)?)?
+    return Ok(text)
+
+
+pub def b32hexencode(data: bytes) -> str:
+    """
+    Encode bytes with the extended-hex Base32 alphabet.
+
+    Base32hex is not interchangeable with standard Base32. The explicit `b32hex*` names keep that alphabet choice
+    visible in code that handles both forms.
+
+    Returns:
+        Uppercase Base32hex text.
+    """
+    return _encode_base32(data, _HEX_ALPHABET, true)
+
+
+pub def b32decode(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode strict standard Base32 text.
+
+    Strict mode requires eight-character quanta, valid terminal padding, and uppercase standard-alphabet characters.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` for invalid length, padding, or alphabet characters.
+    """
+    return _decode_base32(text, _STD_ALPHABET, _LOWER_STD_ALPHABET, false)
+
+
+pub def decode(
+    source: Union[str, _BytesIO, Path],
+    target: Union[_BytesIO, Path],
+    chunk_size: int = 65536,
+) -> Result[bytes, EncodingError]:
+    """
+    Decode standard Base32 from text, a byte stream, or path.
+
+    Stream and path sources are converted from printable ASCII bytes before strict Base32 validation. Non-ASCII stream
+    bytes therefore fail before alphabet checks.
+
+    Args:
+        source: Text, `BytesIO`, or `Path` containing printable Base32 bytes.
+        target: `BytesIO` or `Path` sink for decoded bytes.
+        chunk_size: Positive chunk-size hint for source/sink calls.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` for invalid text, arguments, or I/O failures.
+    """
+    text = _read_source_text("base32", source, chunk_size)?
+    data = b32decode(text)?
+    _write_sink_bytes("base32", target, data)?
+    return Ok(data)
+
+
+pub def b32hexdecode(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode strict Base32 text that uses the RFC 4648 extended-hex alphabet.
+
+    The padding rules are the same as `b32decode`; only the alphabet changes.
+    """
+    return _decode_base32(text, _HEX_ALPHABET, _LOWER_HEX_ALPHABET, false)
+
+
+pub def b32decode_lenient(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode standard Base32 after removing ASCII whitespace and accepting lowercase text.
+
+    Lenient mode is intentionally narrow. It helps with copied, wrapped, or lowercased text, but it does not repair
+    invalid padding or switch between the standard and extended-hex alphabets.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` if the cleaned input is malformed.
+    """
+    return _decode_base32(text, _STD_ALPHABET, _LOWER_STD_ALPHABET, true)
+
+
+pub def decode_lenient(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode standard Base32 using the module's lenient text rules.
+    """
+    return b32decode_lenient(text)
+
+
+pub def b32hexdecode_lenient(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode Base32hex after removing ASCII whitespace and accepting lowercase text.
+
+    This keeps the Base32hex alphabet explicit while applying the same whitespace and case tolerance as
+    `b32decode_lenient`.
+    """
+    return _decode_base32(text, _HEX_ALPHABET, _LOWER_HEX_ALPHABET, true)
+
+
+# BytesIO convenience helpers
+
+pub def b32encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read bytes from `source`, encode standard Base32, and write ASCII bytes to `target`.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_error("invalid_input", "chunk_size must be positive", -1))
+    data = _read_stream_bytes("base32", source)?
+    return _write_stream_bytes("base32", target, _ascii_bytes("base32", b32encode(data))?)
+
+
+pub def encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Alias `b32encode_stream` as the standard Base32 stream encoder.
+    """
+    return b32encode_stream(source, target, chunk_size)
+
+
+pub def b32decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read standard Base32 ASCII bytes from `source`, decode them, and write bytes to `target`.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments, invalid text, or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_error("invalid_input", "chunk_size must be positive", -1))
+    text = _ascii_text("base32", _read_stream_bytes("base32", source)?)?
+    return _write_stream_bytes("base32", target, b32decode(text)?)
+
+
+pub def decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Alias `b32decode_stream` as the standard Base32 stream decoder.
+    """
+    return b32decode_stream(source, target, chunk_size)
+
+
+pub def b32hexencode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read bytes from `source`, encode Base32hex, and write ASCII bytes to `target`.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_error("invalid_input", "chunk_size must be positive", -1))
+    data = _read_stream_bytes("base32", source)?
+    return _write_stream_bytes("base32", target, _ascii_bytes("base32", b32hexencode(data))?)
+
+
+pub def b32hexdecode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read Base32hex ASCII bytes from `source`, decode them, and write bytes to `target`.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments, invalid text, or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_error("invalid_input", "chunk_size must be positive", -1))
+    text = _ascii_text("base32", _read_stream_bytes("base32", source)?)?
+    return _write_stream_bytes("base32", target, b32hexdecode(text)?)
+
+
+# Codec implementation
+
+def _encode_base32(data: bytes, alphabet: str, padded: bool) -> str:
+    """
+    Convert bytes into Base32 text using a rolling bit buffer.
+
+    The buffer is a simple integer lane: append eight input bits, peel off five-bit groups while possible, then pad the
+    final partial group if any source bits remain.
+    """
+    mut out = ""
+    mut buffer = 0
+    mut bits = 0
+    for value in data:
+        buffer = buffer * 256 + int(value)
+        bits += 8
+        while bits >= 5:
+            bits -= 5
+            # The top available five bits choose the next alphabet symbol.
+            out += alphabet[(buffer // _pow2(bits)) % 32:(buffer // _pow2(bits)) % 32 + 1]
+    if bits > 0:
+        # Remaining low bits are shifted up into a final five-bit group.
+        out += alphabet[(buffer * _pow2(5 - bits)) % 32:(buffer * _pow2(5 - bits)) % 32 + 1]
+    if padded:
+        while len(out) % 8 != 0:
+            out += "="
+    return out
+
+
+def _decode_base32(text: str, alphabet: str, lower_alphabet: str, lenient: bool) -> Result[bytes, EncodingError]:
+    """
+    Decode Base32 text by collecting five-bit symbols into output bytes.
+
+    Padding does not carry data. Once padding starts, all remaining characters must also be padding, and only the RFC
+    4648 padding counts for a final quantum are valid.
+    """
+    clean = _clean_input(text, lenient)
+    if len(clean) == 0:
+        return Ok(b"")
+    if not lenient and len(clean) % 8 != 0:
+        return Err(_error("invalid_length", "base32 input length must be a multiple of 8", len(clean)))
+    mut padded = clean
+    if lenient:
+        while len(padded) % 8 != 0:
+            padded += "="
+
+    pad_count = _trailing_padding(padded)
+    if not _valid_padding_count(pad_count):
+        return Err(_error("invalid_padding", "base32 padding count is not valid for an encoded quantum", len(padded) - pad_count))
+
+    out = BytesIO(b"")
+    mut buffer = 0
+    mut bits = 0
+    mut saw_padding = false
+    for index in range(len(padded)):
+        ch = padded[index:index + 1]
+        if ch == "=":
+            saw_padding = true
+            if not _only_padding_from(padded, index):
+                return Err(_error("invalid_padding", "base32 padding is only valid at the end", index))
+        elif not saw_padding:
+            value = _decode_char(ch, alphabet, lower_alphabet, index, lenient)?
+            buffer = buffer * 32 + value
+            bits += 5
+            while bits >= 8:
+                bits -= 8
+                # Eight complete bits are available, so emit one decoded byte.
+                _write_byte(out, (buffer // _pow2(bits)) % 256)?
+    return Ok(out.getvalue())
+
+
+def _clean_input(text: str, lenient: bool) -> str:
+    """
+    Return text unchanged for strict mode or without ASCII whitespace in lenient mode.
+    """
+    if not lenient:
+        return text
+    mut out = ""
+    for ch in text:
+        if not _is_ascii_whitespace(ch):
+            out += ch
+    return out
+
+
+def _decode_char(ch: str, alphabet: str, lower_alphabet: str, position: int, lenient: bool) -> Result[int, EncodingError]:
+    """
+    Map one Base32 alphabet character to its five-bit value.
+    """
+    for index, character in enumerate(alphabet):
+        if character == ch:
+            return Ok(index)
+        if lenient and lower_alphabet[index:index + 1] == ch:
+            return Ok(index)
+    return Err(_error("invalid_character", "character is not in the base32 alphabet", position))
+
+
+def _trailing_padding(value: str) -> int:
+    """
+    Count `=` padding characters at the end of encoded text.
+    """
+    mut count = 0
+    mut scanning_padding = true
+    for offset in range(len(value)):
+        index = len(value) - offset - 1
+        if scanning_padding and value[index:index + 1] == "=":
+            count += 1
+        else:
+            scanning_padding = false
+    return count
+
+
+def _only_padding_from(value: str, start: int) -> bool:
+    """
+    Return whether every character from `start` onward is padding.
+    """
+    for index in range(start, len(value)):
+        if value[index:index + 1] != "=":
+            return false
+    return true
+
+
+def _valid_padding_count(count: int) -> bool:
+    """
+    Return whether the padding count is valid for one Base32 quantum.
+    """
+    return count == 0 or count == 1 or count == 3 or count == 4 or count == 6
+
+
+def _pow2(exp: int) -> int:
+    """
+    Return `2 ** exp` while staying in integer shift semantics.
+    """
+    return 1 << exp
+
+
+def _byte(value: int) -> bytes:
+    """
+    Return a one-byte `bytes` value for an integer in the byte range.
+    """
+    return _BYTE_TABLE[value:value + 1]
+
+
+def _write_byte(out: _BytesIO, value: int) -> Result[None, EncodingError]:
+    """
+    Append one decoded byte to an in-memory buffer.
+    """
+    match out.write_bytes(_byte(value)):
+        Ok(_) => return Ok(None)
+        Err(err) => return Err(_error("io", err.message(), -1))
+
+
+def _is_ascii_whitespace(ch: str) -> bool:
+    """
+    Return whether `ch` is ASCII whitespace accepted by lenient mode.
+    """
+    return ch == " " or ch == "\n" or ch == "\r" or ch == "\t"
+
+
+def _error(kind: str, detail: str, position: int) -> EncodingError:
+    """
+    Build a Base32 error with the module's codec name.
+    """
+    return _encoding_error("base32", kind, detail, position)

@@ -1,7 +1,6 @@
 from rust::std::cell import RefCell
 from rust::std::io import Cursor, Read, Seek, SeekFrom, Write
 from rust::std::rc import Rc
-from rust::std::vec import Vec
 from rust::byteorder @ "1" import BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt
 from std.traits.error import Error
 
@@ -36,16 +35,6 @@ pub model IoError with Error:
             The detail text attached to the failed operation.
         """
         return self.detail
-
-    def source(self) -> Option[str]:
-        """
-        Return the optional source error.
-
-        Returns:
-            `None`; `IoError` stores operation, kind, detail, and cursor position directly.
-        """
-        return None
-
 
 pub trait BinaryRead[T]:
     """
@@ -485,12 +474,8 @@ def _zeros(size: int) -> bytes:
     """
     Build a zero-filled byte vector for numeric writes.
     """
-    mut out = Vec.new()
-    mut i = 0
-    while i < size:
-        out.push(0)
-        i = i + 1
-    return out
+    zero: u8 = 0
+    return list.repeat(zero, size)
 
 
 def _finish_numeric_write(stream: _BytesIO, cursor: Cursor[bytes]) -> Result[None, IoError]:

@@ -34,8 +34,8 @@ use std::path::PathBuf;
 use crate::frontend::ast;
 use crate::frontend::symbols::{CallableParam, VariableInfo};
 use crate::frontend::symbols::{
-    ClassInfo, EnumInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, TraitInfo,
-    TypeBoundInfo, TypeInfo,
+    ClassInfo, EnumInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, StaticInfo,
+    TraitInfo, TypeBoundInfo, TypeInfo,
 };
 use crate::frontend::typechecker::helpers::render_resolved_type_as_rust_arg;
 use incan_core::lang::conventions;
@@ -53,6 +53,7 @@ struct StdlibModuleData {
     traits: Vec<(String, TraitInfo)>,
     types: Vec<(String, TypeInfo)>,
     constants: Vec<(String, VariableInfo)>,
+    statics: Vec<(String, StaticInfo)>,
     derivable_traits: Vec<String>,
     function_meta: HashMap<String, FunctionMeta>,
     trait_meta: HashMap<String, TraitMeta>,
@@ -135,6 +136,18 @@ impl StdlibAstCache {
         lookup_type_method_decl_inner(module_path, type_name, method_name, &mut HashSet::new())
     }
 
+    /// Look up a stdlib function declaration, following prelude re-exports.
+    ///
+    /// This preserves source-level default expressions for lowering and emission. `lookup_function` intentionally
+    /// returns compact type metadata and only records whether a parameter has a default.
+    pub(crate) fn lookup_function_decl(
+        &mut self,
+        module_path: &[String],
+        function_name: &str,
+    ) -> Option<ast::FunctionDecl> {
+        lookup_function_decl_inner(module_path, function_name, &mut HashSet::new())
+    }
+
     /// List public type signatures in a stdlib module.
     pub fn list_types(&mut self, module_path: &[String]) -> Vec<(String, TypeInfo)> {
         self.ensure_loaded(module_path);
@@ -151,6 +164,18 @@ impl StdlibAstCache {
             .constants
             .iter()
             .find(|(name, _)| name == const_name)
+            .map(|(_, info)| info.clone())
+    }
+
+    /// Look up a specific static binding in a stdlib module.
+    pub fn lookup_static(&mut self, module_path: &[String], static_name: &str) -> Option<StaticInfo> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache
+            .get(&key)?
+            .statics
+            .iter()
+            .find(|(name, _)| name == static_name)
             .map(|(_, info)| info.clone())
     }
 
@@ -256,6 +281,7 @@ fn load_stdlib_module_data_unguarded(
     let mut traits = extract_trait_signatures(&program);
     let mut types = extract_type_signatures(&program);
     let mut constants = extract_const_signatures(&program);
+    let mut statics = extract_static_signatures(&program);
     let mut function_meta = extract_function_meta(&program);
     let mut trait_meta = extract_trait_meta(&program);
 
@@ -269,6 +295,7 @@ fn load_stdlib_module_data_unguarded(
         traits: &mut traits,
         types: &mut types,
         constants: &mut constants,
+        statics: &mut statics,
         function_meta: &mut function_meta,
         trait_meta: &mut trait_meta,
     };
@@ -279,6 +306,7 @@ fn load_stdlib_module_data_unguarded(
         traits,
         types,
         constants,
+        statics,
         derivable_traits: extract_derivable_traits(&program),
         function_meta,
         trait_meta,
@@ -290,6 +318,7 @@ struct ReexportMetadataTargets<'a> {
     traits: &'a mut Vec<(String, TraitInfo)>,
     types: &'a mut Vec<(String, TypeInfo)>,
     constants: &'a mut Vec<(String, VariableInfo)>,
+    statics: &'a mut Vec<(String, StaticInfo)>,
     function_meta: &'a mut HashMap<String, FunctionMeta>,
     trait_meta: &'a mut HashMap<String, TraitMeta>,
 }
@@ -352,6 +381,13 @@ fn merge_reexported_metadata(
                 && !targets.constants.iter().any(|(n, _)| n == effective_name)
             {
                 targets.constants.push((effective_name.to_string(), info.clone()));
+            }
+
+            // Merge static signature.
+            if let Some((_, info)) = sub_data.statics.iter().find(|(n, _)| n == &item.name)
+                && !targets.statics.iter().any(|(n, _)| n == effective_name)
+            {
+                targets.statics.push((effective_name.to_string(), info.clone()));
             }
 
             // Merge function meta.
@@ -469,6 +505,24 @@ fn lookup_type_method_decl_inner(
     result
 }
 
+/// Find a function declaration in a stdlib module, following prelude-style re-exports.
+fn lookup_function_decl_inner(
+    module_path: &[String],
+    function_name: &str,
+    loading: &mut HashSet<String>,
+) -> Option<ast::FunctionDecl> {
+    let key = module_path.join(".");
+    if !loading.insert(key.clone()) {
+        return None;
+    }
+    let result = load_stdlib_program(module_path).and_then(|program| {
+        find_function_decl_in_program(&program, function_name)
+            .or_else(|| find_reexported_function_decl(&program, function_name, loading))
+    });
+    loading.remove(&key);
+    result
+}
+
 /// Parse a stdlib stub module into an AST program for metadata lookups that need source expressions.
 fn load_stdlib_program(module_path: &[String]) -> Option<ast::Program> {
     let relative = stdlib::stdlib_stub_path(module_path)?;
@@ -476,6 +530,14 @@ fn load_stdlib_program(module_path: &[String]) -> Option<ast::Program> {
     let source = std::fs::read_to_string(path).ok()?;
     let tokens = crate::frontend::lexer::lex(&source).ok()?;
     crate::frontend::parser::parse(&tokens).ok()
+}
+
+/// Find a top-level function declaration directly in a parsed stdlib program.
+fn find_function_decl_in_program(program: &ast::Program, function_name: &str) -> Option<ast::FunctionDecl> {
+    program.declarations.iter().find_map(|decl| match &decl.node {
+        ast::Declaration::Function(func) if func.name == function_name => Some(func.clone()),
+        _ => None,
+    })
 }
 
 /// Find a method declaration directly in a parsed stdlib program.
@@ -499,6 +561,32 @@ fn find_method_decl(methods: &[ast::Spanned<ast::MethodDecl>], method_name: &str
         .iter()
         .find(|method| method.node.name == method_name)
         .map(|method| method.node.clone())
+}
+
+/// Follow stdlib `from std.x.y import function` re-exports while searching for the owning function declaration.
+fn find_reexported_function_decl(
+    program: &ast::Program,
+    function_name: &str,
+    loading: &mut HashSet<String>,
+) -> Option<ast::FunctionDecl> {
+    program.declarations.iter().find_map(|decl| {
+        let ast::Declaration::Import(import) = &decl.node else {
+            return None;
+        };
+        let ast::ImportKind::From { module, items } = &import.kind else {
+            return None;
+        };
+        if module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        items.iter().find_map(|item| {
+            let effective_name = item.alias.as_ref().unwrap_or(&item.name);
+            if effective_name != function_name {
+                return None;
+            }
+            lookup_function_decl_inner(&module.segments, &item.name, loading)
+        })
+    })
 }
 
 /// Follow stdlib `from std.x.y import Type` re-exports while searching for the owning type declaration.
@@ -535,6 +623,9 @@ fn extract_function_signatures(program: &ast::Program) -> Vec<(String, FunctionI
     let mut fns = Vec::new();
     for decl in &program.declarations {
         if let ast::Declaration::Function(func) = &decl.node {
+            if !matches!(func.visibility, ast::Visibility::Public) {
+                continue;
+            }
             let info = function_decl_to_info(func);
             fns.push((func.name.clone(), info));
             continue;
@@ -582,6 +673,30 @@ fn extract_const_signatures(program: &ast::Program) -> Vec<(String, VariableInfo
         ));
     }
     consts
+}
+
+/// Extract public static bindings from a parsed stdlib `.incn` program.
+fn extract_static_signatures(program: &ast::Program) -> Vec<(String, StaticInfo)> {
+    let mut statics = Vec::new();
+    for decl in &program.declarations {
+        let ast::Declaration::Static(static_decl) = &decl.node else {
+            continue;
+        };
+        if !matches!(static_decl.visibility, ast::Visibility::Public) {
+            continue;
+        }
+        let ty = ast_type_to_resolved(&static_decl.ty.node, &[]);
+        statics.push((
+            static_decl.name.clone(),
+            StaticInfo {
+                ty,
+                is_public: true,
+                is_imported: true,
+                is_used: false,
+            },
+        ));
+    }
+    statics
 }
 
 /// Extract RFC 024 module-level derivable trait declarations.
@@ -1420,6 +1535,176 @@ mod tests {
     }
 
     #[test]
+    fn test_load_encoding_modules_export_source_owned_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let prelude_path = vec!["std".to_string(), "encoding".to_string()];
+        let prelude = load_stdlib_module_data(&prelude_path).ok_or("failed to load stdlib/encoding/prelude.incn")?;
+        assert!(
+            prelude.types.iter().any(|(name, _)| name == "EncodingError"),
+            "std.encoding should export source-owned EncodingError"
+        );
+
+        for (module_name, expected_functions) in [
+            (
+                "hex",
+                vec![
+                    "encode",
+                    "decode",
+                    "b16encode",
+                    "b16decode",
+                    "encode_stream",
+                    "decode_stream",
+                ],
+            ),
+            (
+                "base64",
+                vec![
+                    "encode",
+                    "decode",
+                    "decode_lenient",
+                    "b64encode",
+                    "b64decode",
+                    "b64decode_lenient",
+                    "b64encode_stream",
+                    "b64decode_stream",
+                    "urlsafe_b64encode",
+                    "urlsafe_b64decode",
+                    "urlsafe_b64encode_stream",
+                    "urlsafe_b64decode_stream",
+                ],
+            ),
+            (
+                "base32",
+                vec![
+                    "encode",
+                    "decode",
+                    "decode_lenient",
+                    "b32encode",
+                    "b32decode",
+                    "b32decode_lenient",
+                    "b32hexencode",
+                    "b32hexdecode",
+                    "b32encode_stream",
+                    "b32decode_stream",
+                    "b32hexencode_stream",
+                    "b32hexdecode_stream",
+                    "encode_stream",
+                    "decode_stream",
+                ],
+            ),
+            (
+                "base85",
+                vec![
+                    "a85encode",
+                    "a85decode",
+                    "b85encode",
+                    "b85decode",
+                    "z85encode",
+                    "z85decode",
+                    "a85encode_stream",
+                    "a85decode_stream",
+                    "b85encode_stream",
+                    "b85decode_stream",
+                    "z85encode_stream",
+                    "z85decode_stream",
+                    "encode_stream",
+                    "decode_stream",
+                ],
+            ),
+            (
+                "base58",
+                vec![
+                    "encode",
+                    "decode",
+                    "b58encode",
+                    "b58decode",
+                    "b58encode_stream",
+                    "b58decode_stream",
+                    "encode_stream",
+                    "decode_stream",
+                ],
+            ),
+            (
+                "bech32",
+                vec!["bech32_encode", "bech32_decode", "bech32m_encode", "bech32m_decode"],
+            ),
+        ] {
+            let path = vec!["std".to_string(), "encoding".to_string(), module_name.to_string()];
+            let module = load_stdlib_module_data(&path)
+                .ok_or_else(|| format!("failed to load stdlib/encoding/{module_name}.incn"))?;
+            for expected in expected_functions {
+                assert!(
+                    module.functions.iter().any(|(name, _)| name == expected),
+                    "std.encoding.{module_name} should export {expected}"
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_load_uuid_module_exports_public_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "uuid".to_string()];
+        let module = load_stdlib_module_data(&path).ok_or("failed to load stdlib/uuid.incn")?;
+        let names = module
+            .types
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        for expected in ["UUID", "UuidError", "UuidVersion", "UuidVariant"] {
+            assert!(names.contains(expected), "std.uuid should export {expected}");
+        }
+
+        let functions = module
+            .functions
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        for removed in [
+            "parse",
+            "from_int",
+            "from_bytes",
+            "v1",
+            "v3",
+            "v4",
+            "v5",
+            "v6",
+            "v7",
+            "v8",
+            "nil",
+            "max",
+        ] {
+            assert!(
+                !functions.contains(removed),
+                "std.uuid constructors should live on UUID, not as module function {removed}"
+            );
+        }
+        assert!(
+            !functions.contains("_hex_value"),
+            "private std.uuid helpers must not become importable stdlib functions"
+        );
+
+        let constants = module
+            .constants
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        for expected in [
+            "NIL",
+            "MAX",
+            "NAMESPACE_DNS",
+            "NAMESPACE_URL",
+            "NAMESPACE_OID",
+            "NAMESPACE_X500",
+        ] {
+            assert!(constants.contains(expected), "std.uuid should export const {expected}");
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn extract_type_signatures_preserves_same_name_method_overloads() -> Result<(), Box<dyn std::error::Error>> {
         let source = r#"
 pub trait Convert[T]:
@@ -1501,6 +1786,7 @@ pub type File = rusttype RustFile:
             traits: extract_trait_signatures(&program),
             types: extract_type_signatures(&program),
             constants: extract_const_signatures(&program),
+            statics: extract_static_signatures(&program),
             derivable_traits: extract_derivable_traits(&program),
             function_meta: extract_function_meta(&program),
             trait_meta: extract_trait_meta(&program),

@@ -210,6 +210,14 @@ pub enum LoopIterationPlan {
     IterCloned,
     /// Iterate by mutable reference with `.iter_mut()`.
     IterMut,
+    /// Iterate a string-like value as owned one-character strings.
+    StringChars,
+    /// Iterate a frozen string wrapper as owned one-character strings.
+    FrozenStringChars,
+    /// Iterate bytes as Incan `int` values.
+    BytesAsInts,
+    /// Iterate a frozen bytes wrapper as Incan `int` values.
+    FrozenBytesAsInts,
 }
 
 impl LoopIterationPlan {
@@ -222,6 +230,14 @@ impl LoopIterationPlan {
             Self::IterCopied => quote! { #tokens.iter().copied() },
             Self::IterCloned => quote! { #tokens.iter().cloned() },
             Self::IterMut => quote! { #tokens.iter_mut() },
+            Self::StringChars => quote! { (#tokens).chars().map(|__incan_ch| __incan_ch.to_string()) },
+            Self::FrozenStringChars => {
+                quote! { (#tokens).as_str().chars().map(|__incan_ch| __incan_ch.to_string()) }
+            }
+            Self::BytesAsInts => quote! { (#tokens).iter().map(|__incan_byte| (*__incan_byte) as i64) },
+            Self::FrozenBytesAsInts => {
+                quote! { (#tokens).as_slice().iter().map(|__incan_byte| (*__incan_byte) as i64) }
+            }
         }
     }
 }
@@ -235,6 +251,10 @@ pub fn plan_for_loop_iteration(
 ) -> LoopIterationPlan {
     match iterable_ty {
         IrType::RefMut(inner) => match inner.as_ref() {
+            IrType::String | IrType::StaticStr | IrType::StrRef => LoopIterationPlan::StringChars,
+            IrType::FrozenStr => LoopIterationPlan::FrozenStringChars,
+            IrType::Bytes | IrType::StaticBytes => LoopIterationPlan::BytesAsInts,
+            IrType::FrozenBytes => LoopIterationPlan::FrozenBytesAsInts,
             IrType::List(elem_ty) => match elem_ty.as_ref() {
                 IrType::Int | IrType::Float | IrType::Bool => LoopIterationPlan::IterCopied,
                 _ => LoopIterationPlan::IterMut,
@@ -243,6 +263,10 @@ pub fn plan_for_loop_iteration(
             _ => LoopIterationPlan::AsIs,
         },
         IrType::Ref(inner) => match inner.as_ref() {
+            IrType::String | IrType::StaticStr | IrType::StrRef => LoopIterationPlan::StringChars,
+            IrType::FrozenStr => LoopIterationPlan::FrozenStringChars,
+            IrType::Bytes | IrType::StaticBytes => LoopIterationPlan::BytesAsInts,
+            IrType::FrozenBytes => LoopIterationPlan::FrozenBytesAsInts,
             IrType::List(elem_ty) => match elem_ty.as_ref() {
                 IrType::Int | IrType::Float | IrType::Bool => LoopIterationPlan::IterCopied,
                 _ if item_is_user_enum => LoopIterationPlan::IterCloned,
@@ -273,6 +297,10 @@ pub fn plan_for_loop_iteration(
                 }
             }
         }
+        IrType::String | IrType::StaticStr | IrType::StrRef => LoopIterationPlan::StringChars,
+        IrType::FrozenStr => LoopIterationPlan::FrozenStringChars,
+        IrType::Bytes | IrType::StaticBytes => LoopIterationPlan::BytesAsInts,
+        IrType::FrozenBytes => LoopIterationPlan::FrozenBytesAsInts,
         IrType::Set(_) | IrType::Dict(_, _) => {
             if borrowable_lvalue {
                 LoopIterationPlan::BorrowWhole
@@ -378,6 +406,22 @@ mod tests {
         assert_eq!(
             plan_for_loop_iteration(&IrType::List(Box::new(IrType::String)), true, false, false),
             LoopIterationPlan::Iter
+        );
+    }
+
+    #[test]
+    fn for_loop_on_string_iterates_owned_character_strings() {
+        assert_eq!(
+            plan_for_loop_iteration(&IrType::String, true, false, false),
+            LoopIterationPlan::StringChars
+        );
+    }
+
+    #[test]
+    fn for_loop_on_bytes_iterates_incan_ints() {
+        assert_eq!(
+            plan_for_loop_iteration(&IrType::Bytes, true, false, false),
+            LoopIterationPlan::BytesAsInts
         );
     }
 

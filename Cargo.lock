@@ -1412,7 +1412,7 @@ dependencies = [
 
 [[package]]
 name = "incan"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.46"
 dependencies = [
  "byteorder",
  "clap",
@@ -1424,6 +1424,7 @@ dependencies = [
  "incan_syntax",
  "incan_vocab",
  "insta",
+ "md5",
  "miette",
  "prettyplease",
  "proc-macro2",
@@ -1433,6 +1434,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
+ "sha1",
  "sha2",
  "syn",
  "tempfile",
@@ -1450,14 +1452,14 @@ dependencies = [
 
 [[package]]
 name = "incan_core"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.46"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_derive"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.46"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1466,14 +1468,14 @@ dependencies = [
 
 [[package]]
 name = "incan_semantics_core"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.46"
 dependencies = [
  "incan_core",
 ]
 
 [[package]]
 name = "incan_semantics_stdlib"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.46"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1481,7 +1483,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.46"
 dependencies = [
  "axum",
  "incan_core",
@@ -1494,7 +1496,7 @@ dependencies = [
 
 [[package]]
 name = "incan_syntax"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.46"
 dependencies = [
  "incan_core",
  "incan_semantics_core",
@@ -1515,7 +1517,7 @@ dependencies = [
 
 [[package]]
 name = "incan_web_macros"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.46"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -1792,6 +1794,12 @@ name = "maybe-owned"
 version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4facc753ae494aeb6e3c22f839b158aebd4f9270f55cd3c79906c45476c47ab4"
+
+[[package]]
+name = "md5"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ae960838283323069879657ca3de837e9f7bbb4c7bf6ea7f1b290d5e9476d2e0"
 
 [[package]]
 name = "memchr"
@@ -3020,7 +3028,7 @@ dependencies = [
 
 [[package]]
 name = "rust_inspect"
-version = "0.3.0-dev.44"
+version = "0.3.0-dev.46"
 dependencies = [
  "hex",
  "incan_core",
@@ -3297,6 +3305,17 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
+]
+
+[[package]]
+name = "sha1"
+version = "0.10.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
+dependencies = [
+ "cfg-if",
+ "cpufeatures",
+ "digest",
 ]
 
 [[package]]

@@ -42,6 +42,19 @@ fn parse_program(source: &str, context: &str) -> crate::frontend::ast::Program {
     parser::parse(&tokens).unwrap_or_else(|errs| panic!("{context} parse failed: {errs:?}"))
 }
 
+#[test]
+fn stdlib_module_function_calls_accept_default_arguments() -> Result<(), String> {
+    let source = r#"
+from std.encoding import hex
+from std.io import BytesIO
+
+def main(payload: bytes) -> None:
+  target = BytesIO()
+  encoded = hex.encode(payload, target)
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
 fn check_str_err(source: &str, context: &str) -> Vec<CompileError> {
     match check_str(source) {
         Err(errs) => errs,
@@ -5461,6 +5474,16 @@ def main() -> None:
 }
 
 #[test]
+fn test_list_repeat_u8_can_initialize_bytes() {
+    let source = r#"
+def zeros(size: int) -> bytes:
+  zero: u8 = 0
+  return list.repeat(zero, size)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
 fn test_list_repeat_rejects_wrong_arity() {
     let source = r#"
 def main() -> None:
@@ -8795,6 +8818,20 @@ const DOUBLED: int = BASE * 2
 
 def foo() -> int:
   return DOUBLED
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_const_newtype_constructor_from_numeric_literal() {
+    let source = r#"
+type Token = newtype u128
+
+const ZERO: Token = Token(0)
+const MAX_TOKEN: Token = Token(340282366920938463463374607431768211455)
+
+def foo() -> Token:
+  return MAX_TOKEN
 "#;
     assert!(check_str(source).is_ok());
 }

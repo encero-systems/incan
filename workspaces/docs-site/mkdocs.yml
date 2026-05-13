@@ -128,6 +128,7 @@ nav:
           - Error handling recipes: language/how-to/error_handling_recipes.md
           - Error messages: language/how-to/error_messages.md
           - File I/O: language/how-to/file_io.md
+          - Binary-text encoding: language/how-to/binary_text_encoding.md
           - Generators: language/how-to/generators.md
           - Imports and modules: language/how-to/imports_and_modules.md
           - Module state: language/how-to/module_state.md
@@ -137,6 +138,7 @@ nav:
           - Project lifecycle: language/how-to/project_lifecycle.md
           - Testing: language/how-to/testing_stdlib.md
           - String processing: language/how-to/string_processing.md
+          - Working with UUIDs: language/how-to/working_with_uuids.md
           - Performance: language/how-to/performance.md
           - Rust interop: language/how-to/rust_interop.md
           - Rust types (coming from Python): language/how-to/rust_types_for_python_devs.md
@@ -163,10 +165,12 @@ nav:
               - std.collections: language/reference/stdlib/collections.md
               - std.derives.*: language/reference/stdlib/derives.md
               - std.datetime: language/reference/stdlib/datetime.md
+              - std.encoding: language/reference/stdlib/encoding.md
               - std.fs: language/reference/stdlib/fs.md
               - std.graph: language/reference/stdlib/graph.md
               - std.io: language/reference/stdlib/io.md
               - std.logging: language/reference/stdlib/logging.md
+              - std.uuid: language/reference/stdlib/uuid.md
               - std.tempfile: language/reference/stdlib/tempfile.md
               - std.reflection: language/reference/stdlib/reflection.md
               - std.result: language/reference/stdlib/result.md

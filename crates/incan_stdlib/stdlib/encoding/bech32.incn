@@ -1,0 +1,451 @@
+"""
+Bech32 and Bech32m helpers.
+
+The checksum implementation is pure Incan source using ordinary integer arithmetic and bitwise operators.
+
+Bech32 is split into a human-readable prefix, a separator, five-bit payload values, and a six-value checksum. The
+public helpers keep Bech32 and Bech32m explicit because the two checksum constants are intentionally not
+interchangeable.
+"""
+
+from std.encoding._shared import EncodingError, _encoding_error
+
+const _CHARSET: str = "qpzry9x8gf2tvdw0s3jn54khce6mua7l"
+const _GENERATOR: list[int] = [996825010, 642813549, 513874426, 1027748829, 705979059]
+const _BECH32_CONST: int = 1
+const _BECH32M_CONST: int = 734539939
+const _ASCII_PRINTABLE: str = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+const _ASCII_UPPER: str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+const _ASCII_LOWER: str = "abcdefghijklmnopqrstuvwxyz"
+
+
+# Public types
+
+pub enum Bech32Variant:
+    """
+    Checksum family used by a decoded Bech32 payload.
+
+    `Bech32` is the original BIP-0173 checksum constant. `Bech32m` is the later BIP-0350 constant used by newer witness
+    versions. The enum keeps that distinction visible after generic `decode`.
+    """
+
+    Bech32
+    Bech32m
+
+
+pub model Decoded:
+    """
+    Decoded Bech32 payload with checksum family.
+
+    `data` excludes the six checksum values. Callers that need to round-trip the exact checksum family can inspect
+    `variant`; callers that require one family should use `bech32_decode` or `bech32m_decode`.
+    """
+
+    pub hrp: str
+    pub data: list[int]
+    pub variant: Bech32Variant
+
+
+# Public helpers
+
+pub def bech32_encode(hrp: str, data: list[int]) -> Result[str, EncodingError]:
+    """
+    Encode a human-readable prefix and five-bit data values with the Bech32 checksum.
+
+    `data` must already be grouped into five-bit values. Use `convertbits(raw_bytes, 8, 5)` before this call when
+    encoding byte payloads.
+
+    Returns:
+        Bech32 text, or `Err(EncodingError)` for invalid HRP or data values.
+    """
+    return _encode(hrp, data, Bech32Variant.Bech32)
+
+
+pub def encode(hrp: str, data: list[int]) -> Result[str, EncodingError]:
+    """
+    Alias `bech32_encode` as the module's default encoder.
+    """
+    return bech32_encode(hrp, data)
+
+
+pub def bech32m_encode(hrp: str, data: list[int]) -> Result[str, EncodingError]:
+    """
+    Encode a human-readable prefix and five-bit data values with the Bech32m checksum.
+
+    Bech32m differs only in the checksum constant. Keeping the name explicit avoids accepting one address family as the
+    other.
+
+    Returns:
+        Bech32m text, or `Err(EncodingError)` for invalid HRP or data values.
+    """
+    return _encode(hrp, data, Bech32Variant.Bech32m)
+
+
+pub def bech32_decode(text: str) -> Result[tuple[str, list[int]], EncodingError]:
+    """
+    Decode text and require a Bech32 checksum.
+
+    Use generic `decode` when you want to accept either checksum family and branch on `Decoded.variant`.
+
+    Returns:
+        `(hrp, data)` when the checksum variant is Bech32.
+    """
+    decoded = decode(text)?
+    if decoded.variant != Bech32Variant.Bech32:
+        return Err(_error("invalid_checksum", "checksum is Bech32m, not Bech32", len(text) - 6))
+    return Ok((decoded.hrp, decoded.data))
+
+
+pub def bech32m_decode(text: str) -> Result[tuple[str, list[int]], EncodingError]:
+    """
+    Decode text and require a Bech32m checksum.
+
+    This rejects a valid Bech32 checksum with `invalid_checksum` instead of silently returning the payload.
+
+    Returns:
+        `(hrp, data)` when the checksum variant is Bech32m.
+    """
+    decoded = decode(text)?
+    if decoded.variant != Bech32Variant.Bech32m:
+        return Err(_error("invalid_checksum", "checksum is Bech32, not Bech32m", len(text) - 6))
+    return Ok((decoded.hrp, decoded.data))
+
+
+pub def decode(text: str) -> Result[Decoded, EncodingError]:
+    """
+    Decode Bech32 or Bech32m text.
+
+    Decode normalizes case, validates the human-readable prefix, converts payload characters to five-bit values, and
+    then identifies the checksum family from the polymod result.
+
+    Returns:
+        Decoded HRP, five-bit data payload, and detected checksum variant.
+    """
+    if len(text) < 8:
+        return Err(_error("invalid_length", "bech32 text is too short", len(text)))
+    if not _has_consistent_case(text):
+        return Err(_error("mixed_case", "bech32 text must not mix uppercase and lowercase", 0))
+    normalized = _lower_ascii(text)
+    separator = _last_separator(normalized)
+    if separator < 1:
+        return Err(_error("missing_separator", "bech32 text must contain a non-leading separator '1'", separator))
+    if separator + 7 > len(normalized):
+        return Err(_error("invalid_length", "bech32 checksum requires six characters", separator))
+    hrp = normalized[0:separator]
+    _validate_hrp(hrp)?
+
+    mut values: list[int] = []
+    for index in range(separator + 1, len(normalized)):
+        values.append(_charset_value(normalized[index:index + 1], index)?)
+
+    # Polymod over HRP expansion plus payload+checksum tells us which checksum constant was used.
+    check = _polymod(_hrp_expand(hrp) + values)
+    mut variant = Bech32Variant.Bech32
+    if check == _BECH32_CONST:
+        variant = Bech32Variant.Bech32
+    elif check == _BECH32M_CONST:
+        variant = Bech32Variant.Bech32m
+    else:
+        return Err(_error("invalid_checksum", "bech32 checksum does not match Bech32 or Bech32m", len(normalized) - 6))
+
+    mut data: list[int] = []
+    for data_index in range(len(values) - 6):
+        data.append(values[data_index])
+    return Ok(Decoded(hrp=hrp, data=data, variant=variant))
+
+
+pub def convertbits(data: list[int], from_bits: int, to_bits: int, pad: bool = true) -> Result[list[int], EncodingError]:
+    """
+    Regroup integer bit fields between source and target widths.
+
+    This helper is the bridge between ordinary bytes and Bech32's five-bit payload values. For example,
+    `convertbits(bytes_as_ints, 8, 5)` prepares bytes for encoding, and `convertbits(words, 5, 8, pad=false)` recovers
+    bytes after decoding.
+
+    Args:
+        data: Input values, each fitting in `from_bits`.
+        from_bits: Width of each source value.
+        to_bits: Width of each output value.
+        pad: Whether to emit a padded final output value.
+
+    Returns:
+        Regrouped values, or `Err(EncodingError)` for out-of-range input or invalid trailing padding.
+    """
+    if from_bits <= 0 or to_bits <= 0:
+        return Err(_error("invalid_bits", "bit group sizes must be positive", 0))
+    max_value = _pow2(from_bits) - 1
+    max_out = _pow2(to_bits) - 1
+    mut acc = 0
+    mut bits = 0
+    mut out: list[int] = []
+    for index, value in enumerate(data):
+        if value < 0 or value > max_value:
+            return Err(_error("invalid_value", "input value exceeds source bit group size", index))
+        acc = acc * _pow2(from_bits) + value
+        bits += from_bits
+        while bits >= to_bits:
+            bits -= to_bits
+            # Emit the highest complete output group currently in the accumulator.
+            out.append((acc // _pow2(bits)) % _pow2(to_bits))
+    if pad:
+        if bits > 0:
+            out.append((acc * _pow2(to_bits - bits)) % _pow2(to_bits))
+    elif bits >= from_bits or ((acc * _pow2(to_bits - bits)) % _pow2(to_bits)) != 0:
+        return Err(_error("invalid_padding", "input has non-zero trailing padding bits", len(data)))
+    return Ok(out)
+
+
+# Codec implementation
+
+def _encode(hrp: str, data: list[int], variant: Bech32Variant) -> Result[str, EncodingError]:
+    """
+    Validate payload values and assemble Bech32 text with the selected checksum family.
+
+    The HRP and data validation happen before checksum construction so malformed inputs get precise error categories
+    instead of a later checksum failure.
+    """
+    if len(hrp) < 1:
+        return Err(_error("invalid_hrp", "human-readable prefix must not be empty", 0))
+    if not _has_consistent_case(hrp):
+        return Err(_error("mixed_case", "human-readable prefix must not mix uppercase and lowercase", 0))
+    normalized_hrp = _lower_ascii(hrp)
+    _validate_hrp(normalized_hrp)?
+    mut values: list[int] = []
+    for index, value in enumerate(data):
+        if value < 0 or value > 31:
+            return Err(_error("invalid_value", "bech32 data values must fit in five bits", index))
+        values.append(value)
+
+    checksum = _create_checksum(normalized_hrp, values, variant)
+    mut out = normalized_hrp + "1"
+    for value in values:
+        out += _charset_char(value)
+    for value in checksum:
+        out += _charset_char(value)
+    return Ok(out)
+
+
+def _create_checksum(hrp: str, data: list[int], variant: Bech32Variant) -> list[int]:
+    """
+    Compute the six checksum values for a human-readable prefix and data payload.
+
+    Six zero values reserve the checksum space. XORing with the selected family constant turns the polymod remainder
+    into the concrete checksum digits appended to the output.
+    """
+    mut values = _hrp_expand(hrp) + data + list.repeat(0, 6)
+    mut constant = _BECH32_CONST
+    if variant == Bech32Variant.Bech32m:
+        constant = _BECH32M_CONST
+    polymod = _polymod(values) ^ constant
+    mut out: list[int] = []
+    mut shift = 25
+    while shift >= 0:
+        out.append((polymod // _pow2(shift)) % 32)
+        shift -= 5
+    return out
+
+
+def _hrp_expand(hrp: str) -> list[int]:
+    """
+    Expand a human-readable prefix into high-bit and low-bit checksum fields.
+
+    Bech32 checksums mix the HRP into the checksum without placing HRP characters in the payload alphabet. Each
+    printable ASCII code is split into high five bits and low five bits with a zero separator.
+    """
+    mut out: list[int] = []
+    for ch in hrp:
+        out.append(_ord_printable(ch) // 32)
+    out.append(0)
+    for ch in hrp:
+        out.append(_ord_printable(ch) % 32)
+    return out
+
+
+def _polymod(values: list[int]) -> int:
+    """
+    Run the Bech32 polymod checksum recurrence over five-bit values.
+
+    This is the checksum state machine from the Bech32 spec. The generator constants are fixed taps; when a top bit is
+    set, the corresponding generator is XORed into the new state.
+    """
+    mut chk = 1
+    for value in values:
+        top = chk // 33554432
+        chk = (chk % 33554432) * 32 + value
+        for gen_index in range(5):
+            if (top // _pow2(gen_index)) % 2 == 1:
+                chk = chk ^ _GENERATOR[gen_index]
+    return chk
+
+
+def _charset_value(ch: str, position: int) -> Result[int, EncodingError]:
+    """
+    Map one Bech32 data character to its five-bit value.
+    """
+    for index, character in enumerate(_CHARSET):
+        if character == ch:
+            return Ok(index)
+    return Err(_error("invalid_character", "character is not in the bech32 alphabet", position))
+
+
+def _charset_char(index: int) -> str:
+    """
+    Return one character from the Bech32 data alphabet.
+    """
+    return _CHARSET[index:index + 1]
+
+
+def _last_separator(value: str) -> int:
+    """
+    Return the last separator index, or `-1` if the text has no separator.
+    """
+    mut out = -1
+    for index, ch in enumerate(value):
+        if ch == "1":
+            out = index
+    return out
+
+
+def _validate_hrp(hrp: str) -> Result[None, EncodingError]:
+    """
+    Validate that a human-readable prefix only uses printable ASCII 33..126.
+    """
+    for index, ch in enumerate(hrp):
+        code = _ord_printable(ch)
+        if code < 33 or code > 126:
+            return Err(_error("invalid_hrp", "human-readable prefix must use printable ASCII 33..126", index))
+    return Ok(None)
+
+
+def _ord_printable(ch: str) -> int:
+    """
+    Return the ASCII code for one printable character, or zero when it is not printable ASCII.
+    """
+    for index, character in enumerate(_ASCII_PRINTABLE):
+        if character == ch:
+            return index + 32
+    return 0
+
+
+def _has_consistent_case(value: str) -> bool:
+    """
+    Return whether text is all-lowercase, all-uppercase, or has no letters.
+    """
+    mut saw_lower = false
+    mut saw_upper = false
+    for ch in value:
+        if _is_lower_ascii(ch):
+            saw_lower = true
+        if _is_upper_ascii(ch):
+            saw_upper = true
+    if saw_lower:
+        if saw_upper:
+            return false
+    return true
+
+
+def _lower_ascii(value: str) -> str:
+    """
+    Lowercase ASCII letters while leaving all other characters unchanged.
+    """
+    mut out = ""
+    for ch in value:
+        out += _lower_char(ch)
+    return out
+
+
+def _is_lower_ascii(ch: str) -> bool:
+    """
+    Return whether `ch` is an ASCII lowercase letter.
+    """
+    return _index_of(_ASCII_LOWER, ch) >= 0
+
+
+def _is_upper_ascii(ch: str) -> bool:
+    """
+    Return whether `ch` is an ASCII uppercase letter.
+    """
+    return _index_of(_ASCII_UPPER, ch) >= 0
+
+
+def _lower_char(ch: str) -> str:
+    """
+    Lowercase one ASCII letter.
+    """
+    if ch == "A":
+        return "a"
+    elif ch == "B":
+        return "b"
+    elif ch == "C":
+        return "c"
+    elif ch == "D":
+        return "d"
+    elif ch == "E":
+        return "e"
+    elif ch == "F":
+        return "f"
+    elif ch == "G":
+        return "g"
+    elif ch == "H":
+        return "h"
+    elif ch == "I":
+        return "i"
+    elif ch == "J":
+        return "j"
+    elif ch == "K":
+        return "k"
+    elif ch == "L":
+        return "l"
+    elif ch == "M":
+        return "m"
+    elif ch == "N":
+        return "n"
+    elif ch == "O":
+        return "o"
+    elif ch == "P":
+        return "p"
+    elif ch == "Q":
+        return "q"
+    elif ch == "R":
+        return "r"
+    elif ch == "S":
+        return "s"
+    elif ch == "T":
+        return "t"
+    elif ch == "U":
+        return "u"
+    elif ch == "V":
+        return "v"
+    elif ch == "W":
+        return "w"
+    elif ch == "X":
+        return "x"
+    elif ch == "Y":
+        return "y"
+    elif ch == "Z":
+        return "z"
+    return ch
+
+
+def _index_of(haystack: str, needle: str) -> int:
+    """
+    Return the first index of a one-character needle, or `-1` if absent.
+    """
+    for index, ch in enumerate(haystack):
+        if ch == needle:
+            return index
+    return -1
+
+
+def _pow2(exp: int) -> int:
+    """
+    Return two raised to a non-negative integer exponent.
+    """
+    return 1 << exp
+
+
+def _error(kind: str, detail: str, position: int) -> EncodingError:
+    """
+    Build a Bech32 error with the module's codec name.
+    """
+    return _encoding_error("bech32", kind, detail, position)
