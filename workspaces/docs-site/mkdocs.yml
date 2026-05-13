@@ -128,6 +128,7 @@ nav:
           - Error handling recipes: language/how-to/error_handling_recipes.md
           - Error messages: language/how-to/error_messages.md
           - File I/O: language/how-to/file_io.md
+          - Binary-text encoding: language/how-to/binary_text_encoding.md
           - Generators: language/how-to/generators.md
           - Imports and modules: language/how-to/imports_and_modules.md
           - Module state: language/how-to/module_state.md

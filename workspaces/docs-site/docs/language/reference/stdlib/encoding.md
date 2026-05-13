@@ -178,5 +178,6 @@ Source/sink functions do not insert line wrapping by default. MIME-style wrapped
 
 ## See also
 
+- [Binary-text encoding how-to](../../how-to/binary_text_encoding.md)
 - [std.io reference](io.md)
 - [std.fs reference](fs.md)
