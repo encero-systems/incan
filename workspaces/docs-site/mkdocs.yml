@@ -144,6 +144,7 @@ nav:
           - Rust types (coming from Python): language/how-to/rust_types_for_python_devs.md
       - Reference:
           - Language reference (generated): language/reference/language.md
+          - Feature inventory (generated): language/reference/feature_inventory.md
           - Code style guide: language/reference/code_style.md
           - Functions and calls: language/reference/functions.md
           - Generators: language/reference/generators.md
