@@ -45,7 +45,7 @@ impl AstLowering {
         &mut self,
         f: &ast::FunctionDecl,
     ) -> Result<IrFunction, LoweringError> {
-        self.lower_function_named(f, f.name.clone(), Self::map_visibility(f.visibility))
+        self.lower_function_named(f, f.name.clone(), self.map_callable_visibility(f.visibility))
     }
 
     /// Lower a function declaration using an explicit emitted name and visibility.

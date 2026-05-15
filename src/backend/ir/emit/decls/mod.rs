@@ -370,11 +370,26 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     false
                 };
+            let should_reexport_item = |item: &super::super::decl::IrImportItem| {
+                let binding = item.alias.as_ref().unwrap_or(&item.name);
+                if is_incan_source_stdlib && binding.starts_with('_') {
+                    return false;
+                }
+                export_item_import
+            };
             let item_stmts: Vec<TokenStream> = items
                 .iter()
                 .filter(|item| {
                     let binding = item.alias.as_ref().unwrap_or(&item.name);
-                    export_item_import
+                    let private_type_like_binding = binding
+                        .trim_start_matches('_')
+                        .chars()
+                        .next()
+                        .is_some_and(|ch| ch.is_ascii_uppercase());
+                    if is_incan_source_stdlib && binding.starts_with('_') && !private_type_like_binding {
+                        return self.should_emit_extension_trait_import(binding);
+                    }
+                    should_reexport_item(item)
                         || self.should_emit_import_binding(binding)
                         || self.should_emit_extension_trait_import(binding)
                         || (preserve_metadata_missing_trait_candidate
@@ -387,13 +402,13 @@ impl<'a> IrEmitter<'a> {
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     if let Some(alias) = &item.alias {
                         let alias_ident = Self::rust_ident(alias);
-                        if export_item_import {
+                        if should_reexport_item(item) {
                             quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
                         } else {
                             quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
                         }
                     } else {
-                        if export_item_import {
+                        if should_reexport_item(item) {
                             quote! { pub use #path_ts_clone :: #name_ident; }
                         } else {
                             quote! { use #path_ts_clone :: #name_ident; }
