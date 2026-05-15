@@ -287,6 +287,7 @@ impl TypeChecker {
         self.type_info.record_call_site_callable_params(span, &params);
     }
 
+    /// Return whether a lookup-style Rust method should preserve the probe argument's emitted shape.
     fn rust_lookup_probe_boundary_match(&self, arg_ty: &ResolvedType, target_ty: &ResolvedType) -> bool {
         let ResolvedType::Ref(inner) = target_ty else {
             return false;
@@ -299,10 +300,7 @@ impl TypeChecker {
                 )
             }
             ResolvedType::Bytes | ResolvedType::FrozenBytes => {
-                matches!(
-                    inner.as_ref(),
-                    ResolvedType::Bytes | ResolvedType::RustPath(_) | ResolvedType::TypeVar(_)
-                )
+                matches!(inner.as_ref(), ResolvedType::RustPath(_) | ResolvedType::TypeVar(_))
             }
             _ => false,
         }

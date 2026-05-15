@@ -1,0 +1,33 @@
+from std.compression import Codec, CompressionError, bz2, deflate, decompress_auto, gzip, lzma, snappy, zlib, zstd
+from std.compression.snappy.raw import compress as raw_snappy_compress, decompress as raw_snappy_decompress
+
+
+def assert_round_trip(name: str, plain: bytes, decoded: bytes) -> None:
+    assert decoded == plain
+    println(f"{name} round trip ok")
+
+
+def exercise_compression() -> Result[None, CompressionError]:
+    data = b"Incan compression dogfood"
+
+    gzip_data = gzip.compress(data, None)?
+    assert_round_trip("gzip", data, gzip.decompress(gzip_data)?)
+    codec, decoded = decompress_auto(gzip_data, [Codec.Gzip])?
+    assert codec == Codec.Gzip
+    assert decoded == data
+
+    assert_round_trip("zlib", data, zlib.decompress(zlib.compress(data, None)?)?)
+    assert_round_trip("deflate", data, deflate.decompress(deflate.compress(data, None)?)?)
+    assert_round_trip("zstd", data, zstd.decompress(zstd.compress(data, None)?)?)
+    assert_round_trip("bz2", data, bz2.decompress(bz2.compress(data, None)?)?)
+    assert_round_trip("lzma", data, lzma.decompress(lzma.compress(data, None)?)?)
+    assert_round_trip("snappy", data, snappy.decompress(snappy.compress(data, None)?)?)
+    assert_round_trip("snappy.raw", data, raw_snappy_decompress(raw_snappy_compress(data, None)?)?)
+
+    return Ok(None)
+
+
+def main() -> None:
+    match exercise_compression():
+        Ok(_) => return
+        Err(_) => assert false

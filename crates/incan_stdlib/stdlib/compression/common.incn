@@ -1,0 +1,156 @@
+from std.traits.error import Error
+
+
+pub enum Codec(str):
+    """
+    Compression codec identity used by `std.compression` autodetection.
+    """
+
+    Gzip = "gzip"
+    Zlib = "zlib"
+    Deflate = "deflate"
+    Zstd = "zstd"
+    Bz2 = "bz2"
+    Lzma = "lzma"
+    Snappy = "snappy"
+
+    @staticmethod
+    def all() -> list[Codec]:
+        """
+        Return the stable autodetection candidate order.
+        """
+        return [Codec.Gzip, Codec.Zlib, Codec.Deflate, Codec.Zstd, Codec.Bz2, Codec.Lzma, Codec.Snappy]
+
+
+@derive(Clone)
+pub model CompressionError with Error:
+    """
+    Stable compression failure boundary.
+
+    `kind` is intended for branching on categories such as `invalid_data`, `truncated_input`, `unsupported_codec`,
+    `unsupported_option`, `invalid_level`, `invalid_chunk_size`, `ambiguous_autodetection`, `io`, and `backend`.
+    """
+
+    pub kind: str
+    pub codec: Option[Codec]
+    pub operation: str
+    pub detail: str
+
+    def message(self) -> str:
+        """
+        Return the human-readable error detail.
+        """
+        return self.detail
+
+    def source(self) -> Option[str]:
+        """
+        Return the optional source error.
+        """
+        return None
+
+
+def _level_or_default(codec: Codec, level: Option[int], default: int, minimum: int, maximum: int) -> Result[int, CompressionError]:
+    """
+    Validate a portable integer compression-level request.
+    """
+    match level:
+        Some(value) =>
+            if value < minimum or value > maximum:
+                return Err(
+                    CompressionError(
+                        kind="invalid_level",
+                        codec=Some(codec),
+                        operation="compress",
+                        detail=f"level for {codec.value()} must be between {minimum} and {maximum}",
+                    ),
+                )
+            return Ok(value)
+        None => return Ok(default)
+
+
+def _reject_level(codec: Codec, level: Option[int]) -> Result[None, CompressionError]:
+    """
+    Reject a level argument for codecs without level support.
+    """
+    match level:
+        Some(_) =>
+            return Err(
+                CompressionError(
+                    kind="unsupported_option",
+                    codec=Some(codec),
+                    operation="compress",
+                    detail=f"{codec.value()} does not support configurable compression levels",
+                ),
+            )
+        None => return Ok(None)
+
+
+def _codec_error(codec: Codec, operation: str, detail: str) -> CompressionError:
+    """
+    Build a codec failure from backend error text.
+    """
+    mut kind = "backend"
+    if detail.contains("EOF") or detail.contains("eof") or detail.contains("early") or detail.contains("truncated"):
+        kind = "truncated_input".to_string()
+    elif detail.contains("invalid") or detail.contains("corrupt") or detail.contains("checksum"):
+        kind = "invalid_data".to_string()
+    return CompressionError(kind=kind, codec=Some(codec), operation=operation, detail=detail)
+
+
+def _io_error(codec: Option[Codec], operation: str, detail: str) -> CompressionError:
+    """
+    Build an I/O failure.
+    """
+    return CompressionError(kind="io", codec=codec, operation=operation, detail=detail)
+
+
+def _validate_allowed(allowed: list[Codec]) -> Result[None, CompressionError]:
+    if len(allowed) == 0:
+        return Err(
+            CompressionError(
+                kind="unsupported_codec",
+                codec=None,
+                operation="decompress_auto",
+                detail="allowed codec list must not be empty",
+            ),
+        )
+    return Ok(None)
+
+
+def _allowed(allowed: list[Codec], codec: Codec) -> bool:
+    for candidate in allowed:
+        if candidate == codec:
+            return true
+    return false
+
+
+def _byte_at(data: bytes, index: int) -> int:
+    return int(data[index])
+
+
+def _looks_like_gzip(data: bytes) -> bool:
+    return len(data) >= 2 and _byte_at(data, 0) == 31 and _byte_at(data, 1) == 139
+
+
+def _looks_like_zstd(data: bytes) -> bool:
+    return len(data) >= 4 and _byte_at(data, 0) == 40 and _byte_at(data, 1) == 181 and _byte_at(data, 2) == 47 and _byte_at(data, 3) == 253
+
+
+def _looks_like_bz2(data: bytes) -> bool:
+    return len(data) >= 3 and _byte_at(data, 0) == 66 and _byte_at(data, 1) == 90 and _byte_at(data, 2) == 104
+
+
+def _looks_like_xz(data: bytes) -> bool:
+    return len(data) >= 6 and _byte_at(data, 0) == 253 and _byte_at(data, 1) == 55 and _byte_at(data, 2) == 122 and _byte_at(data, 3) == 88 and _byte_at(data, 4) == 90 and _byte_at(data, 5) == 0
+
+
+def _looks_like_snappy_frame(data: bytes) -> bool:
+    return len(data) >= 10 and _byte_at(data, 0) == 255 and _byte_at(data, 1) == 6 and _byte_at(data, 2) == 0 and _byte_at(data, 3) == 0 and _byte_at(data, 4) == 115 and _byte_at(data, 5) == 78 and _byte_at(data, 6) == 97 and _byte_at(data, 7) == 80 and _byte_at(data, 8) == 112 and _byte_at(data, 9) == 89
+
+
+def _looks_like_zlib(data: bytes) -> bool:
+    if len(data) < 2:
+        return false
+    cmf = _byte_at(data, 0)
+    flg = _byte_at(data, 1)
+    return cmf % 16 == 8 and ((cmf * 256 + flg) % 31 == 0)

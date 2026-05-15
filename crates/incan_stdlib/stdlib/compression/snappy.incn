@@ -1,0 +1,26 @@
+from rust::std::io import Cursor, Read
+from rust::snap::read @ "1" import FrameDecoder, FrameEncoder
+from std.compression.common import Codec, CompressionError, _codec_error, _reject_level
+
+
+pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
+    """
+    Compress bytes as a framed Snappy stream.
+    """
+    _reject_level(Codec.Snappy, level)?
+    mut reader = FrameEncoder.new(Cursor.new(data))
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Snappy, "compress", err.to_string()))
+
+
+pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
+    """
+    Decompress a framed Snappy stream.
+    """
+    mut reader = FrameDecoder.new(Cursor.new(data))
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Snappy, "decompress", err.to_string()))

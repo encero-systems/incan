@@ -433,7 +433,7 @@ impl<'a> IrEmitter<'a> {
         match method {
             "write_all" => true,
             "for_label" | "decode" | "encode" => true,
-            "write" => Self::is_byte_buffer_type(arg_ty),
+            "write" | "compress_vec" | "decompress_vec" => Self::is_byte_buffer_type(arg_ty),
             _ => false,
         }
     }
@@ -966,5 +966,27 @@ impl<'a> IrEmitter<'a> {
         matches!(&receiver.ty, IrType::NamedGeneric(name, _)
             if incan_core::lang::types::collections::from_str(name.as_str())
                 == Some(incan_core::lang::types::collections::CollectionTypeId::Generator))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::IrEmitter;
+    use crate::backend::ir::types::IrType;
+
+    #[test]
+    fn snappy_vec_methods_fallback_borrow_byte_buffers() {
+        assert!(IrEmitter::method_arg_needs_fallback_borrow(
+            "compress_vec",
+            &IrType::Bytes,
+        ));
+        assert!(IrEmitter::method_arg_needs_fallback_borrow(
+            "decompress_vec",
+            &IrType::Bytes,
+        ));
+        assert!(!IrEmitter::method_arg_needs_fallback_borrow(
+            "compress_vec",
+            &IrType::String,
+        ));
     }
 }
