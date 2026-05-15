@@ -30,6 +30,7 @@ If you’re not sure where you fit, start at [Start here](../start_here/index.md
 
 ## Reference (look up)
 
+- Current feature inventory: [Feature inventory (generated)](reference/feature_inventory.md)
 - Generated language reference: [Language reference (generated)](reference/language.md)
 - Code style (canonical source layout guide): [Incan Code Style Guide](reference/code_style.md)
 - Static storage: [Static storage](reference/static_storage.md)

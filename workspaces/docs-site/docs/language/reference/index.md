@@ -15,6 +15,7 @@ For step-by-step learning and patterns, see [Tutorials](../tutorials/book/index.
 ## Table of contents
 
 - [Language reference (generated)](language.md): compiler-generated tables (keywords, operators, builtins, etc.)
+- [Feature inventory (generated)](feature_inventory.md): generated current capability atlas for syntax, stdlib, interop, testing, async, tooling, and library surfaces
 - [Functions and calls](functions.md): function signatures, ordinary call binding, rest parameters, and call-site unpacking
 - [Computed properties](computed_properties.md): field-like derived members, trait requirements, and `property` vs `def`
 - [Newtypes](newtypes.md): nominal wrappers, validated construction, implicit coercion sites, and constraints

@@ -70,7 +70,7 @@ impl<'a> IrEmitter<'a> {
     ) -> Result<TokenStream, EmitError> {
         let callback_tokens = self.emit_expr(callback)?;
         if matches!(callback.ty, IrType::Function { .. }) {
-            Ok(quote! { #callback_tokens(#payload_tokens) })
+            Ok(quote! { (#callback_tokens)(#payload_tokens) })
         } else {
             Ok(quote! { #callback_tokens.__call__(#payload_tokens) })
         }
@@ -90,7 +90,7 @@ impl<'a> IrEmitter<'a> {
         match &callback.kind {
             _ if matches!(callback.ty, IrType::Function { .. }) => {
                 let callback_tokens = self.emit_expr(callback)?;
-                Ok(quote! { #callback_tokens(#borrowed_payload) })
+                Ok(quote! { (#callback_tokens)(#borrowed_payload) })
             }
             _ => {
                 let callback_tokens = self.emit_expr(callback)?;
@@ -171,6 +171,12 @@ impl<'a> IrEmitter<'a> {
                     let callback_tokens = self.emit_expr(callback)?;
                     return Ok(quote! {
                         crate::__incan_std::result::#method_ident(#receiver_tokens, #callback_tokens)
+                    });
+                }
+                if matches!(callback.kind, IrExprKind::Closure { .. }) {
+                    let callback_tokens = self.emit_expr(callback)?;
+                    return Ok(quote! {
+                        #receiver_tokens.#method_ident(#callback_tokens)
                     });
                 }
                 let body = self.emit_result_callback_call(callback, quote! { __incan_result_value })?;
@@ -336,11 +342,21 @@ impl<'a> IrEmitter<'a> {
                 };
                 let external_param_planned =
                     matches!(arg_use_site, ValueUseSite::ExternalCallArg { target_ty: Some(_) });
-                let emitted = self.emit_expr_for_use(arg, arg_use_site);
+                let direct_mut_trait_receiver = external_method_shape
+                    && idx == 0
+                    && Self::external_trait_first_arg_needs_mut_borrow(receiver, method);
+                let emitted = if direct_mut_trait_receiver {
+                    self.emit_expr(arg)
+                } else {
+                    self.emit_expr_for_use(arg, arg_use_site)
+                };
                 if let Some(previous) = previous_qualify {
                     self.qualify_internal_canonical_paths.replace(previous);
                 }
                 let mut emitted = emitted?;
+                if direct_mut_trait_receiver {
+                    return Ok(quote! { &mut #emitted });
+                }
                 if idx == 0
                     && method == "take"
                     && matches!(arg.ty, IrType::Int)
@@ -426,6 +442,21 @@ impl<'a> IrEmitter<'a> {
             "read" | "read_to_end" | "read_exact" | "read_buf" | "read_buf_exact" => Self::is_byte_buffer_type(arg_ty),
             _ => false,
         }
+    }
+
+    /// Return whether an external Rust trait-style associated call needs `&mut` for its first argument.
+    fn external_trait_first_arg_needs_mut_borrow(receiver: &TypedExpr, method: &str) -> bool {
+        if !matches!(method, "update" | "finalize_xof_reset") {
+            return false;
+        }
+        matches!(
+            &receiver.kind,
+            IrExprKind::Var {
+                name,
+                ref_kind: VarRefKind::ExternalRustName,
+                ..
+            } if matches!(name.as_str(), "Digest" | "Update" | "ExtendableOutputReset")
+        )
     }
 
     /// Return whether an external Rust method's first argument should be emitted as a shared borrow.

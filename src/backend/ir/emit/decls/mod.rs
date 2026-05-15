@@ -385,18 +385,35 @@ impl<'a> IrEmitter<'a> {
                     let name_ident = Self::rust_ident(&item.name);
                     let path_tokens_clone = path_tokens.clone();
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
+                    let absolute_path = matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import;
                     if let Some(alias) = &item.alias {
                         let alias_ident = Self::rust_ident(alias);
                         if export_item_import {
-                            quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
+                            if absolute_path {
+                                quote! { pub use :: #path_ts_clone :: #name_ident as #alias_ident; }
+                            } else {
+                                quote! { pub use #path_ts_clone :: #name_ident as #alias_ident; }
+                            }
                         } else {
-                            quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
+                            if absolute_path {
+                                quote! { use :: #path_ts_clone :: #name_ident as #alias_ident; }
+                            } else {
+                                quote! { use #path_ts_clone :: #name_ident as #alias_ident; }
+                            }
                         }
                     } else {
                         if export_item_import {
-                            quote! { pub use #path_ts_clone :: #name_ident; }
+                            if absolute_path {
+                                quote! { pub use :: #path_ts_clone :: #name_ident; }
+                            } else {
+                                quote! { pub use #path_ts_clone :: #name_ident; }
+                            }
                         } else {
-                            quote! { use #path_ts_clone :: #name_ident; }
+                            if absolute_path {
+                                quote! { use :: #path_ts_clone :: #name_ident; }
+                            } else {
+                                quote! { use #path_ts_clone :: #name_ident; }
+                            }
                         }
                     }
                 })

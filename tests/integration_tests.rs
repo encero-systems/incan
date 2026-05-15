@@ -2960,6 +2960,26 @@ def main() -> None:
     }
 
     #[test]
+    fn test_string_and_bytes_iteration_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = run_incan_source(
+            "def main() -> None:\n  mut out = \"\"\n  for ch in \"Az\":\n    out += ch\n  for index, ch in enumerate(\"xy\"):\n    out += f\"{index}{ch}\"\n  mut total = 0\n  for byte in b\"Az\":\n    total += byte\n  for index, byte in enumerate(b\"\\x01\\x02\"):\n    total += index + byte\n  println(out)\n  println(total)\n",
+        );
+
+        assert!(
+            output.status.success(),
+            "incan run string/bytes iteration regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(lines, vec!["Az0x1y", "191"]);
+
+        Ok(())
+    }
+
+    #[test]
     fn test_std_fs_compile_and_run_path_file_and_tree_operations() -> Result<(), Box<dyn std::error::Error>> {
         let base = std::env::temp_dir().join(format!("incan_std_fs_integration_{}", std::process::id()));
         let root = base.join("root");
@@ -3099,6 +3119,227 @@ def main() -> None:
     }
 
     #[test]
+    fn test_std_hash_compile_and_run_digest_file_and_error_paths() -> Result<(), Box<dyn std::error::Error>> {
+        // Keep std.hash's generated-project dependencies in the root Cargo graph so CI fetches them before this smoke
+        // runs the generated project under CARGO_NET_OFFLINE.
+        use blake2::Digest as _;
+        assert_eq!(blake2::Blake2s256::digest(b"abc").len(), 32);
+        assert_eq!(blake3::hash(b"abc").as_bytes().len(), 32);
+        assert_eq!(md5_010::Md5::digest(b"abc").len(), 16);
+        assert_eq!(sha1::Sha1::digest(b"abc").len(), 20);
+        assert_eq!(sha2::Sha256::digest(b"abc").len(), 32);
+        assert_eq!(sha3::Sha3_256::digest(b"abc").len(), 32);
+        let mut xxh32 = xxhash_rust::xxh32::Xxh32::default();
+        xxh32.update(b"abc");
+        assert_ne!(xxh32.digest(), 0);
+        let mut xxh64 = xxhash_rust::xxh64::Xxh64::default();
+        xxh64.update(b"abc");
+        assert_ne!(xxh64.digest(), 0);
+        let mut xxh3 = xxhash_rust::xxh3::Xxh3Default::new();
+        xxh3.update(b"abc");
+        assert_ne!(xxh3.digest(), 0);
+
+        let payload = std::env::temp_dir().join(format!("incan_std_hash_integration_{}.txt", std::process::id()));
+        std::fs::write(&payload, b"abc")?;
+
+        let source = format!(
+            r#"
+from std.hash import (
+    blake2b,
+    blake2s,
+    blake3,
+    HashError,
+    file_digest,
+    file_hash_u32,
+    file_hash_u64,
+    file_hash_u128,
+    md5,
+    reader_digest,
+    reader_hash_u32,
+    reader_hash_u64,
+    reader_hash_u128,
+    sha1,
+    sha224,
+    sha256,
+    sha384,
+    sha512,
+    sha3_224,
+    sha3_256,
+    sha3_384,
+    sha3_512,
+    shake128,
+    shake256,
+    xxh32,
+    xxh64,
+    xxh3_64,
+    xxh3_128,
+)
+from std.fs import Path
+from std.io import BytesIO
+
+def run() -> Result[None, HashError]:
+    sha1_digest = sha1.digest(b"abc")
+    println(len(sha1_digest))
+    println(sha1_digest == b"\xa9\x99\x3e\x36\x47\x06\x81\x6a\xba\x3e\x25\x71\x78\x50\xc2\x6c\x9c\xd0\xd8\x9d")
+    println(len(md5.digest(b"abc")))
+    println(md5.digest(b"abc") == b"\x90\x01\x50\x98\x3c\xd2\x4f\xb0\xd6\x96\x3f\x7d\x28\xe1\x7f\x72")
+    println(len(sha224.digest(b"abc")))
+    println(len(sha384.digest(b"abc")))
+    println(len(sha512.digest(b"abc")))
+    println(len(sha3_224.digest(b"abc")))
+    println(len(sha3_256.digest(b"abc")))
+    println(len(sha3_384.digest(b"abc")))
+    println(len(sha3_512.digest(b"abc")))
+    println(len(blake2b.digest(b"abc")))
+    println(len(blake2s.digest(b"abc")))
+    println(len(blake3.digest(b"abc")))
+
+    mut legacy = sha1.new()
+    legacy.update(b"a")
+    legacy.update(b"bc")
+    println(legacy.finalize_bytes() == sha1_digest)
+
+    digest = sha256.digest(b"abc")
+    println(len(digest))
+
+    mut h = sha256.new()
+    h.update(b"a")
+    h.update(b"bc")
+    println(h.finalize_bytes() == digest)
+
+    mut fast = xxh3_64.new()
+    fast.update(b"a")
+    fast.update(b"bc")
+    println(fast.finalize_u64() == xxh3_64.hash_u64(b"abc"))
+
+    println(len(shake128.digest(b"abc", 8)?))
+    println(len(shake256.digest(b"abc", 8)?))
+    match shake128.digest(b"abc", 0):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+
+    path = Path("{payload}")
+    missing_path = Path("{missing_payload}")
+    match path.open("rb"):
+        Ok(file) => println(file_digest(file, "sha256", 1)? == digest)
+        Err(err) => return Err(HashError(kind=err.kind, algorithm="open", detail=err.detail))
+    println(file_digest(path, "sha1", 1)? == sha1_digest)
+    println(file_digest(path, "sha256", 1)? == digest)
+    println(len(file_digest(path, "shake128", 1, 8)?))
+    println(len(file_digest(path, "shake256", 2, 8)?))
+    println(file_hash_u32(path, "xxh32", 1)? == xxh32.hash_u32(b"abc"))
+    println(file_hash_u64(path, "xxh3_64", 1)? == xxh3_64.hash_u64(b"abc"))
+    println(file_hash_u64(path, "xxh64", 2)? == xxh64.hash_u64(b"abc"))
+    println(file_hash_u128(path, "xxh3_128", 2)? == xxh3_128.hash_u128(b"abc"))
+    println(reader_digest(BytesIO(b"abc"), "sha256", 1)? == digest)
+    println(len(reader_digest(BytesIO(b"abc"), "shake256", 2, 8)?))
+    println(reader_hash_u32(BytesIO(b"abc"), "xxh32", 2)? == xxh32.hash_u32(b"abc"))
+    println(reader_hash_u64(BytesIO(b"abc"), "xxh3_64", 2)? == xxh3_64.hash_u64(b"abc"))
+    println(reader_hash_u64(BytesIO(b"abc"), "xxh64", 2)? == xxh64.hash_u64(b"abc"))
+    println(reader_hash_u128(BytesIO(b"abc"), "xxh3_128", 2)? == xxh3_128.hash_u128(b"abc"))
+
+    match file_hash_u64(path, "sha256", 1):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    match file_hash_u64(path, "unknown", 1):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    match reader_hash_u64(BytesIO(b"abc"), "sha256", 1):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    match reader_hash_u64(BytesIO(b"abc"), "unknown", 1):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    match file_digest(path, "shake128", 1):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    match file_digest(path, "sha256", 0):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    match reader_digest(BytesIO(b"abc"), "sha256", 0):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    match file_digest(missing_path, "sha256", 1):
+        Ok(_) => println("bad")
+        Err(err) => println(err.kind)
+    return Ok(None)
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(err) => println(err.message())
+"#,
+            payload = payload.display(),
+            missing_payload = payload.with_extension("missing").display(),
+        );
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "-c", source.as_str()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        let _ = std::fs::remove_file(&payload);
+        assert!(
+            output.status.success(),
+            "incan run std.hash smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec![
+                "20",
+                "true",
+                "16",
+                "true",
+                "28",
+                "48",
+                "64",
+                "28",
+                "32",
+                "48",
+                "64",
+                "64",
+                "32",
+                "32",
+                "true",
+                "32",
+                "true",
+                "true",
+                "8",
+                "8",
+                "invalid_length",
+                "true",
+                "true",
+                "true",
+                "8",
+                "8",
+                "true",
+                "true",
+                "true",
+                "true",
+                "true",
+                "8",
+                "true",
+                "true",
+                "true",
+                "true",
+                "unsupported_width",
+                "unknown_algorithm",
+                "unsupported_width",
+                "unknown_algorithm",
+                "invalid_length",
+                "invalid_chunk_size",
+                "invalid_chunk_size",
+                "not_found"
+            ],
+            "unexpected std.hash output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_std_io_compile_and_run_bytesio_core_and_numeric_helpers() -> Result<(), Box<dyn std::error::Error>> {
         // Keep std.io's generated-project dependency in the root Cargo graph so CI fetches it before this smoke runs
         // the generated project under CARGO_NET_OFFLINE.
@@ -3195,6 +3436,40 @@ def main() -> None:
                 "0"
             ],
             "unexpected std.io output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_std_encoding_hex_compile_and_run_strict_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/std_encoding_hex_surface.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "incan run std.encoding.hex smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines = stdout.lines().collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec![
+                "417a00",
+                "3",
+                "417a00",
+                "417a00",
+                "FF",
+                "10",
+                "00",
+                "7f",
+                "invalid_length",
+                "invalid_character"
+            ],
+            "unexpected std.encoding.hex output:\n{stdout}"
         );
         Ok(())
     }
@@ -3649,6 +3924,154 @@ def main() -> None:
             vec!["4", "error: bad", "14"],
             "unexpected Result method std.result helper output:\n{stdout}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_map_err_accepts_callable_object_trait_adoption() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from std.traits.callable import Callable1
+
+model Prefixer with Callable1[str, str]:
+    prefix: str
+
+    def __call__(self, error: str) -> str:
+        return f"{self.prefix}: {error}"
+
+def main() -> None:
+    value: Result[int, str] = Err("bad")
+    match value.map_err(Prefixer(prefix="error")):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Result.map_err callable-object regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["error: bad"],
+            "unexpected callable-object output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_method_closure_callbacks_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def main() -> None:
+    prefix = "uuid"
+    value: Result[int, str] = Err("bad")
+    mapped = value.map_err((err) => f"{prefix}: {err}")
+    match mapped:
+        Ok(number) => println(number)
+        Err(error) => println(error)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Result method closure callback regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            lines,
+            vec!["uuid: bad"],
+            "unexpected Result method closure callback output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_result_map_err_accepts_capturing_inline_closure() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+def main() -> None:
+    prefix = "error"
+    value: Result[int, str] = Err("bad")
+    match value.map_err((error) => f"{prefix}: {error}"):
+        Ok(value) => println(value)
+        Err(error) => println(error)
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "Result.map_err inline closure regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(lines, vec!["error: bad"], "unexpected inline closure output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_static_str_index_and_slice_use_string_helpers() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+const ALPHABET: str = "abcdef"
+
+def main() -> None:
+    println(ALPHABET[1])
+    println(ALPHABET[2:5])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "static str index/slice regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["b", "cde"], "unexpected static str output:\n{stdout}");
         Ok(())
     }
 
@@ -5472,6 +5895,66 @@ async def main() -> None:
             output.status,
             String::from_utf8_lossy(&output.stderr)
         );
+    }
+
+    #[test]
+    fn test_run_rfc064_std_encoding_behavior() {
+        let Ok(output) = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/rfc064_std_encoding_behavior.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()
+        else {
+            panic!("failed to run incan");
+        };
+
+        assert!(
+            output.status.success(),
+            "incan run rfc064_std_encoding_behavior failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("strict-padding-error")
+                && stdout.contains("bech32-checksum-error")
+                && stdout.contains("rfc064-encoding-ok"),
+            "expected strict error markers and success marker; got:\n{}",
+            stdout
+        );
+    }
+
+    #[test]
+    fn test_run_std_uuid_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/std_uuid_surface.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "incan run std_uuid_surface failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "std.uuid ok");
+        Ok(())
+    }
+
+    #[test]
+    fn test_run_u128_modulo_floor_div() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/u128_modulo_floor_div.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "incan run u128_modulo_floor_div failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "u128 modulo ok");
+        Ok(())
     }
 
     #[test]

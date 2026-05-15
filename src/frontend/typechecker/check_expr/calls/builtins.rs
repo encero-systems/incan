@@ -1,9 +1,9 @@
 //! Builtin, surface-function, and stdlib-module call dispatch.
 
 use super::TypeChecker;
-use crate::frontend::ast::{CallArg, Expr, Span, Spanned, Type};
+use crate::frontend::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
 use crate::frontend::diagnostics::errors;
-use crate::frontend::symbols::{FunctionInfo, ResolvedType};
+use crate::frontend::symbols::{CallableParam, FunctionInfo, ResolvedType};
 use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty, option_ty, result_ty, set_ty};
 use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_core::lang::stdlib;
@@ -58,13 +58,23 @@ impl TypeChecker {
     fn validate_stdlib_module_call_arity(
         &mut self,
         callable: &str,
-        expected: usize,
+        params: &[CallableParam],
         args: &[CallArg],
         span: Span,
     ) -> bool {
-        if args.len() != expected {
-            self.errors
-                .push(errors::builtin_arity(callable, expected, args.len(), span));
+        let normal_params = params
+            .iter()
+            .filter(|param| param.kind == ParamKind::Normal)
+            .collect::<Vec<_>>();
+        let required = normal_params.iter().filter(|param| !param.has_default).count();
+        let max = normal_params.len();
+        let accepts_extra_args = params
+            .iter()
+            .any(|param| matches!(param.kind, ParamKind::RestPositional | ParamKind::RestKeyword));
+        let supplied = args.len();
+
+        if supplied < required || (!accepts_extra_args && supplied > max) {
+            self.errors.push(errors::builtin_arity(callable, max, supplied, span));
             return false;
         }
         true
@@ -83,7 +93,7 @@ impl TypeChecker {
         args: &[CallArg],
         call_span: Span,
     ) -> ResolvedType {
-        let arity_ok = self.validate_stdlib_module_call_arity(callable, info.params.len(), args, call_span);
+        let arity_ok = self.validate_stdlib_module_call_arity(callable, &info.params, args, call_span);
         let resolved = self.validate_function_call(callable, info, explicit_type_args, args, call_span);
         if arity_ok { resolved } else { ResolvedType::Unknown }
     }
@@ -329,19 +339,28 @@ impl TypeChecker {
                     Some(list_ty(ResolvedType::Int))
                 }
                 BuiltinFnId::Enumerate => {
-                    // enumerate(xs) -> List[(int, T)] (simple)
+                    // enumerate(xs) -> list[(int, T)]
                     let mut inner_ty = ResolvedType::Unknown;
                     if let Some(arg) = args.first() {
                         let iter_ty = self.check_expr(Self::call_arg_expr(arg));
-                        if let ResolvedType::Generic(name, type_args) = &iter_ty
-                            && (name == surface_types::as_str(SurfaceTypeId::Vec)
-                                || matches!(
-                                    collection_type_id(name.as_str()),
-                                    Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
-                                ))
-                            && !type_args.is_empty()
-                        {
-                            inner_ty = type_args[0].clone();
+                        match &iter_ty {
+                            ResolvedType::Generic(name, type_args)
+                                if (name == surface_types::as_str(SurfaceTypeId::Vec)
+                                    || matches!(
+                                        collection_type_id(name.as_str()),
+                                        Some(CollectionTypeId::List | CollectionTypeId::FrozenList)
+                                    ))
+                                    && !type_args.is_empty() =>
+                            {
+                                inner_ty = type_args[0].clone();
+                            }
+                            ResolvedType::Str | ResolvedType::FrozenStr => {
+                                inner_ty = ResolvedType::Str;
+                            }
+                            ResolvedType::Bytes | ResolvedType::FrozenBytes => {
+                                inner_ty = ResolvedType::Int;
+                            }
+                            _ => {}
                         }
                     }
                     self.check_call_args(args);

@@ -17,7 +17,7 @@ use crate::frontend::symbols::ResolvedType;
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ast};
 use incan_core::lang::conventions;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
-use incan_core::lang::types::numerics::{self, NumericTypeId};
+use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
 use incan_core::lang::types::stringlike::{self, StringLikeId};
 use incan_core::{NumericTy, PowExponentKind, result_numeric_type};
 
@@ -630,6 +630,21 @@ impl AstLowering {
             | ast::BinaryOp::FloorDiv
             | ast::BinaryOp::Mod
             | ast::BinaryOp::Pow => {
+                if matches!(op, ast::BinaryOp::FloorDiv | ast::BinaryOp::Mod) {
+                    if let IrType::Numeric(id) = left
+                        && numerics::info_for(*id).family == NumericFamily::UnsignedInteger
+                        && (matches!(right, IrType::Int) || left == right)
+                    {
+                        return left.clone();
+                    }
+                    if let IrType::Numeric(id) = right
+                        && numerics::info_for(*id).family == NumericFamily::UnsignedInteger
+                        && matches!(left, IrType::Int)
+                    {
+                        return right.clone();
+                    }
+                }
+
                 // Convert to NumericTy
                 let lhs_num = ir_type_to_numeric_ty(left);
                 let rhs_num = ir_type_to_numeric_ty(right);

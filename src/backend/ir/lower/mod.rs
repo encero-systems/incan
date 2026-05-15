@@ -46,6 +46,7 @@ use crate::frontend::symbols::NewtypePrimitiveConstraint;
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::conventions;
+use incan_core::lang::stdlib;
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
@@ -889,6 +890,7 @@ impl AstLowering {
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
+        self.seed_imported_stdlib_trait_decls(program);
         self.alias_imported_dependency_trait_decls();
         self.symbol_aliases = program
             .declarations
@@ -1637,8 +1639,18 @@ impl AstLowering {
     fn alias_imported_dependency_trait_decls(&mut self) {
         let existing = self.trait_decls.clone();
         for (alias, path) in self.import_aliases.clone() {
-            let module_key = path.join(".");
-            if let Some(decl) = existing.get(&module_key) {
+            let mut canonical_path = crate::frontend::module::canonicalize_source_module_segments(&path);
+            if canonical_path
+                .first()
+                .is_some_and(|segment| segment == stdlib::STDLIB_ROOT)
+            {
+                canonical_path[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
+            }
+            let module_key = canonical_path.join(".");
+            if let Some(decl) = existing
+                .get(&module_key)
+                .filter(|decl| Self::trait_decl_has_lowerable_defaults(decl))
+            {
                 self.trait_decls.entry(alias.clone()).or_insert_with(|| decl.clone());
             }
             let prefix = format!("{module_key}.");
@@ -1646,11 +1658,59 @@ impl AstLowering {
                 let Some(trait_name) = qualified.strip_prefix(&prefix) else {
                     continue;
                 };
+                if !Self::trait_decl_has_lowerable_defaults(decl) {
+                    continue;
+                }
                 self.trait_decls
                     .entry(format!("{alias}.{trait_name}"))
                     .or_insert_with(|| decl.clone());
             }
         }
+    }
+
+    /// Seed trait declarations imported from stdlib modules.
+    ///
+    /// Lowering needs the source trait body to decide which methods belong in generated `impl Trait for Type` blocks.
+    /// The typechecker already validates the import; this pass follows the same stdlib namespace graph so imported
+    /// traits such as `std.io.BinaryReader` lower without hardcoded method lists.
+    fn seed_imported_stdlib_trait_decls(&mut self, program: &ast::Program) {
+        for decl in &program.declarations {
+            let ast::Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            let ast::ImportKind::From { module, items } = &import.kind else {
+                continue;
+            };
+            if module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
+                continue;
+            }
+
+            for item in items {
+                let Some(mut trait_decl) = self.stdlib_cache.lookup_trait_decl(&module.segments, &item.name) else {
+                    continue;
+                };
+                let local_name = item.alias.as_ref().unwrap_or(&item.name).clone();
+                trait_decl.name = local_name.clone();
+                trait_decl.methods = Self::methods_with_partials(
+                    &trait_decl.methods,
+                    &trait_decl.method_aliases,
+                    &trait_decl.method_partials,
+                    decl.span,
+                );
+                let method_names = trait_decl
+                    .methods
+                    .iter()
+                    .map(|method| method.node.name.clone())
+                    .collect();
+                self.trait_methods.entry(local_name.clone()).or_insert(method_names);
+                self.trait_decls.entry(local_name).or_insert(trait_decl);
+            }
+        }
+    }
+
+    /// Return whether an imported trait declaration needs aliasing for default-body expansion.
+    fn trait_decl_has_lowerable_defaults(decl: &ast::TraitDecl) -> bool {
+        decl.methods.iter().any(|method| method.node.body.is_some())
     }
 
     /// Propagate serde Rust derives from structs to enum/newtype field types.

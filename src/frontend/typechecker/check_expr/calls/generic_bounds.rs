@@ -349,6 +349,63 @@ impl TypeChecker {
         }
     }
 
+    /// Return the active generic placeholder name represented by `ty`.
+    ///
+    /// Function bodies sometimes resolve an in-scope type parameter as a named placeholder while validating a nested
+    /// generic call. Treat that spelling as a placeholder only when the current bound stack actually contains it.
+    fn active_type_param_name<'a>(&self, ty: &'a ResolvedType) -> Option<&'a str> {
+        let name = match ty {
+            ResolvedType::TypeVar(name) | ResolvedType::Named(name) => name,
+            _ => return None,
+        };
+        self.current_type_param_bound_details
+            .iter()
+            .rev()
+            .any(|frame| frame.contains_key(name))
+            .then_some(name.as_str())
+    }
+
+    /// Check whether an active generic placeholder already carries the bound required by a nested generic call.
+    fn active_type_param_satisfies_bound_info(
+        &self,
+        placeholder_name: &str,
+        required: &crate::frontend::symbols::TypeBoundInfo,
+        bindings: &std::collections::HashMap<String, ResolvedType>,
+    ) -> bool {
+        for frame in self.current_type_param_bound_details.iter().rev() {
+            let Some(active_bounds) = frame.get(placeholder_name) else {
+                continue;
+            };
+            for active in active_bounds {
+                if active.name != required.name {
+                    continue;
+                }
+                if required.type_args.is_empty() {
+                    return true;
+                }
+                if active.type_args.len() != required.type_args.len() {
+                    continue;
+                }
+                let expected = required
+                    .type_args
+                    .iter()
+                    .map(|arg| substitute_resolved_type(arg, bindings));
+                let actual = active
+                    .type_args
+                    .iter()
+                    .map(|arg| substitute_resolved_type(arg, bindings));
+                if expected
+                    .zip(actual)
+                    .all(|(left, right)| self.types_compatible(&left, &right))
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+        false
+    }
+
     /// Render a type-parameter bound with call-site substitutions applied.
     fn type_bound_display(
         &self,
@@ -374,6 +431,11 @@ impl TypeChecker {
         bound: &crate::frontend::symbols::TypeBoundInfo,
         bindings: &std::collections::HashMap<String, ResolvedType>,
     ) -> bool {
+        if let Some(placeholder_name) = self.active_type_param_name(ty)
+            && self.active_type_param_satisfies_bound_info(placeholder_name, bound, bindings)
+        {
+            return true;
+        }
         if bound.name == builtin_traits::as_str(TraitId::Awaitable) {
             let expected_output = bound
                 .type_args

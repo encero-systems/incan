@@ -1,0 +1,115 @@
+from std.uuid import (
+    MAX,
+    NAMESPACE_DNS,
+    NAMESPACE_OID,
+    NAMESPACE_URL,
+    NAMESPACE_X500,
+    NIL,
+    UUID,
+    UuidError,
+    UuidVariant,
+    UuidVersion,
+)
+
+
+def exercise_uuid() -> Result[None, UuidError]:
+    parsed = UUID.parse("550e8400-e29b-41d4-a716-446655440000")?
+    assert parsed.canonical()? == "550e8400-e29b-41d4-a716-446655440000"
+    assert parsed.variant()? == UuidVariant.Rfc9562
+    assert parsed.version()? == UuidVersion.V4
+
+    simple = UUID.parse("550e8400e29b41d4a716446655440000")?
+    assert simple == parsed
+    assert UUID.parse("{550e8400-e29b-41d4-a716-446655440000}")? == parsed
+    assert UUID.parse("urn:uuid:550e8400-e29b-41d4-a716-446655440000")? == parsed
+
+    roundtrip = UUID.from_int(parsed.to_int())
+    assert roundtrip == parsed
+    assert UUID.from_bytes(parsed.to_bytes()?)? == parsed
+
+    nil_uuid = UUID.nil()
+    assert NIL == nil_uuid
+    assert nil_uuid.canonical()? == "00000000-0000-0000-0000-000000000000"
+    assert nil_uuid.version()? == UuidVersion.Nil
+    assert nil_uuid.variant()? == UuidVariant.Ncs
+
+    max_uuid = UUID.max()
+    assert MAX == max_uuid
+    assert max_uuid.canonical()? == "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    assert max_uuid.version()? == UuidVersion.Max
+    assert max_uuid.variant()? == UuidVariant.Future
+
+    constructed = UUID.from_int(parsed.to_int())
+    assert constructed == parsed
+
+    assert NAMESPACE_DNS.canonical()? == "6ba7b810-9dad-11d1-80b4-00c04fd430c8"
+    assert NAMESPACE_URL.canonical()? == "6ba7b811-9dad-11d1-80b4-00c04fd430c8"
+    assert NAMESPACE_OID.canonical()? == "6ba7b812-9dad-11d1-80b4-00c04fd430c8"
+    assert NAMESPACE_X500.canonical()? == "6ba7b814-9dad-11d1-80b4-00c04fd430c8"
+
+    name_v3 = UUID.v3(NAMESPACE_DNS, "www.example.com")?
+    assert name_v3.canonical()? == "5df41881-3aed-3515-88a7-2f4a814cf09e"
+    assert name_v3.version()? == UuidVersion.V3
+    assert name_v3.variant()? == UuidVariant.Rfc9562
+
+    name_v5 = UUID.v5(NAMESPACE_DNS, "www.example.com")?
+    assert name_v5.canonical()? == "2ed6657d-e927-568b-95e1-2665a8aea6a2"
+    assert name_v5.version()? == UuidVersion.V5
+    assert name_v5.variant()? == UuidVariant.Rfc9562
+
+    time_v1 = UUID.v1()?
+    assert time_v1.version()? == UuidVersion.V1
+    assert time_v1.variant()? == UuidVariant.Rfc9562
+
+    random_v4 = UUID.v4()?
+    assert random_v4.version()? == UuidVersion.V4
+    assert random_v4.variant()? == UuidVariant.Rfc9562
+
+    time_v6 = UUID.v6()?
+    assert time_v6.version()? == UuidVersion.V6
+    assert time_v6.variant()? == UuidVariant.Rfc9562
+
+    time_v7 = UUID.v7()?
+    assert time_v7.version()? == UuidVersion.V7
+    assert time_v7.variant()? == UuidVariant.Rfc9562
+
+    custom_v8 = UUID.v8(b"abcdefghijklmnop")?
+    assert custom_v8.canonical()? == "61626364-6566-8768-a96a-6b6c6d6e6f70"
+    assert custom_v8.version()? == UuidVersion.V8
+    assert custom_v8.variant()? == UuidVariant.Rfc9562
+
+    arbitrary = UUID.from_bytes(b"\x01\x02\x03\x04\x05\x06\x90\x08\xff\x0a\x0b\x0c\x0d\x0e\x0f\x10")?
+    assert arbitrary.version()? == UuidVersion.Unknown(9)
+    assert arbitrary.variant()? == UuidVariant.Future
+    assert UUID.from_int(arbitrary.to_int()) == arbitrary
+
+    assert_parse_err("550e8400-e29b-41d4-a716-44665544000z")
+    assert_parse_err("{550e8400-e29b-41d4-a716-446655440000")
+    assert_parse_err("550e8400-e29b-41d4-a716446655440000")
+    assert_from_bytes_err(b"short")
+    assert_v8_err(b"short")
+    return Ok(None)
+
+
+def assert_parse_err(text: str) -> None:
+    match UUID.parse(text):
+        Ok(_) => assert False
+        Err(_) => pass
+
+
+def assert_from_bytes_err(raw: bytes) -> None:
+    match UUID.from_bytes(raw):
+        Ok(_) => assert False
+        Err(_) => pass
+
+
+def assert_v8_err(raw: bytes) -> None:
+    match UUID.v8(raw):
+        Ok(_) => assert False
+        Err(_) => pass
+
+
+def main() -> None:
+    match exercise_uuid():
+        Ok(_) => println("std.uuid ok")
+        Err(err) => println(err.message())

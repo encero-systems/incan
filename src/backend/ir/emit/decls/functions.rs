@@ -283,6 +283,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::None
             | IrExprKind::Bool(_)
             | IrExprKind::Int(_)
+            | IrExprKind::IntLiteral(_)
             | IrExprKind::Float(_)
             | IrExprKind::Decimal(_)
             | IrExprKind::String(_)
@@ -1491,6 +1492,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::None
             | IrExprKind::Bool(_)
             | IrExprKind::Int(_)
+            | IrExprKind::IntLiteral(_)
             | IrExprKind::Float(_)
             | IrExprKind::Decimal(_)
             | IrExprKind::String(_)

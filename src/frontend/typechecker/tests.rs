@@ -42,6 +42,19 @@ fn parse_program(source: &str, context: &str) -> crate::frontend::ast::Program {
     parser::parse(&tokens).unwrap_or_else(|errs| panic!("{context} parse failed: {errs:?}"))
 }
 
+#[test]
+fn stdlib_module_function_calls_accept_default_arguments() -> Result<(), String> {
+    let source = r#"
+from std.encoding import hex
+from std.io import BytesIO
+
+def main(payload: bytes) -> None:
+  target = BytesIO()
+  encoded = hex.encode(payload, target)
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
 fn check_str_err(source: &str, context: &str) -> Vec<CompileError> {
     match check_str(source) {
         Err(errs) => errs,
@@ -2125,6 +2138,43 @@ def f() -> None:
         }),
         "expected RustPath(std::time::Instant) in expr types, got {:?}",
         info.expressions.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rust_from_import_shadows_dependency_type_for_rust_display_name() -> Result<(), Box<dyn std::error::Error>> {
+    let dep_source = r#"
+pub model Duration:
+  pub value: int
+"#;
+    let source = r#"
+from rust::std::time import Duration
+
+def f() -> None:
+  pass
+"#;
+    let dep_tokens =
+        lexer::lex(dep_source).map_err(|errs| std::io::Error::other(format!("lex dep failed: {errs:?}")))?;
+    let dep_ast =
+        parser::parse(&dep_tokens).map_err(|errs| std::io::Error::other(format!("parse dep failed: {errs:?}")))?;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&ast, &[("dep", &dep_ast)])
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+
+    let symbol = checker
+        .lookup_symbol("Duration")
+        .ok_or_else(|| std::io::Error::other("Duration import was not recorded"))?;
+    let SymbolKind::RustItem(info) = &symbol.kind else {
+        return Err(std::io::Error::other(format!("expected RustItem, got {:?}", symbol.kind)).into());
+    };
+    assert_eq!(info.path, "std::time::Duration");
+    assert_eq!(
+        checker.resolved_type_from_rust_display("Duration"),
+        ResolvedType::RustPath("std::time::Duration".to_string())
     );
     Ok(())
 }
@@ -5461,6 +5511,16 @@ def main() -> None:
 }
 
 #[test]
+fn test_list_repeat_u8_can_initialize_bytes() {
+    let source = r#"
+def zeros(size: int) -> bytes:
+  zero: u8 = 0
+  return list.repeat(zero, size)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
 fn test_list_repeat_rejects_wrong_arity() {
     let source = r#"
 def main() -> None:
@@ -8668,6 +8728,31 @@ def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
     assert!(check_str(source).is_ok());
 }
 
+#[test]
+fn test_enum_variant_does_not_shadow_existing_same_scope_type_binding() {
+    let source = r#"
+class Sha256:
+  @staticmethod
+  def default() -> int:
+    return 256
+
+enum Algorithm(str):
+  Sha256 = "sha256"
+  Md5 = "md5"
+
+def selected_algorithm_name(algorithm: Algorithm) -> str:
+  match algorithm:
+    Algorithm.Sha256 =>
+      return "sha256"
+    Algorithm.Md5 =>
+      return "md5"
+
+def default_value() -> int:
+  return Sha256.default()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
 // ========================================
 // Async function tests
 // ========================================
@@ -8795,6 +8880,20 @@ const DOUBLED: int = BASE * 2
 
 def foo() -> int:
   return DOUBLED
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_const_newtype_constructor_from_numeric_literal() {
+    let source = r#"
+type Token = newtype u128
+
+const ZERO: Token = Token(0)
+const MAX_TOKEN: Token = Token(340282366920938463463374607431768211455)
+
+def foo() -> Token:
+  return MAX_TOKEN
 "#;
     assert!(check_str(source).is_ok());
 }
@@ -9237,6 +9336,51 @@ def accepts_marker(value: NotExported) -> None:
         "Expected not-exported diagnostic for std.testing.NotExported; got: {:?}",
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn test_stdlib_prelude_reexports_stdlib_imported_types() {
+    let source = r#"
+from std.fs import IoError
+
+def main() -> None:
+  err = IoError(kind="invalid_input", detail="bad input")
+  print(err.kind)
+  print(err.detail)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_stdlib_internal_imports_do_not_become_public_reexports() {
+    let source = r#"
+from std.io import Error
+
+def main() -> None:
+  pass
+"#;
+    let errs = check_str_err(
+        source,
+        "private stdlib implementation imports should not be public reexports",
+    );
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Cannot import `Error` from stdlib module `std.io`")),
+        "Expected std.io.Error to stay private; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_stdlib_import_only_facades_reexport_imported_types() {
+    let source = r#"
+from std.datetime.civil import Date, TimeDelta
+
+def main() -> None:
+  renewal = Date.fromisoformat("2026-04-14")? + TimeDelta.days(30)
+  print(renewal.isoformat())
+"#;
+    assert_check_ok(source);
 }
 
 #[test]
@@ -11838,6 +11982,30 @@ def main() -> Token:
         "Expected explicit generic bound error; got: {:?}",
         errs.iter().map(|e| &e.message).collect::<Vec<_>>()
     );
+}
+
+#[test]
+fn test_generic_bound_propagates_through_nested_generic_call() {
+    let source = r#"
+trait Reader:
+  def read_bytes(self, size: int) -> bytes: ...
+
+model Buffer with Reader:
+  data: bytes
+
+  def read_bytes(self, _size: int) -> bytes:
+    return self.data
+
+def feed[R with Reader](reader: R) -> bytes:
+  return reader.read_bytes(1)
+
+def outer[R with Reader](reader: R) -> bytes:
+  return feed(reader)
+
+def main() -> bytes:
+  return outer(Buffer(data=b"abc"))
+"#;
+    assert_check_ok(source);
 }
 
 /// GitHub #193: `@derive(Clone)` must allow `.clone()` on the concrete type (not only through unconstrained `T`).

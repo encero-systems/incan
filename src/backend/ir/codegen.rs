@@ -528,14 +528,21 @@ pub enum GenerationError {
 }
 
 impl std::fmt::Display for GenerationError {
+    /// Format generation errors for CLI and integration-test diagnostics.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             GenerationError::TypeCheck(errs) => {
                 if errs.is_empty() {
                     write!(f, "typecheck failed")
                 } else {
-                    // We intentionally avoid rich source formatting here (no file/source context at this layer).
-                    write!(f, "typecheck failed ({} errors): {}", errs.len(), errs[0].message)
+                    // We intentionally avoid rich source formatting here (no file/source context at this layer), but
+                    // include every message so generated-project stdlib failures are actionable.
+                    let messages = errs
+                        .iter()
+                        .map(|err| err.message.as_str())
+                        .collect::<Vec<_>>()
+                        .join("; ");
+                    write!(f, "typecheck failed ({} errors): {}", errs.len(), messages)
                 }
             }
             GenerationError::Lowering(e) => write!(f, "{}", e),
@@ -961,7 +968,7 @@ impl<'a> IrCodegen<'a> {
             inner.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
             inner.set_generated_union_types(generated_union_types);
             for dep_ir in &dependency_ir_programs {
-                inner.seed_nominal_metadata_from_program(dep_ir);
+                inner.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
             Ok(svc.emit_program(&ir_program)?)
         } else {
@@ -983,7 +990,7 @@ impl<'a> IrCodegen<'a> {
             emitter.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
             emitter.set_generated_union_types(generated_union_types);
             for dep_ir in &dependency_ir_programs {
-                emitter.seed_nominal_metadata_from_program(dep_ir);
+                emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
             Ok(emitter.emit_program(&ir_program)?)
         }
@@ -1186,7 +1193,7 @@ impl<'a> IrCodegen<'a> {
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
                 for (_, _, dep_ir) in &lowered_modules {
-                    inner.seed_nominal_metadata_from_program(dep_ir);
+                    inner.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
                 svc.emit_program(ir)?
             } else {
@@ -1204,7 +1211,7 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
                 for (_, _, dep_ir) in &lowered_modules {
-                    emitter.seed_nominal_metadata_from_program(dep_ir);
+                    emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
                 emitter.emit_program(ir)?
             };
@@ -1370,7 +1377,7 @@ impl<'a> IrCodegen<'a> {
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
                 for (_, dep_ir) in &lowered_modules {
-                    inner.seed_nominal_metadata_from_program(dep_ir);
+                    inner.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
                 svc.emit_program(ir)?
             } else {
@@ -1388,7 +1395,7 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
                 for (_, dep_ir) in &lowered_modules {
-                    emitter.seed_nominal_metadata_from_program(dep_ir);
+                    emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
                 emitter.emit_program(ir)?
             };
@@ -1877,15 +1884,16 @@ def main() -> None:
         let mut emitter = IrEmitter::new(&program.function_registry);
         let code = must_ok(emitter.emit_program(&program));
 
-        assert!(code.contains("use rand::Rng;"), "{code}");
-        assert!(code.contains("use rand::thread_rng;"), "{code}");
+        assert!(code.contains("use ::rand::Rng;"), "{code}");
+        assert!(code.contains("use ::rand::thread_rng;"), "{code}");
         assert_no_generated_unused_lint_allows(&code);
     }
 
     #[test]
     fn generated_use_analysis_keeps_only_selected_same_name_rust_extension_trait_import() {
         use crate::backend::ir::decl::{
-            FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, IrRustTraitImport, Visibility,
+            FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, IrRustTraitImport, IrStruct,
+            Visibility,
         };
         use crate::backend::ir::expr::{IrExprKind, IrMethodDispatch, MethodCallArgPolicy, VarAccess, VarRefKind};
         use crate::backend::ir::{IrDecl, IrDeclKind, IrProgram, IrStmt, IrStmtKind, IrType, Mutability, TypedExpr};
@@ -1916,14 +1924,18 @@ def main() -> None:
                         methods: vec![String::from("render")],
                     }),
                 },
-                IrImportItem {
-                    name: String::from("widget"),
-                    alias: None,
-                    rust_trait_import: None,
-                },
             ],
         }));
-        let widget_ty = IrType::Struct(String::from("demo::Widget"));
+        program.declarations.push(IrDecl::new(IrDeclKind::Struct(IrStruct {
+            name: String::from("Widget"),
+            fields: Vec::new(),
+            derives: Vec::new(),
+            visibility: Visibility::Private,
+            type_params: Vec::new(),
+            derive_rust_modules: std::collections::HashMap::new(),
+            lint_allows: Vec::new(),
+        })));
+        let widget_ty = IrType::Struct(String::from("Widget"));
         program.declarations.push(IrDecl::new(IrDeclKind::Function(IrFunction {
             name: String::from("main"),
             params: Vec::<FunctionParam>::new(),
@@ -1935,10 +1947,9 @@ def main() -> None:
                     type_annotation: None,
                     mutability: Mutability::Immutable,
                     value: TypedExpr::new(
-                        IrExprKind::Var {
-                            name: String::from("widget"),
-                            access: VarAccess::Copy,
-                            ref_kind: VarRefKind::ExternalRustName,
+                        IrExprKind::Struct {
+                            name: String::from("Widget"),
+                            fields: Vec::new(),
                         },
                         widget_ty.clone(),
                     ),
@@ -1977,8 +1988,8 @@ def main() -> None:
         let mut emitter = IrEmitter::new(&program.function_registry);
         let code = must_ok(emitter.emit_program(&program));
 
-        assert!(code.contains("use demo::AlphaRender;"), "{code}");
-        assert!(!code.contains("use demo::BetaRender;"), "{code}");
+        assert!(code.contains("use ::demo::AlphaRender;"), "{code}");
+        assert!(!code.contains("use ::demo::BetaRender;"), "{code}");
         assert_no_generated_unused_lint_allows(&code);
     }
 
@@ -2087,8 +2098,87 @@ def main() -> None:
         let mut emitter = IrEmitter::new(&program.function_registry);
         let code = must_ok(emitter.emit_program(&program));
 
-        assert!(code.contains("use rand::Rng;"), "{code}");
-        assert!(code.contains("use rand::thread_rng;"), "{code}");
+        assert!(code.contains("use ::rand::Rng;"), "{code}");
+        assert!(code.contains("use ::rand::thread_rng;"), "{code}");
+        assert_no_generated_unused_lint_allows(&code);
+    }
+
+    #[test]
+    fn generated_use_analysis_keeps_rust_trait_for_associated_method_on_rust_type() {
+        use crate::backend::ir::decl::{
+            FunctionParam, IrFunction, IrImportItem, IrImportOrigin, IrImportQualifier, IrRustTraitImport, Visibility,
+        };
+        use crate::backend::ir::expr::{
+            IrCallArg, IrCallArgKind, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind,
+        };
+        use crate::backend::ir::{IrDecl, IrDeclKind, IrProgram, IrStmt, IrStmtKind, IrType, TypedExpr};
+
+        let mut program = IrProgram::new();
+        program.declarations.push(IrDecl::new(IrDeclKind::Import {
+            visibility: Visibility::Private,
+            origin: IrImportOrigin::Standard,
+            qualifier: IrImportQualifier::None,
+            path: vec![String::from("sha2")],
+            alias: None,
+            items: vec![
+                IrImportItem {
+                    name: String::from("Digest"),
+                    alias: None,
+                    rust_trait_import: Some(IrRustTraitImport {
+                        trait_path: String::from("sha2::Digest"),
+                        definition_path: Some(String::from("digest::digest::Digest")),
+                        methods: vec![String::from("digest")],
+                    }),
+                },
+                IrImportItem {
+                    name: String::from("Sha256"),
+                    alias: None,
+                    rust_trait_import: None,
+                },
+            ],
+        }));
+        program.declarations.push(IrDecl::new(IrDeclKind::Function(IrFunction {
+            name: String::from("main"),
+            params: Vec::<FunctionParam>::new(),
+            return_type: IrType::Unit,
+            body: vec![IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+                IrExprKind::MethodCall {
+                    receiver: Box::new(TypedExpr::new(
+                        IrExprKind::Var {
+                            name: String::from("Sha256"),
+                            access: VarAccess::Copy,
+                            ref_kind: VarRefKind::ExternalRustName,
+                        },
+                        IrType::Unknown,
+                    )),
+                    method: String::from("digest"),
+                    dispatch: None,
+                    type_args: Vec::new(),
+                    args: vec![IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: TypedExpr::new(IrExprKind::Bytes(b"abc".to_vec()), IrType::Bytes),
+                    }],
+                    callable_signature: None,
+                    arg_policy: MethodCallArgPolicy::Default,
+                },
+                IrType::Bytes,
+            )))],
+            is_async: false,
+            is_generator: false,
+            visibility: Visibility::Private,
+            type_params: Vec::new(),
+            is_extern: false,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        })));
+
+        let mut emitter = IrEmitter::new(&program.function_registry);
+        let code = must_ok(emitter.emit_program(&program));
+
+        assert!(code.contains("use ::sha2::Digest;"), "{code}");
+        assert!(code.contains("use ::sha2::Sha256;"), "{code}");
+        assert!(code.contains("Sha256::digest"), "{code}");
         assert_no_generated_unused_lint_allows(&code);
     }
 
@@ -2781,6 +2871,47 @@ def main() -> None:
     }
 
     #[test]
+    fn imported_stdlib_trait_default_expands_in_dependency_impl() -> Result<(), Box<dyn std::error::Error>> {
+        let main_module = parse_program_result(
+            r#"
+from std.io import BytesIO
+
+def main() -> None:
+  return
+"#,
+        )?;
+        let io_module = read_stdlib_program("crates/incan_stdlib/stdlib/io.incn")?;
+        let traits_error_module = read_stdlib_program("crates/incan_stdlib/stdlib/traits/error.incn")?;
+
+        let io_path = vec!["__incan_std".to_string(), "io".to_string()];
+        let traits_error_path = vec!["__incan_std".to_string(), "traits".to_string(), "error".to_string()];
+
+        let mut codegen = IrCodegen::new();
+        codegen.add_module_with_path_segments("__incan_std_io", &io_module, io_path.clone());
+        codegen.add_module_with_path_segments(
+            "__incan_std_traits_error",
+            &traits_error_module,
+            traits_error_path.clone(),
+        );
+
+        let (_main_code, rust_modules) =
+            codegen.try_generate_multi_file_nested(&main_module, &[io_path.clone(), traits_error_path])?;
+        let io_code = rust_modules
+            .get(&io_path)
+            .ok_or_else(|| std::io::Error::other("missing generated std.io module"))?;
+
+        assert!(
+            io_code.contains("impl Error for IoError"),
+            "expected IoError to adopt std.traits.error.Error; got:\n{io_code}"
+        );
+        assert!(
+            io_code.contains("fn source(&self) -> Option<String>"),
+            "expected imported Error.source default method to expand into IoError impl; got:\n{io_code}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_rust_imports_do_not_use_crate_prefix() {
         let code = generate(
             r#"
@@ -2790,7 +2921,7 @@ pub def touch(duration: Duration) -> None:
   return
 "#,
         );
-        assert!(code.contains("use time::Duration;"));
+        assert!(code.contains("use ::time::Duration;"));
         assert!(!code.contains("use crate::time::Duration;"));
     }
 

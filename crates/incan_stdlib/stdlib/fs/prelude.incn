@@ -5,7 +5,7 @@ Use `Path` for lexical path manipulation and filesystem operations. Whole-file h
 payloads; `File` handles returned by `Path.open()` and `OpenOptions.open()` support bounded reads, writes, seeking,
 flushing, and durability requests.
 
-Operations that can fail return `Result[..., IoError]` with normalized error kinds and the path that caused the failure.
+Operations that can fail return `Result[..., IoError]` with normalized error kinds and optional path context.
 
 Example:
 
@@ -20,6 +20,7 @@ println(artifact.read_text(encoding="utf-8", errors="strict")?)
 ```
 """
 
-from std.fs.path import Path, IoError
+from std.fs.path import Path
 from std.fs.file import File, OpenFileMode, OpenOptions
 from std.fs.metadata import DirEntry, PathStat, DiskUsage
+from std.io import IoError

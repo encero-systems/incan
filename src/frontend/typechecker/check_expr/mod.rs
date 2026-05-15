@@ -298,6 +298,19 @@ impl TypeChecker {
         let Some(target) = super::numeric_type_id_for_compat(expected_ty) else {
             return self.check_expr(expr);
         };
+        if matches!(target, incan_core::lang::types::numerics::NumericTypeId::U128) {
+            if unsigned_int_literal_magnitude(expr).is_some() {
+                return expected_ty.clone();
+            }
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "Integer literal does not fit in {expected_ty}; valid range is 0..={}",
+                    u128::MAX
+                ),
+                expr.span,
+            ));
+            return expected_ty.clone();
+        }
         let Some(value) = signed_int_literal_value(expr) else {
             return self.check_expr(expr);
         };
@@ -452,11 +465,19 @@ fn decimal_literal_digit_counts(body: &str) -> Option<(usize, usize, usize)> {
 /// Return the signed value represented by an integer literal or unary-negative integer literal.
 fn signed_int_literal_value(expr: &Spanned<Expr>) -> Option<i128> {
     match &expr.node {
-        Expr::Literal(Literal::Int(value)) => Some(i128::from(value.value)),
+        Expr::Literal(Literal::Int(value)) => i128::try_from(value.magnitude).ok(),
         Expr::Unary(UnaryOp::Neg, inner) => match &inner.node {
-            Expr::Literal(Literal::Int(value)) => Some(-i128::from(value.value)),
+            Expr::Literal(Literal::Int(value)) => i128::try_from(value.magnitude).ok().map(|value| -value),
             _ => None,
         },
+        _ => None,
+    }
+}
+
+/// Return the unsigned magnitude for a non-negative integer literal.
+fn unsigned_int_literal_magnitude(expr: &Spanned<Expr>) -> Option<u128> {
+    match &expr.node {
+        Expr::Literal(Literal::Int(value)) => Some(value.magnitude),
         _ => None,
     }
 }

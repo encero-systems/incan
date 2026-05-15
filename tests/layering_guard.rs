@@ -70,3 +70,80 @@ fn std_collections_source_has_no_rust_backed_dispatch_markers_when_present() {
         );
     }
 }
+
+#[test]
+fn std_encoding_source_stays_incan_authored_without_rust_externs() {
+    let source_root = std::path::Path::new("crates/incan_stdlib/stdlib/encoding");
+    let Ok(entries) = std::fs::read_dir(source_root) else {
+        return;
+    };
+
+    for entry in entries {
+        let entry = entry.expect("encoding stdlib directory entries should be readable");
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("incn") {
+            continue;
+        }
+        let source = std::fs::read_to_string(&path).expect("encoding stdlib source should be readable");
+        for forbidden in ["rust.module", "@rust.extern", "from rust::"] {
+            assert!(
+                !source.contains(forbidden),
+                "`{forbidden}` is not allowed in Incan-authored std.encoding source: {}",
+                path.display()
+            );
+        }
+    }
+}
+
+#[test]
+fn std_uuid_namespace_stays_source_stdlib_only() {
+    let Some(ns) = stdlib::find_namespace("uuid") else {
+        panic!("std.uuid should be registered");
+    };
+
+    assert_eq!(ns.feature, None, "std.uuid must not activate a Cargo feature");
+    assert_eq!(
+        ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>(),
+        vec!["rand"],
+        "std.uuid crate dependencies should stay limited to source-visible Rust imports"
+    );
+
+    let source_path = std::path::Path::new("crates/incan_stdlib/stdlib/uuid.incn");
+    let source = std::fs::read_to_string(source_path).expect("std.uuid source should exist");
+    for dep in ns.extra_crate_deps {
+        let import_prefix = format!("from rust::{}", dep.crate_name);
+        assert!(
+            source.contains(&import_prefix),
+            "`{}` must be visible as an inline std.uuid source import",
+            dep.crate_name
+        );
+    }
+    assert!(
+        source.contains("from std.hash import md5 as hash_md5, sha1 as hash_sha1"),
+        "std.uuid v3/v5 hashing should dogfood std.hash instead of direct digest crates"
+    );
+
+    assert!(
+        ns.submodules.is_empty(),
+        "std.uuid should resolve as a leaf stdlib source module"
+    );
+    assert!(
+        !ns.typechecker_only,
+        "std.uuid must load through the ordinary stdlib source path"
+    );
+}
+
+#[test]
+fn std_uuid_source_has_no_rust_backed_type_markers() {
+    let source_path = std::path::Path::new("crates/incan_stdlib/stdlib/uuid.incn");
+    let Ok(source) = std::fs::read_to_string(source_path) else {
+        panic!("std.uuid source should exist");
+    };
+
+    for forbidden in ["rust.module", "@rust.extern", "rusttype"] {
+        assert!(
+            !source.contains(forbidden),
+            "`{forbidden}` is not allowed in source-defined std.uuid"
+        );
+    }
+}

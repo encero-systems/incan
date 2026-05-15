@@ -1,0 +1,1007 @@
+"""
+Core `std.hash` algorithms and one-shot helpers.
+
+This module owns the algorithm wrappers and value hashing paths. File and reader streaming live in
+`std.hash._streaming` so the public prelude stays small and the hot dispatch paths are easier to audit.
+"""
+
+from rust::incan_stdlib::errors import raise_value_error
+from rust::blake2 @ "0.10" import Blake2b512, Blake2s256
+from rust::blake3 @ "1" import Hasher as Blake3Hasher, hash as blake3_hash
+from rust::md5 @ "0.10" import Md5
+from rust::sha1 @ "0.10" import Sha1
+from rust::sha2 @ "0.10" import Digest, Sha224, Sha256, Sha384, Sha512
+from rust::sha3 @ "0.10" import Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256
+from rust::sha3::digest @ "0.10" import ExtendableOutputReset, Update, XofReader
+from rust::xxhash_rust::xxh3 @ "0.8" with ["xxh3"] import Xxh3Default
+from rust::xxhash_rust::xxh32 @ "0.8" with ["xxh32"] import Xxh32
+from rust::xxhash_rust::xxh64 @ "0.8" with ["xxh64"] import Xxh64
+from std.traits.error import Error
+
+
+pub const DEFAULT_CHUNK_SIZE: int = 65536
+
+
+@derive(Clone)
+pub model HashError with Error:
+    """
+    Stable error value returned by fallible `std.hash` helpers.
+
+    `algorithm` is the requested hash name, `kind` is the branchable error category, and `detail` is the
+    human-readable message. One-shot namespace helpers raise `ValueError` for this detail when their API is infallible.
+    """
+
+    pub kind: str
+    pub algorithm: str
+    pub detail: str
+
+    def message(self) -> str:
+        """
+        Return the human-readable failure detail.
+        """
+        return self.detail
+
+    def source(self) -> Option[str]:
+        """
+        Hash errors currently do not wrap structured source errors.
+        """
+        return None
+
+
+pub trait ByteDigestHasher:
+    """
+    Incremental byte-digest hasher contract used by fixed-length digest algorithms.
+    """
+
+    def update(mut self, chunk: bytes) -> None: ...
+
+    def finalize_bytes(mut self) -> bytes: ...
+
+
+pub trait ShakeDigestHasher:
+    """
+    Incremental SHAKE hasher contract with caller-selected output length.
+    """
+
+    def update(mut self, chunk: bytes) -> None: ...
+
+    def finalize_bytes(mut self, length: int) -> Result[bytes, HashError]: ...
+
+
+pub trait Hash32DigestHasher:
+    """
+    Incremental non-cryptographic hasher contract for algorithms with native `u32` output.
+    """
+
+    def update(mut self, chunk: bytes) -> None: ...
+
+    def finalize_bytes(mut self) -> bytes: ...
+
+    def finalize_u32(mut self) -> u32: ...
+
+
+pub trait Hash64DigestHasher:
+    """
+    Incremental non-cryptographic hasher contract for algorithms with native `u64` output.
+    """
+
+    def update(mut self, chunk: bytes) -> None: ...
+
+    def finalize_bytes(mut self) -> bytes: ...
+
+    def finalize_u64(mut self) -> u64: ...
+
+
+pub trait Hash128DigestHasher:
+    """
+    Incremental non-cryptographic hasher contract for algorithms with native `u128` output.
+    """
+
+    def update(mut self, chunk: bytes) -> None: ...
+
+    def finalize_bytes(mut self) -> bytes: ...
+
+    def finalize_u128(mut self) -> u128: ...
+
+
+pub enum _Algorithm(str):
+    """
+    Canonical algorithm selector used after validating public string names.
+
+    Public file and reader helpers accept strings to keep the RFC surface compact. Internally, dispatch converts those
+    strings once and then matches on this enum so unsupported names and unsupported output widths stay distinct.
+    """
+
+    Sha224 = "sha224"
+    Sha256 = "sha256"
+    Sha384 = "sha384"
+    Sha512 = "sha512"
+    Sha3_224 = "sha3_224"
+    Sha3_256 = "sha3_256"
+    Sha3_384 = "sha3_384"
+    Sha3_512 = "sha3_512"
+    Shake128 = "shake128"
+    Shake256 = "shake256"
+    Blake2b = "blake2b"
+    Blake2s = "blake2s"
+    Blake3 = "blake3"
+    Md5 = "md5"
+    Sha1 = "sha1"
+    Xxh32 = "xxh32"
+    Xxh64 = "xxh64"
+    Xxh3_64 = "xxh3_64"
+    Xxh3_128 = "xxh3_128"
+
+    def from_str(name: str) -> Result[Self, HashError]:
+        """
+        Parse a public algorithm name into the internal selector.
+
+        Args:
+            name: Canonical algorithm name such as `sha256`, `blake3`, or `xxh3_128`.
+
+        Returns:
+            `Ok(_Algorithm)` for known names, or `Err(HashError)` with kind `unknown_algorithm`.
+        """
+        if let Some(parsed) = _Algorithm.from_value(name):
+            return Ok(parsed)
+        return Err(_invalid_error(name, "unknown_algorithm", f"unknown hash algorithm: {name}"))
+
+    def is_known(name: str) -> bool:
+        """
+        Return whether `name` is a known hash algorithm.
+        """
+        known = _Algorithm.from_str(name).map((_algorithm) => true).map_err((_error) => false)
+        match known:
+            Ok(value) => return value
+            Err(value) => return value
+
+    def name(self) -> str:
+        """
+        Return the canonical public algorithm name.
+        """
+        return self.value()
+
+    def is_shake(self) -> bool:
+        """
+        Return whether this algorithm has caller-selected SHAKE output length.
+        """
+        match self:
+            _Algorithm.Shake128 => return true
+            _Algorithm.Shake256 => return true
+            _ => return false
+
+
+pub class _Sha224Hasher with ByteDigestHasher:
+    """
+    Incremental SHA-224 hasher.
+    """
+
+    handle: Sha224
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha256Hasher with ByteDigestHasher:
+    """
+    Incremental SHA-256 hasher.
+    """
+
+    handle: Sha256
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha384Hasher with ByteDigestHasher:
+    """
+    Incremental SHA-384 hasher.
+    """
+
+    handle: Sha384
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha512Hasher with ByteDigestHasher:
+    """
+    Incremental SHA-512 hasher.
+    """
+
+    handle: Sha512
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha3_224Hasher with ByteDigestHasher:
+    """
+    Incremental SHA3-224 hasher.
+    """
+
+    handle: Sha3_224
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha3_256Hasher with ByteDigestHasher:
+    """
+    Incremental SHA3-256 hasher.
+    """
+
+    handle: Sha3_256
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha3_384Hasher with ByteDigestHasher:
+    """
+    Incremental SHA3-384 hasher.
+    """
+
+    handle: Sha3_384
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha3_512Hasher with ByteDigestHasher:
+    """
+    Incremental SHA3-512 hasher.
+    """
+
+    handle: Sha3_512
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Shake128Hasher with ShakeDigestHasher:
+    """
+    Incremental SHAKE128 hasher with explicit output length.
+    """
+
+    handle: Shake128
+
+    def update(mut self, chunk: bytes) -> None:
+        Update.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self, length: int) -> Result[bytes, HashError]:
+        if length <= 0:
+            return Err(_invalid_error("shake128", "invalid_length", "SHAKE digest length must be positive"))
+        mut out = _zeros(length)
+        mut reader = ExtendableOutputReset.finalize_xof_reset(self.handle)
+        reader.read(out)
+        return Ok(out)
+
+
+pub class _Shake256Hasher with ShakeDigestHasher:
+    """
+    Incremental SHAKE256 hasher with explicit output length.
+    """
+
+    handle: Shake256
+
+    def update(mut self, chunk: bytes) -> None:
+        Update.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self, length: int) -> Result[bytes, HashError]:
+        if length <= 0:
+            return Err(_invalid_error("shake256", "invalid_length", "SHAKE digest length must be positive"))
+        mut out = _zeros(length)
+        mut reader = ExtendableOutputReset.finalize_xof_reset(self.handle)
+        reader.read(out)
+        return Ok(out)
+
+
+pub class _Blake2bHasher with ByteDigestHasher:
+    """
+    Incremental BLAKE2b hasher with the standard 64-byte output.
+    """
+
+    handle: Blake2b512
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Blake2sHasher with ByteDigestHasher:
+    """
+    Incremental BLAKE2s hasher with the standard 32-byte output.
+    """
+
+    handle: Blake2s256
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Blake3Hasher with ByteDigestHasher:
+    """
+    Incremental BLAKE3 hasher.
+    """
+
+    handle: Blake3Hasher
+
+    def update(mut self, chunk: bytes) -> None:
+        self.handle.update(chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize().as_bytes().to_vec()
+
+
+pub class _Md5Hasher with ByteDigestHasher:
+    """
+    Incremental MD5 hasher for interoperability and checksum workflows.
+    """
+
+    handle: Md5
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Sha1Hasher with ByteDigestHasher:
+    """
+    Incremental SHA-1 hasher for interoperability and checksum workflows.
+    """
+
+    handle: Sha1
+
+    def update(mut self, chunk: bytes) -> None:
+        Digest.update(self.handle, chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return self.handle.finalize_reset().to_vec()
+
+
+pub class _Xxh32Hasher with Hash32DigestHasher:
+    """
+    Incremental xxHash32 hasher with 32-bit output.
+    """
+
+    handle: Xxh32
+
+    def update(mut self, chunk: bytes) -> None:
+        self.handle.update(chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return _u32_to_le_bytes(self.finalize_u32())
+
+    def finalize_u32(mut self) -> u32:
+        return self.handle.digest()
+
+
+pub class _Xxh64Hasher with Hash64DigestHasher:
+    """
+    Incremental xxHash64 hasher with 64-bit output.
+    """
+
+    handle: Xxh64
+
+    def update(mut self, chunk: bytes) -> None:
+        self.handle.update(chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return _u64_to_le_bytes(self.finalize_u64())
+
+    def finalize_u64(mut self) -> u64:
+        return self.handle.digest()
+
+
+pub class _Xxh3_64Hasher with Hash64DigestHasher:
+    """
+    Incremental XXH3 64-bit hasher.
+    """
+
+    handle: Xxh3Default
+
+    def update(mut self, chunk: bytes) -> None:
+        self.handle.update(chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return _u64_to_le_bytes(self.finalize_u64())
+
+    def finalize_u64(mut self) -> u64:
+        return self.handle.digest()
+
+
+pub class _Xxh3_128Hasher with Hash128DigestHasher:
+    """
+    Incremental XXH3 128-bit hasher.
+    """
+
+    handle: Xxh3Default
+
+    def update(mut self, chunk: bytes) -> None:
+        self.handle.update(chunk.as_slice())
+
+    def finalize_bytes(mut self) -> bytes:
+        return _u128_to_le_bytes(self.finalize_u128())
+
+    def finalize_u128(mut self) -> u128:
+        return self.handle.digest128()
+
+
+@rust.allow("non_camel_case_types")
+pub class sha224:
+    """
+    SHA-224 namespace with one-shot and incremental hashing.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha224", 0)
+
+    @staticmethod
+    def new() -> _Sha224Hasher:
+        return _Sha224Hasher(handle=Sha224.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class sha256:
+    """
+    SHA-256 namespace with one-shot and incremental hashing.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha256", 0)
+
+    @staticmethod
+    def new() -> _Sha256Hasher:
+        return _Sha256Hasher(handle=Sha256.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class sha384:
+    """
+    SHA-384 namespace with one-shot and incremental hashing.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha384", 0)
+
+    @staticmethod
+    def new() -> _Sha384Hasher:
+        return _Sha384Hasher(handle=Sha384.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class sha512:
+    """
+    SHA-512 namespace with one-shot and incremental hashing.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha512", 0)
+
+    @staticmethod
+    def new() -> _Sha512Hasher:
+        return _Sha512Hasher(handle=Sha512.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class sha3_224:
+    """
+    SHA3-224 namespace with one-shot and incremental hashing.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha3_224", 0)
+
+    @staticmethod
+    def new() -> _Sha3_224Hasher:
+        return _Sha3_224Hasher(handle=Sha3_224.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class sha3_256:
+    """
+    SHA3-256 namespace with one-shot and incremental hashing.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha3_256", 0)
+
+    @staticmethod
+    def new() -> _Sha3_256Hasher:
+        return _Sha3_256Hasher(handle=Sha3_256.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class sha3_384:
+    """
+    SHA3-384 namespace with one-shot and incremental hashing.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha3_384", 0)
+
+    @staticmethod
+    def new() -> _Sha3_384Hasher:
+        return _Sha3_384Hasher(handle=Sha3_384.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class sha3_512:
+    """
+    SHA3-512 namespace with one-shot and incremental hashing.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha3_512", 0)
+
+    @staticmethod
+    def new() -> _Sha3_512Hasher:
+        return _Sha3_512Hasher(handle=Sha3_512.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class shake128:
+    """
+    SHAKE128 namespace requiring explicit output lengths.
+    """
+
+    @staticmethod
+    def digest(data: bytes, length: int) -> Result[bytes, HashError]:
+        return _digest_bytes(data, "shake128", length)
+
+    @staticmethod
+    def new() -> _Shake128Hasher:
+        return _Shake128Hasher(handle=Shake128.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class shake256:
+    """
+    SHAKE256 namespace requiring explicit output lengths.
+    """
+
+    @staticmethod
+    def digest(data: bytes, length: int) -> Result[bytes, HashError]:
+        return _digest_bytes(data, "shake256", length)
+
+    @staticmethod
+    def new() -> _Shake256Hasher:
+        return _Shake256Hasher(handle=Shake256.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class blake2b:
+    """
+    BLAKE2b namespace with the standard 64-byte output.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "blake2b", 64)
+
+    @staticmethod
+    def new() -> _Blake2bHasher:
+        return _Blake2bHasher(handle=Blake2b512.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class blake2s:
+    """
+    BLAKE2s namespace with the standard 32-byte output.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "blake2s", 32)
+
+    @staticmethod
+    def new() -> _Blake2sHasher:
+        return _Blake2sHasher(handle=Blake2s256.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class blake3:
+    """
+    BLAKE3 namespace with one-shot and incremental hashing.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "blake3", 0)
+
+    @staticmethod
+    def new() -> _Blake3Hasher:
+        return _Blake3Hasher(handle=Blake3Hasher.new())
+
+
+@rust.allow("non_camel_case_types")
+pub class md5:
+    """
+    MD5 namespace for interoperability and checksum workflows.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "md5", 0)
+
+    @staticmethod
+    def new() -> _Md5Hasher:
+        return _Md5Hasher(handle=Md5.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class sha1:
+    """
+    SHA-1 namespace for interoperability and checksum workflows.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "sha1", 0)
+
+    @staticmethod
+    def new() -> _Sha1Hasher:
+        return _Sha1Hasher(handle=Sha1.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class xxh3_64:
+    """
+    XXH3 64-bit namespace with byte and integer outputs.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "xxh3_64", 0)
+
+    @staticmethod
+    def hash_u64(data: bytes) -> u64:
+        return _must_hash_u64(data, "xxh3_64")
+
+    @staticmethod
+    def new() -> _Xxh3_64Hasher:
+        return _Xxh3_64Hasher(handle=Xxh3Default.new())
+
+
+@rust.allow("non_camel_case_types")
+pub class xxh3_128:
+    """
+    XXH3 128-bit namespace with byte and integer outputs.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "xxh3_128", 0)
+
+    @staticmethod
+    def hash_u128(data: bytes) -> u128:
+        return _must_hash_u128(data, "xxh3_128")
+
+    @staticmethod
+    def new() -> _Xxh3_128Hasher:
+        return _Xxh3_128Hasher(handle=Xxh3Default.new())
+
+
+@rust.allow("non_camel_case_types")
+pub class xxh64:
+    """
+    xxHash64 namespace with byte and 64-bit integer outputs.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "xxh64", 0)
+
+    @staticmethod
+    def hash_u64(data: bytes) -> u64:
+        return _must_hash_u64(data, "xxh64")
+
+    @staticmethod
+    def new() -> _Xxh64Hasher:
+        return _Xxh64Hasher(handle=Xxh64.default())
+
+
+@rust.allow("non_camel_case_types")
+pub class xxh32:
+    """
+    xxHash32 namespace with byte and 32-bit integer outputs.
+    """
+
+    @staticmethod
+    def digest(data: bytes) -> bytes:
+        return _must_digest_bytes(data, "xxh32", 0)
+
+    @staticmethod
+    def hash_u32(data: bytes) -> u32:
+        return _must_hash_u32(data, "xxh32")
+
+    @staticmethod
+    def new() -> _Xxh32Hasher:
+        return _Xxh32Hasher(handle=Xxh32.default())
+
+
+def _digest_bytes(data: bytes, algorithm: str, length: int) -> Result[bytes, HashError]:
+    """
+    Parse a public algorithm name and compute one-shot digest bytes.
+    """
+    return _digest_algorithm(data, _Algorithm.from_str(algorithm)?, length)
+
+
+def _digest_algorithm(data: bytes, algorithm: _Algorithm, length: int) -> Result[bytes, HashError]:
+    """
+    Dispatch one-shot byte hashing after algorithm validation.
+
+    SHAKE algorithms validate caller-selected output length here because fixed-size digest algorithms ignore the
+    `length` argument by design.
+    """
+    match algorithm:
+        _Algorithm.Sha224 => return _digest_from_hasher(sha224.new(), data)
+        _Algorithm.Sha256 => return _digest_from_hasher(sha256.new(), data)
+        _Algorithm.Sha384 => return _digest_from_hasher(sha384.new(), data)
+        _Algorithm.Sha512 => return _digest_from_hasher(sha512.new(), data)
+        _Algorithm.Sha3_224 => return _digest_from_hasher(sha3_224.new(), data)
+        _Algorithm.Sha3_256 => return _digest_from_hasher(sha3_256.new(), data)
+        _Algorithm.Sha3_384 => return _digest_from_hasher(sha3_384.new(), data)
+        _Algorithm.Sha3_512 => return _digest_from_hasher(sha3_512.new(), data)
+        _Algorithm.Shake128 =>
+            if length <= 0:
+                return Err(_invalid_error(algorithm.name(), "invalid_length", "SHAKE digest length must be positive"))
+            mut hasher = shake128.new()
+            hasher.update(data)
+            return hasher.finalize_bytes(length)
+        _Algorithm.Shake256 =>
+            if length <= 0:
+                return Err(_invalid_error(algorithm.name(), "invalid_length", "SHAKE digest length must be positive"))
+            mut hasher = shake256.new()
+            hasher.update(data)
+            return hasher.finalize_bytes(length)
+        _Algorithm.Blake2b => return _digest_from_hasher(blake2b.new(), data)
+        _Algorithm.Blake2s => return _digest_from_hasher(blake2s.new(), data)
+        _Algorithm.Blake3 => return Ok(blake3_hash(data.as_slice()).as_bytes().to_vec())
+        _Algorithm.Md5 => return _digest_from_hasher(md5.new(), data)
+        _Algorithm.Sha1 => return _digest_from_hasher(sha1.new(), data)
+        _Algorithm.Xxh32 => return Ok(_u32_to_le_bytes(_xxh32_hash(data)))
+        _Algorithm.Xxh64 => return Ok(_u64_to_le_bytes(_xxh64_hash(data)))
+        _Algorithm.Xxh3_64 => return Ok(_u64_to_le_bytes(_xxh3_64_hash(data)))
+        _Algorithm.Xxh3_128 => return Ok(_u128_to_le_bytes(_xxh3_128_hash(data)))
+
+
+def _digest_from_hasher[H with ByteDigestHasher](mut hasher: H, data: bytes) -> Result[bytes, HashError]:
+    """
+    Feed all bytes into a fixed-length digest hasher and finalize it.
+    """
+    hasher.update(data)
+    return Ok(hasher.finalize_bytes())
+
+
+def _hash_u32(data: bytes, algorithm: str) -> Result[u32, HashError]:
+    """
+    Compute a native `u32` hash for algorithms that expose that width.
+    """
+    match _Algorithm.from_str(algorithm)?:
+        _Algorithm.Xxh32 => return Ok(_xxh32_hash(data))
+        _ => return Err(_unsupported_width_error(algorithm, "u32"))
+
+
+def _hash_u64(data: bytes, algorithm: str) -> Result[u64, HashError]:
+    """
+    Compute a native `u64` hash for algorithms that expose that width.
+    """
+    match _Algorithm.from_str(algorithm)?:
+        _Algorithm.Xxh3_64 => return Ok(_xxh3_64_hash(data))
+        _Algorithm.Xxh64 => return Ok(_xxh64_hash(data))
+        _ => return Err(_unsupported_width_error(algorithm, "u64"))
+
+
+def _hash_u128(data: bytes, algorithm: str) -> Result[u128, HashError]:
+    """
+    Compute a native `u128` hash for algorithms that expose that width.
+    """
+    match _Algorithm.from_str(algorithm)?:
+        _Algorithm.Xxh3_128 => return Ok(_xxh3_128_hash(data))
+        _ => return Err(_unsupported_width_error(algorithm, "u128"))
+
+
+def _xxh32_hash(data: bytes) -> u32:
+    """
+    Run xxHash32 over one byte payload.
+    """
+    mut hasher = xxh32.new()
+    hasher.update(data)
+    return hasher.finalize_u32()
+
+
+def _xxh64_hash(data: bytes) -> u64:
+    """
+    Run xxHash64 over one byte payload.
+    """
+    mut hasher = xxh64.new()
+    hasher.update(data)
+    return hasher.finalize_u64()
+
+
+def _xxh3_64_hash(data: bytes) -> u64:
+    """
+    Run XXH3 with native 64-bit output over one byte payload.
+    """
+    mut hasher = xxh3_64.new()
+    hasher.update(data)
+    return hasher.finalize_u64()
+
+
+def _xxh3_128_hash(data: bytes) -> u128:
+    """
+    Run XXH3 with native 128-bit output over one byte payload.
+    """
+    mut hasher = xxh3_128.new()
+    hasher.update(data)
+    return hasher.finalize_u128()
+
+
+def _must_digest_bytes(data: bytes, algorithm: str, length: int) -> bytes:
+    """
+    Return digest bytes or raise `ValueError` for namespace helpers with infallible signatures.
+    """
+    match _digest_bytes(data, algorithm, length):
+        Ok(value) => return value
+        Err(err) => return raise_value_error(err.detail)
+
+
+def _must_hash_u32(data: bytes, algorithm: str) -> u32:
+    """
+    Return a native `u32` hash or raise `ValueError` for namespace helpers.
+    """
+    match _hash_u32(data, algorithm):
+        Ok(value) => return value
+        Err(err) => return raise_value_error(err.detail)
+
+
+def _must_hash_u64(data: bytes, algorithm: str) -> u64:
+    """
+    Return a native `u64` hash or raise `ValueError` for namespace helpers.
+    """
+    match _hash_u64(data, algorithm):
+        Ok(value) => return value
+        Err(err) => return raise_value_error(err.detail)
+
+
+def _must_hash_u128(data: bytes, algorithm: str) -> u128:
+    """
+    Return a native `u128` hash or raise `ValueError` for namespace helpers.
+    """
+    match _hash_u128(data, algorithm):
+        Ok(value) => return value
+        Err(err) => return raise_value_error(err.detail)
+
+
+def _zeros(size: int) -> bytes:
+    """
+    Allocate a zero-filled byte vector for SHAKE finalization buffers.
+    """
+    zero: u8 = 0
+    return list.repeat(zero, size)
+
+
+def _u32_to_le_bytes(value: u32) -> bytes:
+    """
+    Encode a 32-bit integer as little-endian bytes in Incan source.
+    """
+    number = int(value)
+    mut out: list[u8] = []
+    _append_byte(out, number % 256)
+    _append_byte(out, (number // 256) % 256)
+    _append_byte(out, (number // 65536) % 256)
+    _append_byte(out, (number // 16777216) % 256)
+    return out
+
+
+def _u64_to_le_bytes(value: u64) -> bytes:
+    """
+    Encode a 64-bit integer as little-endian bytes in Incan source.
+    """
+    number = int(value)
+    mut out: list[u8] = []
+    _append_byte(out, number % 256)
+    _append_byte(out, (number // 256) % 256)
+    _append_byte(out, (number // 65536) % 256)
+    _append_byte(out, (number // 16777216) % 256)
+    _append_byte(out, (number // 4294967296) % 256)
+    _append_byte(out, (number // 1099511627776) % 256)
+    _append_byte(out, (number // 281474976710656) % 256)
+    _append_byte(out, (number // 72057594037927936) % 256)
+    return out
+
+
+def _u128_to_le_bytes(value: u128) -> bytes:
+    """
+    Encode a 128-bit integer as little-endian bytes in Incan source.
+    """
+    mut out: list[u8] = []
+    _append_byte(out, int(value % 256))
+    _append_byte(out, int((value // 256) % 256))
+    _append_byte(out, int((value // 65536) % 256))
+    _append_byte(out, int((value // 16777216) % 256))
+    _append_byte(out, int((value // 4294967296) % 256))
+    _append_byte(out, int((value // 1099511627776) % 256))
+    _append_byte(out, int((value // 281474976710656) % 256))
+    _append_byte(out, int((value // 72057594037927936) % 256))
+    _append_byte(out, int((value // 18446744073709551616) % 256))
+    _append_byte(out, int((value // 4722366482869645213696) % 256))
+    _append_byte(out, int((value // 1208925819614629174706176) % 256))
+    _append_byte(out, int((value // 309485009821345068724781056) % 256))
+    _append_byte(out, int((value // 79228162514264337593543950336) % 256))
+    _append_byte(out, int((value // 20282409603651670423947251286016) % 256))
+    _append_byte(out, int((value // 5192296858534827628530496329220096) % 256))
+    _append_byte(out, int((value // 1329227995784915872903807060280344576) % 256))
+    return out
+
+
+def _append_byte(mut out: list[u8], value: int) -> None:
+    """
+    Append one low byte after explicit wrapping conversion to `u8`.
+    """
+    byte: u8 = value.wrapping_resize()
+    out.append(byte)
+
+
+pub def _invalid_error(algorithm: str, kind: str, detail: str) -> HashError:
+    """
+    Build a validation or capability error for hash helper APIs.
+    """
+    return HashError(kind=kind, algorithm=algorithm, detail=detail)
+
+
+pub def _io_error(algorithm: str, kind: str, detail: str) -> HashError:
+    """
+    Map lower-level reader or filesystem I/O failures into hash-domain errors.
+    """
+    return HashError(kind=kind, algorithm=algorithm, detail=detail)
+
+
+pub def _unsupported_width_error(algorithm: str, width: str) -> HashError:
+    """
+    Distinguish known algorithms with the wrong native integer width from unknown algorithm names.
+    """
+    if _Algorithm.is_known(algorithm):
+        return _invalid_error(algorithm, "unsupported_width", f"{algorithm} does not expose a {width} hash")
+    return _invalid_error(algorithm, "unknown_algorithm", f"unknown hash algorithm: {algorithm}")

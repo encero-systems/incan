@@ -25,9 +25,9 @@ from rust::std::io import Error as RustIoError
 from rust::std::rc import Rc
 from rust::std::string import String as RustString
 from rust::tempfile @ "3" import Builder, NamedTempFile as RustNamedTemporaryFile, TempDir as RustTemporaryDirectory
-from std.io import BytesIO, _BytesIO
+from std.io import BytesIO, IoError, _BytesIO
 from std.fs import File, Path
-from std.fs.path import IoError, _io_error as _fs_io_error
+from std.fs.path import _io_error as _fs_io_error
 
 
 pub class NamedTemporaryFile:

@@ -224,6 +224,21 @@ impl SymbolTable {
         id
     }
 
+    /// Define a symbol without replacing an existing same-scope lookup binding.
+    ///
+    /// Enum variants need to remain available to whole-table consumers such as match exhaustiveness and qualified
+    /// pattern resolution, but a variant named like an imported type must not steal the bare identifier from that type.
+    pub fn define_preserving_existing_binding(&mut self, mut symbol: Symbol) -> SymbolId {
+        symbol.scope = self.current_scope;
+        let id = self.symbols.len();
+        self.scopes[self.current_scope]
+            .symbols
+            .entry(symbol.name.clone())
+            .or_insert(id);
+        self.symbols.push(symbol);
+        id
+    }
+
     /// Look up a symbol by name in the current scope chain
     pub fn lookup(&self, name: &str) -> Option<SymbolId> {
         let mut scope_idx = self.current_scope;

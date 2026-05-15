@@ -286,31 +286,36 @@ impl TypeChecker {
                     .filter(|a| matches!(a, PatternArg::Positional(_)))
                     .count();
 
+                let incan_resolution = self.incan_enum_constructor_payload_types(
+                    expected_ty,
+                    variant_name,
+                    positional_count,
+                    enum_qualifier_opt,
+                );
                 let rust_resolution =
                     self.rust_enum_constructor_payload_types(expected_ty, name.as_str(), positional_count);
-                let field_types: Option<Vec<ResolvedType>> = self
-                    .symbols
-                    .all_symbols()
-                    .iter()
-                    .rev()
-                    .find_map(|sym| {
-                        if sym.name != variant_name {
-                            return None;
-                        }
-                        if let SymbolKind::Variant(info) = &sym.kind {
-                            if self.match_variant_symbol_applies_to_scrutinee(
-                                expected_ty,
-                                info,
-                                positional_count,
-                                enum_qualifier_opt,
-                            ) {
-                                Some(info.fields.clone())
+                let field_types: Option<Vec<ResolvedType>> = incan_resolution
+                    .clone()
+                    .or_else(|| {
+                        self.symbols.all_symbols().iter().rev().find_map(|sym| {
+                            if sym.name != variant_name {
+                                return None;
+                            }
+                            if let SymbolKind::Variant(info) = &sym.kind {
+                                if self.match_variant_symbol_applies_to_scrutinee(
+                                    expected_ty,
+                                    info,
+                                    positional_count,
+                                    enum_qualifier_opt,
+                                ) {
+                                    Some(info.fields.clone())
+                                } else {
+                                    None
+                                }
                             } else {
                                 None
                             }
-                        } else {
-                            None
-                        }
+                        })
                     })
                     .or_else(|| match rust_resolution.as_ref() {
                         Some(RustEnumPatternResolution::PayloadTypes(fields)) => Some(fields.clone()),
@@ -536,6 +541,54 @@ impl TypeChecker {
             ResolvedType::RustPath(_) => false,
             _ => false,
         }
+    }
+
+    /// Payload types for a source-defined enum variant, using the enum type's own metadata.
+    ///
+    /// Qualified patterns such as `Color.Red` should not depend on a module-level `Red` symbol being importable or
+    /// winning same-scope shadowing. The scrutinee already tells us which enum is being matched, so resolve the
+    /// variant from that enum's table first and reserve bare variant symbols as a compatibility fallback.
+    fn incan_enum_constructor_payload_types(
+        &self,
+        expected_ty: &ResolvedType,
+        variant_name: &str,
+        positional_count: usize,
+        enum_qualifier_opt: Option<&str>,
+    ) -> Option<Vec<ResolvedType>> {
+        let enum_name = match expected_ty {
+            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => type_name,
+            _ => return None,
+        };
+        if enum_qualifier_opt.is_some_and(|qualifier| qualifier != enum_name) {
+            return None;
+        }
+        let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name) else {
+            return None;
+        };
+        let canonical_variant = enum_info
+            .variant_aliases
+            .get(variant_name)
+            .map(String::as_str)
+            .unwrap_or(variant_name);
+        if !enum_info.variants.iter().any(|variant| variant == canonical_variant) {
+            return None;
+        }
+        let Some(symbol) = self
+            .symbols
+            .all_symbols()
+            .iter()
+            .rev()
+            .find(|sym| sym.name == canonical_variant || sym.name == variant_name)
+        else {
+            return Some(Vec::new());
+        };
+        let SymbolKind::Variant(info) = &symbol.kind else {
+            return Some(Vec::new());
+        };
+        if info.enum_name != *enum_name || positional_count > info.fields.len() {
+            return None;
+        }
+        Some(info.fields.clone())
     }
 
     /// Tuple-variant payload types for `match` patterns on Rust-backed enum surfaces.

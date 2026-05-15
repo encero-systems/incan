@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use incan_core::lang::builtins;
 use incan_core::lang::derives;
 use incan_core::lang::errors;
+use incan_core::lang::features;
 use incan_core::lang::keywords;
 use incan_core::lang::magic_methods;
 use incan_core::lang::operators;
@@ -257,6 +258,46 @@ fn traits_spellings_unique_and_resolvable() {
         from_str: traits::from_str,
         as_str: traits::as_str,
     });
+}
+
+#[test]
+fn feature_inventory_has_required_metadata() {
+    assert_eq!(features::FEATURES.len(), 44, "feature inventory length changed");
+
+    let mut seen = HashMap::new();
+    for feature in features::FEATURES {
+        if let Some(prev) = seen.insert(feature.name, feature.id) {
+            panic!(
+                "duplicate feature name {:?}: {:?} and {:?}",
+                feature.name, prev, feature.id
+            );
+        }
+        assert!(
+            !feature.activation.trim().is_empty(),
+            "feature {:?} is missing activation guidance",
+            feature.id
+        );
+        assert!(
+            !feature.summary.trim().is_empty(),
+            "feature {:?} is missing a summary",
+            feature.id
+        );
+        assert!(
+            !feature.prefer_over.trim().is_empty(),
+            "feature {:?} is missing prefer-over guidance",
+            feature.id
+        );
+        assert!(
+            !feature.references.is_empty(),
+            "feature {:?} should link to at least one reference page",
+            feature.id
+        );
+        assert!(
+            !feature.canonical_forms.is_empty(),
+            "feature {:?} should list at least one canonical form",
+            feature.id
+        );
+    }
 }
 
 #[test]

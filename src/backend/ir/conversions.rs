@@ -175,6 +175,7 @@ use super::types::Mutability;
 use super::{IrExpr, IrExprKind, IrType, TypedExpr};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_exponent_kind_from_ir};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
+use incan_core::lang::types::numerics::{self, NumericFamily};
 use incan_core::{NumericOp, NumericTy, needs_float_promotion, result_numeric_type};
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -311,6 +312,23 @@ fn emit_binop_token(op: &BinOp) -> TokenStream {
     }
 }
 
+/// Return whether an IR type is one of the exact-width unsigned integer types.
+fn exact_unsigned_integer_type(ty: &IrType) -> bool {
+    matches!(
+        ty,
+        IrType::Numeric(id) if numerics::info_for(*id).family == NumericFamily::UnsignedInteger
+    )
+}
+
+/// Return whether an expression is a non-negative integer literal that Rust can infer to an unsigned type.
+fn non_negative_integer_literal(expr: &TypedExpr) -> bool {
+    match &expr.kind {
+        IrExprKind::Int(value) => *value >= 0,
+        IrExprKind::IntLiteral(_) => true,
+        _ => false,
+    }
+}
+
 /// Determine a BinOpPlan: conversions + emit strategy in one place.
 pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> BinOpPlan {
     let is_stringish = |ty: &IrType| match ty {
@@ -386,6 +404,29 @@ pub fn determine_binop_plan(op: &BinOp, left: &TypedExpr, right: &TypedExpr) -> 
 
     let lhs_num = ir_type_to_numeric_ty(&left.ty);
     let rhs_num = ir_type_to_numeric_ty(&right.ty);
+
+    // Python modulo/floor-division helpers are i64/f64-only. Unsigned exact-width operands can use Rust's native
+    // operators because their domain has no negative remainder/flooring case to normalize.
+    if matches!(num_op, NumericOp::FloorDiv | NumericOp::Mod)
+        && (exact_unsigned_integer_type(&left.ty)
+            && (matches!(right.ty, IrType::Int) || exact_unsigned_integer_type(&right.ty))
+            || exact_unsigned_integer_type(&right.ty)
+                && matches!(left.ty, IrType::Int)
+                && non_negative_integer_literal(left))
+    {
+        return BinOpPlan {
+            lhs_conv: NumericConversion::None,
+            rhs_conv: NumericConversion::None,
+            result_ty: if exact_unsigned_integer_type(&left.ty) {
+                left.ty.clone()
+            } else {
+                right.ty.clone()
+            },
+            emit: BinOpEmitKind::Infix {
+                token: emit_binop_token(op),
+            },
+        };
+    }
 
     let pow_exp_kind = if matches!(op, BinOp::Pow) {
         Some(pow_exponent_kind_from_ir(right))

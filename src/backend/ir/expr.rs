@@ -105,6 +105,10 @@ pub enum IrExprKind {
     None,
     Bool(bool),
     Int(i64),
+    /// Integer literal preserved by source text because it does not fit in the legacy `i64` literal slot.
+    ///
+    /// The emitter relies on surrounding Rust type context for literals such as `u128::MAX`.
+    IntLiteral(String),
     Float(f64),
     Decimal(String),
     String(String),

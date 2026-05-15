@@ -1,0 +1,1075 @@
+"""
+UUID parsing, formatting, inspection, and generation helpers.
+
+`UUID` stores the 128-bit value directly and exposes the common text, byte, integer, namespace, version, and variant operations expected from a UUID module. Generators cover RFC 9562 versions 1, 3, 4, 5, 6, 7, and 8.
+"""
+
+from rust::rand import Rng, thread_rng
+from rust::std::string import String as RustString
+from std.datetime.runtime import SystemTime
+from std.hash import md5 as hash_md5, sha1 as hash_sha1
+from std.io import BytesIO, Endian, IoError, _BytesIO
+from std.traits.error import Error
+
+
+# Well-known UUIDs are stored as their network-order u128 values. That keeps module load work to a plain value
+# construction while `canonical()` still exposes the familiar text spelling.
+pub const NIL: UUID = UUID(0)
+pub const MAX: UUID = UUID(340282366920938463463374607431768211455)
+
+# RFC namespace UUIDs:
+# DNS  = 6ba7b810-9dad-11d1-80b4-00c04fd430c8
+pub const NAMESPACE_DNS: UUID = UUID(143098242404177361603877621312831893704)
+# URL  = 6ba7b811-9dad-11d1-80b4-00c04fd430c8
+pub const NAMESPACE_URL: UUID = UUID(143098242483405524118141958906375844040)
+# OID  = 6ba7b812-9dad-11d1-80b4-00c04fd430c8
+pub const NAMESPACE_OID: UUID = UUID(143098242562633686632406296499919794376)
+# X500 = 6ba7b814-9dad-11d1-80b4-00c04fd430c8
+pub const NAMESPACE_X500: UUID = UUID(143098242721090011660934971687007695048)
+
+
+pub enum UuidVersion:
+    """
+    RFC 9562 UUID version marker.
+
+    `Nil` and `Max` represent the two special UUID values. `Unknown(version)` preserves non-standard version
+    nibbles for UUIDs introduced through `from_bytes(...)` or `from_int(...)` instead of rejecting the value.
+    """
+
+    Nil
+    V1
+    V2
+    V3
+    V4
+    V5
+    V6
+    V7
+    V8
+    Max
+    Unknown(int)
+
+    def from_nibble(value: int) -> Self:
+        """
+        Convert a UUID version nibble into the corresponding marker.
+
+        Args:
+            value: The high nibble from UUID byte 6.
+
+        Returns:
+            The known version marker, or `Unknown(value)` for non-standard UUIDs.
+        """
+        match value:
+            1 => return UuidVersion.V1
+            2 => return UuidVersion.V2
+            3 => return UuidVersion.V3
+            4 => return UuidVersion.V4
+            5 => return UuidVersion.V5
+            6 => return UuidVersion.V6
+            7 => return UuidVersion.V7
+            8 => return UuidVersion.V8
+            _ => return UuidVersion.Unknown(value)
+
+
+pub enum UuidVariant:
+    """
+    UUID variant encoded in octet 8.
+
+    Values introduced through binary or numeric conversion may report non-RFC variants. Version 8 construction
+    always forces the RFC 9562 variant bits.
+    """
+
+    Ncs
+    Rfc9562
+    Microsoft
+    Future
+    Unknown
+
+
+pub model UuidError with Error:
+    """
+    Error returned by UUID parsing and byte conversion.
+
+    `kind` is stable enough for callers to branch on validation categories such as `invalid_length`,
+    `invalid_character`, and `invalid_bytes`. `detail` keeps the human-readable context.
+    """
+
+    pub kind: str
+    pub detail: str
+
+    def message(self) -> str:
+        """
+        Return the human-readable error detail.
+
+        Returns:
+            The detail text attached to the UUID failure.
+        """
+        return self.detail
+
+@derive(Clone, Copy, Eq, Ord, Hash)
+pub type UUID = newtype u128:
+    """
+    RFC 9562 UUID value stored as one unsigned 128-bit integer.
+
+    Text parsing and canonical formatting follow the RFC 9562 spelling. Binary and numeric constructors preserve any
+    128-bit payload so protocol surfaces that carry non-generated UUID bit patterns can still round-trip exactly.
+    """
+
+    @staticmethod
+    def nil() -> Self:
+        """
+        Return the nil UUID.
+
+        Returns:
+            `00000000-0000-0000-0000-000000000000`.
+        """
+        return NIL
+
+    @staticmethod
+    def max() -> Self:
+        """
+        Return the maximum UUID value.
+
+        Returns:
+            `ffffffff-ffff-ffff-ffff-ffffffffffff`.
+        """
+        return MAX
+
+    @staticmethod
+    def from_int(value: u128) -> Self:
+        """
+        Construct a UUID from its unsigned 128-bit integer representation.
+
+        Args:
+            value: Raw UUID bits as a `u128`.
+
+        Returns:
+            A UUID preserving exactly the supplied bits.
+        """
+        return UUID(value)
+
+    @staticmethod
+    def from_bytes(raw: bytes) -> Result[Self, UuidError]:
+        """
+        Construct a UUID from 16 RFC/network-order bytes.
+
+        Args:
+            raw: The 16-byte UUID payload in network byte order.
+
+        Returns:
+            `Ok(UUID)` when `raw` is exactly 16 bytes, otherwise `Err(UuidError)`.
+        """
+        if len(raw) != 16:
+            return Err(_invalid_bytes_len(len(raw)))
+
+        match _read_u128_from_bytes(raw):
+            Ok(value) => return Ok(UUID(value))
+            Err(err) => return Err(_io_error("from_bytes", err))
+
+    @staticmethod
+    def v8(raw: bytes) -> Result[Self, UuidError]:
+        """
+        Construct an RFC 9562 version 8 UUID from 16 custom bytes.
+
+        Args:
+            raw: A 16-byte vendor-defined payload.
+
+        Returns:
+            A UUID with version 8 and RFC 9562 variant bits applied to the payload.
+        """
+        if len(raw) != 16:
+            return Err(_invalid_bytes_len(len(raw)))
+        return _v8_from_raw_bytes(raw)
+
+    @staticmethod
+    def v1() -> Result[Self, UuidError]:
+        """
+        Generate an RFC 9562 version 1 UUID.
+
+        Returns:
+            A Gregorian time-based UUID with a random clock sequence and random node identifier.
+        """
+        return _time_uuid(1)
+
+    @staticmethod
+    def v3(namespace: UUID, name: Union[str, bytes]) -> Result[Self, UuidError]:
+        """
+        Generate an RFC 9562 version 3 namespace UUID.
+
+        Args:
+            namespace: Namespace UUID whose bytes prefix the hashed name.
+            name: UTF-8 text or raw bytes to hash inside the namespace.
+
+        Returns:
+            An MD5 namespace UUID with version and RFC 9562 variant bits applied.
+        """
+        return _name_uuid_md5(namespace, name)
+
+    @staticmethod
+    def v4() -> Result[Self, UuidError]:
+        """
+        Generate an RFC 9562 version 4 UUID.
+
+        Returns:
+            A randomly generated UUID with version and RFC 9562 variant bits applied.
+        """
+        return _v4_from_random()
+
+    @staticmethod
+    def v5(namespace: UUID, name: Union[str, bytes]) -> Result[Self, UuidError]:
+        """
+        Generate an RFC 9562 version 5 namespace UUID.
+
+        Args:
+            namespace: Namespace UUID whose bytes prefix the hashed name.
+            name: UTF-8 text or raw bytes to hash inside the namespace.
+
+        Returns:
+            A SHA-1 namespace UUID with version and RFC 9562 variant bits applied.
+        """
+        return _name_uuid_sha1(namespace, name)
+
+    @staticmethod
+    def v6() -> Result[Self, UuidError]:
+        """
+        Generate an RFC 9562 version 6 UUID.
+
+        Returns:
+            A reordered Gregorian time-based UUID with a random clock sequence and random node identifier.
+        """
+        return _time_uuid(6)
+
+    @staticmethod
+    def v7() -> Result[Self, UuidError]:
+        """
+        Generate an RFC 9562 version 7 UUID.
+
+        Returns:
+            A Unix-epoch-millisecond UUID with random payload bits.
+        """
+        return _unix_time_uuid()
+
+    @staticmethod
+    def parse(text: str) -> Result[Self, UuidError]:
+        """
+        Parse canonical, simple, URN, or braced UUID text.
+
+        Args:
+            text: UUID text using hexadecimal digits, optional canonical hyphens, optional braces, or `urn:uuid:`.
+
+        Returns:
+            The parsed UUID, or `Err(UuidError)` for invalid length, format, or hex digits.
+        """
+        return UUID.from_bytes(_UuidText(text=text).to_bytes()?)
+
+    def to_int(self) -> u128:
+        """
+        Return the unsigned 128-bit integer representation.
+
+        Returns:
+            Raw UUID bits as a `u128`.
+        """
+        return self.0
+
+    def to_bytes(self) -> Result[bytes, UuidError]:
+        """
+        Return 16 RFC/network-order bytes.
+
+        Returns:
+            A 16-byte payload in network byte order.
+        """
+        writer = _uuid_writer("to_bytes")
+        writer.u128(self.0)?
+        return Ok(writer.raw())
+
+    def canonical(self) -> Result[str, UuidError]:
+        """
+        Return the lower-case canonical 8-4-4-4-12 UUID spelling.
+
+        Returns:
+            UUID text such as `550e8400-e29b-41d4-a716-446655440000`.
+        """
+        bytes = self.to_bytes()?
+        mut out = ""
+
+        for index in range(16):
+            value = _byte_at_uuid(bytes, index, "canonical")?
+            if index == 4 or index == 6 or index == 8 or index == 10:
+                out += "-"
+            out += _hex_byte(value)
+
+        return Ok(out)
+
+    def to_string(self) -> str:
+        """
+        Return the lower-case canonical UUID spelling.
+
+        Returns:
+            UUID text such as `550e8400-e29b-41d4-a716-446655440000`.
+        """
+        match self.canonical():
+            Ok(value) => return value
+            Err(_) => return ""
+
+    def to_hex(self) -> str:
+        """
+        Return 32 lower-case hexadecimal UUID digits without hyphens.
+
+        Returns:
+            UUID text such as `550e8400e29b41d4a716446655440000`.
+        """
+        return self.to_string().replace("-", "")
+
+    def to_urn(self) -> str:
+        """
+        Return the UUID as a URN.
+
+        Returns:
+            UUID text prefixed with `urn:uuid:`.
+        """
+        return "urn:uuid:" + self.to_string()
+
+    def __str__(self) -> str:
+        """
+        Return the canonical display spelling.
+
+        Returns:
+            The same text as `to_string()`.
+        """
+        return self.to_string()
+
+    def version(self) -> Result[UuidVersion, UuidError]:
+        """
+        Return the UUID version marker.
+
+        Returns:
+            A known version marker, `Nil`, `Max`, or `Unknown(version)` for non-standard version nibbles.
+        """
+        # RFC 9562 treats nil and max as special values rather than versioned layouts.
+        if self.0 == 0:
+            return Ok(UuidVersion.Nil)
+        if self.0 == 340282366920938463463374607431768211455:
+            return Ok(UuidVersion.Max)
+
+        bytes = self.to_bytes()?
+        value = _byte_at_uuid(bytes, 6, "version")?
+        numeric_version = int(value) // 16
+        return Ok(UuidVersion.from_nibble(numeric_version))
+
+    def variant(self) -> Result[UuidVariant, UuidError]:
+        """
+        Return the UUID variant marker.
+
+        Returns:
+            The variant encoded by octet 8.
+        """
+        # Nil and max also fall out of the octet-8 rules, but naming them here makes the special cases explicit.
+        if self.0 == 0:
+            return Ok(UuidVariant.Ncs)
+        if self.0 == 340282366920938463463374607431768211455:
+            return Ok(UuidVariant.Future)
+
+        bytes = self.to_bytes()?
+        value = _byte_at_uuid(bytes, 8, "variant")?
+
+        if value < 128:
+            return Ok(UuidVariant.Ncs)
+        if value < 192:
+            return Ok(UuidVariant.Rfc9562)
+        if value < 224:
+            return Ok(UuidVariant.Microsoft)
+        return Ok(UuidVariant.Future)
+
+model _UuidText:
+    """
+    Normalizes supported UUID text spellings and decodes them into bytes.
+    """
+
+    text: str
+
+    def to_bytes(self) -> Result[bytes, UuidError]:
+        """
+        Decode the accepted UUID text spellings into network-order bytes.
+
+        Returns:
+            Sixteen UUID bytes, or `Err(UuidError)` when normalization or hex decoding fails.
+        """
+        normalized = self.normalized_hex()?
+        writer = _uuid_writer("parse")
+
+        mut index = 0
+        while index < 32:
+            writer.u8(self.hex_pair(normalized, index)?)?
+            index += 2
+
+        return Ok(writer.raw())
+
+    def normalized_hex(self) -> Result[str, UuidError]:
+        """
+        Normalize UUID text to exactly 32 lower-case hexadecimal digits.
+
+        Returns:
+            Simple UUID hex text without wrappers or hyphens.
+        """
+        mut value = self.text.lower()
+
+        # Remove wrappers up front so validation only has to handle simple or canonical hex.
+        if value.startswith("urn:uuid:"):
+            value = value.__slice__(9, len(value))
+
+        if value.startswith("{") or value.endswith("}"):
+            if not value.startswith("{") or not value.endswith("}") or len(value) < 2:
+                return Err(_invalid_format("braces must wrap the whole UUID"))
+            value = value.__slice__(1, len(value) - 1)
+
+        if len(value) == 36:
+            if value.__slice__(8, 9) != "-" or value.__slice__(13, 14) != "-" or value.__slice__(18, 19) != "-" or value.__slice__(23, 24) != "-":
+                return Err(_invalid_format("hyphens must appear at positions 8, 13, 18, and 23"))
+            return Ok(value.replace("-", ""))
+
+        if len(value) != 32:
+            return Err(_invalid_length(len(value)))
+        return Ok(value)
+
+    def hex_pair(self, normalized: str, index: int) -> Result[u8, UuidError]:
+        """
+        Decode two hexadecimal digits from normalized UUID text.
+
+        Args:
+            normalized: The 32-digit UUID text produced by `normalized_hex()`.
+            index: The first digit index for the byte.
+
+        Returns:
+            The decoded byte at that pair position.
+        """
+        high = _hex_value(normalized.__slice__(index, index + 1))?
+        low = _hex_value(normalized.__slice__(index + 1, index + 2))?
+        byte_value: u8 = ((high * 16) + low).wrapping_resize()
+        return Ok(byte_value)
+
+
+model _UuidBytesWriter:
+    """
+    Owns byte assembly for UUID constructors so generator code reads in UUID fields instead of stream mechanics.
+    """
+
+    out: _BytesIO
+    operation: str
+
+    def raw(self) -> bytes:
+        """
+        Return the bytes written so far.
+
+        Returns:
+            The current byte buffer.
+        """
+        return self.out.getvalue()
+
+    def uuid(self) -> Result[UUID, UuidError]:
+        """
+        Convert the current buffer into a UUID.
+
+        Returns:
+            `Ok(UUID)` when the buffer contains exactly sixteen bytes.
+        """
+        return UUID.from_bytes(self.raw())
+
+    def data(self, value: bytes) -> Result[None, UuidError]:
+        """
+        Append raw bytes to the UUID buffer.
+
+        Args:
+            value: Bytes to append unchanged.
+
+        Returns:
+            `Ok(None)` when the write succeeds.
+        """
+        return self.out.write_bytes(value).map(_discard_written_count).map_err((err) => _io_error(self.operation, err))
+
+    def u8(self, value: u8) -> Result[None, UuidError]:
+        """
+        Append one byte to the UUID buffer.
+
+        Args:
+            value: Byte to write.
+
+        Returns:
+            `Ok(None)` when the write succeeds.
+        """
+        return self.out.write(value, Endian.Big).map_err((err) => _io_error(self.operation, err))
+
+    def u16(self, value: u16) -> Result[None, UuidError]:
+        """
+        Append a 16-bit integer in network byte order.
+
+        Args:
+            value: Integer to write.
+
+        Returns:
+            `Ok(None)` when the write succeeds.
+        """
+        return self.out.write(value, Endian.Big).map_err((err) => _io_error(self.operation, err))
+
+    def u32(self, value: u32) -> Result[None, UuidError]:
+        """
+        Append a 32-bit integer in network byte order.
+
+        Args:
+            value: Integer to write.
+
+        Returns:
+            `Ok(None)` when the write succeeds.
+        """
+        return self.out.write(value, Endian.Big).map_err((err) => _io_error(self.operation, err))
+
+    def u128(self, value: u128) -> Result[None, UuidError]:
+        """
+        Append a 128-bit integer in network byte order.
+
+        Args:
+            value: Integer to write.
+
+        Returns:
+            `Ok(None)` when the write succeeds.
+        """
+        return self.out.write(value, Endian.Big).map_err((err) => _io_error(self.operation, err))
+
+    def clock_seq(self, clock_seq: int) -> Result[None, UuidError]:
+        """
+        Append RFC 9562 variant-adjusted clock sequence bytes.
+
+        Args:
+            clock_seq: Fourteen-bit clock sequence value.
+
+        Returns:
+            `Ok(None)` when both bytes are written.
+        """
+        high: u8 = (128 + (clock_seq // 256)).wrapping_resize()
+        low: u8 = (clock_seq % 256).wrapping_resize()
+        self.u8(high)?
+        self.u8(low)?
+        return Ok(None)
+
+    def u48(self, value: int) -> Result[None, UuidError]:
+        """
+        Append a 48-bit integer in network byte order.
+
+        Args:
+            value: Integer whose low 48 bits are written.
+
+        Returns:
+            `Ok(None)` when all six bytes are written.
+        """
+        byte0: u8 = ((value // 1099511627776) % 256).wrapping_resize()
+        byte1: u8 = ((value // 4294967296) % 256).wrapping_resize()
+        byte2: u8 = ((value // 16777216) % 256).wrapping_resize()
+        byte3: u8 = ((value // 65536) % 256).wrapping_resize()
+        byte4: u8 = ((value // 256) % 256).wrapping_resize()
+        byte5: u8 = (value % 256).wrapping_resize()
+        self.u8(byte0)?
+        self.u8(byte1)?
+        self.u8(byte2)?
+        self.u8(byte3)?
+        self.u8(byte4)?
+        self.u8(byte5)?
+        return Ok(None)
+
+
+def _discard_written_count(_count: int) -> None:
+    """
+    Drop a successful byte count from `BytesIO.write_bytes`.
+
+    Args:
+        _count: Number of bytes written.
+
+    Returns:
+        `None` for writer methods that expose only success or failure.
+    """
+    pass
+
+
+def _uuid_writer(operation: str) -> _UuidBytesWriter:
+    """
+    Create a UUID byte writer tagged with an operation name for errors.
+
+    Args:
+        operation: Human-readable operation label used in converted `UuidError` details.
+
+    Returns:
+        An empty UUID byte writer.
+    """
+    return _UuidBytesWriter(out=BytesIO(b""), operation=operation)
+
+
+def _time_uuid(version: int) -> Result[UUID, UuidError]:
+    """
+    Generate a Gregorian time-based UUID.
+
+    Args:
+        version: Version `1` or `6`.
+
+    Returns:
+        A v1 or v6 UUID with random clock sequence and node fields.
+    """
+    timestamp = _current_gregorian_100ns()
+    clock_seq = _random_int(0, 16384)
+    node = _random_node_bytes()?
+
+    match version:
+        1 => return _v1_from_fields(timestamp, clock_seq, node)
+        _ => return _v6_from_fields(timestamp, clock_seq, node)
+
+
+def _v1_from_fields(timestamp: u128, clock_seq: int, node: bytes) -> Result[UUID, UuidError]:
+    """
+    Assemble a version 1 UUID from timestamp, clock sequence, and node fields.
+
+    Args:
+        timestamp: Gregorian 100ns timestamp.
+        clock_seq: Fourteen-bit clock sequence value.
+        node: Six node bytes.
+
+    Returns:
+        A UUIDv1 value.
+    """
+    ts = int(timestamp)
+    writer = _uuid_writer("v1")
+
+    # UUIDv1 keeps the Gregorian timestamp in three non-contiguous fields.
+    time_low: u32 = (ts % 4294967296).wrapping_resize()
+    time_mid: u16 = ((ts // 4294967296) % 65536).wrapping_resize()
+    time_high_and_version: u16 = (4096 + ((ts // 281474976710656) % 4096)).wrapping_resize()
+    writer.u32(time_low)?
+    writer.u16(time_mid)?
+    writer.u16(time_high_and_version)?
+    writer.clock_seq(clock_seq)?
+    writer.data(node)?
+    return writer.uuid()
+
+
+def _v6_from_fields(timestamp: u128, clock_seq: int, node: bytes) -> Result[UUID, UuidError]:
+    """
+    Assemble a version 6 UUID from timestamp, clock sequence, and node fields.
+
+    Args:
+        timestamp: Gregorian 100ns timestamp.
+        clock_seq: Fourteen-bit clock sequence value.
+        node: Six node bytes.
+
+    Returns:
+        A UUIDv6 value.
+    """
+    ts = int(timestamp)
+    writer = _uuid_writer("v6")
+
+    # UUIDv6 reorders the same Gregorian timestamp so ordinary byte ordering sorts by time.
+    time_high: u32 = (ts // 268435456).wrapping_resize()
+    time_mid: u16 = ((ts // 4096) % 65536).wrapping_resize()
+    time_low_and_version: u16 = (24576 + (ts % 4096)).wrapping_resize()
+    writer.u32(time_high)?
+    writer.u16(time_mid)?
+    writer.u16(time_low_and_version)?
+    writer.clock_seq(clock_seq)?
+    writer.data(node)?
+    return writer.uuid()
+
+
+def _unix_time_uuid() -> Result[UUID, UuidError]:
+    """
+    Generate a version 7 UUID from Unix time and random payload bits.
+
+    Returns:
+        A UUIDv7 value.
+    """
+    timestamp_ms = SystemTime.now().unix_nanoseconds() // 1000000
+    random = _random_bytes(10)?
+    writer = _uuid_writer("v7")
+
+    # UUIDv7 starts with a 48-bit Unix timestamp in milliseconds.
+    writer.u48(timestamp_ms)?
+
+    # The remaining bytes are random, except for the version nibble and variant bits.
+    first_random = int(_byte_at_uuid(random, 0, "v7")?)
+    second_random = _byte_at_uuid(random, 1, "v7")?
+    version_and_rand: u8 = (112 + (first_random % 16)).wrapping_resize()
+    writer.u8(version_and_rand)?
+    writer.u8(second_random)?
+
+    third_random = int(_byte_at_uuid(random, 2, "v7")?)
+    variant_and_rand: u8 = (128 + (third_random % 64)).wrapping_resize()
+    writer.u8(variant_and_rand)?
+    for index in range(3, 10):
+        writer.u8(_byte_at_uuid(random, index, "v7")?)?
+
+    return writer.uuid()
+
+
+def _v4_from_random() -> Result[UUID, UuidError]:
+    """
+    Generate a version 4 UUID from sixteen random bytes.
+
+    Returns:
+        A UUIDv4 value with version and variant bits applied.
+    """
+    raw = _random_bytes(16)?
+    return _uuid_from_versioned_bytes(raw, 4, "v4")
+
+
+def _name_uuid_md5(namespace: UUID, name: Union[str, bytes]) -> Result[UUID, UuidError]:
+    """
+    Generate a version 3 namespace UUID using MD5.
+
+    Args:
+        namespace: Namespace UUID whose bytes prefix the name.
+        name: Text or raw bytes to hash.
+
+    Returns:
+        A UUIDv3 value.
+    """
+    message = _namespace_name_bytes(namespace, name)?
+    digest = hash_md5.digest(message)
+    writer = _uuid_writer("v3")
+
+    for index in range(16):
+        writer.u8(digest[index])?
+
+    return _uuid_from_versioned_bytes(writer.raw(), 3, "v3")
+
+
+def _name_uuid_sha1(namespace: UUID, name: Union[str, bytes]) -> Result[UUID, UuidError]:
+    """
+    Generate a version 5 namespace UUID using SHA-1.
+
+    Args:
+        namespace: Namespace UUID whose bytes prefix the name.
+        name: Text or raw bytes to hash.
+
+    Returns:
+        A UUIDv5 value.
+    """
+    message = _namespace_name_bytes(namespace, name)?
+    digest = hash_sha1.digest(message)
+    writer = _uuid_writer("v5")
+
+    for index in range(16):
+        writer.u8(digest[index])?
+
+    return _uuid_from_versioned_bytes(writer.raw(), 5, "v5")
+
+
+def _namespace_name_bytes(namespace: UUID, name: Union[str, bytes]) -> Result[bytes, UuidError]:
+    """
+    Build the namespace-name hash input.
+
+    Args:
+        namespace: Namespace UUID.
+        name: Text or raw bytes inside the namespace.
+
+    Returns:
+        Namespace bytes followed by name bytes.
+    """
+    writer = _uuid_writer("name")
+    writer.data(namespace.to_bytes()?)?
+    writer.data(_name_as_bytes(name))?
+    return Ok(writer.raw())
+
+
+def _name_as_bytes(name: Union[str, bytes]) -> bytes:
+    """
+    Convert a namespace name into bytes.
+
+    Args:
+        name: UTF-8 text or raw bytes.
+
+    Returns:
+        Raw bytes to append after the namespace UUID.
+    """
+    match name:
+        str(text) => return RustString.from(text).into_bytes()
+        bytes(raw) => return raw
+
+
+def _current_gregorian_100ns() -> u128:
+    """
+    Return the current Gregorian timestamp in 100ns intervals.
+
+    Returns:
+        Intervals elapsed since 1582-10-15 00:00:00 UTC.
+    """
+    unix_nanos = SystemTime.now().unix_nanoseconds()
+    offset: u128 = 122192928000000000
+    if unix_nanos >= 0:
+        intervals: u128 = (unix_nanos // 100).wrapping_resize()
+        value: u128 = (int(offset) + int(intervals)).wrapping_resize()
+        return value
+    intervals: u128 = ((0 - unix_nanos) // 100).wrapping_resize()
+    value: u128 = (int(offset) - int(intervals)).wrapping_resize()
+    return value
+
+
+def _random_int(low: int, high: int) -> int:
+    """
+    Return a random integer in a half-open range.
+
+    Args:
+        low: Inclusive lower bound.
+        high: Exclusive upper bound.
+
+    Returns:
+        A random integer where `low <= value < high`.
+    """
+    mut rng = thread_rng()
+    return rng.gen_range(low..high)
+
+
+def _random_bytes(count: int) -> Result[bytes, UuidError]:
+    """
+    Return random bytes for UUID generation.
+
+    Args:
+        count: Number of bytes to generate.
+
+    Returns:
+        A byte buffer of length `count`.
+    """
+    mut rng = thread_rng()
+    writer = _uuid_writer("random")
+    for _ in range(count):
+        value: u8 = rng.gen_range(0..256).wrapping_resize()
+        writer.u8(value)?
+    return Ok(writer.raw())
+
+
+def _random_node_bytes() -> Result[bytes, UuidError]:
+    """
+    Generate a random UUIDv1/v6 node field.
+
+    Returns:
+        Six node bytes with the multicast bit set.
+    """
+    raw = _random_bytes(6)?
+    writer = _uuid_writer("node")
+    first = int(_byte_at_uuid(raw, 0, "node")?)
+    # Random UUIDv1/v6 nodes set the multicast bit so they are not mistaken for IEEE MAC addresses.
+    first_with_multicast: u8 = (first | 1).wrapping_resize()
+    writer.u8(first_with_multicast)?
+    for index in range(1, 6):
+        writer.u8(_byte_at_uuid(raw, index, "node")?)?
+    return Ok(writer.raw())
+
+
+def _uuid_from_versioned_bytes(raw: bytes, version: int, operation: str) -> Result[UUID, UuidError]:
+    """
+    Apply RFC 9562 version and variant bits to a 16-byte payload.
+
+    Args:
+        raw: Sixteen source bytes.
+        version: UUID version nibble to force into byte 6.
+        operation: Operation label used when converting I/O errors.
+
+    Returns:
+        A UUID built from the adjusted payload.
+    """
+    writer = _uuid_writer(operation)
+
+    for index in range(16):
+        mut byte_value: u8 = _byte_at_uuid(raw, index, operation)?
+        # RFC 9562 stores the version in byte 6's high nibble and the variant in byte 8's high bits.
+        if index == 6:
+            low = int(byte_value) % 16
+            versioned: u8 = ((version * 16) + low).wrapping_resize()
+            byte_value = versioned
+        elif index == 8:
+            low = int(byte_value) % 64
+            variant: u8 = (128 + low).wrapping_resize()
+            byte_value = variant
+        writer.u8(byte_value)?
+
+    return writer.uuid()
+
+
+def _v8_from_raw_bytes(raw: bytes) -> Result[UUID, UuidError]:
+    """
+    Construct a version 8 UUID from vendor-defined bytes.
+
+    Args:
+        raw: Sixteen custom bytes.
+
+    Returns:
+        A UUIDv8 value with version and variant bits applied.
+    """
+    return _uuid_from_versioned_bytes(raw, 8, "v8")
+
+
+def _hex_value(digit: str) -> Result[int, UuidError]:
+    """
+    Decode one lower-case hexadecimal digit.
+
+    Args:
+        digit: Single-character hexadecimal text.
+
+    Returns:
+        The numeric value for the digit.
+    """
+    match digit:
+        "0" => return Ok(0)
+        "1" => return Ok(1)
+        "2" => return Ok(2)
+        "3" => return Ok(3)
+        "4" => return Ok(4)
+        "5" => return Ok(5)
+        "6" => return Ok(6)
+        "7" => return Ok(7)
+        "8" => return Ok(8)
+        "9" => return Ok(9)
+        "a" => return Ok(10)
+        "b" => return Ok(11)
+        "c" => return Ok(12)
+        "d" => return Ok(13)
+        "e" => return Ok(14)
+        "f" => return Ok(15)
+        _ => return Err(_invalid_character(digit))
+
+
+def _hex_digit(value: int) -> str:
+    """
+    Encode a nibble as lower-case hexadecimal text.
+
+    Args:
+        value: Integer from 0 through 15.
+
+    Returns:
+        A single hexadecimal character.
+    """
+    digits = "0123456789abcdef"
+    return digits.__slice__(value, value + 1)
+
+
+def _hex_byte(value: u8) -> str:
+    """
+    Encode a byte as two lower-case hexadecimal digits.
+
+    Args:
+        value: Byte to encode.
+
+    Returns:
+        Two hexadecimal characters.
+    """
+    as_int = int(value)
+    high = as_int // 16
+    low = as_int - (high * 16)
+    return _hex_digit(high) + _hex_digit(low)
+
+
+def _read_u128_from_bytes(raw: bytes) -> Result[u128, IoError]:
+    """
+    Read sixteen network-order bytes into a `u128`.
+
+    Args:
+        raw: Bytes to read.
+
+    Returns:
+        The decoded integer, or `Err(IoError)` when the input is too short.
+    """
+    reader = BytesIO(raw)
+    value: u128 = reader.read(Endian.Big)?
+    return Ok(value)
+
+
+def _byte_at(raw: bytes, index: int) -> Result[u8, IoError]:
+    """
+    Read one byte from a byte buffer.
+
+    Args:
+        raw: Source bytes.
+        index: Byte offset to read.
+
+    Returns:
+        The selected byte, or `Err(IoError)` when the offset is outside the buffer.
+    """
+    reader = BytesIO(raw)
+    reader.seek(index)?
+    value: u8 = reader.read(Endian.Big)?
+    return Ok(value)
+
+
+def _byte_at_uuid(raw: bytes, index: int, operation: str) -> Result[u8, UuidError]:
+    """
+    Read one byte and convert I/O failures into UUID errors.
+
+    Args:
+        raw: Source bytes.
+        index: Byte offset to read.
+        operation: Operation label used in the error detail.
+
+    Returns:
+        The selected byte, or `Err(UuidError)`.
+    """
+    match _byte_at(raw, index):
+        Ok(value) => return Ok(value)
+        Err(err) => return Err(_io_error(operation, err))
+
+
+def _invalid_length(length: int) -> UuidError:
+    """
+    Build an invalid-length UUID error.
+
+    Args:
+        length: Observed text length.
+
+    Returns:
+        A `UuidError` describing the length mismatch.
+    """
+    return UuidError(kind="invalid_length", detail=f"UUID text must contain 32 hex digits, got {length}")
+
+
+def _invalid_format(detail: str) -> UuidError:
+    """
+    Build an invalid-format UUID error.
+
+    Args:
+        detail: Specific format problem.
+
+    Returns:
+        A `UuidError` with `invalid_format` kind.
+    """
+    return UuidError(kind="invalid_format", detail=detail)
+
+
+def _invalid_character(digit: str) -> UuidError:
+    """
+    Build an invalid-hex-character UUID error.
+
+    Args:
+        digit: Rejected digit text.
+
+    Returns:
+        A `UuidError` with `invalid_character` kind.
+    """
+    return UuidError(kind="invalid_character", detail=f"invalid UUID hex digit: {digit}")
+
+
+def _invalid_bytes_len(length: int) -> UuidError:
+    """
+    Build an invalid-byte-length UUID error.
+
+    Args:
+        length: Observed byte length.
+
+    Returns:
+        A `UuidError` with `invalid_bytes` kind.
+    """
+    return UuidError(kind="invalid_bytes", detail=f"UUID byte representation must be 16 bytes, got {length}")
+
+
+def _io_error(operation: str, err: IoError) -> UuidError:
+    """
+    Convert an `IoError` into this module's UUID error type.
+
+    Args:
+        operation: Operation label to include in the error detail.
+        err: Source I/O error.
+
+    Returns:
+        A `UuidError` with `io_error` kind.
+    """
+    return UuidError(kind="io_error", detail=f"{operation} failed: {err.message()}")

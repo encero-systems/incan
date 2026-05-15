@@ -112,8 +112,11 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.fs` | - | `std.fs.path`, `std.fs.file`, `std.fs.metadata`, `std.fs.glob`, `std.fs.prelude` | - |
 | `std.datetime` | - | `std.datetime.runtime`, `std.datetime.civil`, `std.datetime.civil.intervals`, `std.datetime.civil.naive`, `std.datetime.civil.offset`, `std.datetime.error`, `std.datetime.prelude` | - |
 | `std.graph` | - | - | - |
+| `std.uuid` | - | - | - |
 | `std.collections` | - | - | - |
 | `std.io` | - | - | - |
+| `std.encoding` | - | `std.encoding._shared`, `std.encoding.prelude`, `std.encoding.hex`, `std.encoding.base32`, `std.encoding.base64`, `std.encoding.base85`, `std.encoding.base58`, `std.encoding.bech32` | - |
+| `std.hash` | - | `std.hash._core`, `std.hash._streaming`, `std.hash.prelude` | - |
 | `std.tempfile` | - | - | - |
 | `std.rust` | - | - | - |
 | `std.builtins` | - | - | - |

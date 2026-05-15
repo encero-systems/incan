@@ -75,10 +75,13 @@ impl<'a> IrEmitter<'a> {
                 }
             }
 
-            let Some(field_names) = self.struct_field_names.get(name) else {
-                // Unknown struct to the emitter; fall back to emitting only provided fields.
-                // This can occur for cross-crate types or if struct wasn't registered during lowering.
-                tracing::debug!(struct_name = %name, "struct field metadata not found, emitting provided fields only");
+            let Some(metadata) = self.struct_constructor_metadata_for_fields(name, fields) else {
+                // Unknown or ambiguous struct to the emitter; fall back to emitting only provided fields.
+                tracing::debug!(
+                    struct_name = %name,
+                    ambiguous = self.ambiguous_type_names.contains(name),
+                    "struct constructor metadata unavailable, emitting provided fields only"
+                );
                 if fields.is_empty() {
                     return Ok(quote! { #n {} });
                 }
@@ -86,13 +89,13 @@ impl<'a> IrEmitter<'a> {
                     .iter()
                     .map(|(fname, fval)| {
                         let fn_ident = Self::rust_ident(fname);
-                        let target_type = self.struct_field_types.get(&(name.to_string(), fname.clone()));
-                        let fv = self.emit_expr_for_use(fval, ValueUseSite::StructField { target_ty: target_type })?;
+                        let fv = self.emit_expr_for_use(fval, ValueUseSite::StructField { target_ty: None })?;
                         Ok(quote! { #fn_ident: #fv })
                     })
                     .collect::<Result<_, EmitError>>()?;
                 return Ok(quote! { #n { #(#field_tokens),* } });
             };
+            let field_names = &metadata.fields;
 
             if field_names.is_empty() {
                 return Ok(quote! { #n {} });
@@ -101,11 +104,11 @@ impl<'a> IrEmitter<'a> {
             let mut out_fields: Vec<TokenStream> = Vec::new();
             for fname in field_names {
                 let fn_ident = Self::rust_ident(fname);
-                let target_type = self.struct_field_types.get(&(name.to_string(), fname.clone()));
+                let target_type = metadata.field_types.get(fname);
                 if let Some(fval) = provided.get(fname.as_str()) {
                     let fv = self.emit_expr_for_use(fval, ValueUseSite::StructField { target_ty: target_type })?;
                     out_fields.push(quote! { #fn_ident: #fv });
-                } else if let Some(default_expr) = self.struct_field_defaults.get(&(name.to_string(), fname.clone())) {
+                } else if let Some(default_expr) = metadata.field_defaults.get(fname) {
                     let fv =
                         self.emit_expr_for_use(default_expr, ValueUseSite::StructField { target_ty: target_type })?;
                     out_fields.push(quote! { #fn_ident: #fv });

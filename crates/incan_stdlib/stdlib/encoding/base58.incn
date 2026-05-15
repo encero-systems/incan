@@ -1,0 +1,323 @@
+"""
+Encode and decode Base58 payloads with explicit base conversion.
+
+Base58 is not byte-aligned, so this module treats the input as base-256 digits and converts those digits to base-58
+digits with carry propagation. Decode uses the inverse conversion back to base-256 bytes.
+
+The implementation does not convert the whole payload to one integer first. That keeps arbitrary-length byte strings
+independent of machine-sized integer limits and avoids requiring a separate big-integer backend.
+
+The code below deliberately mirrors the schoolbook conversion people use by hand: carry each new base-256 digit across
+the existing base-58 digit list. That is slower than a specialized host library, but it keeps the stdlib behavior
+auditable and fully source-owned.
+"""
+
+from std.encoding._shared import (
+    EncodingError,
+    _ascii_bytes,
+    _ascii_text,
+    _encoding_error,
+    _read_source_bytes,
+    _read_source_text,
+    _read_stream_bytes,
+    _write_sink_bytes,
+    _write_stream_bytes,
+)
+from std.fs import Path
+from std.io import BytesIO, _BytesIO
+
+const _BITCOIN_ALPHABET: str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+const _BYTE_TABLE: bytes = b"\x00\x01\x02\x03\x04\x05\x06\x07\x08\t\n\x0b\x0c\r\x0e\x0f\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1a\x1b\x1c\x1d\x1e\x1f !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7f\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8a\x8b\x8c\x8d\x8e\x8f\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9a\x9b\x9c\x9d\x9e\x9f\xa0\xa1\xa2\xa3\xa4\xa5\xa6\xa7\xa8\xa9\xaa\xab\xac\xad\xae\xaf\xb0\xb1\xb2\xb3\xb4\xb5\xb6\xb7\xb8\xb9\xba\xbb\xbc\xbd\xbe\xbf\xc0\xc1\xc2\xc3\xc4\xc5\xc6\xc7\xc8\xc9\xca\xcb\xcc\xcd\xce\xcf\xd0\xd1\xd2\xd3\xd4\xd5\xd6\xd7\xd8\xd9\xda\xdb\xdc\xdd\xde\xdf\xe0\xe1\xe2\xe3\xe4\xe5\xe6\xe7\xe8\xe9\xea\xeb\xec\xed\xee\xef\xf0\xf1\xf2\xf3\xf4\xf5\xf6\xf7\xf8\xf9\xfa\xfb\xfc\xfd\xfe\xff"
+
+
+# Public value helpers
+
+pub def b58encode(data: bytes) -> str:
+    """
+    Encode bytes with the Bitcoin Base58 alphabet.
+
+    Leading zero bytes are not part of the numeric conversion; they are represented directly as leading `1`
+    characters, matching the Bitcoin alphabet convention.
+
+    Returns:
+        Base58 text with leading zero bytes represented as leading `1` characters.
+    """
+    return _encode_base58(data, _BITCOIN_ALPHABET)
+
+
+pub def encode(
+    source: Union[bytes, _BytesIO, Path],
+    target: Union[_BytesIO, Path],
+    chunk_size: int = 65536,
+) -> Result[str, EncodingError]:
+    """
+    Encode bytes from a value, byte stream, or path with the Bitcoin Base58 alphabet.
+
+    The target receives the same ASCII representation bytes as the returned text. This helper is the finite
+    source/sink form of `b58encode`.
+
+    Args:
+        source: Bytes, `BytesIO`, or `Path` to encode.
+        target: `BytesIO` or `Path` sink for encoded ASCII bytes.
+        chunk_size: Positive chunk-size hint for source/sink calls.
+
+    Returns:
+        Encoded text, or `Err(EncodingError)` for invalid arguments or I/O failures.
+    """
+    data = _read_source_bytes("base58", source, chunk_size)?
+    text = b58encode(data)
+    _write_sink_bytes("base58", target, _ascii_bytes("base58", text)?)?
+    return Ok(text)
+
+
+pub def bitcoin_b58encode(data: bytes) -> str:
+    """
+    Alias `b58encode` with an explicit Bitcoin alphabet name.
+
+    Keep this spelling when code may later grow support for additional Base58 alphabets.
+    """
+    return b58encode(data)
+
+
+pub def b58decode(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode strict Bitcoin Base58 text.
+
+    Strict mode rejects characters outside the Bitcoin alphabet, including visually ambiguous characters such as `0`,
+    `O`, `I`, and `l`.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` when `text` contains a non-alphabet character.
+    """
+    return _decode_base58(text, _BITCOIN_ALPHABET, false)
+
+
+pub def decode(
+    source: Union[str, _BytesIO, Path],
+    target: Union[_BytesIO, Path],
+    chunk_size: int = 65536,
+) -> Result[bytes, EncodingError]:
+    """
+    Decode Bitcoin Base58 from text, a byte stream, or path.
+
+    Stream and path inputs are ASCII representation bytes. Non-ASCII bytes fail at the shared stream boundary before
+    this module checks the Base58 alphabet.
+
+    Args:
+        source: Text, `BytesIO`, or `Path` containing printable Base58 bytes.
+        target: `BytesIO` or `Path` sink for decoded bytes.
+        chunk_size: Positive chunk-size hint for source/sink calls.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` for invalid text, arguments, or I/O failures.
+    """
+    text = _read_source_text("base58", source, chunk_size)?
+    data = b58decode(text)?
+    _write_sink_bytes("base58", target, data)?
+    return Ok(data)
+
+
+pub def bitcoin_b58decode(text: str) -> Result[bytes, EncodingError]:
+    """
+    Alias `b58decode` with an explicit Bitcoin alphabet name.
+    """
+    return b58decode(text)
+
+
+pub def b58decode_lenient(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode Bitcoin Base58 after removing ASCII whitespace.
+
+    Lenient mode is for copied or wrapped Base58 text only. It does not accept alternate alphabets or ambiguous
+    characters that Bitcoin Base58 intentionally omits.
+
+    Returns:
+        Decoded bytes, or `Err(EncodingError)` if the cleaned text is malformed.
+    """
+    return _decode_base58(text, _BITCOIN_ALPHABET, true)
+
+
+pub def decode_lenient(text: str) -> Result[bytes, EncodingError]:
+    """
+    Decode Bitcoin Base58 using the module's lenient whitespace rules.
+    """
+    return b58decode_lenient(text)
+
+
+# BytesIO convenience helpers
+
+pub def b58encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read bytes from `source`, encode Bitcoin Base58, and write ASCII bytes to `target`.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_error("invalid_input", "chunk_size must be positive", -1))
+    data = _read_stream_bytes("base58", source)?
+    return _write_stream_bytes("base58", target, _ascii_bytes("base58", b58encode(data))?)
+
+
+pub def encode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Alias `b58encode_stream` as the default Base58 stream encoder.
+    """
+    return b58encode_stream(source, target, chunk_size)
+
+
+pub def b58decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Read Bitcoin Base58 ASCII bytes from `source`, decode them, and write bytes to `target`.
+
+    Returns:
+        `Ok(None)` after writing, or `Err(EncodingError)` for invalid arguments, invalid text, or I/O failures.
+    """
+    if chunk_size <= 0:
+        return Err(_error("invalid_input", "chunk_size must be positive", -1))
+    text = _ascii_text("base58", _read_stream_bytes("base58", source)?)?
+    return _write_stream_bytes("base58", target, b58decode(text)?)
+
+
+pub def decode_stream(source: _BytesIO, target: _BytesIO, chunk_size: int = 65536) -> Result[None, EncodingError]:
+    """
+    Alias `b58decode_stream` as the default Base58 stream decoder.
+    """
+    return b58decode_stream(source, target, chunk_size)
+
+
+# Codec implementation
+
+def _encode_base58(data: bytes, alphabet: str) -> str:
+    """
+    Convert base-256 bytes into Base58 digits while preserving leading zeroes.
+
+    `digits` is little-endian: the least-significant Base58 digit is at index `0`. That makes carry propagation cheap
+    because each new byte only walks the existing list from least to most significant.
+    """
+    if len(data) == 0:
+        return ""
+    mut leading_zeroes = 0
+    mut scanning_zeroes = true
+    for value in data:
+        if scanning_zeroes and int(value) == 0:
+            leading_zeroes += 1
+        else:
+            scanning_zeroes = false
+
+    mut digits: list[int] = []
+    for index in range(leading_zeroes, len(data)):
+        mut carry = int(data[index])
+        mut digit_index = 0
+        while digit_index < len(digits):
+            # Existing Base58 digits represent the previous number; multiply by 256 and add the new byte via carry.
+            carry += digits[digit_index] * 256
+            digits[digit_index] = carry % 58
+            carry = carry // 58
+            digit_index += 1
+        while carry > 0:
+            digits.append(carry % 58)
+            carry = carry // 58
+
+    mut out = ""
+    for _ in range(leading_zeroes):
+        out += alphabet[0:1]
+    for offset in range(len(digits)):
+        value = digits[len(digits) - offset - 1]
+        out += alphabet[value:value + 1]
+    return out
+
+
+def _decode_base58(text: str, alphabet: str, lenient: bool) -> Result[bytes, EncodingError]:
+    """
+    Convert Base58 text back into base-256 bytes while preserving leading zeroes.
+
+    This is the inverse of `_encode_base58`: each input digit multiplies the current byte list by 58 and carries the new
+    digit through a little-endian base-256 representation.
+    """
+    clean = _clean_input(text, lenient)
+    if len(clean) == 0:
+        return Ok(b"")
+
+    mut leading_zeroes = 0
+    mut scanning_zeroes = true
+    for ch in clean:
+        if scanning_zeroes and ch == alphabet[0:1]:
+            leading_zeroes += 1
+        else:
+            scanning_zeroes = false
+
+    mut bytes_le: list[int] = []
+    for index, ch in enumerate(clean):
+        value = _decode_char(ch, alphabet, index)?
+        mut carry = value
+        mut byte_index = 0
+        while byte_index < len(bytes_le):
+            # Carry through base-256 bytes, again least-significant first.
+            carry += bytes_le[byte_index] * 58
+            bytes_le[byte_index] = carry % 256
+            carry = carry // 256
+            byte_index += 1
+        while carry > 0:
+            bytes_le.append(carry % 256)
+            carry = carry // 256
+
+    out = BytesIO(b"")
+    for _ in range(leading_zeroes):
+        _write_byte(out, 0)?
+    for offset in range(len(bytes_le)):
+        _write_byte(out, bytes_le[len(bytes_le) - offset - 1])?
+    return Ok(out.getvalue())
+
+
+def _decode_char(ch: str, alphabet: str, position: int) -> Result[int, EncodingError]:
+    """
+    Map one Base58 alphabet character to its digit value.
+    """
+    for index, character in enumerate(alphabet):
+        if character == ch:
+            return Ok(index)
+    return Err(_error("invalid_character", "character is not in the base58 alphabet", position))
+
+
+def _clean_input(text: str, lenient: bool) -> str:
+    """
+    Return text unchanged for strict mode or without ASCII whitespace in lenient mode.
+    """
+    if not lenient:
+        return text
+    mut out = ""
+    for ch in text:
+        if not _is_ascii_whitespace(ch):
+            out += ch
+    return out
+
+
+def _byte(value: int) -> bytes:
+    """
+    Return a one-byte `bytes` value for an integer in the byte range.
+    """
+    return _BYTE_TABLE[value:value + 1]
+
+
+def _write_byte(out: _BytesIO, value: int) -> Result[None, EncodingError]:
+    """
+    Append one decoded byte to an in-memory buffer.
+    """
+    match out.write_bytes(_byte(value)):
+        Ok(_) => return Ok(None)
+        Err(err) => return Err(_error("io", err.message(), -1))
+
+
+def _is_ascii_whitespace(ch: str) -> bool:
+    """
+    Return whether `ch` is ASCII whitespace accepted by lenient mode.
+    """
+    return ch == " " or ch == "\n" or ch == "\r" or ch == "\t"
+
+
+def _error(kind: str, detail: str, position: int) -> EncodingError:
+    """
+    Build a Base58 error with the module's codec name.
+    """
+    return _encoding_error("base58", kind, detail, position)

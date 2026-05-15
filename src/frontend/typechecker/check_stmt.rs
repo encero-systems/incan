@@ -1353,6 +1353,10 @@ impl TypeChecker {
         }
     }
 
+    /// Infer the item type for built-in iterable surfaces.
+    ///
+    /// This captures language-level iteration semantics, such as strings yielding one-character `str` values and
+    /// bytes yielding `int` values, before the backend chooses the Rust iterator adapter that implements them.
     pub(crate) fn infer_iterator_element_type(&self, iter_ty: &ResolvedType) -> ResolvedType {
         match iter_ty {
             ResolvedType::FrozenList(elem) | ResolvedType::FrozenSet(elem) => elem.as_ref().clone(),
@@ -1372,7 +1376,8 @@ impl TypeChecker {
                     _ => ResolvedType::Unknown,
                 }
             }
-            ResolvedType::Str => ResolvedType::Str, // String iteration gives chars/strings
+            ResolvedType::Str | ResolvedType::FrozenStr => ResolvedType::Str,
+            ResolvedType::Bytes | ResolvedType::FrozenBytes => ResolvedType::Int,
             _ => ResolvedType::Unknown,
         }
     }

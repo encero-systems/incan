@@ -1,7 +1,6 @@
 from rust::std::cell import RefCell
 from rust::std::io import Cursor, Read, Seek, SeekFrom, Write
 from rust::std::rc import Rc
-from rust::std::vec import Vec
 from rust::byteorder @ "1" import BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt
 from std.traits.error import Error
 
@@ -9,24 +8,26 @@ from std.traits.error import Error
 @derive(Clone)
 pub model IoError with Error:
     """
-    In-memory binary I/O failure.
+    Binary I/O failure.
 
-    `operation` names the failed `std.io` action. `kind` is stable enough for branching on common failures such as
-    `invalid_input`, `unexpected_eof`, and `other`. `detail` keeps the human-readable context.
+    `kind` is stable enough for branching on common failures such as `invalid_input`, `unexpected_eof`, and `other`.
+    `detail` keeps the human-readable context. `operation`, `position`, and `path` add optional context for stream and
+    filesystem implementors that share the same `BinaryReader` contract.
 
     Example:
 
     ```incan
     match BytesIO(b"AB").read_exact(4):
         Ok(data) => println(len(data))
-        Err(err) => println(f"{err.operation}: {err.kind}")
+        Err(err) => println(err.kind)
     ```
     """
 
-    pub operation: str
     pub kind: str
     pub detail: str
-    pub position: int
+    pub operation: str = "io"
+    pub position: int = -1
+    pub path: Option[str] = None
 
     def message(self) -> str:
         """
@@ -36,16 +37,6 @@ pub model IoError with Error:
             The detail text attached to the failed operation.
         """
         return self.detail
-
-    def source(self) -> Option[str]:
-        """
-        Return the optional source error.
-
-        Returns:
-            `None`; `IoError` stores operation, kind, detail, and cursor position directly.
-        """
-        return None
-
 
 pub trait BinaryRead[T]:
     """
@@ -65,6 +56,17 @@ pub trait BinaryRead[T]:
     """
 
     def read(self, endian: Endian) -> Result[T, IoError]: ...
+
+
+pub trait BinaryReader:
+    """
+    Trait-backed byte reads from a binary stream.
+
+    Implementors expose bounded byte reads that advance their cursor. A zero-length successful read marks EOF for
+    consumers such as `std.hash.reader_digest`.
+    """
+
+    def read_bytes(self, size: int) -> Result[bytes, IoError]: ...
 
 
 pub trait BinaryWrite[T]:
@@ -96,7 +98,8 @@ pub enum Endian:
     Big
 
 
-pub class _BytesIO with BinaryRead[u8], BinaryRead[i8], BinaryRead[u16], BinaryRead[i16], BinaryRead[u32], BinaryRead[i32], BinaryRead[u64], BinaryRead[i64], BinaryRead[u128], BinaryRead[i128], BinaryRead[f32], BinaryRead[f64], BinaryWrite[u8], BinaryWrite[i8], BinaryWrite[u16], BinaryWrite[i16], BinaryWrite[u32], BinaryWrite[i32], BinaryWrite[u64], BinaryWrite[i64], BinaryWrite[u128], BinaryWrite[i128], BinaryWrite[f32], BinaryWrite[f64]:
+@derive(Debug)
+pub class _BytesIO with BinaryReader, BinaryRead[u8], BinaryRead[i8], BinaryRead[u16], BinaryRead[i16], BinaryRead[u32], BinaryRead[i32], BinaryRead[u64], BinaryRead[i64], BinaryRead[u128], BinaryRead[i128], BinaryRead[f32], BinaryRead[f64], BinaryWrite[u8], BinaryWrite[i8], BinaryWrite[u16], BinaryWrite[i16], BinaryWrite[u32], BinaryWrite[i32], BinaryWrite[u64], BinaryWrite[i64], BinaryWrite[u128], BinaryWrite[i128], BinaryWrite[f32], BinaryWrite[f64]:
     """
     Writable and seekable byte stream over an in-memory buffer.
 
@@ -138,6 +141,12 @@ pub class _BytesIO with BinaryRead[u8], BinaryRead[i8], BinaryRead[u16], BinaryR
         match Read.by_ref(cursor).take(size).read_to_end(out):
             Ok(_) => return Ok(out)
             Err(err) => return Err(_rust_io_error("read", int(cursor.position()), err))
+
+    def read_bytes(self, size: int) -> Result[bytes, IoError]:
+        """
+        Read up to `size` bytes through the `BinaryReader` trait surface.
+        """
+        return self.read(size)
 
     def read_exact(self, size: int) -> Result[bytes, IoError]:
         """
@@ -485,12 +494,8 @@ def _zeros(size: int) -> bytes:
     """
     Build a zero-filled byte vector for numeric writes.
     """
-    mut out = Vec.new()
-    mut i = 0
-    while i < size:
-        out.push(0)
-        i = i + 1
-    return out
+    zero: u8 = 0
+    return list.repeat(zero, size)
 
 
 def _finish_numeric_write(stream: _BytesIO, cursor: Cursor[bytes]) -> Result[None, IoError]:

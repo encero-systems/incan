@@ -797,6 +797,14 @@ impl TypeChecker {
         let trimmed = rust_ty.trim();
         let no_lifetimes = trimmed.replace("'static ", "").replace("'_", "").replace(' ', "");
         let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        if let Some(Symbol {
+            kind: SymbolKind::RustItem(info),
+            ..
+        }) = self.lookup_symbol(normalized.as_str())
+            && !matches!(info.binding, RustImportBindingKind::CrateRoot)
+        {
+            return ResolvedType::RustPath(info.path.clone());
+        }
         match normalized.as_str() {
             "&str" => return ResolvedType::Str,
             "&[u8]" => return ResolvedType::Bytes,
@@ -3778,6 +3786,15 @@ impl TypeChecker {
                 true
             }
             (ResolvedType::FrozenBytes, ResolvedType::Bytes | ResolvedType::FrozenBytes) => true,
+            // `bytes` and `list[u8]` share the same owned representation. This lets APIs use collection helpers
+            // such as `list.repeat` when constructing byte buffers without falling back to manual Vec assembly.
+            (ResolvedType::Generic(name, args), ResolvedType::Bytes)
+                if collection_type_id(name.as_str()) == Some(CollectionTypeId::List)
+                    && args.len() == 1
+                    && matches!(args[0], ResolvedType::Numeric(id) if incan_core::lang::types::numerics::as_str(id) == "u8") =>
+            {
+                true
+            }
             // Allow `FrozenBytes` where `bytes` is expected.
             (ResolvedType::Named(name), ResolvedType::Bytes)
                 if stringlike_type_id(name.as_str()) == Some(StringLikeId::FrozenBytes) =>

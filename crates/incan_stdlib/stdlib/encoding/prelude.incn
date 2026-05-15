@@ -1,0 +1,75 @@
+"""
+Binary-text encoding utilities.
+
+Importing `std.encoding` exposes the shared `EncodingError` and keeps the family submodules loadable from the root
+namespace. The `_anchor` imports below are intentionally private: they make the compiler include each source-owned
+submodule when the prelude is loaded, while users continue to call explicit families such as `std.encoding.base64`.
+"""
+
+from std.encoding._shared import EncodingError
+
+# Keep family modules attached to the root namespace without flattening all helpers into the prelude.
+from std.encoding.hex import encode as _hex_encode_anchor
+from std.encoding.hex import decode as _hex_decode_anchor
+from std.encoding.hex import decode_lenient as _hex_decode_lenient_anchor
+from std.encoding.hex import b16encode as _hex_b16encode_anchor
+from std.encoding.hex import b16decode as _hex_b16decode_anchor
+from std.encoding.hex import b16decode_lenient as _hex_b16decode_lenient_anchor
+from std.encoding.hex import hexlify as _hex_hexlify_anchor
+from std.encoding.hex import unhexlify as _hex_unhexlify_anchor
+from std.encoding.hex import encode_stream as _hex_encode_stream_anchor
+from std.encoding.hex import decode_stream as _hex_decode_stream_anchor
+from std.encoding.base32 import encode as _base32_encode_anchor
+from std.encoding.base32 import decode as _base32_decode_anchor
+from std.encoding.base32 import decode_lenient as _base32_decode_lenient_anchor
+from std.encoding.base32 import b32encode as _base32_b32encode_anchor
+from std.encoding.base32 import b32decode as _base32_b32decode_anchor
+from std.encoding.base32 import b32decode_lenient as _base32_b32decode_lenient_anchor
+from std.encoding.base32 import b32hexencode as _base32_b32hexencode_anchor
+from std.encoding.base32 import b32hexdecode as _base32_b32hexdecode_anchor
+from std.encoding.base32 import b32encode_stream as _base32_b32encode_stream_anchor
+from std.encoding.base32 import b32decode_stream as _base32_b32decode_stream_anchor
+from std.encoding.base32 import b32hexencode_stream as _base32_b32hexencode_stream_anchor
+from std.encoding.base32 import b32hexdecode_stream as _base32_b32hexdecode_stream_anchor
+from std.encoding.base32 import encode_stream as _base32_encode_stream_anchor
+from std.encoding.base32 import decode_stream as _base32_decode_stream_anchor
+from std.encoding.base64 import encode as _base64_encode_anchor
+from std.encoding.base64 import decode as _base64_decode_anchor
+from std.encoding.base64 import decode_lenient as _base64_decode_lenient_anchor
+from std.encoding.base64 import b64encode as _base64_b64encode_anchor
+from std.encoding.base64 import b64decode as _base64_b64decode_anchor
+from std.encoding.base64 import b64decode_lenient as _base64_b64decode_lenient_anchor
+from std.encoding.base64 import b64encode_stream as _base64_b64encode_stream_anchor
+from std.encoding.base64 import b64decode_stream as _base64_b64decode_stream_anchor
+from std.encoding.base64 import urlsafe_b64encode as _base64_urlsafe_b64encode_anchor
+from std.encoding.base64 import urlsafe_b64decode as _base64_urlsafe_b64decode_anchor
+from std.encoding.base64 import urlsafe_b64encode_stream as _base64_urlsafe_b64encode_stream_anchor
+from std.encoding.base64 import urlsafe_b64decode_stream as _base64_urlsafe_b64decode_stream_anchor
+from std.encoding.base85 import a85encode as _base85_a85encode_anchor
+from std.encoding.base85 import a85decode as _base85_a85decode_anchor
+from std.encoding.base85 import b85encode as _base85_b85encode_anchor
+from std.encoding.base85 import b85decode as _base85_b85decode_anchor
+from std.encoding.base85 import z85encode as _base85_z85encode_anchor
+from std.encoding.base85 import z85decode as _base85_z85decode_anchor
+from std.encoding.base85 import encode as _base85_encode_anchor
+from std.encoding.base85 import decode as _base85_decode_anchor
+from std.encoding.base85 import a85encode_stream as _base85_a85encode_stream_anchor
+from std.encoding.base85 import a85decode_stream as _base85_a85decode_stream_anchor
+from std.encoding.base85 import b85encode_stream as _base85_b85encode_stream_anchor
+from std.encoding.base85 import b85decode_stream as _base85_b85decode_stream_anchor
+from std.encoding.base85 import z85encode_stream as _base85_z85encode_stream_anchor
+from std.encoding.base85 import z85decode_stream as _base85_z85decode_stream_anchor
+from std.encoding.base85 import encode_stream as _base85_encode_stream_anchor
+from std.encoding.base85 import decode_stream as _base85_decode_stream_anchor
+from std.encoding.base58 import encode as _base58_encode_anchor
+from std.encoding.base58 import decode as _base58_decode_anchor
+from std.encoding.base58 import b58encode as _base58_b58encode_anchor
+from std.encoding.base58 import b58decode as _base58_b58decode_anchor
+from std.encoding.base58 import b58encode_stream as _base58_b58encode_stream_anchor
+from std.encoding.base58 import b58decode_stream as _base58_b58decode_stream_anchor
+from std.encoding.base58 import encode_stream as _base58_encode_stream_anchor
+from std.encoding.base58 import decode_stream as _base58_decode_stream_anchor
+from std.encoding.bech32 import bech32_encode as _bech32_bech32_encode_anchor
+from std.encoding.bech32 import bech32_decode as _bech32_bech32_decode_anchor
+from std.encoding.bech32 import bech32m_encode as _bech32_bech32m_encode_anchor
+from std.encoding.bech32 import bech32m_decode as _bech32_bech32m_decode_anchor
