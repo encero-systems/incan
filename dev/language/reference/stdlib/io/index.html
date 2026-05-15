@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../graph/">
+        <link rel="prev" href="../hash/">
       
       
         <link rel="next" href="../logging/">
@@ -2081,6 +2081,8 @@
       
         
       
+        
+      
     
     
       
@@ -2259,6 +2261,27 @@
   
   <span class="md-ellipsis">
     std.graph
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../hash/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.hash
   </span>
   
 
@@ -5321,7 +5344,7 @@
 
 <h1 id="stdio-reference">std.io reference<a class="headerlink" href="#stdio-reference" title="Permanent link">&para;</a></h1>
 <p><code>std.io</code> provides in-memory binary streams for byte buffers that are already in memory.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span><span class="p">,</span> <span class="nc">Endian</span><span class="p">,</span> <span class="nc">IoError</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span><span class="p">,</span> <span class="nc">Endian</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">,</span> <span class="nc">BinaryReader</span>
 </code></pre></div>
 <p>Use <code>BytesIO</code> for parser fixtures, protocol payloads, generated binary blobs, and format readers that should not depend on filesystem paths. <code>std.fs</code> gets bytes into or out of files; <code>std.io</code> moves a cursor through bytes that already exist.</p>
 <h2 id="bytesio">BytesIO<a class="headerlink" href="#bytesio" title="Permanent link">&para;</a></h2>
@@ -5343,6 +5366,11 @@
 <td><code>buf.read(size: int = -1)</code></td>
 <td><code>Result[bytes, IoError]</code></td>
 <td>Read at most <code>size</code> bytes, or the rest when <code>size</code> is negative.</td>
+</tr>
+<tr>
+<td><code>buf.read_bytes(size: int)</code></td>
+<td><code>Result[bytes, IoError]</code></td>
+<td>Trait-backed bounded byte read for consumers such as <code>std.hash.reader_digest</code>.</td>
 </tr>
 <tr>
 <td><code>buf.read_exact(size: int)</code></td>
@@ -5436,6 +5464,10 @@
 <tr>
 <td><code>Endian</code></td>
 <td><code>Endian.Little</code>, <code>Endian.Big</code></td>
+</tr>
+<tr>
+<td><code>BinaryReader</code></td>
+<td><code>read_bytes(size: int) -&gt; Result[bytes, IoError]</code></td>
 </tr>
 <tr>
 <td><code>BinaryRead[T]</code></td>

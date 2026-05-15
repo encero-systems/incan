@@ -2075,6 +2075,8 @@
       
         
       
+        
+      
     
     
       
@@ -2253,6 +2255,27 @@
   
   <span class="md-ellipsis">
     std.graph
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/hash/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.hash
   </span>
   
 
@@ -5953,7 +5976,7 @@
 
 <h1 id="release-03">Release 0.3<a class="headerlink" href="#release-03" title="Permanent link">&para;</a></h1>
 <p>Incan 0.3 is the current development release. It picks up after the <code>0.2</code> line, which made the language surface more explicit around stdlib imports, Rust interop, library manifests, module state, and call-site generics.</p>
-<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, Rust trait adoption from Incan-owned wrappers, graph, collections, datetime, logging, and encoding stdlib surfaces, iterator adapter chains, Result combinators, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 030 adds <code>std.collections</code> for specialized collection semantics; RFC 047 adds <code>std.graph</code> for explicit in-memory dependency and plan graphs; RFC 050 lets enums declare methods and adopt traits; RFC 043 starts Rust trait implementation authoring from Incan source with <code>with Trait</code>, method-level <code>for Trait</code>, and associated type declarations on newtypes and rusttypes; RFC 088 standardizes lazy iterator adapters and terminal consumers; RFC 070 adds Rust-shaped <code>Result[T, E]</code> composition with <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>; RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points; RFC 058 adds Rust-backed runtime timing plus source-defined civil temporal values, fixed UTC offsets, Python-shaped parsing/formatting, and interval arithmetic; RFC 072 adds source-defined structured logging; and RFC 064 adds <code>std.encoding</code> for strict-by-default binary-text transforms.</p>
+<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, Rust trait adoption from Incan-owned wrappers, graph, collections, datetime, logging, encoding, and hashing stdlib surfaces, iterator adapter chains, Result combinators, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 030 adds <code>std.collections</code> for specialized collection semantics; RFC 047 adds <code>std.graph</code> for explicit in-memory dependency and plan graphs; RFC 064 adds <code>std.encoding</code> for strict-by-default binary-text transforms; RFC 065 adds <code>std.hash</code> for stable byte, file, reader, cryptographic, compatibility, and non-cryptographic hashing workflows; RFC 050 lets enums declare methods and adopt traits; RFC 043 starts Rust trait implementation authoring from Incan source with <code>with Trait</code>, method-level <code>for Trait</code>, and associated type declarations on newtypes and rusttypes; RFC 088 standardizes lazy iterator adapters and terminal consumers; RFC 070 adds Rust-shaped <code>Result[T, E]</code> composition with <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>; RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points; RFC 058 adds Rust-backed runtime timing plus source-defined civil temporal values, fixed UTC offsets, Python-shaped parsing/formatting, and interval arithmetic; and RFC 072 adds source-defined structured logging.</p>
 <p>This page will grow as more <code>0.3</code> work lands. If you are looking for the shipped <code>0.2</code> story, start with <a href="../0_2/">Release 0.2</a>.</p>
 <p>For numeric guidance, start with <a href="../../language/how-to/choosing_numeric_types/">Choosing numeric types</a> and <a href="../../language/reference/numeric_semantics/">Numeric semantics</a>. For the current control-flow guidance, start with <a href="../../language/explanation/control_flow/">Control Flow</a>. For the current source-layout contract, start with the <a href="../../language/reference/code_style/">Incan Code Style Guide</a>. Use <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a> for the tool behavior. <a href="/dev/RFCs/closed/implemented/009_sized_integers">RFC 009</a>, <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a>, and <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a> record the design snapshots behind those behaviors.</p>
 <h2 id="what-03-is-about">What 0.3 is about<a class="headerlink" href="#what-03-is-about" title="Permanent link">&para;</a></h2>
@@ -5972,6 +5995,7 @@
 <li>time-shaped data should have one stdlib vocabulary for Rust-backed runtime timing, civil dates and times, fixed UTC offsets, and calendar-aware intervals</li>
 <li>binary-text encoding should have explicit stdlib modules for strict and lenient value plus finite source/sink transforms, with variant choices visible in API names</li>
 <li>specialized collection semantics should have explicit stdlib types instead of forcing every queue, multiset, ordered map, sorted set, layered map, or priority queue through bare builtin containers</li>
+<li>byte, file, and reader hashing should have explicit algorithm namespaces, with cryptographic and compatibility digests separated from fast non-cryptographic integer helpers</li>
 <li>user-facing tooling behavior should match the docs closely enough that CI and editor integrations can rely on it</li>
 <li>testing should feel like a first-class workflow, with inline unit tests, fixtures, parametrization, selection, scheduling, and machine-readable reports owned by Incan rather than delegated to ad hoc scripts</li>
 <li>iterator pipelines should be lazy by default, with terminal consumers such as <code>.collect()</code>, <code>.count()</code>, <code>.any()</code>, <code>.all()</code>, <code>.find()</code>, and <code>.fold()</code> making realization or summarization explicit</li>
@@ -6333,6 +6357,7 @@ metadata-proven body-less <code>rusttype</code> forwarding without emitting inva
 <li><code>std.datetime</code> temporal values and intervals: <a href="/dev/RFCs/closed/implemented/058_std_datetime">RFC 058</a></li>
 <li>UUID parsing, formatting, inspection, and generation: <a href="../../RFCs/closed/implemented/060_std_uuid/">RFC 060</a></li>
 <li>Binary-text encoding and decoding utilities: <a href="/dev/RFCs/closed/implemented/064_std_encoding">RFC 064</a></li>
+<li>Byte, file, reader, cryptographic, compatibility, and non-cryptographic hashing: <a href="/dev/RFCs/closed/implemented/065_std_hash">RFC 065</a></li>
 <li>Targeted generated-Rust lint suppression: <a href="/dev/RFCs/closed/implemented/057_rust_allow_targeted_lint_suppression">RFC 057</a></li>
 <li>Protocol hooks for core syntax: <a href="/dev/RFCs/closed/implemented/068_protocol_hooks_for_core_language_syntax">RFC 068</a></li>
 <li>Fixed-length list initialization with <code>list.repeat</code>: <a href="/dev/RFCs/closed/implemented/069_list_repeat_std_helper">RFC 069</a></li>
