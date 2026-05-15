@@ -1,0 +1,60 @@
+"""
+Autodetection helpers for `std.compression`.
+
+Autodetection is deliberately decompression-only and signature-driven. Raw deflate and raw Snappy are not guessed
+because they lack reliable framing signatures.
+"""
+
+from std.compression._core import (
+    Codec,
+    CompressionError,
+    _allowed,
+    _looks_like_bz2,
+    _looks_like_gzip,
+    _looks_like_snappy_frame,
+    _looks_like_xz,
+    _looks_like_zlib,
+    _looks_like_zstd,
+    _validate_allowed,
+)
+from std.compression.gzip import decompress as _gzip_decompress
+from std.compression.zlib import decompress as _zlib_decompress
+from std.compression.zstd import decompress as _zstd_decompress
+from std.compression.bz2 import decompress as _bz2_decompress
+from std.compression.lzma import decompress as _lzma_decompress
+from std.compression.snappy import decompress as _snappy_decompress
+
+
+pub def decompress_auto(data: bytes, allowed: list[Codec] = Codec.all()) -> Result[tuple[Codec, bytes], CompressionError]:
+    """
+    Decompress bytes by explicit signature-based autodetection.
+
+    Args:
+        data: Compressed bytes with a detectable framing signature.
+        allowed: Candidate codecs to consider. The list is binding; codecs not present are not attempted.
+
+    Returns:
+        `Ok((codec, plain))` when an allowed codec signature matches, or `Err(CompressionError)` when the filter is
+        empty, no signature matches, or the matched codec rejects the payload.
+    """
+    _validate_allowed(allowed)?
+    if _allowed(allowed.clone(), Codec.Gzip) and _looks_like_gzip(data):
+        return Ok((Codec.Gzip, _gzip_decompress(data)?))
+    elif _allowed(allowed, Codec.Zstd) and _looks_like_zstd(data):
+        return Ok((Codec.Zstd, _zstd_decompress(data)?))
+    elif _allowed(allowed, Codec.Bz2) and _looks_like_bz2(data):
+        return Ok((Codec.Bz2, _bz2_decompress(data)?))
+    elif _allowed(allowed, Codec.Lzma) and _looks_like_xz(data):
+        return Ok((Codec.Lzma, _lzma_decompress(data)?))
+    elif _allowed(allowed, Codec.Snappy) and _looks_like_snappy_frame(data):
+        return Ok((Codec.Snappy, _snappy_decompress(data)?))
+    elif _allowed(allowed, Codec.Zlib) and _looks_like_zlib(data):
+        return Ok((Codec.Zlib, _zlib_decompress(data)?))
+    return Err(
+        CompressionError(
+            kind="unsupported_codec",
+            codec=None,
+            operation="decompress_auto",
+            detail="no allowed compression codec matched the input signature",
+        ),
+    )

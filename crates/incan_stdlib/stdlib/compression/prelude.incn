@@ -1,0 +1,9 @@
+"""
+Codec-based compression and decompression.
+
+`std.compression` exposes explicit codec submodules for normal workflows and top-level autodetection helpers for
+decompression when the caller deliberately opts in.
+"""
+
+from std.compression._core import Codec, CompressionError
+from std.compression._auto import decompress_auto

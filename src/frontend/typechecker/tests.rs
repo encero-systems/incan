@@ -896,6 +896,22 @@ def main() -> None:
 }
 
 #[test]
+fn owned_value_does_not_satisfy_incan_shared_ref_parameter() {
+    let source = r#"
+def borrowed(data: &bytes) -> None:
+  return
+
+def main(data: bytes) -> None:
+  borrowed(data)
+"#;
+    let errs = check_str_err(source, "owned bytes should not satisfy an Incan &bytes parameter");
+    assert!(
+        errs.iter().any(|err| err.message.contains("Type mismatch")),
+        "expected type mismatch, got {errs:?}"
+    );
+}
+
+#[test]
 fn rfc009_binary_float_literals_are_checked_for_f32_targets() {
     let ok = r#"
 def main() -> None:
@@ -3098,11 +3114,13 @@ def f() -> None:
     })?;
     let info = checker.type_info();
     assert!(
-        info.expressions
-            .expr_types
-            .values()
-            .any(|t| matches!(t, ResolvedType::Function(params, _) if params.is_empty())),
-        "expected associated function field access to resolve to a callable type, got {:?}",
+        info.expressions.expr_types.values().any(|t| matches!(
+            t,
+            ResolvedType::Function(params, ret)
+                if params.is_empty()
+                    && matches!(ret.as_ref(), ResolvedType::RustPath(path) if path == "demo::Builder")
+        )),
+        "expected associated function field access to resolve to a callable type returning demo::Builder, got {:?}",
         info.expressions.expr_types
     );
     Ok(())

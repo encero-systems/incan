@@ -1,0 +1,57 @@
+"""
+Zlib compression helpers.
+
+This module writes and reads zlib-wrapped deflate streams. The user-facing API stays byte-oriented and normalizes
+backend errors into `CompressionError`.
+"""
+
+from rust::std::io import Cursor, Read
+from rust::flate2 @ "1" import Compression as FlateCompression
+from rust::flate2::read @ "1" import ZlibDecoder, ZlibEncoder
+from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default
+
+
+pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
+    """
+    Compress bytes as a zlib-wrapped deflate stream.
+
+    Args:
+        data: Plain input bytes.
+        level: Optional portable compression level from 0 through 9.
+
+    Returns:
+        `Ok(bytes)` with a complete zlib stream, or `Err(CompressionError)` for invalid levels or codec failures.
+    """
+    mut reader = ZlibEncoder.new(Cursor.new(data), _flate_level(level)?)
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Zlib, "compress", err.to_string()))
+
+
+pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
+    """
+    Decompress a zlib-wrapped deflate stream.
+
+    Args:
+        data: Zlib-compressed bytes.
+
+    Returns:
+        `Ok(bytes)` with the decompressed payload, or `Err(CompressionError)` for invalid or truncated data.
+    """
+    mut reader = ZlibDecoder.new(Cursor.new(data))
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Zlib, "decompress", err.to_string()))
+
+
+def _flate_level(level: Option[int]) -> Result[FlateCompression, CompressionError]:
+    """
+    Convert a portable zlib level into the `flate2` compression type.
+    """
+    selected = _level_or_default(Codec.Zlib, level, 6, 0, 9)?
+    maybe: Option[u32] = selected.try_resize()
+    match maybe:
+        Some(value) => return Ok(FlateCompression.new(value))
+        None => return Err(_codec_error(Codec.Zlib, "compress", "level does not fit u32"))

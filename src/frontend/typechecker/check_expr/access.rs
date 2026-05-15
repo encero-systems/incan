@@ -1168,7 +1168,7 @@ impl TypeChecker {
             TypeInfo::Newtype(nt) if nt.is_rusttype => {
                 if let ResolvedType::RustPath(path) = &nt.underlying {
                     if let Some(sig) = self.rust_associated_function_signature(path, field) {
-                        return Some(self.resolved_function_type_from_rust_sig(&sig, false));
+                        return Some(self.resolved_function_type_from_rust_sig_for_path(&sig, false, path));
                     }
                     if let Some(meta) = self.rust_item_metadata_for_path(path)
                         && let RustItemKind::Type(info) = &meta.kind
@@ -1314,14 +1314,15 @@ impl TypeChecker {
                     self.type_info.record_regular_method_arg_shape(receiver_span, method);
                 }
                 let callable_display = format!("rust::{rust_path}.{method}");
-                Some(self.validate_rust_method_call(
+                let ret = self.validate_rust_method_call(
                     callable_display.as_str(),
                     &sig,
                     args,
                     arg_types,
                     preserves_lookup_arg_shape,
                     span,
-                ))
+                );
+                Some(Self::substitute_rust_self_type(ret, rust_path))
             }
             RustItemKind::Unsupported { description } => {
                 self.errors.push(errors::rust_item_shape_not_supported(
@@ -2281,7 +2282,7 @@ impl TypeChecker {
                 }
                 RustItemKind::Type(_) => {
                     if let Some(sig) = self.rust_associated_function_signature(path, field) {
-                        return self.resolved_function_type_from_rust_sig(&sig, false);
+                        return self.resolved_function_type_from_rust_sig_for_path(&sig, false, path);
                     }
                     if let RustItemKind::Type(info) = &meta.kind
                         && let Some(rust_field) = info.fields.iter().find(|f| f.name == field)

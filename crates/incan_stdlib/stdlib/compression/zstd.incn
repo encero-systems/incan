@@ -1,0 +1,52 @@
+"""
+Zstandard compression helpers.
+
+This module exposes zstd frames through one-shot byte helpers and keeps backend-specific error details behind
+`CompressionError`.
+"""
+
+from rust::std::io import Cursor
+from rust::zstd::stream @ "0.13" import decode_all, encode_all
+from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default
+
+
+pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
+    """
+    Compress bytes as a zstd frame.
+
+    Args:
+        data: Plain input bytes.
+        level: Optional portable zstd level from -7 through 22.
+
+    Returns:
+        `Ok(bytes)` with a zstd frame, or `Err(CompressionError)` for invalid levels or codec failures.
+    """
+    match encode_all(Cursor.new(data), _zstd_level(level)?):
+        Ok(out) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Zstd, "compress", err))
+
+
+pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
+    """
+    Decompress a zstd frame.
+
+    Args:
+        data: Zstd-compressed bytes.
+
+    Returns:
+        `Ok(bytes)` with the decompressed payload, or `Err(CompressionError)` for invalid or truncated data.
+    """
+    match decode_all(Cursor.new(data)):
+        Ok(out) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Zstd, "decompress", err))
+
+
+def _zstd_level(level: Option[int]) -> Result[i32, CompressionError]:
+    """
+    Convert a portable zstd level into the backend's `i32` level.
+    """
+    selected = _level_or_default(Codec.Zstd, level, 0, -7, 22)?
+    maybe: Option[i32] = selected.try_resize()
+    match maybe:
+        Some(value) => return Ok(value)
+        None => return Err(_codec_error(Codec.Zstd, "compress", "level does not fit i32"))

@@ -1,0 +1,46 @@
+"""
+Framed Snappy compression helpers.
+
+Framed Snappy is the default `std.compression.snappy` surface because it carries framing bytes suitable for streams and
+autodetection. Raw block helpers live under `std.compression.snappy.raw`.
+"""
+
+from rust::std::io import Cursor, Read
+from rust::snap::read @ "1" import FrameDecoder, FrameEncoder
+from std.compression._core import Codec, CompressionError, _codec_error, _reject_level
+
+
+pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
+    """
+    Compress bytes as a framed Snappy stream.
+
+    Args:
+        data: Plain input bytes.
+        level: Must be `None`; Snappy does not expose a portable compression level.
+
+    Returns:
+        `Ok(bytes)` with a framed Snappy stream, or `Err(CompressionError)` for unsupported options or codec failures.
+    """
+    _reject_level(Codec.Snappy, level)?
+    mut reader = FrameEncoder.new(Cursor.new(data))
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Snappy, "compress", err.to_string()))
+
+
+pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
+    """
+    Decompress a framed Snappy stream.
+
+    Args:
+        data: Framed Snappy bytes.
+
+    Returns:
+        `Ok(bytes)` with the decompressed payload, or `Err(CompressionError)` for invalid or truncated data.
+    """
+    mut reader = FrameDecoder.new(Cursor.new(data))
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Snappy, "decompress", err.to_string()))

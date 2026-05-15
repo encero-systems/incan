@@ -2712,6 +2712,34 @@ fn test_std_graph_compiled_codegen() {
     insta::assert_snapshot!("std_graph_compiled", rust_code);
 }
 
+/// RFC 061: compile the `std.compression` source modules.
+#[test]
+fn test_std_compression_modules_compile_codegen() -> Result<(), Box<dyn std::error::Error>> {
+    let paths = [
+        "crates/incan_stdlib/stdlib/compression/prelude.incn",
+        "crates/incan_stdlib/stdlib/compression/_core.incn",
+        "crates/incan_stdlib/stdlib/compression/_auto.incn",
+        "crates/incan_stdlib/stdlib/compression/gzip.incn",
+        "crates/incan_stdlib/stdlib/compression/zlib.incn",
+        "crates/incan_stdlib/stdlib/compression/deflate.incn",
+        "crates/incan_stdlib/stdlib/compression/zstd.incn",
+        "crates/incan_stdlib/stdlib/compression/bz2.incn",
+        "crates/incan_stdlib/stdlib/compression/lzma.incn",
+        "crates/incan_stdlib/stdlib/compression/snappy.incn",
+        "crates/incan_stdlib/stdlib/compression/snappy/raw.incn",
+    ];
+
+    for path in paths {
+        let source = fs::read_to_string(path)?;
+        let rust_code = generate_rust(&source);
+        assert!(
+            rust_code.contains("__incan"),
+            "expected {path} to compile into Incan-generated Rust, got:\n{rust_code}"
+        );
+    }
+    Ok(())
+}
+
 /// RFC 047: verify `std.graph` imports, direct constructors, DAGs, and multigraph edge ids lower to Rust.
 #[test]
 fn test_std_graph_import_codegen() {

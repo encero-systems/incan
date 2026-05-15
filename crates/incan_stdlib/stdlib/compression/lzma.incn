@@ -1,0 +1,55 @@
+"""
+XZ/LZMA-family compression helpers.
+
+The public `std.compression.lzma` name exposes XZ-framed LZMA-family data through the `xz2` backend.
+"""
+
+from rust::std::io import Cursor, Read
+from rust::xz2::read @ "0.1" import XzDecoder, XzEncoder
+from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default
+
+
+pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
+    """
+    Compress bytes as an XZ/LZMA-family stream.
+
+    Args:
+        data: Plain input bytes.
+        level: Optional portable compression level from 0 through 9.
+
+    Returns:
+        `Ok(bytes)` with an XZ-framed payload, or `Err(CompressionError)` for invalid levels or codec failures.
+    """
+    mut reader = XzEncoder.new(Cursor.new(data), _xz_level(level)?)
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Lzma, "compress", err.to_string()))
+
+
+pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
+    """
+    Decompress an XZ/LZMA-family stream.
+
+    Args:
+        data: XZ/LZMA-family compressed bytes.
+
+    Returns:
+        `Ok(bytes)` with the decompressed payload, or `Err(CompressionError)` for invalid or truncated data.
+    """
+    mut reader = XzDecoder.new(Cursor.new(data))
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Lzma, "decompress", err.to_string()))
+
+
+def _xz_level(level: Option[int]) -> Result[u32, CompressionError]:
+    """
+    Convert a portable LZMA level into the `xz2` numeric level.
+    """
+    selected = _level_or_default(Codec.Lzma, level, 6, 0, 9)?
+    maybe: Option[u32] = selected.try_resize()
+    match maybe:
+        Some(value) => return Ok(value)
+        None => return Err(_codec_error(Codec.Lzma, "compress", "level does not fit u32"))

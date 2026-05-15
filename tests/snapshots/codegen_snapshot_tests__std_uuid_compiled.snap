@@ -22,7 +22,7 @@ pub use crate::__incan_std::hash::sha1 as hash_sha1;
 pub use crate::__incan_std::io::BytesIO;
 pub use crate::__incan_std::io::Endian;
 pub use crate::__incan_std::io::IoError;
-pub use crate::__incan_std::io::_BytesIO;
+use crate::__incan_std::io::_BytesIO;
 pub use crate::__incan_std::traits::error::Error;
 pub const NIL: UUID = UUID(0);
 pub const MAX: UUID = UUID(340282366920938463463374607431768211455);

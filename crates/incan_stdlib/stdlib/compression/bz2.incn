@@ -1,0 +1,56 @@
+"""
+Bzip2 compression helpers.
+
+This module owns the byte-oriented bzip2 surface and translates portable levels into the Rust backend's level type.
+"""
+
+from rust::std::io import Cursor, Read
+from rust::bzip2 @ "0.6" import Compression as BzCompression
+from rust::bzip2::read @ "0.6" import BzDecoder, BzEncoder
+from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default
+
+
+pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
+    """
+    Compress bytes as a bzip2 stream.
+
+    Args:
+        data: Plain input bytes.
+        level: Optional portable compression level from 0 through 9.
+
+    Returns:
+        `Ok(bytes)` with a bzip2 stream, or `Err(CompressionError)` for invalid levels or codec failures.
+    """
+    mut reader = BzEncoder.new(Cursor.new(data), _bz_level(level)?)
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Bz2, "compress", err.to_string()))
+
+
+pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
+    """
+    Decompress a bzip2 stream.
+
+    Args:
+        data: Bzip2-compressed bytes.
+
+    Returns:
+        `Ok(bytes)` with the decompressed payload, or `Err(CompressionError)` for invalid or truncated data.
+    """
+    mut reader = BzDecoder.new(Cursor.new(data))
+    mut out: bytes = b""
+    match reader.read_to_end(out):
+        Ok(_) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Bz2, "decompress", err.to_string()))
+
+
+def _bz_level(level: Option[int]) -> Result[BzCompression, CompressionError]:
+    """
+    Convert a portable bzip2 level into the backend compression type.
+    """
+    selected = _level_or_default(Codec.Bz2, level, 6, 0, 9)?
+    maybe: Option[u32] = selected.try_resize()
+    match maybe:
+        Some(value) => return Ok(BzCompression.new(value))
+        None => return Err(_codec_error(Codec.Bz2, "compress", "level does not fit u32"))

@@ -6651,6 +6651,39 @@ def main() -> None:
     }
 
     #[test]
+    fn test_std_compression_surface_runs_generated_project() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/std_compression_surface.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "std.compression surface run failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec![
+                "gzip round trip ok",
+                "zlib round trip ok",
+                "deflate round trip ok",
+                "zstd round trip ok",
+                "bz2 round trip ok",
+                "lzma round trip ok",
+                "snappy round trip ok",
+                "snappy.raw round trip ok",
+            ],
+            "unexpected std.compression output: {stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_rust_associated_call_in_elif_branch_uses_path_syntax() {
         let Ok(output) = Command::new(incan_debug_binary())
             .args([
