@@ -1578,6 +1578,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#set-the-required-incan-toolchain" class="md-nav__link">
+    <span class="md-ellipsis">
+      Set the required Incan toolchain
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#define-repeatable-environments" class="md-nav__link">
     <span class="md-ellipsis">
       Define repeatable environments
@@ -5497,6 +5506,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#set-the-required-incan-toolchain" class="md-nav__link">
+    <span class="md-ellipsis">
+      Set the required Incan toolchain
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#define-repeatable-environments" class="md-nav__link">
     <span class="md-ellipsis">
       Define repeatable environments
@@ -5656,6 +5674,25 @@ incan<span class="w"> </span><span class="nb">test</span>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>version<span class="w"> </span>--set<span class="w"> </span><span class="m">1</span>.2.0
 </code></pre></div>
 <p><code>incan version</code> changes the project version, not the compiler or toolchain version. Toolchain requirements stay in <code>requires-incan</code>, and compiler releases are maintained separately from your app or library.</p>
+<h2 id="set-the-required-incan-toolchain">Set the required Incan toolchain<a class="headerlink" href="#set-the-required-incan-toolchain" title="Permanent link">&para;</a></h2>
+<p>Use <code>[project].requires-incan</code> when a project needs a particular Incan release line:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[project]</span>
+<span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;greeter&quot;</span>
+<span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
+<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.3,&lt;0.4&quot;</span>
+</code></pre></div>
+<p>Project-aware execution commands enforce this before they do real work. If the active compiler is incompatible, <code>incan run</code>, <code>incan build</code>, <code>incan test</code>, <code>incan lock</code>, and <code>incan env run</code> fail with the active version and the requirement that rejected it. Plain single-file or inline commands outside a project do not use <code>requires-incan</code>.</p>
+<p>You can make a named env stricter for release or CI workflows:</p>
+<div class="language-toml highlight"><pre><span></span><code><span class="k">[tool.incan.envs.ci]</span>
+<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.3,&lt;0.4&quot;</span>
+
+<span class="k">[tool.incan.envs.ci.scripts]</span>
+<span class="n">test</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;incan&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;test&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;--locked&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>Inspect the effective requirement before running the script:</p>
+<div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>env<span class="w"> </span>show<span class="w"> </span>ci
+incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </span>ci<span class="w"> </span><span class="nb">test</span><span class="w"> </span>--dry-run
+</code></pre></div>
 <h2 id="define-repeatable-environments">Define repeatable environments<a class="headerlink" href="#define-repeatable-environments" title="Permanent link">&para;</a></h2>
 <p>Use <code>incan env</code> when a project has commands that should always run with the same arguments, working directory, or environment variables.</p>
 <p>The important mental model is:</p>

@@ -5909,6 +5909,7 @@ Project-aware commands discover it by walking upward from the current working di
 <span class="n">readme</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;README.md&quot;</span>
 <span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.2&quot;</span>
 </code></pre></div>
+<p><code>requires-incan</code> is enforced by project-aware execution commands. If the active compiler does not satisfy the requirement, <code>incan run</code> in project mode, <code>incan build</code>, <code>incan test</code>, <code>incan lock</code>, and <code>incan env run</code> fail before compiling, locking, or launching scripts. Single-file or inline commands without a discovered project manifest do not infer a toolchain requirement.</p>
 <h3 id="projectscripts"><code>[project.scripts]</code><a class="headerlink" href="#projectscripts" title="Permanent link">&para;</a></h3>
 <p>Named entry points for CLI commands:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project.scripts]</span>
@@ -5947,6 +5948,7 @@ Project-aware commands discover it by walking upward from the current working di
 
 <span class="k">[tool.incan.envs.release]</span>
 <span class="n">extends</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;default&quot;</span><span class="p">]</span>
+<span class="n">requires-incan</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;&gt;=0.3,&lt;0.4&quot;</span>
 <span class="n">env-vars</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">INCAN_FANCY_ERRORS</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="w"> </span><span class="p">}</span>
 
 <span class="k">[tool.incan.envs.release.scripts]</span>
@@ -5966,6 +5968,11 @@ Project-aware commands discover it by walking upward from the current working di
 <td><code>extends</code></td>
 <td>list of strings</td>
 <td>Other environments to merge before this one</td>
+</tr>
+<tr>
+<td><code>requires-incan</code></td>
+<td>string</td>
+<td>Additional Incan toolchain requirement for this env</td>
 </tr>
 <tr>
 <td><code>detached</code></td>
@@ -5989,6 +5996,8 @@ Project-aware commands discover it by walking upward from the current working di
 </tr>
 </tbody>
 </table>
+<p>Env-level <code>requires-incan</code> narrows the project requirement for that environment. <code>incan env show &lt;env&gt;</code> and <code>incan env run &lt;env&gt; &lt;script&gt; --dry-run</code> display the effective requirement and whether the active compiler satisfies it; actual <code>incan env run</code> execution rejects unsatisfied constraints before spawning the script.</p>
+<p>Environment matrices from RFC 073 remain deferred beyond <code>0.3</code>; ordinary named envs may declare <code>requires-incan</code>, but matrix expansion is not available yet.</p>
 <p>Use the environment with:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>env<span class="w"> </span>list
 incan<span class="w"> </span>env<span class="w"> </span>show<span class="w"> </span>release

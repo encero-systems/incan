@@ -6462,6 +6462,7 @@ one-shot, BytesIO stream, file stream, autodetection, option error, and chunk-si
 <li><strong>Language/Interop</strong>: Generated Rust now retains extension-trait imports from typechecker import metadata and receiver trait metadata instead of backend method-name heuristics, so same-name methods from unrelated imported traits do not force unused trait imports (#447).</li>
 <li><strong>Tooling</strong>: <code>incan lock</code> now treats manifest projects as a project-wide lock surface, covering declared scripts and test harness dependency inputs so multi-entrypoint projects do not alternate stale-lock warnings between <code>incan test</code> and <code>incan run src/extra.incn</code> (#505).</li>
 <li><strong>Tooling</strong>: <code>incan fmt</code> now wraps long class trait adoption headers into parseable parenthesized <code>with (...)</code> lists, keeping broad adoption surfaces such as <code>_BytesIO</code> readable and below the line-length target (#565).</li>
+<li><strong>Tooling</strong>: Project-aware commands now enforce <code>[project].requires-incan</code>, env-level <code>requires-incan</code> can narrow named environment workflows, and <code>incan env show</code> / <code>env run --dry-run</code> report the effective toolchain compatibility before scripts run; RFC 073 matrix expansion remains deferred beyond <code>0.3</code> (#401, RFC 073).</li>
 </ul>
 <h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
 <ul>
@@ -6484,6 +6485,7 @@ one-shot, BytesIO stream, file stream, autodetection, option error, and chunk-si
 <li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.46</code>.</li>
 <li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.47</code>.</li>
 <li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.48</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.49</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>
