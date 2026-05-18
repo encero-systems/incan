@@ -1624,6 +1624,27 @@ trait Combo with BoundedDataSet[int], DataSet[str]:
     }
 
     #[test]
+    fn test_parse_parenthesized_declaration_trait_adoptions() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+class BinaryBuffer with (
+    BinaryReader,
+    BinaryRead[u8],
+    BinaryWrite[u8],
+):
+    handle: Cursor[bytes]
+"#;
+        let program = parse_str(source)?;
+        let class = require_class_decl(&program.declarations[0])?;
+        assert_eq!(class.traits.len(), 3);
+        assert_eq!(class.traits[0].node.name, "BinaryReader");
+        assert_eq!(class.traits[1].node.name, "BinaryRead");
+        assert_eq!(class.traits[1].node.type_args.len(), 1);
+        assert_eq!(class.traits[2].node.name, "BinaryWrite");
+        assert_eq!(class.traits[2].node.type_args.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_newtype_with_docstring() -> Result<(), Vec<CompileError>> {
         let source = r#"
 type UserId[T] = newtype int:

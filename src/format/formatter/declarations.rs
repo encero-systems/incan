@@ -417,37 +417,16 @@ impl Formatter {
             self.format_decorator(&dec.node);
         }
 
-        self.write_visibility(class.visibility);
-        self.writer.write("class ");
-        self.writer.write(&class.name);
-        self.format_type_params(&class.type_params);
-
-        if let Some(base) = &class.extends {
-            self.writer.write(" extends ");
-            self.writer.write(base);
+        let checkpoint = self.writer.checkpoint();
+        self.write_class_header(class, false);
+        self.writer.write(":");
+        if !class.traits.is_empty() && self.writer.line_length_exceeded() {
+            self.writer.restore(checkpoint);
+            self.write_class_header(class, true);
+            self.writer.write(":");
         }
 
-        if !class.traits.is_empty() {
-            self.writer.write(" with ");
-            for (i, trait_name) in class.traits.iter().enumerate() {
-                if i > 0 {
-                    self.writer.write(", ");
-                }
-                self.writer.write(&trait_name.node.name);
-                if !trait_name.node.type_args.is_empty() {
-                    self.writer.write("[");
-                    for (j, arg) in trait_name.node.type_args.iter().enumerate() {
-                        if j > 0 {
-                            self.writer.write(", ");
-                        }
-                        self.format_type(&arg.node);
-                    }
-                    self.writer.write("]");
-                }
-            }
-        }
-
-        self.writer.writeln(":");
+        self.writer.newline();
         self.writer.indent();
 
         if let Some(docstring) = &class.docstring {
@@ -492,6 +471,28 @@ impl Formatter {
         }
 
         self.writer.dedent();
+    }
+
+    /// Write a class declaration header, optionally wrapping its trait adoption list.
+    fn write_class_header(&mut self, class: &ClassDecl, multiline_traits: bool) {
+        self.write_visibility(class.visibility);
+        self.writer.write("class ");
+        self.writer.write(&class.name);
+        self.format_type_params(&class.type_params);
+
+        if let Some(base) = &class.extends {
+            self.writer.write(" extends ");
+            self.writer.write(base);
+        }
+
+        if !class.traits.is_empty() {
+            self.writer.write(" with ");
+            if multiline_traits {
+                self.format_trait_bounds_multiline(&class.traits);
+            } else {
+                self.format_trait_bounds_inline(&class.traits);
+            }
+        }
     }
 
     /// Format a trait declaration, including same-trait method aliases.
@@ -1199,6 +1200,33 @@ impl Formatter {
             }
             self.writer.write("]");
         }
+    }
+
+    /// Format a comma-separated trait adoption list on the current line.
+    fn format_trait_bounds_inline(&mut self, bounds: &[Spanned<TraitBound>]) {
+        for (i, bound) in bounds.iter().enumerate() {
+            if i > 0 {
+                self.writer.write(", ");
+            }
+            self.format_trait_bound(&bound.node);
+        }
+    }
+
+    /// Format a parenthesized one-bound-per-line trait adoption list.
+    fn format_trait_bounds_multiline(&mut self, bounds: &[Spanned<TraitBound>]) {
+        let trailing_commas = self.writer.config().trailing_commas;
+        self.writer.write("(");
+        self.writer.newline();
+        self.writer.indent();
+        for (i, bound) in bounds.iter().enumerate() {
+            self.format_trait_bound(&bound.node);
+            if trailing_commas || i + 1 < bounds.len() {
+                self.writer.write(",");
+            }
+            self.writer.newline();
+        }
+        self.writer.dedent();
+        self.writer.write(")");
     }
 }
 

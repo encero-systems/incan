@@ -110,8 +110,29 @@ impl<'a> Parser<'a> {
         Ok(Spanned::new(bound, Span::new(start, end)))
     }
 
-    /// Comma-separated supertrait bounds after `with` on a trait declaration.
+    /// Parse declaration-level trait adoption lists after `with`.
+    ///
+    /// Bare lists keep the original compact form (`with A, B`). Parenthesized lists (`with (A, B,)`) provide the
+    /// parseable multiline shape used by formatter output when a declaration header exceeds the target line length.
     fn trait_supertrait_list_spanned(&mut self) -> Result<Vec<Spanned<TraitBound>>, CompileError> {
+        if self.match_token(&TokenKind::Punctuation(PunctuationId::LParen)) {
+            let mut bounds = Vec::new();
+            loop {
+                bounds.push(self.trait_bound_spanned()?);
+                if !self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
+                    break;
+                }
+                if self.check(&TokenKind::Punctuation(PunctuationId::RParen)) {
+                    break;
+                }
+            }
+            self.expect(
+                &TokenKind::Punctuation(PunctuationId::RParen),
+                "Expected ')' after trait adoption list",
+            )?;
+            return Ok(bounds);
+        }
+
         let mut bounds = vec![self.trait_bound_spanned()?];
         while self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
             bounds.push(self.trait_bound_spanned()?);
