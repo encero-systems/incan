@@ -5481,7 +5481,7 @@
 
 
 <h1 id="stduuid"><code>std.uuid</code><a class="headerlink" href="#stduuid" title="Permanent link">&para;</a></h1>
-<p><code>std.uuid</code> provides RFC 9562 UUID values as ordinary Incan source-defined data. The module stores each <code>UUID</code> as a nominal <code>u128</code> wrapper and owns parsing, formatting, byte layout, version bits, and variant bits in Incan source. Rust interop is limited to primitive inputs for randomness, clock access, MD5, SHA-1, and UTF-8 string bytes.</p>
+<p><code>std.uuid</code> provides RFC 9562 UUID values as ordinary Incan source-defined data. The module stores each <code>UUID</code> as a nominal <code>u128</code> wrapper and owns parsing, formatting, byte layout, version bits, and variant bits in Incan source. Rust interop is limited to primitive inputs for randomness, clock access, and UTF-8 string bytes; name-based UUID hashing dogfoods <code>std.hash</code>.</p>
 <h2 id="imports">Imports<a class="headerlink" href="#imports" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NAMESPACE_DNS</span><span class="p">,</span> <span class="nc">UUID</span><span class="p">,</span> <span class="nc">UuidError</span><span class="p">,</span> <span class="nc">UuidVariant</span><span class="p">,</span> <span class="nc">UuidVersion</span>
 </code></pre></div>
