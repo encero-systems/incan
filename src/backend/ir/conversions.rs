@@ -784,6 +784,15 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 // String variables → borrow for external calls (&str param)
                 (IrExprKind::StaticRead { .. }, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::Into,
                 (IrExprKind::Var { .. }, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::Into,
+                (IrExprKind::Var { access, .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => {
+                    match access {
+                        VarAccess::Move => Conversion::None,
+                        _ => Conversion::Clone,
+                    }
+                }
+                (IrExprKind::Field { .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => {
+                    Conversion::Clone
+                }
                 (IrExprKind::Var { .. }, _) if matches!(expr.ty, IrType::String) => Conversion::Borrow,
                 (IrExprKind::Field { .. }, None) if matches!(expr.ty, IrType::String) => Conversion::Borrow,
                 (_, Some(IrType::Ref(_))) if !matches!(expr.ty, IrType::Ref(_) | IrType::RefMut(_)) => {
@@ -1334,6 +1343,21 @@ mod tests {
 
         let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
         assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_external_function_string_var_with_by_value_target_does_not_borrow() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "s".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::String,
+        );
+
+        let conv = determine_conversion(&expr, Some(&IrType::String), ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::None);
     }
 
     #[test]

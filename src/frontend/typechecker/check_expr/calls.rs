@@ -144,21 +144,23 @@ impl TypeChecker {
 
             if let Some(sym) = self.lookup_symbol(name).cloned() {
                 match sym.kind {
-                    SymbolKind::Type(type_info)
+                    SymbolKind::Type(type_info) => {
                         if let Some(ret) =
-                            self.check_type_constructor_hook_call(name, &type_info, type_args, args, span) =>
-                    {
-                        self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
-                        self.type_info
-                            .expressions
-                            .ident_kinds
-                            .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
-                        return ret;
-                    }
-                    SymbolKind::Type(type_info) if stdlib::is_graph_constructor_type(name) && args.is_empty() => {
-                        return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
-                    }
-                    SymbolKind::Type(TypeInfo::Newtype(_)) => {
+                            self.check_type_constructor_hook_call(name, &type_info, type_args, args, span)
+                        {
+                            self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
+                            self.type_info
+                                .expressions
+                                .ident_kinds
+                                .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                            return ret;
+                        }
+                        if stdlib::is_graph_constructor_type(name) && args.is_empty() {
+                            return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
+                        }
+                        let TypeInfo::Newtype(_) = type_info else {
+                            return ResolvedType::Unknown;
+                        };
                         if !type_args.is_empty() {
                             self.errors
                                 .push(errors::explicit_call_site_type_args_not_supported(span));

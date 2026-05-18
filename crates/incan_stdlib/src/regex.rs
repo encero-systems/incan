@@ -72,9 +72,9 @@ impl RawRegex {
 
     /// Return a left-to-right non-overlapping match iterator.
     #[must_use]
-    pub fn find_iter(&self, text: String) -> RawMatchIterator {
+    pub fn find_iter<S: AsRef<str>>(&self, text: S) -> RawMatchIterator {
         RawMatchIterator {
-            items: self.inner.find_iter(&text).map(RawMatch::from_match).collect(),
+            items: self.inner.find_iter(text.as_ref()).map(RawMatch::from_match).collect(),
             index: 0,
         }
     }
@@ -89,11 +89,11 @@ impl RawRegex {
 
     /// Return a left-to-right non-overlapping captures iterator.
     #[must_use]
-    pub fn captures_iter(&self, text: String) -> RawCapturesIterator {
+    pub fn captures_iter<S: AsRef<str>>(&self, text: S) -> RawCapturesIterator {
         RawCapturesIterator {
             items: self
                 .inner
-                .captures_iter(&text)
+                .captures_iter(text.as_ref())
                 .map(|captures| RawCaptures::from_captures(&self.inner, &captures))
                 .collect(),
             index: 0,
@@ -114,19 +114,23 @@ impl RawRegex {
 
     /// Return a left-to-right split iterator over all separators.
     #[must_use]
-    pub fn split(&self, text: String) -> RawSplitIterator {
+    pub fn split<S: AsRef<str>>(&self, text: S) -> RawSplitIterator {
         RawSplitIterator {
-            items: self.inner.split(&text).map(ToString::to_string).collect(),
+            items: self.inner.split(text.as_ref()).map(ToString::to_string).collect(),
             index: 0,
         }
     }
 
     /// Return a left-to-right split iterator with at most `limit` fields.
     #[must_use]
-    pub fn splitn(&self, text: String, limit: i64) -> RawSplitIterator {
+    pub fn splitn<S: AsRef<str>>(&self, text: S, limit: i64) -> RawSplitIterator {
         let normalized = usize::try_from(limit).unwrap_or(0);
         RawSplitIterator {
-            items: self.inner.splitn(&text, normalized).map(ToString::to_string).collect(),
+            items: self
+                .inner
+                .splitn(text.as_ref(), normalized)
+                .map(ToString::to_string)
+                .collect(),
             index: 0,
         }
     }
