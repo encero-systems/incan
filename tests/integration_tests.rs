@@ -10196,6 +10196,45 @@ def main() -> None:
     }
 
     #[test]
+    fn direct_std_json_deserialize_derive_runs_through_incan_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"direct_std_json_deserialize_derive\"\nversion = \"0.3.0-dev.1\"\n",
+            r#"from std.serde.json import Deserialize
+
+@derive(Deserialize)
+model Payload:
+  value: int
+
+def main() -> None:
+  match Payload.from_json('{"value":7}'):
+    case Ok(payload):
+      println(f"{payload.value}")
+    case Err(err):
+      println(err)
+"#,
+        )?;
+
+        let output = Command::new(incan_bin_path())
+            .arg("run")
+            .arg(&main_path)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "expected directly imported Deserialize.from_json to run successfully through Incan source.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(stdout.lines().next(), Some("7"));
+        Ok(())
+    }
+
+    #[test]
     fn generated_runtime_helpers_support_frozen_float_list_min_max() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let main_path = write_project_files(
