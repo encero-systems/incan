@@ -290,36 +290,41 @@ pub model Regex:
         Return capture groups for the first match anywhere in `text`.
         """
         match self.raw.captures(text):
+            None => return None
             Some(raw_caps) =>
                 mut indexed: list[Option[Match]] = []
                 for index in range(0, _offset_from_usize(raw_caps.len())):
                     maybe_raw_index: Option[usize] = index.try_resize()
                     raw_index = maybe_raw_index.unwrap()
+                    mut captured: Option[Match] = None
                     match raw_caps.get(raw_index):
                         Some(found) =>
-                            indexed.append(Some(Match(
+                            captured = Some(Match(
                                 text=found.as_str().to_string(),
                                 start_offset=_offset_from_usize(found.start()),
                                 end_offset=_offset_from_usize(found.end()),
-                            )))
-                        None => indexed.append(None)
+                            ))
+                        None => pass
+                    indexed.append(captured)
 
                 mut named: Dict[str, Option[Match]] = {}
                 for maybe_name in self.raw.capture_names():
-                    match maybe_name:
-                        Some(raw_name) =>
-                            name = raw_name.to_string()
-                            match raw_caps.name(raw_name):
-                                Some(found) =>
-                                    named[name] = Some(Match(
-                                        text=found.as_str().to_string(),
-                                        start_offset=_offset_from_usize(found.start()),
-                                        end_offset=_offset_from_usize(found.end()),
-                                    ))
-                                None => named[name] = None
+                    if maybe_name is None:
+                        continue
+
+                    raw_name = maybe_name.unwrap()
+                    name = raw_name.to_string()
+                    mut captured: Option[Match] = None
+                    match raw_caps.name(raw_name):
+                        Some(found) =>
+                            captured = Some(Match(
+                                text=found.as_str().to_string(),
+                                start_offset=_offset_from_usize(found.start()),
+                                end_offset=_offset_from_usize(found.end()),
+                            ))
                         None => pass
+                    named[name] = captured
                 return Some(Captures(indexed=indexed, named=named))
-            None => return None
 
     def captures_iter(self, text: str) -> CapturesIterator:
         """
@@ -331,29 +336,34 @@ pub model Regex:
             for index in range(0, _offset_from_usize(raw_caps.len())):
                 maybe_raw_index: Option[usize] = index.try_resize()
                 raw_index = maybe_raw_index.unwrap()
+                mut captured: Option[Match] = None
                 match raw_caps.get(raw_index):
                     Some(found) =>
-                        indexed.append(Some(Match(
+                        captured = Some(Match(
                             text=found.as_str().to_string(),
                             start_offset=_offset_from_usize(found.start()),
                             end_offset=_offset_from_usize(found.end()),
-                        )))
-                    None => indexed.append(None)
+                        ))
+                    None => pass
+                indexed.append(captured)
 
             mut named: Dict[str, Option[Match]] = {}
             for maybe_name in self.raw.capture_names():
-                match maybe_name:
-                    Some(raw_name) =>
-                        name = raw_name.to_string()
-                        match raw_caps.name(raw_name):
-                            Some(found) =>
-                                named[name] = Some(Match(
-                                    text=found.as_str().to_string(),
-                                    start_offset=_offset_from_usize(found.start()),
-                                    end_offset=_offset_from_usize(found.end()),
-                                ))
-                            None => named[name] = None
+                if maybe_name is None:
+                    continue
+
+                raw_name = maybe_name.unwrap()
+                name = raw_name.to_string()
+                mut captured: Option[Match] = None
+                match raw_caps.name(raw_name):
+                    Some(found) =>
+                        captured = Some(Match(
+                            text=found.as_str().to_string(),
+                            start_offset=_offset_from_usize(found.start()),
+                            end_offset=_offset_from_usize(found.end()),
+                        ))
                     None => pass
+                named[name] = captured
             items.append(Captures(indexed=indexed, named=named))
         return CapturesIterator(items=items, index=0)
 
