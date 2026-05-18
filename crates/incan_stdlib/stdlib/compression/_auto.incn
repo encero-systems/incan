@@ -39,6 +39,38 @@ from std.fs import File
 from std.io import _BytesIO
 
 
+def _matching_codec(candidate: Codec, data: bytes) -> Option[Codec]:
+    """
+    Return `candidate` only when its reliable framing signature matches `data`.
+    """
+    match candidate:
+        Codec.Gzip =>
+            if _looks_like_gzip(data):
+                return Some(Codec.Gzip)
+            return None
+        Codec.Zlib =>
+            if _looks_like_zlib(data):
+                return Some(Codec.Zlib)
+            return None
+        Codec.Deflate => return None
+        Codec.Zstd =>
+            if _looks_like_zstd(data):
+                return Some(Codec.Zstd)
+            return None
+        Codec.Bz2 =>
+            if _looks_like_bz2(data):
+                return Some(Codec.Bz2)
+            return None
+        Codec.Lzma =>
+            if _looks_like_xz(data):
+                return Some(Codec.Lzma)
+            return None
+        Codec.Snappy =>
+            if _looks_like_snappy_frame(data):
+                return Some(Codec.Snappy)
+            return None
+
+
 def _detect_codec(data: bytes, allowed: list[Codec], operation: str) -> Result[Option[Codec], CompressionError]:
     """
     Return the first allowed codec whose reliable framing signature matches.
@@ -54,26 +86,9 @@ def _detect_codec(data: bytes, allowed: list[Codec], operation: str) -> Result[O
         )
 
     for candidate in allowed:
-        match candidate:
-            Codec.Gzip =>
-                if _looks_like_gzip(data):
-                    return Ok(Some(Codec.Gzip))
-            Codec.Zlib =>
-                if _looks_like_zlib(data):
-                    return Ok(Some(Codec.Zlib))
-            Codec.Deflate => pass
-            Codec.Zstd =>
-                if _looks_like_zstd(data):
-                    return Ok(Some(Codec.Zstd))
-            Codec.Bz2 =>
-                if _looks_like_bz2(data):
-                    return Ok(Some(Codec.Bz2))
-            Codec.Lzma =>
-                if _looks_like_xz(data):
-                    return Ok(Some(Codec.Lzma))
-            Codec.Snappy =>
-                if _looks_like_snappy_frame(data):
-                    return Ok(Some(Codec.Snappy))
+        match _matching_codec(candidate, data):
+            Some(codec) => return Ok(Some(codec))
+            None => pass
     return Ok(None)
 
 
