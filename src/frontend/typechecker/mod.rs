@@ -71,6 +71,7 @@ use crate::frontend::ast::*;
 use crate::frontend::diagnostics::{CompileError, ErrorKind, errors};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{ExportedSymbol, exported_symbols};
+use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
 #[cfg(feature = "rust_inspect")]
@@ -111,6 +112,13 @@ pub(crate) struct LoopContext {
     pub expected_break_ty: Option<ResolvedType>,
     /// Types observed from `break` statements that contribute to the loop result.
     pub break_types: Vec<(ResolvedType, Span)>,
+}
+
+/// Resolved target for a source-level `type Alias = Target` declaration.
+#[derive(Debug, Clone)]
+pub(crate) struct TypeAliasTarget {
+    pub type_params: Vec<String>,
+    pub target: ResolvedType,
 }
 
 /// Declaration context that determines how `yield` expressions are interpreted.
@@ -169,6 +177,8 @@ pub struct TypeChecker {
     pub(crate) static_decls: Vec<(StaticDecl, Span)>,
     /// Collected module-level function declarations for static dependency analysis.
     pub(crate) local_function_decls: HashMap<String, FunctionDecl>,
+    /// Transparent source type aliases, keyed by their local type name.
+    pub(crate) type_aliases: HashMap<String, TypeAliasTarget>,
     /// Declaration-order index for each local static binding.
     pub(crate) static_decl_positions: HashMap<String, usize>,
     /// Const evaluation state machine.
@@ -272,6 +282,7 @@ impl TypeChecker {
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
             local_function_decls: HashMap::new(),
+            type_aliases: HashMap::new(),
             static_decl_positions: HashMap::new(),
             const_eval_state: HashMap::new(),
             const_eval_cache: HashMap::new(),
@@ -2458,6 +2469,99 @@ impl TypeChecker {
         }
     }
 
+    /// Register the resolved target for a source-level type alias.
+    pub(crate) fn register_type_alias_target(&mut self, alias: &TypeAliasDecl) {
+        let type_params = alias
+            .type_params
+            .iter()
+            .map(|param| param.name.clone())
+            .collect::<Vec<_>>();
+        let target = self.resolve_type_checked(&alias.target);
+        self.type_aliases
+            .insert(alias.name.clone(), TypeAliasTarget { type_params, target });
+    }
+
+    /// Expand transparent source type aliases inside a resolved type.
+    fn expand_type_aliases(&self, ty: ResolvedType) -> ResolvedType {
+        let mut expanding = HashSet::new();
+        self.expand_type_aliases_inner(ty, &mut expanding)
+    }
+
+    /// Recursively expand alias leaves within one resolved type while preserving non-aliased structure.
+    fn expand_type_aliases_inner(&self, ty: ResolvedType, expanding: &mut HashSet<String>) -> ResolvedType {
+        match ty {
+            ResolvedType::Named(name) => self
+                .expand_named_type_alias(name.clone(), Vec::new(), expanding)
+                .unwrap_or(ResolvedType::Named(name)),
+            ResolvedType::Generic(name, args) => {
+                let expanded_args = args
+                    .into_iter()
+                    .map(|arg| self.expand_type_aliases_inner(arg, expanding))
+                    .collect::<Vec<_>>();
+                self.expand_named_type_alias(name.clone(), expanded_args.clone(), expanding)
+                    .unwrap_or(ResolvedType::Generic(name, expanded_args))
+            }
+            ResolvedType::Function(params, ret) => ResolvedType::Function(
+                params
+                    .into_iter()
+                    .map(|param| CallableParam {
+                        name: param.name,
+                        ty: self.expand_type_aliases_inner(param.ty, expanding),
+                        kind: param.kind,
+                        has_default: param.has_default,
+                    })
+                    .collect(),
+                Box::new(self.expand_type_aliases_inner(*ret, expanding)),
+            ),
+            ResolvedType::Tuple(items) => ResolvedType::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| self.expand_type_aliases_inner(item, expanding))
+                    .collect(),
+            ),
+            ResolvedType::FrozenList(inner) => {
+                ResolvedType::FrozenList(Box::new(self.expand_type_aliases_inner(*inner, expanding)))
+            }
+            ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(
+                Box::new(self.expand_type_aliases_inner(*key, expanding)),
+                Box::new(self.expand_type_aliases_inner(*value, expanding)),
+            ),
+            ResolvedType::FrozenSet(inner) => {
+                ResolvedType::FrozenSet(Box::new(self.expand_type_aliases_inner(*inner, expanding)))
+            }
+            ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(self.expand_type_aliases_inner(*inner, expanding))),
+            ResolvedType::RefMut(inner) => {
+                ResolvedType::RefMut(Box::new(self.expand_type_aliases_inner(*inner, expanding)))
+            }
+            other => other,
+        }
+    }
+
+    /// Expand one named alias reference, applying generic arguments and stopping on alias cycles.
+    fn expand_named_type_alias(
+        &self,
+        name: String,
+        args: Vec<ResolvedType>,
+        expanding: &mut HashSet<String>,
+    ) -> Option<ResolvedType> {
+        let alias = self.type_aliases.get(&name)?;
+        if alias.type_params.len() != args.len() {
+            return None;
+        }
+        if !expanding.insert(name.clone()) {
+            return None;
+        }
+        let target = if alias.type_params.is_empty() {
+            alias.target.clone()
+        } else {
+            let subst = type_param_subst_map(&alias.type_params, &args);
+            substitute_resolved_type(&alias.target, &subst)
+        };
+        let expanded = self.expand_type_aliases_inner(target, expanding);
+        expanding.remove(&name);
+        Some(expanded)
+    }
+
     /// Resolve a type annotation and emit diagnostics for reserved or invalid type spellings.
     fn resolve_type_checked(&mut self, ty: &Spanned<Type>) -> ResolvedType {
         self.validate_stdlib_type_usage(ty);
@@ -2484,7 +2588,8 @@ impl TypeChecker {
                 .push(errors::rust_crate_root_used_as_type(name.as_str(), &info.path, ty.span));
             return ResolvedType::Unknown;
         }
-        resolve_type(&ty.node, &self.symbols)
+        let resolved = resolve_type(&ty.node, &self.symbols);
+        self.expand_type_aliases(resolved)
     }
 
     /// Return whether a simple type name is reserved for a parameterized numeric family.

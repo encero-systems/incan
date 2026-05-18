@@ -128,6 +128,7 @@ impl TypeChecker {
                     span: decl.span,
                     scope: 0,
                 });
+                self.register_type_alias_target(a);
             }
             Declaration::Newtype(nt) => {
                 self.validate_root_namespace(&nt.name, decl.span);
