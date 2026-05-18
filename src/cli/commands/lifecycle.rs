@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::ValueEnum;
-use serde_json::json;
+use serde_json::{Value as JsonValue, json};
 use toml_edit::{DocumentMut, value};
 
 use crate::cli::{CliError, CliResult, ExitCode};
@@ -21,6 +21,7 @@ use crate::manifest::{
     render_dependency_overlay_manifest,
 };
 use crate::project_lifecycle::env::{EnvConfigError, EnvConfigSet, EnvRunPreview, ResolvedEnv, resolve_cwd};
+use crate::project_lifecycle::toolchain::{ToolchainCompatibility, ToolchainConstraintSet};
 use crate::project_lifecycle::version::{VersionBump, VersionChange, VersionRequest};
 
 /// CLI spelling of version bumps accepted by `incan version`.
@@ -151,7 +152,7 @@ pub fn env_show(env_name: Option<&str>, format: EnvOutputFormat, project: Option
         Some(env_name) => {
             let resolved = context.config.resolve_env(env_name).map_err(env_config_error_to_cli)?;
             match format {
-                EnvOutputFormat::Text => print_resolved_env(&resolved, &context.project_root),
+                EnvOutputFormat::Text => print_resolved_env(&resolved, &context.project_root)?,
                 EnvOutputFormat::Json => print_resolved_env_json(&resolved, &context.project_root)?,
             }
         }
@@ -180,12 +181,13 @@ pub fn env_run(
         .config
         .resolve_run_preview(&context.project_root, env_name, script, extra_args)
         .map_err(env_config_error_to_cli)?;
-    reject_recursive_env_run(&preview)?;
 
     if dry_run {
-        print_run_preview(&preview);
+        print_run_preview(&preview)?;
         return Ok(ExitCode::SUCCESS);
     }
+    crate::cli::commands::common::enforce_toolchain_constraints(&preview.resolved_env.requires_incan)?;
+    reject_recursive_env_run(&preview)?;
 
     let Some((program, args)) = preview.argv.split_first() else {
         return Err(CliError::failure(format!(
@@ -459,9 +461,22 @@ fn extend_active_invocation_stack(current: Option<&str>, next_marker: &str) -> S
 }
 
 /// Print one resolved environment in the human-oriented text format.
-fn print_resolved_env(resolved: &ResolvedEnv, project_root: &Path) {
+fn print_resolved_env(resolved: &ResolvedEnv, project_root: &Path) -> CliResult<()> {
+    let compatibility = toolchain_compatibility(&resolved.requires_incan)?;
     println!("{}", resolved.name);
     println!("  overlay chain: {}", resolved.overlay_chain.join(" -> "));
+    println!(
+        "  requires-incan: {}",
+        compatibility
+            .effective_requirement
+            .as_deref()
+            .unwrap_or("unconstrained")
+    );
+    println!(
+        "  active Incan: {} ({})",
+        compatibility.active_version,
+        toolchain_status(&compatibility)
+    );
     println!("  cwd: {}", display_cwd(project_root, resolved.cwd.as_deref()));
     println!("  env vars: {}", resolved.env_vars.len());
     println!("  scripts: {}", resolved.scripts.len());
@@ -480,13 +495,16 @@ fn print_resolved_env(resolved: &ResolvedEnv, project_root: &Path) {
     print_named_value_section("Dev Dependencies", &resolved.dev_dependencies, |name, value| {
         format!("{name:<16} {}", value_to_display_string(value))
     });
+    Ok(())
 }
 
 /// Print one resolved environment as JSON.
 fn print_resolved_env_json(resolved: &ResolvedEnv, project_root: &Path) -> CliResult<()> {
+    let compatibility = toolchain_compatibility(&resolved.requires_incan)?;
     print_json(&json!({
         "env": resolved.name,
         "overlay_chain": resolved.overlay_chain,
+        "requires_incan": toolchain_json(&compatibility),
         "cwd": resolve_cwd(project_root, resolved.cwd.as_deref()).display().to_string(),
         "env_vars": resolved.env_vars,
         "scripts": resolved.scripts,
@@ -496,16 +514,32 @@ fn print_resolved_env_json(resolved: &ResolvedEnv, project_root: &Path) -> CliRe
 }
 
 /// Print the dry-run preview for `incan env run`.
-fn print_run_preview(preview: &EnvRunPreview) {
+fn print_run_preview(preview: &EnvRunPreview) -> CliResult<()> {
+    let compatibility = toolchain_compatibility(&preview.resolved_env.requires_incan)?;
     println!("env: {}", preview.env);
+    println!(
+        "requires-incan: {}",
+        compatibility
+            .effective_requirement
+            .as_deref()
+            .unwrap_or("unconstrained")
+    );
+    println!(
+        "active Incan: {} ({})",
+        compatibility.active_version,
+        toolchain_status(&compatibility)
+    );
     println!("cwd: {}", preview.cwd.display());
     println!("env-vars:");
     print_map(&preview.env_vars);
     println!("command: {}", shell_join(&preview.argv));
+    Ok(())
 }
 
 struct EnvSummary {
     name: String,
+    requires_incan: String,
+    toolchain_status: String,
     cwd: String,
     env_vars: usize,
     scripts: usize,
@@ -528,6 +562,8 @@ fn print_env_overview_json(context: &EnvContext) -> CliResult<()> {
             .into_iter()
             .map(|summary| json!({
                 "name": summary.name,
+                "requires_incan": summary.requires_incan,
+                "toolchain_status": summary.toolchain_status,
                 "cwd": summary.cwd,
                 "env_vars": summary.env_vars,
                 "scripts": summary.scripts,
@@ -546,8 +582,15 @@ fn resolve_env_summaries(context: &EnvContext) -> CliResult<Vec<EnvSummary>> {
         .into_iter()
         .map(|name| {
             let resolved = context.config.resolve_env(&name).map_err(env_config_error_to_cli)?;
+            let compatibility = toolchain_compatibility(&resolved.requires_incan)?;
             Ok(EnvSummary {
                 name: resolved.name,
+                requires_incan: compatibility
+                    .effective_requirement
+                    .as_deref()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "unconstrained".to_string()),
+                toolchain_status: toolchain_status(&compatibility).to_string(),
                 cwd: display_cwd(&context.project_root, resolved.cwd.as_deref()),
                 env_vars: resolved.env_vars.len(),
                 scripts: resolved.scripts.len(),
@@ -572,6 +615,18 @@ fn print_summary_table(summaries: &[EnvSummary]) {
         .max()
         .unwrap_or(3)
         .max("Cwd".len());
+    let requires_width = summaries
+        .iter()
+        .map(|summary| summary.requires_incan.len())
+        .max()
+        .unwrap_or(15)
+        .max("Requires Incan".len());
+    let toolchain_width = summaries
+        .iter()
+        .map(|summary| summary.toolchain_status.len())
+        .max()
+        .unwrap_or(10)
+        .max("Toolchain".len());
     let env_vars_width = summaries
         .iter()
         .map(|summary| summary.env_vars.to_string().len())
@@ -598,17 +653,19 @@ fn print_summary_table(summaries: &[EnvSummary]) {
         .max("Dev Dependencies".len());
 
     println!(
-        "{:<name_width$}  {:<cwd_width$}  {:>env_vars_width$}  {:>scripts_width$}  {:>deps_width$}  {:>dev_deps_width$}",
-        "Name", "Cwd", "Env Vars", "Scripts", "Dependencies", "Dev Dependencies",
+        "{:<name_width$}  {:<requires_width$}  {:<toolchain_width$}  {:<cwd_width$}  {:>env_vars_width$}  {:>scripts_width$}  {:>deps_width$}  {:>dev_deps_width$}",
+        "Name", "Requires Incan", "Toolchain", "Cwd", "Env Vars", "Scripts", "Dependencies", "Dev Dependencies",
     );
     println!(
-        "{:-<name_width$}  {:-<cwd_width$}  {:-<env_vars_width$}  {:-<scripts_width$}  {:-<deps_width$}  {:-<dev_deps_width$}",
-        "", "", "", "", "", "",
+        "{:-<name_width$}  {:-<requires_width$}  {:-<toolchain_width$}  {:-<cwd_width$}  {:-<env_vars_width$}  {:-<scripts_width$}  {:-<deps_width$}  {:-<dev_deps_width$}",
+        "", "", "", "", "", "", "", "",
     );
     for summary in summaries {
         println!(
-            "{:<name_width$}  {:<cwd_width$}  {:>env_vars_width$}  {:>scripts_width$}  {:>deps_width$}  {:>dev_deps_width$}",
+            "{:<name_width$}  {:<requires_width$}  {:<toolchain_width$}  {:<cwd_width$}  {:>env_vars_width$}  {:>scripts_width$}  {:>deps_width$}  {:>dev_deps_width$}",
             summary.name,
+            summary.requires_incan,
+            summary.toolchain_status,
             summary.cwd,
             summary.env_vars,
             summary.scripts,
@@ -616,6 +673,41 @@ fn print_summary_table(summaries: &[EnvSummary]) {
             summary.dev_dependencies,
         );
     }
+}
+
+/// Compute current-toolchain compatibility for CLI display.
+fn toolchain_compatibility(constraints: &ToolchainConstraintSet) -> CliResult<ToolchainCompatibility> {
+    constraints
+        .compatibility_current()
+        .map_err(|error| CliError::failure(error.to_string()))
+}
+
+/// Render the compact compatibility status used in text tables.
+fn toolchain_status(compatibility: &ToolchainCompatibility) -> &'static str {
+    if compatibility.effective_requirement.is_none() {
+        "unconstrained"
+    } else if compatibility.satisfied {
+        "satisfied"
+    } else {
+        "unsatisfied"
+    }
+}
+
+/// Render toolchain compatibility as JSON.
+fn toolchain_json(compatibility: &ToolchainCompatibility) -> JsonValue {
+    json!({
+        "active_version": compatibility.active_version,
+        "effective": compatibility.effective_requirement.as_deref(),
+        "satisfied": compatibility.satisfied,
+        "layers": compatibility
+            .layers
+            .iter()
+            .map(|layer| json!({
+                "source": layer.source.as_str(),
+                "requirement": layer.requirement.as_str(),
+            }))
+            .collect::<Vec<_>>(),
+    })
 }
 
 /// Print one named string map section in text output.
@@ -761,6 +853,7 @@ mod tests {
             resolved_env: ResolvedEnv {
                 name: "unit".to_string(),
                 overlay_chain: vec![],
+                requires_incan: ToolchainConstraintSet::new(),
                 cwd: None,
                 env_vars: BTreeMap::new(),
                 scripts: BTreeMap::new(),
@@ -781,5 +874,45 @@ mod tests {
             vec!["default:run".to_string(), "unit:test".to_string()]
         );
         assert!(active_stack_contains(Some(&stack), "unit:test"));
+    }
+
+    #[test]
+    fn env_run_rejects_unsatisfied_requires_incan_before_spawning() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::write(
+            tmp.path().join(MANIFEST_FILENAME),
+            r#"
+            [project]
+            name = "demo"
+            version = "0.1.0"
+
+            [tool.incan.envs.release]
+            requires-incan = ">999.0.0"
+
+            [tool.incan.envs.release.scripts]
+            probe = ["incan", "--version"]
+            "#,
+        )?;
+
+        let previous = env::current_dir()?;
+        env::set_current_dir(tmp.path())?;
+        let result = env_run("release", "probe", false, &[], None);
+        env::set_current_dir(previous)?;
+
+        let error = match result {
+            Ok(exit_code) => return Err(format!("expected requires-incan failure, got {exit_code:?}").into()),
+            Err(error) => error,
+        };
+        assert!(
+            error.message.contains("does not satisfy requires-incan"),
+            "expected requires-incan failure, got: {}",
+            error.message
+        );
+        assert!(
+            error.message.contains("env.release.requires-incan"),
+            "expected env layer in diagnostic, got: {}",
+            error.message
+        );
+        Ok(())
     }
 }

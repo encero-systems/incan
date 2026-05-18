@@ -108,6 +108,21 @@ Both `incan new` and `incan init` accept metadata flags:
 
 `incan init --name greeter --version 0.1.0` writes the core project keys, `readme = "README.md"`, and a default `main` script. Metadata flags or interactive answers populate optional fields such as `description`, `authors`, and `license`.
 
+### Toolchain requirements
+
+`requires-incan` is an executable compatibility guard. Project-aware execution commands enforce it before doing build, test, lock, or env-script work:
+
+```toml
+[project]
+name = "greeter"
+version = "0.1.0"
+requires-incan = ">=0.3,<0.4"
+```
+
+If the active compiler is outside the range, `incan run` in project mode, `incan build`, `incan test`, `incan lock`, and `incan env run` fail early with a diagnostic that names the active compiler version and the contributing constraint layers. Single-file and inline commands without a discovered `incan.toml` remain manifest-free and do not infer a requirement.
+
+Development compilers identify themselves with prerelease versions such as `0.3.0-dev.49`. For lifecycle compatibility, that development build is treated as part of the `0.3` line, so a requirement such as `>=0.3,<0.4` admits it.
+
 ## `[project.scripts]`
 
 `[project.scripts]` maps script names to Incan source files:
@@ -206,6 +221,7 @@ test = ["incan", "test", "tests/"]
 
 [tool.incan.envs.ci]
 extends = ["unit"]
+requires-incan = ">=0.3,<0.4"
 
 [tool.incan.envs.ci.scripts]
 test = ["incan", "test", "--locked", "tests/"]
@@ -251,10 +267,15 @@ Typical pattern:
 | Field      | Type                  | Meaning                                                                     |
 | ---------- | --------------------- | --------------------------------------------------------------------------- |
 | `extends`  | list of strings       | Other environments to merge before this one                                 |
+| `requires-incan` | string          | Additional Incan toolchain requirement for this env                         |
 | `detached` | bool                  | Do not include `default` automatically                                      |
 | `cwd`      | string                | Working directory for scripts, relative to the project root unless absolute |
 | `env-vars` | table                 | Environment variables to inject into the process                            |
 | `scripts`  | table of string lists | Script names mapped to argv lists                                           |
+
+An env-level `requires-incan` is combined with the project requirement and any inherited env requirements. This can make an automation env stricter than day-to-day development without weakening the project baseline. Use `incan env show <env>` or `incan env run <env> <script> --dry-run` to inspect the effective requirement and current compatibility before running the script.
+
+RFC 073 also reserves declarative environment matrices, but matrix expansion is not part of the `0.3` lifecycle implementation. Named envs resolve one configuration unless a later release documents matrix support.
 
 Dependency overlay tables may also be used for environment-specific dependencies:
 

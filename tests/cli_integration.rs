@@ -72,6 +72,147 @@ main = "src/main.incn"
 }
 
 #[test]
+fn requires_incan_allows_compatible_project_commands() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "compatible_toolchain_guard"
+version = "0.1.0"
+requires-incan = ">=0.3,<0.4"
+
+[project.scripts]
+main = "src/main.incn"
+"#,
+    )?;
+    let main_path = src_dir.join("main.incn");
+    fs::write(
+        &main_path,
+        r#"def main() -> None:
+  println("cli lifecycle ok")
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["lock", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&output, "incan lock with compatible requires-incan");
+
+    Ok(())
+}
+
+#[test]
+fn requires_incan_rejects_project_aware_commands() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_root = tmp.path();
+    let src_dir = project_root.join("src");
+    let tests_dir = project_root.join("tests");
+    fs::create_dir_all(&src_dir)?;
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        project_root.join("incan.toml"),
+        r#"[project]
+name = "toolchain_guard"
+version = "0.1.0"
+requires-incan = ">999.0.0"
+
+[project.scripts]
+main = "src/main.incn"
+"#,
+    )?;
+    fs::write(
+        src_dir.join("main.incn"),
+        r#"def main() -> None:
+  println("should not run")
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_main.incn"),
+        r#"from std.testing import test
+
+@test
+def test_guard() -> None:
+  assert True
+"#,
+    )?;
+
+    let cases = vec![
+        (vec!["lock"], "incan lock"),
+        (vec!["build", "src/main.incn"], "incan build"),
+        (vec!["run"], "incan run"),
+        (vec!["test"], "incan test"),
+    ];
+
+    for (args, context) in cases {
+        let output = run_incan(project_root, &args)?;
+        assert_failure(&output, context);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("does not satisfy requires-incan"),
+            "{context} should reject incompatible requires-incan, got:\n{stderr}"
+        );
+        assert!(
+            stderr.contains("project.requires-incan"),
+            "{context} should name the project constraint layer, got:\n{stderr}"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn env_requires_incan_is_reported_and_enforced_for_env_run() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_root = tmp.path();
+    fs::write(
+        project_root.join("incan.toml"),
+        r#"[project]
+name = "env_toolchain_guard"
+version = "0.1.0"
+
+[tool.incan.envs.release]
+requires-incan = ">999.0.0"
+
+[tool.incan.envs.release.scripts]
+probe = ["incan", "--version"]
+"#,
+    )?;
+
+    let show_output = run_incan(project_root, &["env", "show", "release"])?;
+    assert_success(&show_output, "incan env show release");
+    let show_stdout = String::from_utf8_lossy(&show_output.stdout);
+    assert!(
+        show_stdout.contains("requires-incan: >999.0.0"),
+        "env show should report effective constraint, got:\n{show_stdout}"
+    );
+    assert!(
+        show_stdout.contains("unsatisfied"),
+        "env show should report compatibility state, got:\n{show_stdout}"
+    );
+
+    let dry_run_output = run_incan(project_root, &["env", "run", "release", "probe", "--dry-run"])?;
+    assert_success(&dry_run_output, "incan env run release probe --dry-run");
+    let dry_run_stdout = String::from_utf8_lossy(&dry_run_output.stdout);
+    assert!(
+        dry_run_stdout.contains("active Incan:") && dry_run_stdout.contains("unsatisfied"),
+        "env dry-run should surface unsatisfied compatibility without spawning, got:\n{dry_run_stdout}"
+    );
+
+    let run_output = run_incan(project_root, &["env", "run", "release", "probe"])?;
+    assert_failure(&run_output, "incan env run release probe");
+    let stderr = String::from_utf8_lossy(&run_output.stderr);
+    assert!(
+        stderr.contains("env.release.requires-incan"),
+        "env run should name the env constraint layer, got:\n{stderr}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn init_creates_project_scaffold_with_expected_content() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let project_dir = tmp.path().join("generated_app");

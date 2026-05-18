@@ -35,6 +35,8 @@ readme = "README.md"
 requires-incan = ">=0.2"
 ```
 
+`requires-incan` is enforced by project-aware execution commands. If the active compiler does not satisfy the requirement, `incan run` in project mode, `incan build`, `incan test`, `incan lock`, and `incan env run` fail before compiling, locking, or launching scripts. Single-file or inline commands without a discovered project manifest do not infer a toolchain requirement.
+
 ### `[project.scripts]`
 
 Named entry points for CLI commands:
@@ -91,6 +93,7 @@ test = ["incan", "test", "tests/"]
 
 [tool.incan.envs.release]
 extends = ["default"]
+requires-incan = ">=0.3,<0.4"
 env-vars = { INCAN_FANCY_ERRORS = "1" }
 
 [tool.incan.envs.release.scripts]
@@ -102,10 +105,15 @@ Fields:
 | Field      | Type                  | Description                                                                 |
 | ---------- | --------------------- | --------------------------------------------------------------------------- |
 | `extends`  | list of strings       | Other environments to merge before this one                                 |
+| `requires-incan` | string          | Additional Incan toolchain requirement for this env                         |
 | `detached` | bool                  | Do not include `default` automatically                                      |
 | `cwd`      | string                | Working directory for scripts, relative to the project root unless absolute |
 | `env-vars` | table                 | Environment variables to inject into the process                            |
 | `scripts`  | table of string lists | Script names mapped to argv lists                                           |
+
+Env-level `requires-incan` narrows the project requirement for that environment. `incan env show <env>` and `incan env run <env> <script> --dry-run` display the effective requirement and whether the active compiler satisfies it; actual `incan env run` execution rejects unsatisfied constraints before spawning the script.
+
+Environment matrices from RFC 073 remain deferred beyond `0.3`; ordinary named envs may declare `requires-incan`, but matrix expansion is not available yet.
 
 Use the environment with:
 

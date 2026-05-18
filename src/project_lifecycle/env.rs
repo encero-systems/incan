@@ -10,6 +10,7 @@ use thiserror::Error;
 use toml::Value;
 
 use crate::manifest::{EnvSection, ProjectManifest};
+use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 
 /// Display label used for the project-level overlay in resolved chains.
 pub const PROJECT_BASE_OVERLAY: &str = "project";
@@ -25,6 +26,8 @@ pub struct EnvConfigSet {
 /// A deterministic overlay of fields that can participate in environment resolution.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct EnvOverlay {
+    /// Effective Incan toolchain constraints contributed by the project and env overlays.
+    pub requires_incan: ToolchainConstraintSet,
     /// Working directory for scripts. Relative paths are interpreted against the project root.
     pub cwd: Option<String>,
     /// Environment variables to inject into the script process.
@@ -44,6 +47,8 @@ pub struct ResolvedEnv {
     pub name: String,
     /// Overlay labels in application order, beginning with the project base overlay.
     pub overlay_chain: Vec<String>,
+    /// Effective Incan toolchain constraints after project/env overlay resolution.
+    pub requires_incan: ToolchainConstraintSet,
     /// Final working directory, if any env overlay defined it.
     pub cwd: Option<String>,
     /// Final environment variable map after deterministic overlay merging.
@@ -99,6 +104,7 @@ impl EnvConfigSet {
     pub fn from_manifest(manifest: &ProjectManifest) -> Self {
         Self {
             base: EnvOverlay {
+                requires_incan: ToolchainConstraintSet::from_project_manifest(manifest),
                 dependencies: manifest.env_base_dependency_overlay(),
                 dev_dependencies: manifest.env_base_dev_dependency_overlay(),
                 ..EnvOverlay::default()
@@ -154,6 +160,7 @@ impl EnvConfigSet {
         Ok(ResolvedEnv {
             name: name.to_string(),
             overlay_chain: state.chain,
+            requires_incan: state.overlay.requires_incan,
             cwd: state.overlay.cwd,
             env_vars: state.overlay.env_vars,
             scripts: state.overlay.scripts,
@@ -233,7 +240,7 @@ impl EnvConfigSet {
 
         state.stack.pop();
         if let Some(env) = env {
-            state.overlay.apply_env(env);
+            state.overlay.apply_env(name, env);
         }
         state.chain.push(name.to_string());
         Ok(())
@@ -242,7 +249,11 @@ impl EnvConfigSet {
 
 impl EnvOverlay {
     /// Apply one configured env table on top of this overlay using RFC 015 merge rules.
-    fn apply_env(&mut self, env: &EnvSection) {
+    fn apply_env(&mut self, name: &str, env: &EnvSection) {
+        if let Some(requirement) = &env.requires_incan {
+            self.requires_incan
+                .push(format!("env.{name}.requires-incan"), requirement.clone());
+        }
         if let Some(cwd) = &env.cwd {
             self.cwd = Some(cwd.clone());
         }
@@ -696,6 +707,59 @@ mod tests {
             ]
         );
         assert_eq!(preview.env_vars.get("INCAN_NO_BANNER").map(String::as_str), Some("1"));
+        Ok(())
+    }
+
+    #[test]
+    fn resolves_project_and_env_toolchain_constraints_in_overlay_order() -> Result<(), Box<dyn std::error::Error>> {
+        let config = parse_config(
+            r#"
+            [project]
+            requires-incan = ">=0.3,<0.5"
+
+            [tool.incan.envs.default]
+            requires-incan = ">=0.3,<0.4"
+
+            [tool.incan.envs.release]
+            requires-incan = ">=0.3.1,<0.4"
+            "#,
+        )?;
+
+        let resolved = config.resolve_env("release")?;
+
+        assert_eq!(
+            resolved
+                .requires_incan
+                .layers()
+                .iter()
+                .map(|layer| (layer.source.as_str(), layer.requirement.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("project.requires-incan", ">=0.3,<0.5"),
+                ("env.default.requires-incan", ">=0.3,<0.4"),
+                ("env.release.requires-incan", ">=0.3.1,<0.4"),
+            ]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_project_requires_incan_is_manifest_error() -> Result<(), Box<dyn std::error::Error>> {
+        let error = match ProjectManifest::from_str(
+            r#"
+            [project]
+            requires-incan = "not semver"
+            "#,
+            Path::new("incan.toml"),
+        ) {
+            Ok(manifest) => return Err(format!("expected manifest error, parsed {manifest:?}").into()),
+            Err(error) => error,
+        };
+
+        assert!(
+            error.to_string().contains("invalid requires-incan constraint"),
+            "expected requires-incan parse diagnostic, got: {error}"
+        );
         Ok(())
     }
 

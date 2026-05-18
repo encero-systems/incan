@@ -9,6 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use crate::cli::commands::common::CargoPolicy;
 use crate::cli::{CliError, CliResult, ExitCode};
+use crate::manifest::ProjectManifest;
 
 mod discovery;
 mod execution;
@@ -193,6 +194,19 @@ fn stable_id_root(path: &Path) -> PathBuf {
     } else {
         canonical
     }
+}
+
+/// Discover and enforce project-level toolchain constraints for a test path, when it belongs to a project.
+fn enforce_test_path_toolchain_constraint(path: &Path) -> CliResult<()> {
+    let start = if path.is_file() {
+        path.parent().unwrap_or_else(|| Path::new("."))
+    } else {
+        path
+    };
+    if let Some(manifest) = ProjectManifest::discover(start).map_err(|error| CliError::failure(error.to_string()))? {
+        crate::cli::commands::common::enforce_project_toolchain_constraint(&manifest)?;
+    }
+    Ok(())
 }
 
 /// Stable test identifier used by `-k`, `--list`, and machine-readable reports.
@@ -1047,6 +1061,7 @@ pub fn run_tests(config: TestRunConfig<'_>) -> CliResult<ExitCode> {
     let jobs = jobs.max(1);
 
     let path = Path::new(path);
+    enforce_test_path_toolchain_constraint(path)?;
     let stable_id_root = stable_id_root(path);
     let test_files = discover_test_files(path);
     let eval_context = CollectionEvalContext::new(test_features.into_iter().collect());

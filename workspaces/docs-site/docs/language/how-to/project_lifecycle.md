@@ -111,6 +111,36 @@ incan version --set 1.2.0
 
 `incan version` changes the project version, not the compiler or toolchain version. Toolchain requirements stay in `requires-incan`, and compiler releases are maintained separately from your app or library.
 
+## Set the required Incan toolchain
+
+Use `[project].requires-incan` when a project needs a particular Incan release line:
+
+```toml
+[project]
+name = "greeter"
+version = "0.1.0"
+requires-incan = ">=0.3,<0.4"
+```
+
+Project-aware execution commands enforce this before they do real work. If the active compiler is incompatible, `incan run`, `incan build`, `incan test`, `incan lock`, and `incan env run` fail with the active version and the requirement that rejected it. Plain single-file or inline commands outside a project do not use `requires-incan`.
+
+You can make a named env stricter for release or CI workflows:
+
+```toml
+[tool.incan.envs.ci]
+requires-incan = ">=0.3,<0.4"
+
+[tool.incan.envs.ci.scripts]
+test = ["incan", "test", "--locked"]
+```
+
+Inspect the effective requirement before running the script:
+
+```bash
+incan env show ci
+incan env run ci test --dry-run
+```
+
 ## Define repeatable environments
 
 Use `incan env` when a project has commands that should always run with the same arguments, working directory, or environment variables.

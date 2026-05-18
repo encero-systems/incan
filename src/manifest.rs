@@ -8,6 +8,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
+use semver::VersionReq;
 use serde::{Deserialize, Serialize};
 use toml_edit::{Array as EditArray, Document, DocumentMut, Item, Table, Value as EditValue};
 
@@ -259,6 +260,9 @@ pub struct EnvSection {
     /// Env names to apply before this env.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub extends: Vec<String>,
+    /// Required Incan toolchain version requirement for this env.
+    #[serde(rename = "requires-incan", skip_serializing_if = "Option::is_none")]
+    pub requires_incan: Option<String>,
     /// Skip implicit `default` inclusion when resolving this env.
     #[serde(default, skip_serializing_if = "is_false")]
     pub detached: bool,
@@ -758,6 +762,7 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         .unwrap_or_default();
 
     validate_package_collisions(&rust_dependencies, &rust_dev_dependencies, path)?;
+    validate_requires_incan_constraints(&raw, &spans, path)?;
 
     if let Some(vocab) = &raw.vocab {
         if let Some(crate_path) = &vocab.crate_path {
@@ -787,6 +792,56 @@ fn parse_manifest_content(content: &str, path: &Path) -> Result<ProjectManifest,
         rust_dependencies: rust_dependencies.specs,
         rust_dev_dependencies: rust_dev_dependencies.specs,
     })
+}
+
+/// Validate every `requires-incan` string in the manifest before command-specific policy checks run.
+fn validate_requires_incan_constraints(
+    raw: &RawManifest,
+    spans: &ManifestSpans<'_>,
+    path: &Path,
+) -> Result<(), ManifestError> {
+    if let Some(requirement) = raw
+        .project
+        .as_ref()
+        .and_then(|project| project.requires_incan.as_deref())
+    {
+        validate_requires_incan_requirement(requirement, path, spans.entry_location(&["project"], "requires-incan"))?;
+    }
+
+    if let Some(envs) = raw
+        .tool
+        .as_ref()
+        .and_then(|tool| tool.incan.as_ref())
+        .map(|incan| &incan.envs)
+    {
+        for (env_name, env) in envs {
+            if let Some(requirement) = env.requires_incan.as_deref() {
+                validate_requires_incan_requirement(
+                    requirement,
+                    path,
+                    spans.entry_location(&["tool", "incan", "envs", env_name.as_str()], "requires-incan"),
+                )?;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Validate one SemVer requirement string from a `requires-incan` field.
+fn validate_requires_incan_requirement(
+    requirement: &str,
+    path: &Path,
+    location: Option<ManifestLocation>,
+) -> Result<(), ManifestError> {
+    VersionReq::parse(requirement).map_err(|error| {
+        manifest_invalid(
+            path,
+            location,
+            format!("invalid requires-incan constraint `{requirement}`: {error}"),
+        )
+    })?;
+    Ok(())
 }
 
 /// Serialize one resolved Rust dependency spec back into the canonical TOML table shape.

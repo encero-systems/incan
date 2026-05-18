@@ -24,8 +24,8 @@ use crate::manifest::ProjectManifest;
 
 use super::common::{
     CargoPolicy, ProjectRequirements, build_source_map, cargo_command_flags, cargo_lockfile_flags,
-    collect_inline_rust_imports, collect_modules, collect_project_requirements, format_dependency_error,
-    merge_project_requirement_dependencies,
+    collect_inline_rust_imports, collect_modules, collect_project_requirements, enforce_project_toolchain_constraint,
+    format_dependency_error, merge_project_requirement_dependencies,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
@@ -47,6 +47,7 @@ pub fn lock_project(
     let manifest = ProjectManifest::discover(&start_dir)
         .map_err(|e| CliError::failure(e.to_string()))?
         .ok_or_else(|| CliError::failure("No incan.toml found (run `incan init`)"))?;
+    enforce_project_toolchain_constraint(&manifest)?;
 
     let cargo_features = CargoFeatureSelection {
         cargo_features,

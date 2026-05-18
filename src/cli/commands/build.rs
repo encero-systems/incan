@@ -29,9 +29,9 @@ use crate::manifest::ProjectManifest;
 
 use super::common::{
     CargoPolicy, build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules,
-    collect_project_requirements, format_dependency_error, imported_module_deps_for_with_index,
-    merge_project_requirement_dependencies, module_key_index, resolve_project_root,
-    typecheck_modules_with_import_graph, validate_output_dir,
+    collect_project_requirements, enforce_project_toolchain_constraint, format_dependency_error,
+    imported_module_deps_for_with_index, merge_project_requirement_dependencies, module_key_index,
+    resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
@@ -414,6 +414,13 @@ fn prepare_project(
             .map_err(|e| CliError::failure(format!("failed to determine current directory: {e}")))?
             .join(file_path)
     };
+    let path = normalized_file_path.as_path();
+    let inferred_project_root = resolve_project_root(path);
+    let manifest = ProjectManifest::discover(&inferred_project_root).map_err(|e| CliError::failure(e.to_string()))?;
+    if let Some(manifest) = manifest.as_ref() {
+        enforce_project_toolchain_constraint(manifest)?;
+    }
+
     let normalized_file_path_str = normalized_file_path.to_string_lossy().to_string();
     let modules = collect_modules(&normalized_file_path_str)?;
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
@@ -423,9 +430,6 @@ fn prepare_project(
     };
 
     let dep_modules = &modules[..modules.len() - 1];
-    let path = normalized_file_path.as_path();
-    let inferred_project_root = resolve_project_root(path);
-    let manifest = ProjectManifest::discover(&inferred_project_root).map_err(|e| CliError::failure(e.to_string()))?;
     let project_root = manifest
         .as_ref()
         .map(|manifest| manifest.project_root().to_path_buf())
@@ -635,6 +639,7 @@ pub fn build_library(
             "No incan.toml found for `incan build --lib` (run `incan init` first)",
         ));
     };
+    enforce_project_toolchain_constraint(&manifest)?;
 
     let lib_entry = validate_library_entrypoint(&manifest)?;
     let lib_entry_str = lib_entry.to_string_lossy().to_string();

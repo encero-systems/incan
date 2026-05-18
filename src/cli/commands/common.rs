@@ -27,6 +27,7 @@ use crate::frontend::{ast_walk, diagnostics, lexer, parser, typechecker, vocab_d
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
 use crate::manifest::{DependencySource, DependencySpec};
+use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig};
 use incan_core::lang::{
@@ -130,6 +131,18 @@ impl CargoPolicy {
             self.locked = true;
         }
     }
+}
+
+/// Enforce the project-level `requires-incan` constraint for a project-aware command.
+pub(crate) fn enforce_project_toolchain_constraint(manifest: &ProjectManifest) -> CliResult<()> {
+    enforce_toolchain_constraints(&ToolchainConstraintSet::from_project_manifest(manifest))
+}
+
+/// Enforce an already-resolved effective `requires-incan` constraint set.
+pub(crate) fn enforce_toolchain_constraints(constraints: &ToolchainConstraintSet) -> CliResult<()> {
+    constraints
+        .enforce_current()
+        .map_err(|error| CliError::failure(error.to_string()))
 }
 
 /// Resolve one boolean policy input with CLI enable/disable flags over env defaults.
