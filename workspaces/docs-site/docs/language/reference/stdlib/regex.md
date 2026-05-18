@@ -233,4 +233,4 @@ Rejected pattern syntax returns a `RegexError`. Error text is diagnostic text; p
 
 - [Strings and bytes](../strings.md)
 - [Callable objects](../stdlib_traits/callable.md)
-- [RFC 059: std.regex](../../../RFCs/059_std_regex.md)
+- [RFC 059: std.regex](../../../RFCs/closed/implemented/059_std_regex.md)
