@@ -228,6 +228,8 @@ struct GeneratedUseAnalyzer<'program> {
     rust_extension_trait_imports: HashMap<String, IrRustTraitImport>,
     external_error_trait_types: HashSet<String>,
     preserve_public_items: bool,
+    variable_types: HashMap<String, IrType>,
+    struct_field_aliases: HashMap<(String, String), String>,
     analysis: GeneratedUseAnalysis,
     pending: Vec<String>,
 }
@@ -247,6 +249,8 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             rust_extension_trait_imports: HashMap::new(),
             external_error_trait_types: external_error_trait_types.clone(),
             preserve_public_items,
+            variable_types: HashMap::new(),
+            struct_field_aliases: HashMap::new(),
             analysis: GeneratedUseAnalysis::default(),
             pending: Vec::new(),
         };
@@ -258,6 +262,15 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 }
                 IrDeclKind::Struct(s) => {
                     analyzer.declarations_by_name.insert(s.name.clone(), decl);
+                    for field in &s.fields {
+                        if let Some(alias) = &field.alias
+                            && alias != &field.name
+                        {
+                            analyzer
+                                .struct_field_aliases
+                                .insert((s.name.clone(), alias.clone()), field.name.clone());
+                        }
+                    }
                     if preserve_public_items && !matches!(s.visibility, Visibility::Private) {
                         analyzer.analysis.public_types.insert(s.name.clone());
                     }
@@ -521,10 +534,14 @@ impl<'program> GeneratedUseAnalyzer<'program> {
 
     /// Scan a function signature, defaults, and body for generated Rust dependencies.
     fn scan_function(&mut self, func: &IrFunction) {
+        let outer_variable_types = std::mem::take(&mut self.variable_types);
         self.scan_type_params(&func.type_params);
         self.scan_type(&func.return_type);
         for param in &func.params {
             self.scan_type(&param.ty);
+            if !param.is_self {
+                self.variable_types.insert(param.name.clone(), param.ty.clone());
+            }
             if let Some(default) = &param.default {
                 self.scan_expr(default);
             }
@@ -532,6 +549,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         for stmt in &func.body {
             self.scan_stmt(stmt);
         }
+        self.variable_types = outer_variable_types;
     }
 
     /// Scan generic parameters and their trait bounds for imports used only in Rust generic syntax.
@@ -568,9 +586,15 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     fn scan_stmt(&mut self, stmt: &IrStmt) {
         match &stmt.kind {
             IrStmtKind::Expr(expr) | IrStmtKind::Yield(expr) => self.scan_expr(expr),
-            IrStmtKind::Let { ty, value, .. } => {
+            IrStmtKind::Let { name, ty, value, .. } => {
                 self.scan_type(ty);
                 self.scan_expr(value);
+                let binding_ty = if matches!(ty, IrType::Unknown) {
+                    Self::inferred_binding_type(value).unwrap_or_else(|| value.ty.clone())
+                } else {
+                    ty.clone()
+                };
+                self.variable_types.insert(name.clone(), binding_ty);
             }
             IrStmtKind::Assign { target, value } | IrStmtKind::CompoundAssign { target, value, .. } => {
                 self.scan_assign_target(target);
@@ -768,8 +792,13 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             }
             IrExprKind::Field { object, field } => {
                 self.scan_expr(object);
-                if let Some(type_name) = Self::nominal_type_name(&object.ty) {
-                    self.analysis.read_fields.insert((type_name.to_string(), field.clone()));
+                if let Some(type_name) = self.object_nominal_type_name(object) {
+                    let field = self
+                        .struct_field_aliases
+                        .get(&(type_name.clone(), field.clone()))
+                        .map(String::as_str)
+                        .unwrap_or(field.as_str());
+                    self.analysis.read_fields.insert((type_name, field.to_string()));
                 }
             }
             IrExprKind::Index { object, index } => {
@@ -1183,6 +1212,43 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrType::SelfType
             | IrType::Unknown => {}
         }
+    }
+
+    /// Infer a binding type from constructor-shaped values when lowering left the expression typed as unknown.
+    fn inferred_binding_type(value: &TypedExpr) -> Option<IrType> {
+        if !matches!(value.ty, IrType::Unknown) {
+            return Some(value.ty.clone());
+        }
+        match &value.kind {
+            IrExprKind::Struct { name, .. } => Some(IrType::Struct(name.clone())),
+            IrExprKind::Call { func, .. } => {
+                let IrExprKind::Var { name, ref_kind, .. } = &func.kind else {
+                    return None;
+                };
+                if matches!(ref_kind, VarRefKind::TypeName) {
+                    Some(IrType::Struct(name.clone()))
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Return the nominal type name after peeling explicit reference wrappers.
+    fn object_nominal_type_name(&self, object: &TypedExpr) -> Option<String> {
+        Self::nominal_type_name(&object.ty).map(str::to_string).or_else(|| {
+            let name = match &object.kind {
+                IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
+                    name
+                }
+                _ => return None,
+            };
+            self.variable_types
+                .get(name)
+                .and_then(Self::nominal_type_name)
+                .map(str::to_string)
+        })
     }
 
     /// Return the nominal type name after peeling explicit reference wrappers.

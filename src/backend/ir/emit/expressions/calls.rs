@@ -514,6 +514,57 @@ impl<'a> IrEmitter<'a> {
             quote! { ::<#(#emitted),*> }
         };
 
+        if matches!(
+            &func.kind,
+            IrExprKind::Var {
+                ref_kind: VarRefKind::TypeName,
+                ..
+            }
+        ) && function_sig.is_none()
+            && !args.is_empty()
+            && args.iter().all(|arg| arg.name.is_some())
+            && let Some(target_name) = result_target_ty.and_then(|ty| match ty {
+                IrType::Ref(inner) | IrType::RefMut(inner) => inner.nominal_type_name(),
+                _ => ty.nominal_type_name(),
+            })
+        {
+            let fields = args
+                .iter()
+                .filter_map(|arg| arg.name.as_ref().map(|name| (name.clone(), arg.expr.clone())))
+                .collect::<Vec<_>>();
+            if let Some(metadata) = self
+                .struct_constructor_metadata_for_fields(target_name, &fields)
+                .or_else(|| self.unique_struct_constructor_metadata_for_fields(&fields))
+            {
+                let mut provided: std::collections::HashMap<&str, &TypedExpr> = std::collections::HashMap::new();
+                for (name, expr) in &fields {
+                    if let Some(canonical) = metadata.canonical_field_name(name) {
+                        provided.insert(canonical, expr);
+                    }
+                }
+
+                let mut out_fields = Vec::new();
+                for field_name in &metadata.fields {
+                    let field_ident = Self::rust_ident(field_name);
+                    let target_ty = metadata.field_types.get(field_name);
+                    if let Some(value) = provided.get(field_name.as_str()) {
+                        let value = self.emit_expr_for_use(value, ValueUseSite::StructField { target_ty })?;
+                        out_fields.push(quote! { #field_ident: #value });
+                    } else if let Some(default_expr) = metadata.field_defaults.get(field_name) {
+                        let value = self.emit_expr_for_use(default_expr, ValueUseSite::StructField { target_ty })?;
+                        out_fields.push(quote! { #field_ident: #value });
+                    } else {
+                        return Err(EmitError::Unsupported(format!(
+                            "missing required field '{}' when constructing '{}'",
+                            field_name, target_name
+                        )));
+                    }
+                }
+
+                return Ok(quote! { #f { #(#out_fields),* } });
+            }
+        }
+
         if let Some(sig) = function_sig
             && sig.params.iter().any(|param| param.kind != ParamKind::Normal)
         {

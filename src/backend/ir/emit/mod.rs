@@ -73,6 +73,7 @@ pub(super) struct StructConstructorMetadata {
     fields: Vec<String>,
     field_types: HashMap<String, IrType>,
     field_defaults: HashMap<String, super::IrExpr>,
+    field_aliases: HashMap<String, String>,
 }
 
 impl StructConstructorMetadata {
@@ -95,16 +96,40 @@ impl StructConstructorMetadata {
                         .map(|default| (field.name.clone(), default.clone()))
                 })
                 .collect(),
+            field_aliases: s
+                .fields
+                .iter()
+                .filter_map(|field| {
+                    field
+                        .alias
+                        .as_ref()
+                        .filter(|alias| *alias != &field.name)
+                        .map(|alias| (alias.clone(), field.name.clone()))
+                })
+                .collect(),
+        }
+    }
+
+    /// Resolve a source-facing field name or alias to the canonical Rust field name.
+    fn canonical_field_name<'a>(&'a self, field: &'a str) -> Option<&'a str> {
+        if self.field_types.contains_key(field) {
+            Some(field)
+        } else {
+            self.field_aliases.get(field).map(String::as_str)
         }
     }
 
     /// Return whether every provided named field exists on this constructor variant.
     fn supports_named_fields(&self, provided: &HashSet<&str>) -> bool {
-        provided.iter().all(|field| self.field_types.contains_key(*field))
+        provided.iter().all(|field| self.canonical_field_name(field).is_some())
     }
 
     /// Return whether provided fields plus declared defaults can construct this variant.
     fn constructible_from(&self, provided: &HashSet<&str>) -> bool {
+        let provided = provided
+            .iter()
+            .filter_map(|field| self.canonical_field_name(field))
+            .collect::<HashSet<_>>();
         self.fields
             .iter()
             .all(|field| provided.contains(field.as_str()) || self.field_defaults.contains_key(field))
@@ -666,6 +691,29 @@ impl<'a> IrEmitter<'a> {
             return Some(metadata);
         }
         candidates.first().copied().or_else(|| variants.first())
+    }
+
+    /// Select a unique constructor metadata variant by provided fields when an imported type was called through a
+    /// source alias and the IR no longer carries the canonical declaration name.
+    pub(super) fn unique_struct_constructor_metadata_for_fields(
+        &self,
+        fields: &[(String, TypedExpr)],
+    ) -> Option<&StructConstructorMetadata> {
+        let provided = fields
+            .iter()
+            .filter_map(|(field, _)| (!field.is_empty()).then_some(field.as_str()))
+            .collect::<HashSet<_>>();
+        let candidates = self
+            .struct_constructor_metadata
+            .values()
+            .flat_map(|variants| variants.iter())
+            .filter(|metadata| metadata.supports_named_fields(&provided) && metadata.constructible_from(&provided))
+            .collect::<Vec<_>>();
+        if candidates.len() == 1 {
+            candidates.first().copied()
+        } else {
+            None
+        }
     }
 
     /// Return an Incan-owned method signature for a receiver type when typechecker call-site metadata is unavailable.

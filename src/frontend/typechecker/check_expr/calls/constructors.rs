@@ -223,6 +223,39 @@ impl TypeChecker {
         self.constructor_result_type_with_bindings(name, &std::collections::HashMap::new())
     }
 
+    /// Compute a constructor result type from explicit call-site type arguments.
+    pub(in crate::frontend::typechecker::check_expr::calls) fn explicit_constructor_result_type(
+        &mut self,
+        name: &str,
+        type_info: &TypeInfo,
+        type_args: &[Spanned<Type>],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        if type_args.is_empty() {
+            return None;
+        }
+        let type_params = match type_info {
+            TypeInfo::Model(info) => &info.type_params,
+            TypeInfo::Class(info) => &info.type_params,
+            TypeInfo::Newtype(info) => &info.type_params,
+            TypeInfo::Enum(info) => &info.type_params,
+            _ => return None,
+        };
+        if type_args.len() != type_params.len() {
+            self.errors.push(errors::explicit_type_arg_arity(
+                name,
+                type_params.len(),
+                type_args.len(),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        Some(ResolvedType::Generic(
+            name.to_string(),
+            type_args.iter().map(|ty| self.resolve_type_checked(ty)).collect(),
+        ))
+    }
+
     /// Compute the constructor result surface type, substituting any generic bindings inferred from constructor fields.
     ///
     /// Unbound type parameters remain `Unknown` so callers can continue typechecking even when inference is partial.
