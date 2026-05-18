@@ -1,0 +1,178 @@
+"""
+Replacement-template helpers for `std.regex`.
+
+This private module is intentionally small and source-level. It parses the `$` replacement syntax used by string
+replacement methods while `std.regex._core` owns the match loop.
+"""
+
+from std.regex.types import Captures
+
+
+pub model _ReplacementPiece:
+    """
+    One expanded replacement segment plus the next unread template offset.
+    """
+
+    text: str
+    next_index: int
+
+
+pub def _expand_replacement(repl: str, caps: Captures) -> str:
+    """
+    Expand a replacement template against one capture set.
+
+    Supported markers are `$$` for a literal dollar, `$1` for numeric groups, `$name` for named groups, and `${name}`
+    for braced named or numeric groups. Unknown, missing, and nonparticipating groups expand to the empty string.
+    Malformed markers keep the literal `$` so replacement remains total.
+    """
+    mut out = ""
+    mut index = 0
+
+    while index < len(repl):
+        ch = repl[index:index + 1]
+        if ch != "$":
+            out += ch
+            index += 1
+        else:
+            piece = _replacement_piece(repl, caps, index)
+            out += piece.text
+            index = piece.next_index
+
+    return out
+
+
+def _replacement_piece(repl: str, caps: Captures, dollar_index: int) -> _ReplacementPiece:
+    """
+    Expand the `$` marker at `dollar_index`.
+
+    Malformed markers intentionally consume only the dollar sign. That keeps the parser total and leaves the following
+    character to be handled normally by the main loop.
+    """
+    if dollar_index + 1 >= len(repl):
+        return _literal_piece("$", dollar_index + 1)
+
+    marker = repl[dollar_index + 1:dollar_index + 2]
+    if marker == "$":
+        return _literal_piece("$", dollar_index + 2)
+    if marker == "{":
+        return _braced_piece(repl, caps, dollar_index)
+    if _is_ascii_digit(marker):
+        return _numeric_piece(repl, caps, dollar_index)
+    if _is_name_start(marker):
+        return _named_piece(repl, caps, dollar_index)
+    return _literal_piece("$", dollar_index + 1)
+
+
+def _braced_piece(repl: str, caps: Captures, dollar_index: int) -> _ReplacementPiece:
+    """
+    Expand `${name}` or `${1}` from `dollar_index`.
+    """
+    close = _find_char(repl, "}", dollar_index + 2)
+    if close < 0:
+        return _literal_piece("$", dollar_index + 1)
+
+    name = repl[dollar_index + 2:close]
+    return _literal_piece(_replacement_group(caps, name), close + 1)
+
+
+def _numeric_piece(repl: str, caps: Captures, dollar_index: int) -> _ReplacementPiece:
+    """
+    Expand `$1`, `$12`, and other unbraced numeric groups.
+    """
+    start = dollar_index + 1
+    mut end = start
+    while end < len(repl) and _is_ascii_digit(repl[end:end + 1]):
+        end += 1
+    return _literal_piece(_replacement_group(caps, repl[start:end]), end)
+
+
+def _named_piece(repl: str, caps: Captures, dollar_index: int) -> _ReplacementPiece:
+    """
+    Expand `$name` using the unbraced replacement-name character rules.
+    """
+    start = dollar_index + 1
+    mut end = start
+    while end < len(repl) and _is_name_continue(repl[end:end + 1]):
+        end += 1
+    return _literal_piece(_replacement_group(caps, repl[start:end]), end)
+
+
+def _literal_piece(text: str, next_index: int) -> _ReplacementPiece:
+    """
+    Build a replacement parser result.
+    """
+    return _ReplacementPiece(text=text, next_index=next_index)
+
+
+def _replacement_group(caps: Captures, name: str) -> str:
+    """
+    Resolve a numeric or named replacement group.
+
+    Missing groups, unknown names, and optional groups that did not participate all resolve to `""`.
+    """
+    if _is_digit_text(name):
+        if let Some(value) = caps.group(int(name)):
+            return value
+        return ""
+
+    if let Some(value) = caps.group(name):
+        return value
+    return ""
+
+
+def _is_digit_text(value: str) -> bool:
+    """
+    Return whether `value` is a non-empty ASCII digit sequence.
+    """
+    if len(value) == 0:
+        return false
+    for ch in value:
+        if not _is_ascii_digit(ch):
+            return false
+    return true
+
+
+def _find_char(value: str, needle: str, start: int) -> int:
+    """
+    Return the next index of `needle` at or after `start`, or `-1` when absent.
+    """
+    mut index = start
+    while index < len(value):
+        if value[index:index + 1] == needle:
+            return index
+        index += 1
+    return -1
+
+
+def _is_ascii_digit(ch: str) -> bool:
+    """
+    Return whether `ch` is one ASCII digit.
+    """
+    for candidate in "0123456789":
+        if candidate == ch:
+            return true
+    return false
+
+
+def _is_name_start(ch: str) -> bool:
+    """
+    Return whether `ch` can start an unbraced replacement group name.
+    """
+    return _is_ascii_letter(ch) or ch == "_"
+
+
+def _is_name_continue(ch: str) -> bool:
+    """
+    Return whether `ch` can continue an unbraced replacement group name.
+    """
+    return _is_name_start(ch) or _is_ascii_digit(ch)
+
+
+def _is_ascii_letter(ch: str) -> bool:
+    """
+    Return whether `ch` is one ASCII letter.
+    """
+    for candidate in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz":
+        if candidate == ch:
+            return true
+    return false

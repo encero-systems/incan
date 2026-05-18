@@ -2198,6 +2198,67 @@ mod tests {
     }
 
     #[test]
+    fn qualified_rusttype_receiver_method_uses_incan_string_conversion() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let mut emitter = IrEmitter::new(&registry);
+        emitter.rusttype_alias_names.insert("_RawRegex".to_string());
+        emitter.struct_field_types.insert(
+            ("Regex".to_string(), "raw".to_string()),
+            IrType::Struct("crate::__incan_std::regex::_RawRegex".to_string()),
+        );
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Field {
+                        object: Box::new(TypedExpr::new(
+                            IrExprKind::Var {
+                                name: "self".to_string(),
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::Value,
+                            },
+                            IrType::Struct("Regex".to_string()),
+                        )),
+                        field: "raw".to_string(),
+                    },
+                    IrType::Unknown,
+                )),
+                method: "find_iter".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "text".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::String,
+                    ),
+                }],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Struct("_RawMatchIterator".to_string()),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("self . raw . find_iter"),
+            "expected regular method-call emission on qualified rusttype receiver, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("& text") && !rendered.contains("&text"),
+            "qualified rusttype receiver methods must use Incan arg rules for owned string args, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn known_iterator_adapter_methods_emit_incan_stdlib_models() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);

@@ -2697,6 +2697,19 @@ def normalize(value: int | str) -> str:
 }
 
 #[test]
+fn test_union_match_wildcard_arm_narrows_remaining_member() {
+    let source = r#"
+def normalize(value: int | str) -> str:
+  match value:
+    int(n) =>
+      return "number"
+    _ =>
+      return value.upper()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
 fn test_issue562_type_aliases_are_transparent_for_dict_and_union_surfaces() -> Result<(), String> {
     let source = r#"
 type FieldValue = str | bool | int | float | None
@@ -3470,6 +3483,76 @@ def render[T](value: Label[T]) -> str:
             .values()
             .any(|c| c.rust_target_type == "String" && matches!(c.target_type, ResolvedType::Str)),
         "expected rust return coercion (&str -> String) for generic rusttype method call, got {:?}",
+        info.rust.return_coercions
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rusttype_alias_resolves_underlying_rust_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::std::string import String as RustString
+
+type Label = rusttype RustString
+
+def render(value: Label) -> str:
+    return value.as_str()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "std::string::String".to_string(),
+                definition_path: Some("std::string::String".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![RustMethodSig {
+                        name: "as_str".to_string(),
+                        signature: RustFunctionSig {
+                            params: vec![RustParam {
+                                name: Some("self".to_string()),
+                                type_display: "&self".to_string(),
+                            }],
+                            return_type: "&str".to_string(),
+                            is_async: false,
+                            is_unsafe: false,
+                        },
+                    }],
+                    implemented_traits: Vec::new(),
+                    fields: vec![],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect: {e}")))?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected rusttype alias receiver to expose underlying Rust methods: {errs:?}"
+        ))
+    })?;
+    let info = checker.type_info();
+    assert!(
+        info.expressions
+            .expr_types
+            .values()
+            .any(|ty| matches!(ty, ResolvedType::Str)),
+        "expected underlying rusttype method call to resolve to str, got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.rust
+            .return_coercions
+            .values()
+            .any(|c| c.rust_target_type == "String" && matches!(c.target_type, ResolvedType::Str)),
+        "expected borrowed Rust method return to be owned as Incan str, got {:?}",
         info.rust.return_coercions
     );
     Ok(())
@@ -9726,6 +9809,57 @@ def exercise() -> None:
     between: Result[list[EdgeId], GraphError] = multi.edges_between(left, right)
 "#;
     assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_std_regex_rfc059_surface_typechecks() {
+    let source = r#"
+from std.regex import Captures, Match, Regex, RegexError
+
+def replacement(caps: Captures) -> str:
+    match caps.group("word"):
+        Some(word) => return f"[{word}]"
+        None => return "[]"
+
+def exercise(text: str) -> Result[None, RegexError]:
+    word_re: Regex = Regex("^(?P<word>\\w+)(?:-(\\d+))?$", ignore_case=true, multiline=true, dotall=false, verbose=false)?
+    matched: bool = word_re.is_match(text)
+    maybe_match: Option[Match] = word_re.find(text)
+    maybe_captures: Option[Captures] = word_re.captures(text)
+    maybe_full: Option[Captures] = word_re.full_match(text)
+
+    for found in word_re.find_iter(text):
+        found_text: str = found.as_str()
+        found_start: int = found.start()
+        found_end: int = found.end()
+        found_span: Tuple[int, int] = found.span()
+
+    for captures in word_re.captures_iter(text):
+        indexed_zero: Option[str] = captures.group(0)
+        named_word: Option[str] = captures.group("word")
+        word_span: Option[Tuple[int, int]] = captures.span("word")
+        indexed_groups: list[Option[str]] = captures.groups()
+        named_groups: Dict[str, Option[str]] = captures.groupdict()
+
+    for part in word_re.split(text):
+        split_part: str = part
+
+    for part in word_re.splitn(text, 2):
+        splitn_part: str = part
+
+    literal_once: str = word_re.replace(text, "literal")
+    literal_all: str = word_re.replace_all(text, "literal")
+    indexed_replacement: str = word_re.replace_all(text, "$1")
+    named_replacement: str = word_re.replace_all(text, "${word}")
+    callable_replacement: str = word_re.replacen(text, 1, replacement)
+    return Ok(None)
+"#;
+    check_str(source).unwrap_or_else(|errs| {
+        panic!(
+            "std.regex RFC 059 surface should typecheck; got: {:?}",
+            errs.iter().map(|err| &err.message).collect::<Vec<_>>()
+        )
+    });
 }
 
 #[test]

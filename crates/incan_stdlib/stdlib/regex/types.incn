@@ -1,0 +1,317 @@
+"""
+Value types and iterators for `std.regex`.
+
+The regex engine yields borrowed match views. This module defines the owned public values that `std.regex` returns to
+Incan callers: matches, capture sets, and iterators over collected results.
+"""
+
+from std.derives.collection import Iterator
+from std.derives.copying import Clone
+
+
+@derive(Clone)
+pub model Match:
+    """
+    One regex match span.
+
+    Match offsets are byte offsets into the searched string. The matched substring is copied so the value can be stored,
+    returned, and cloned without carrying engine-borrowed lifetimes.
+    """
+
+    text: str
+    start_offset: int
+    end_offset: int
+
+    def as_str(self) -> str:
+        """
+        Return the matched substring.
+
+        Returns:
+            The text covered by this match span.
+        """
+        return self.text
+
+    def start(self) -> int:
+        """
+        Return the start byte offset.
+
+        Returns:
+            Inclusive byte offset into the searched string.
+        """
+        return self.start_offset
+
+    def end(self) -> int:
+        """
+        Return the exclusive end byte offset.
+
+        Returns:
+            Byte offset immediately after the match.
+        """
+        return self.end_offset
+
+    def span(self) -> Tuple[int, int]:
+        """
+        Return the byte span.
+
+        Returns:
+            `(start, end)` with `end` exclusive.
+        """
+        return (self.start_offset, self.end_offset)
+
+
+@derive(Clone)
+pub model Captures:
+    """
+    Capture groups for one successful regex match.
+
+    Group `0` is always the full match. Optional groups that did not participate are represented as `None` rather than
+    empty strings, matching Python-style group access without losing the distinction between absence and an empty match.
+    """
+
+    indexed: list[Option[Match]]
+    named: Dict[str, Option[Match]]
+
+    def full_match(self) -> Option[Match]:
+        """
+        Return capture group `0`.
+
+        Returns:
+            `Some(Match)` for the full match, or `None` if the capture set is malformed.
+        """
+        return self.match_index(0)
+
+    def group(self, key: int | str) -> Option[str]:
+        """
+        Return captured text by numeric index or name.
+
+        Args:
+            key: Integer capture index or named capture key.
+
+        Returns:
+            `Some(str)` when the group exists and participated, otherwise `None`.
+        """
+        if isinstance(key, int):
+            return _match_text(self.match_index(key))
+        elif isinstance(key, str):
+            return _match_text(self.match_name(key))
+        return None
+
+    def span(self, key: int | str) -> Option[Tuple[int, int]]:
+        """
+        Return a captured byte span by numeric index or name.
+
+        Args:
+            key: Integer capture index or named capture key.
+
+        Returns:
+            `Some((start, end))` when the group exists and participated, otherwise `None`.
+        """
+        if isinstance(key, int):
+            return _match_span(self.match_index(key))
+        elif isinstance(key, str):
+            return _match_span(self.match_name(key))
+        return None
+
+    def groups(self) -> list[Option[str]]:
+        """
+        Return indexed capture text, excluding the full match.
+
+        Returns:
+            A list for capture groups `1..n`, preserving `None` for nonparticipating optional groups.
+        """
+        mut out: list[Option[str]] = []
+        for index in range(1, len(self.indexed)):
+            out.append(_match_text(self.indexed[index]))
+        return out
+
+    def groupdict(self) -> Dict[str, Option[str]]:
+        """
+        Return named capture text.
+
+        Returns:
+            A dictionary from capture name to captured text, preserving `None` for nonparticipating optional groups.
+        """
+        mut out: Dict[str, Option[str]] = {}
+        for name in self.named.keys():
+            out[name] = _match_text(self.named[name])
+        return out
+
+    def match_index(self, index: int) -> Option[Match]:
+        """
+        Return a captured match by numeric index.
+
+        Args:
+            index: Capture group index. `0` refers to the full match.
+
+        Returns:
+            `Some(Match)` when the group exists and participated, otherwise `None`.
+        """
+        if index < 0 or index >= len(self.indexed):
+            return None
+        return self.indexed[index]
+
+    def match_name(self, name: str) -> Option[Match]:
+        """
+        Return a captured match by name.
+
+        Args:
+            name: Named capture key.
+
+        Returns:
+            `Some(Match)` when the named group exists and participated, otherwise `None`.
+        """
+        if name not in self.named:
+            return None
+        return self.named[name]
+
+
+pub model MatchIterator with Iterator[Match]:
+    """
+    Iterator over owned `Match` values.
+
+    `Regex.find_iter()` snapshots engine matches into this list-backed iterator so the iteration surface stays ordinary
+    Incan data rather than borrowed engine state.
+    """
+
+    items: list[Match]
+    index: int
+
+    def __iter__(self) -> MatchIterator:
+        """
+        Return this iterator.
+
+        Returns:
+            The iterator itself.
+        """
+        return self
+
+    def __next__(mut self) -> Option[Match]:
+        """
+        Return the next match.
+
+        Returns:
+            `Some(Match)` until all collected matches are consumed, then `None`.
+        """
+        if self.index >= len(self.items):
+            return None
+        value = self.items[self.index]
+        self.index += 1
+        return Some(value)
+
+
+pub model CapturesIterator with Iterator[Captures]:
+    """
+    Iterator over owned capture sets.
+
+    `Regex.captures_iter()` snapshots each engine capture set into ordinary `Captures` values before iteration begins.
+    """
+
+    items: list[Captures]
+    index: int
+
+    def __iter__(self) -> CapturesIterator:
+        """
+        Return this iterator.
+
+        Returns:
+            The iterator itself.
+        """
+        return self
+
+    def __next__(mut self) -> Option[Captures]:
+        """
+        Return the next capture set.
+
+        Returns:
+            `Some(Captures)` until all collected capture sets are consumed, then `None`.
+        """
+        if self.index >= len(self.items):
+            return None
+        value = self.items[self.index]
+        self.index += 1
+        return Some(value)
+
+
+pub model SplitIterator with Iterator[str]:
+    """
+    Iterator over fields produced by regex splitting.
+
+    Split fields are computed lazily from the collected match iterator and the original text. Empty fields are preserved
+    when a match appears at a boundary or two matches are adjacent.
+    """
+
+    matches: MatchIterator
+    text: str
+    limit: int
+    produced: int
+    last_end: int
+    done: bool
+
+    def __iter__(self) -> SplitIterator:
+        """
+        Return this iterator.
+
+        Returns:
+            The iterator itself.
+        """
+        return self
+
+    def __next__(mut self) -> Option[str]:
+        """
+        Return the next split field.
+
+        Returns:
+            `Some(str)` until the split limit or match stream is exhausted, then `None`.
+        """
+        if self.done:
+            return None
+        if self.limit == 0:
+            self.done = true
+            return None
+        if self.limit > 0 and self.produced >= self.limit - 1:
+            self.done = true
+            self.produced += 1
+            return Some(self.text[self.last_end:])
+
+        match self.matches.__next__():
+            Some(found) =>
+                start, end = found.span()
+                part = self.text[self.last_end:start]
+                self.last_end = end
+                self.produced += 1
+                return Some(part)
+            None =>
+                self.done = true
+                self.produced += 1
+                return Some(self.text[self.last_end:])
+
+
+pub def _offset_from_usize(value: usize) -> int:
+    """
+    Convert a Rust byte offset to Incan `int`.
+
+    Host offsets should fit in normal Incan programs. If an offset exceeds `i64::MAX`, the value saturates instead of
+    panicking while constructing a public match value.
+    """
+    maybe_offset: Option[int] = value.try_resize()
+    if let Some(offset) = maybe_offset:
+        return offset
+    return 9223372036854775807
+
+
+def _match_text(value: Option[Match]) -> Option[str]:
+    """
+    Convert an optional match to optional text.
+    """
+    if let Some(found) = value:
+        return Some(found.as_str())
+    return None
+
+
+def _match_span(value: Option[Match]) -> Option[Tuple[int, int]]:
+    """
+    Convert an optional match to an optional byte span.
+    """
+    if let Some(found) = value:
+        return Some(found.span())
+    return None

@@ -147,3 +147,36 @@ fn std_uuid_source_has_no_rust_backed_type_markers() {
         );
     }
 }
+
+#[test]
+fn std_regex_keeps_behavior_in_incan_source() {
+    let source_paths = [
+        "crates/incan_stdlib/stdlib/regex/prelude.incn",
+        "crates/incan_stdlib/stdlib/regex/_core.incn",
+        "crates/incan_stdlib/stdlib/regex/types.incn",
+        "crates/incan_stdlib/stdlib/regex/_replacement.incn",
+    ];
+    let mut source = String::new();
+    for source_path in source_paths {
+        source.push_str(&std::fs::read_to_string(source_path).expect("std.regex source module should exist"));
+        source.push('\n');
+    }
+    assert!(
+        source.contains("from rust::regex import Regex as RustRegex, RegexBuilder"),
+        "std.regex should dogfood direct regex crate interop for engine construction"
+    );
+    assert!(
+        !source.contains("from rust::incan_stdlib::regex"),
+        "std.regex should not call a Rust snapshot-helper module"
+    );
+    assert!(
+        source.contains("def _replacen_string") && source.contains("def _expand_replacement"),
+        "std.regex replacement behavior should stay in Incan source"
+    );
+
+    let rust_path = std::path::Path::new("crates/incan_stdlib/src/regex.rs");
+    assert!(
+        !rust_path.exists(),
+        "std.regex should not keep a Rust runtime-helper module for source-level behavior"
+    );
+}

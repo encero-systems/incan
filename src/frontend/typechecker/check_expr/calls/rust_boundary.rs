@@ -57,6 +57,39 @@ impl TypeChecker {
         return_ty
     }
 
+    /// Record an ownership conversion for borrowed Rust scalar-like returns that Incan exposes as owned values.
+    pub(in crate::frontend::typechecker) fn record_rust_return_coercion_from_display(
+        &mut self,
+        rust_return_type: &str,
+        incan_ret: &ResolvedType,
+        span: Span,
+    ) {
+        let normalized = rust_return_type.replace(' ', "");
+        let is_borrowed_str = normalized == "&str" || (normalized.starts_with("&'") && normalized.ends_with("str"));
+        let target = if is_borrowed_str && matches!(incan_ret, ResolvedType::Str) {
+            Some(("String", ResolvedType::Str))
+        } else {
+            let is_borrowed_bytes =
+                normalized == "&[u8]" || (normalized.starts_with("&'") && normalized.ends_with("[u8]"));
+            if is_borrowed_bytes && matches!(incan_ret, ResolvedType::Bytes) {
+                Some(("Vec<u8>", ResolvedType::Bytes))
+            } else {
+                None
+            }
+        };
+        let Some((rust_target_type, target_type)) = target else {
+            return;
+        };
+        self.type_info.rust.return_coercions.insert(
+            (span.start, span.end),
+            RustArgCoercionInfo {
+                rust_target_type: rust_target_type.to_string(),
+                target_type,
+                kind: RustArgCoercionKind::Builtin(CoercionPolicy::Exact),
+            },
+        );
+    }
+
     fn rusttype_boundary_match(&self, arg_ty: &ResolvedType, target_ty: &ResolvedType) -> Option<RustArgCoercionKind> {
         if let ResolvedType::Named(type_name) = arg_ty
             && let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(type_name)
@@ -376,7 +409,9 @@ impl TypeChecker {
             }
         }
 
-        self.resolved_rust_return_type_from_sig(sig)
+        let ret = self.resolved_rust_return_type_from_sig(sig);
+        self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
+        ret
     }
 
     /// Validate a direct Rust function call (`rust::path::item(...)`) and record boundary coercions.
@@ -421,7 +456,9 @@ impl TypeChecker {
             }
         }
 
-        self.resolved_rust_return_type_from_sig(sig)
+        let ret = self.resolved_rust_return_type_from_sig(sig);
+        self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
+        ret
     }
 }
 

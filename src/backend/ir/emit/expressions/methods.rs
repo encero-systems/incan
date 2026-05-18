@@ -549,14 +549,45 @@ impl<'a> IrEmitter<'a> {
     fn is_incan_owned_nominal_receiver(&self, receiver_ty: &IrType) -> bool {
         match Self::receiver_type_for_method_dispatch(receiver_ty) {
             IrType::Struct(name) | IrType::NamedGeneric(name, _) => {
+                let short_name = name.rsplit("::").next().unwrap_or(name);
                 self.struct_field_names.contains_key(name)
+                    || self.struct_field_names.contains_key(short_name)
                     || self.rusttype_alias_names.contains(name)
+                    || self.rusttype_alias_names.contains(short_name)
                     || self.type_module_paths.contains_key(name)
+                    || self.type_module_paths.contains_key(short_name)
             }
-            IrType::Enum(name) => self.enum_variant_fields.keys().any(|(enum_name, _)| enum_name == name),
+            IrType::Enum(name) => {
+                let short_name = name.rsplit("::").next().unwrap_or(name);
+                self.enum_variant_fields
+                    .keys()
+                    .any(|(enum_name, _)| enum_name == name || enum_name == short_name)
+            }
             IrType::Trait(_) => true,
             _ => false,
         }
+    }
+
+    /// Recover a field receiver's declared surface type before choosing method-call ownership policy.
+    fn receiver_with_known_field_type(&self, receiver: &TypedExpr) -> Option<TypedExpr> {
+        let IrExprKind::Field { object, field } = &receiver.kind else {
+            return None;
+        };
+        let owner = Self::receiver_type_for_method_dispatch(&object.ty).nominal_type_name()?;
+        let field_ty = self
+            .struct_field_types
+            .get(&(owner.to_string(), field.clone()))
+            .cloned()
+            .or_else(|| {
+                owner.rsplit("::").next().and_then(|short| {
+                    self.struct_field_types
+                        .get(&(short.to_string(), field.clone()))
+                        .cloned()
+                })
+            })?;
+        let mut receiver = receiver.clone();
+        receiver.ty = field_ty;
+        Some(receiver)
     }
 
     /// Emit a known method call using enum-based dispatch.
@@ -713,6 +744,8 @@ impl<'a> IrEmitter<'a> {
             });
         }
 
+        let inferred_receiver = self.receiver_with_known_field_type(receiver);
+        let receiver = inferred_receiver.as_ref().unwrap_or(receiver);
         let r0 = self.emit_expr(receiver)?;
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let r = &info.r;

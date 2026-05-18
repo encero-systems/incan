@@ -113,6 +113,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.datetime` | - | `std.datetime.runtime`, `std.datetime.civil`, `std.datetime.civil.intervals`, `std.datetime.civil.naive`, `std.datetime.civil.offset`, `std.datetime.error`, `std.datetime.prelude` | - |
 | `std.graph` | - | - | - |
 | `std.uuid` | - | - | - |
+| `std.regex` | - | `std.regex._core`, `std.regex._replacement`, `std.regex.types`, `std.regex.prelude` | - |
 | `std.collections` | - | - | - |
 | `std.io` | - | - | - |
 | `std.encoding` | - | `std.encoding._shared`, `std.encoding.prelude`, `std.encoding.hex`, `std.encoding.base32`, `std.encoding.base64`, `std.encoding.base85`, `std.encoding.base58`, `std.encoding.bech32` | - |

@@ -13,7 +13,7 @@ use crate::frontend::typechecker::helpers::{
     option_ty, string_method_return,
 };
 use crate::frontend::typechecker::type_info::{RustMethodTraitImportUse, RustTraitImportInfo};
-use incan_core::interop::{CoercionPolicy, RustCollectionFamily, RustItemKind};
+use incan_core::interop::{RustCollectionFamily, RustItemKind};
 use incan_core::lang::conventions;
 use incan_core::lang::magic_methods;
 use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
@@ -1082,19 +1082,43 @@ impl TypeChecker {
 
     fn rust_canonical_path_for_receiver_type(&self, ty: &ResolvedType) -> Option<String> {
         match ty {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.rust_canonical_path_for_receiver_type(inner),
             ResolvedType::RustPath(path) => Some(path.clone()),
-            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => {
-                let id = self.symbols.lookup(name)?;
-                let sym = self.symbols.get(id)?;
-                let SymbolKind::RustItem(info) = &sym.kind else {
-                    return None;
-                };
-                match info.binding {
-                    RustImportBindingKind::CrateRoot => None,
-                    RustImportBindingKind::RootedPath | RustImportBindingKind::FromImport => Some(info.path.clone()),
-                }
+            ResolvedType::Named(name) => self.rust_canonical_path_for_nominal_receiver(name, None),
+            ResolvedType::Generic(name, args) => {
+                self.rust_canonical_path_for_nominal_receiver(name, Some(args.as_slice()))
             }
             _ => None,
+        }
+    }
+
+    fn rust_canonical_path_for_nominal_receiver(
+        &self,
+        name: &str,
+        type_args: Option<&[ResolvedType]>,
+    ) -> Option<String> {
+        if let Some(TypeInfo::Newtype(newtype)) = self.lookup_semantic_type_info(name)
+            && newtype.is_rusttype
+        {
+            let underlying = if let Some(args) = type_args {
+                let subst = type_param_subst_map(&newtype.type_params, args);
+                substitute_resolved_type(&newtype.underlying, &subst)
+            } else {
+                newtype.underlying.clone()
+            };
+            if let Some(path) = self.rust_path_for_rusttype_underlying(&underlying) {
+                return Some(path);
+            }
+        }
+
+        let id = self.symbols.lookup(name)?;
+        let sym = self.symbols.get(id)?;
+        let SymbolKind::RustItem(info) = &sym.kind else {
+            return None;
+        };
+        match info.binding {
+            RustImportBindingKind::CrateRoot => None,
+            RustImportBindingKind::RootedPath | RustImportBindingKind::FromImport => Some(info.path.clone()),
         }
     }
 
@@ -2034,32 +2058,7 @@ impl TypeChecker {
         let Some(sig) = self.rust_method_signature(underlying_path, method) else {
             return;
         };
-        let normalized = sig.return_type.replace(' ', "");
-        // ---- `&str` → `String` (Incan `str` = Rust `String`) ----
-        let is_borrowed_str = normalized == "&str" || (normalized.starts_with("&'") && normalized.ends_with("str"));
-        if is_borrowed_str && matches!(incan_ret, ResolvedType::Str) {
-            self.type_info.rust.return_coercions.insert(
-                (span.start, span.end),
-                crate::frontend::typechecker::RustArgCoercionInfo {
-                    rust_target_type: "String".to_string(),
-                    target_type: ResolvedType::Str,
-                    kind: crate::frontend::typechecker::RustArgCoercionKind::Builtin(CoercionPolicy::Exact),
-                },
-            );
-            return;
-        }
-        // ---- `&[u8]` → `Vec<u8>` (Incan `bytes` = Rust `Vec<u8>`) ----
-        let is_borrowed_bytes = normalized == "&[u8]" || (normalized.starts_with("&'") && normalized.ends_with("[u8]"));
-        if is_borrowed_bytes && matches!(incan_ret, ResolvedType::Bytes) {
-            self.type_info.rust.return_coercions.insert(
-                (span.start, span.end),
-                crate::frontend::typechecker::RustArgCoercionInfo {
-                    rust_target_type: "Vec<u8>".to_string(),
-                    target_type: ResolvedType::Bytes,
-                    kind: crate::frontend::typechecker::RustArgCoercionKind::Builtin(CoercionPolicy::Exact),
-                },
-            );
-        }
+        self.record_rust_return_coercion_from_display(sig.return_type.as_str(), incan_ret, span);
     }
 
     /// Normalize a tuple index (supports negative indices) and emit bounds errors.

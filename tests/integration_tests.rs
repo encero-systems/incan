@@ -6007,6 +6007,96 @@ async def main() -> None:
     }
 
     #[test]
+    fn test_run_std_regex_rfc059_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/std_regex_surface.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "incan run std_regex_surface failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec![
+                "true",
+                "xx@0:2",
+                "ALPHA-12",
+                "beta",
+                "beta",
+                "0:4",
+                "<none>",
+                "<none>",
+                "beta|<none>",
+                "one,two",
+                "a:1,b:2",
+                "a|b|c",
+                "a|b,c",
+                "a|b,c",
+                "a|b|c",
+                "Lovelace, Ada",
+                "Lovelace/Ada",
+                "Lovelace, Ada",
+                "$2, $1",
+                "x x three",
+                "$1 two",
+            ],
+            "unexpected std.regex output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_run_std_regex_unsupported_safe_engine_pattern_reports_error() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+from std.regex import Regex
+
+def main() -> None:
+    match Regex("(?<=prefix)\\w+"):
+        Ok(_) => println("unexpected-ok")
+        Err(err) =>
+            println("unsupported")
+            println(err.kind())
+            println(err.message())
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "std.regex unsupported-pattern program should report RegexError without failing the process: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        assert!(
+            stdout.contains("unsupported") && !stdout.contains("unexpected-ok"),
+            "expected safe-engine rejection branch, got:\n{stdout}"
+        );
+        assert!(
+            stdout.contains("compile_error"),
+            "expected stable RegexError kind, got:\n{stdout}"
+        );
+        assert!(
+            stdout.to_ascii_lowercase().contains("look"),
+            "expected diagnostic to identify the unsupported lookaround boundary, got:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_run_u128_modulo_floor_div() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args(["run", "tests/fixtures/valid/u128_modulo_floor_div.incn"])

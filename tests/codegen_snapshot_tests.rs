@@ -2801,6 +2801,28 @@ fn test_std_uuid_import_codegen() {
     insta::assert_snapshot!("std_uuid_import", rust_code);
 }
 
+/// RFC 059: direct imported constructors lower through the generic `__incan_new` hook.
+#[test]
+fn test_std_regex_import_constructor_hook_codegen() {
+    let source = r#"
+from std.regex import Regex, RegexError
+
+def main() -> Result[None, RegexError]:
+  _regex = Regex("x+", ignore_case=true)?
+  return Ok(None)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("Regex::__incan_new(\"x+\".to_string(),true,false,false,false)?"),
+        "expected imported Regex constructor syntax to lower through the generic __incan_new hook; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("__incan_std::regex::compile("),
+        "direct constructor lowering should not hardcode std.regex.compile; generated:\n{rust_code}"
+    );
+}
+
 /// RFC 023 (#303): explicit `with Serialize` adoption should expand the stdlib default `to_json` body into the
 /// generated impl while also forwarding the Rust serde derive.
 #[test]

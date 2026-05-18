@@ -1,6 +1,6 @@
 # RFC 059: `std.regex` — regular expressions, matches, captures, and replacement
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-04-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -9,7 +9,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/294
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** 0.3.0-dev.46
 
 ## Summary
 
@@ -299,6 +299,84 @@ This feature is additive. Existing string-manipulation code keeps working, but r
 - **Language surface**: the module and result types must be available as specified.
 - **Execution handoff**: implementations must preserve the chosen matching and replacement semantics without leaking backend-specific quirks.
 - **Docs / tooling**: should standardize regex examples, error reporting expectations, and the distinction between stdlib-safe regex and any later fancy-regex package.
+
+## Implementation Plan
+
+### Phase 1: Stdlib surface and registry
+
+- Add `std.regex` to the stdlib namespace registry with the runtime crate dependencies required by the safe default engine.
+- Add the source-defined `std.regex` module with public `Regex`, `Match`, `Captures`, and `RegexError` declarations.
+- Keep the Incan-facing contract owned by the `.incn` module while using Rust regex primitives as the predictable engine substrate.
+
+### Phase 2: Runtime support and execution handoff
+
+- Add runtime support for compiled regex values, match spans, capture groups, iterators, split iterators, and replacement operations.
+- Preserve explicit absence for unmatched optional groups instead of converting missing groups to empty strings.
+- Standardize replacement interpolation through the Rust-style `$1` / `${name}` contract and expose callable replacement support through the Incan-facing API.
+
+### Phase 3: Typechecker, lowering, and emission
+
+- Ensure imports from `std.regex` expose the public module surface and reject private helpers.
+- Ensure direct construction with keyword flag options typechecks and lowers correctly.
+- Ensure method calls on `Regex`, `Match`, and `Captures` preserve the declared return types through lowering and emission.
+
+### Phase 4: Tests
+
+- Add loader/typechecker coverage for `std.regex` exports, construction, flags, and unsupported pattern diagnostics.
+- Add end-to-end compile/run coverage for search, full match, find iteration, captures iteration, split/splitn, named and indexed groups, optional unmatched groups, and replacement.
+- Add codegen or integration coverage for callable replacements and capture-aware replacement strings.
+
+### Phase 5: Docs, release metadata, and lifecycle
+
+- Add user-facing `std.regex` reference documentation and cross-link it from the stdlib index.
+- Add regex examples that use current v0.3 syntax and idioms rather than Rust-shaped escape hatches.
+- Update release notes and project version metadata for the active `0.3.0-dev` line.
+
+## Progress Checklist
+
+### Spec / lifecycle
+
+- [x] Confirm RFC 059 is linked to issue #294 and scoped to the full `std.regex` surface.
+- [x] Establish the active development version baseline.
+- [x] Keep the RFC checklist synchronized with implemented scope.
+
+### Stdlib / runtime
+
+- [x] Register `std.regex` in the stdlib namespace registry with required dependency metadata.
+- [x] Add the public source-defined `std.regex` module.
+- [x] Implement compiled regex construction with inline flags and keyword options.
+- [x] Implement `RegexError` or equivalent pattern compilation error surface.
+- [x] Implement `Match` span accessors.
+- [x] Implement `Captures` indexed and named lookup, span lookup, `groups()`, and `groupdict()`.
+- [x] Implement `find`, `find_iter`, `captures`, `captures_iter`, `full_match`, `split`, and `splitn`.
+- [x] Implement `replace`, `replace_all`, and `replacen` for literal/capture-aware replacement strings.
+- [x] Implement callable replacement support.
+- [x] Preserve explicit absence for unmatched optional groups.
+
+### Compiler / execution handoff
+
+- [x] Ensure `std.regex` imports expose the intended public surface only.
+- [x] Ensure direct `Regex(pattern, ignore_case=True, multiline=True, dotall=True, verbose=True)?` construction typechecks.
+- [x] Ensure regex calls lower and emit without leaking Rust engine types into user-facing Incan code.
+- [x] Add diagnostics or tests proving unsupported backtracking-only features are rejected by the safe engine.
+
+### Tests
+
+- [x] Add stdlib loader/typechecker tests for exported regex types and methods.
+- [x] Add end-to-end tests for construction, flags, `is_match`, `find`, and `full_match`.
+- [x] Add end-to-end tests for named/indexed captures and optional unmatched groups.
+- [x] Add end-to-end tests for `find_iter` and `captures_iter` left-to-right non-overlapping order.
+- [x] Add end-to-end tests for `split` and `splitn`.
+- [x] Add end-to-end tests for literal, capture-aware, and callable replacements.
+- [x] Run targeted verification for the touched layers.
+- [x] Run the repository gate before closeout.
+
+### Docs / release
+
+- [x] Add or update user-facing `std.regex` reference docs.
+- [x] Link `std.regex` from the stdlib reference index/navigation where applicable.
+- [x] Update the 0.3 release notes.
+- [x] Bump the active development version metadata by one dev increment.
 
 ## Design Decisions
 

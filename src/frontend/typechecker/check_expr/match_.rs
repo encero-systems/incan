@@ -74,14 +74,42 @@ impl TypeChecker {
         _span: Span,
     ) -> ResolvedType {
         let subject_ty = self.check_expr(subject);
+        let subject_binding = if let Expr::Ident(name) = &subject.node {
+            self.lookup_variable_info(name)
+                .cloned()
+                .map(|info| (name.clone(), info, subject.span))
+        } else {
+            None
+        };
+        let mut remaining_union_members = subject_ty.union_members().map(|members| members.to_vec());
 
         self.check_match_exhaustiveness(&subject_ty, arms, _span);
 
         let mut arm_types = Vec::new();
 
         for arm in arms {
+            let narrowed_subject_ty = remaining_union_members
+                .as_ref()
+                .and_then(|remaining| self.match_arm_remainder_type(&arm.node.pattern, remaining));
+            let expected_ty = narrowed_subject_ty.as_ref().unwrap_or(&subject_ty);
+
             self.symbols.enter_scope(ScopeKind::Block);
-            self.check_pattern(&arm.node.pattern, &subject_ty);
+            self.check_pattern(&arm.node.pattern, expected_ty);
+            if let (Some((name, info, span)), Some(ty)) = (&subject_binding, narrowed_subject_ty.clone()) {
+                self.symbols.define(Symbol {
+                    name: name.clone(),
+                    kind: SymbolKind::Variable(VariableInfo {
+                        ty,
+                        is_mutable: info.is_mutable,
+                        is_used: false,
+                    }),
+                    span: *span,
+                    scope: 0,
+                });
+                if info.is_mutable {
+                    self.mutable_bindings.insert(name.clone());
+                }
+            }
 
             let arm_ty = match &arm.node.body {
                 MatchBody::Expr(e) => self.check_expr(e),
@@ -95,9 +123,54 @@ impl TypeChecker {
             arm_types.push(arm_ty);
 
             self.symbols.exit_scope();
+
+            if let Some(remaining) = remaining_union_members.as_mut() {
+                self.remove_covered_union_members(remaining, &arm.node.pattern, &subject_ty);
+            }
         }
 
         arm_types.first().cloned().unwrap_or(ResolvedType::Unit)
+    }
+
+    /// Return the type represented by the as-yet-uncovered union members for wildcard and binding arms.
+    fn match_arm_remainder_type(&self, pattern: &Spanned<Pattern>, remaining: &[ResolvedType]) -> Option<ResolvedType> {
+        match &pattern.node {
+            Pattern::Wildcard | Pattern::Binding(_) if !remaining.is_empty() => Some(union_ty(remaining.to_vec())),
+            Pattern::Group(inner) => self.match_arm_remainder_type(inner, remaining),
+            _ => None,
+        }
+    }
+
+    /// Whether two union member candidates are equivalent for match-arm narrowing.
+    fn match_union_member_matches(&self, member: &ResolvedType, target: &ResolvedType) -> bool {
+        self.types_compatible(member, target) && self.types_compatible(target, member)
+    }
+
+    /// Remove the union members covered by a pattern from the remaining-arm accumulator.
+    fn remove_covered_union_members(
+        &self,
+        remaining: &mut Vec<ResolvedType>,
+        pattern: &Spanned<Pattern>,
+        subject_ty: &ResolvedType,
+    ) {
+        match &pattern.node {
+            Pattern::Constructor(name, _) => {
+                let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.as_str());
+                if enum_qualifier_opt.is_none()
+                    && let Some(member_ty) = self.union_pattern_member_type(subject_ty, ctor_name)
+                {
+                    remaining.retain(|member| !self.match_union_member_matches(member, &member_ty));
+                }
+            }
+            Pattern::Or(alternatives) => {
+                for alternative in alternatives {
+                    self.remove_covered_union_members(remaining, alternative, subject_ty);
+                }
+            }
+            Pattern::Group(inner) => self.remove_covered_union_members(remaining, inner, subject_ty),
+            Pattern::Wildcard | Pattern::Binding(_) => remaining.clear(),
+            _ => {}
+        }
     }
 
     /// Type-check a pattern against an expected type, defining bindings in the current scope.

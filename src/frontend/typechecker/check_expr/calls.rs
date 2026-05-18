@@ -144,22 +144,79 @@ impl TypeChecker {
 
             if let Some(sym) = self.lookup_symbol(name).cloned() {
                 match sym.kind {
-                    SymbolKind::Type(type_info) if stdlib::is_graph_constructor_type(name) && args.is_empty() => {
-                        return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
-                    }
-                    SymbolKind::Type(TypeInfo::Newtype(_)) => {
-                        if !type_args.is_empty() {
-                            self.errors
-                                .push(errors::explicit_call_site_type_args_not_supported(span));
+                    SymbolKind::Type(type_info) => {
+                        if let Some(ret) =
+                            self.check_type_constructor_hook_call(name, &type_info, type_args, args, span)
+                        {
+                            self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
+                            self.type_info
+                                .expressions
+                                .ident_kinds
+                                .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                            return ret;
+                        }
+                        if stdlib::is_graph_constructor_type(name) && args.is_empty() {
+                            return self.check_graph_constructor_call(name, &type_info, type_args, args, span);
+                        }
+                        if let Some(tid) = surface_types::from_str(name) {
+                            if !type_args.is_empty() {
+                                self.errors
+                                    .push(errors::explicit_call_site_type_args_not_supported(span));
+                                self.check_call_args(args);
+                                return ResolvedType::Unknown;
+                            }
+                            self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
+                            self.type_info
+                                .expressions
+                                .ident_kinds
+                                .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                            if matches!(tid, SurfaceTypeId::Json | SurfaceTypeId::Query) {
+                                return self.check_json_query_constructor_call(tid, args, span);
+                            }
+                            if matches!(tid, SurfaceTypeId::Html) {
+                                return ResolvedType::Named(surface_types::as_str(tid).to_string());
+                            }
+                            if matches!(tid, SurfaceTypeId::ValidationError) {
+                                return self.check_constructor(name, args, span);
+                            }
+                        }
+                        let explicit_constructor_ty =
+                            self.explicit_constructor_result_type(name, &type_info, type_args, span);
+                        if let TypeInfo::Model(model) = &type_info
+                            && model
+                                .derives
+                                .iter()
+                                .any(|d| derives::from_str(d.as_str()) == Some(DeriveId::Validate))
+                        {
                             self.check_call_args(args);
+                            self.errors
+                                .push(errors::validate_derive_disallows_raw_construction(name, span));
                             return ResolvedType::Unknown;
                         }
+                        if matches!(type_info, TypeInfo::Newtype(_)) {
+                            self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
+                            self.type_info
+                                .expressions
+                                .ident_kinds
+                                .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
+                            let constructor_ty = self.check_constructor(name, args, span);
+                            return explicit_constructor_ty.unwrap_or(constructor_ty);
+                        }
+                        let ctor_fields = match &type_info {
+                            TypeInfo::Model(info) => Some(info.fields.clone()),
+                            TypeInfo::Class(info) => Some(info.fields.clone()),
+                            _ => None,
+                        };
+                        let Some(fields) = ctor_fields else {
+                            return ResolvedType::Unknown;
+                        };
+                        let constructor_ty = self.check_model_or_class_constructor_call(name, &fields, args, span);
                         self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
                         self.type_info
                             .expressions
                             .ident_kinds
                             .insert((callee.span.start, callee.span.end), IdentKind::TypeName);
-                        return self.check_constructor(name, args, span);
+                        return explicit_constructor_ty.unwrap_or(constructor_ty);
                     }
                     SymbolKind::Function(func_info) => {
                         return self.validate_function_call(name, &func_info, type_args, args, span);

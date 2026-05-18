@@ -1,0 +1,518 @@
+"""
+Compiled-pattern implementation for `std.regex`.
+
+This private module owns the boundary with the Rust `regex` crate. Public callers should import from `std.regex`; the
+prelude re-exports the stable surface while this module keeps engine construction, searching, captures, splitting, and
+replacement dispatch together.
+"""
+
+from rust::regex import Regex as RustRegex, RegexBuilder
+from std.regex._replacement import _expand_replacement
+from std.regex.types import Captures, CapturesIterator, Match, MatchIterator, SplitIterator, _offset_from_usize
+
+
+pub model RegexError:
+    """
+    Pattern compilation failure from the safe regex engine.
+
+    `Regex.compile()` and direct `Regex(...)` construction return this value when the engine rejects a pattern. The
+    stable `kind()` value is suitable for branching; `message()` preserves the engine's diagnostic detail for humans.
+    """
+
+    kind_value: str
+    detail: str
+
+    def kind(self) -> str:
+        """
+        Return the stable error category.
+
+        Returns:
+            A short category string. Compile failures currently report `compile_error`.
+        """
+        return self.kind_value
+
+    def message(self) -> str:
+        """
+        Return the engine diagnostic.
+
+        Returns:
+            Human-readable detail from the underlying regex engine.
+        """
+        return self.detail
+
+
+type _RawRegex = rusttype RustRegex
+
+
+pub model Regex:
+    """
+    Compiled regular expression.
+
+    The default engine is the safe Rust-regex/RE2-style matcher: it supports Unicode-aware literals, classes,
+    quantifiers, anchors, alternation, and indexed or named capture groups while rejecting backtracking-only constructs
+    such as lookaround and pattern backreferences.
+
+    Example:
+
+    ```incan
+    re = Regex(r"(?P<word>\w+)")?
+    caps = re.captures("hello")?.unwrap()
+    println(caps.group("word").unwrap())
+    ```
+    """
+
+    raw: _RawRegex
+
+    @staticmethod
+    def __incan_new(pattern: str, ignore_case: bool = False, multiline: bool = False, dotall: bool = False, verbose: bool = False) -> Result[Regex, RegexError]:
+        """
+        Construct a compiled regex through `Regex(...)` syntax.
+
+        Args:
+            pattern: Pattern text accepted by the safe engine.
+            ignore_case: Enable case-insensitive matching.
+            multiline: Make `^` and `$` match line boundaries inside the text.
+            dotall: Let `.` match newline characters.
+            verbose: Enable the engine's ignore-whitespace pattern mode.
+
+        Returns:
+            `Ok(Regex)` when compilation succeeds, or `Err(RegexError)` with the engine diagnostic.
+        """
+        return Regex.compile(pattern, ignore_case, multiline, dotall, verbose)
+
+    @staticmethod
+    def compile(pattern: str, ignore_case: bool = False, multiline: bool = False, dotall: bool = False, verbose: bool = False) -> Result[Regex, RegexError]:
+        """
+        Compile a pattern into a reusable regex.
+
+        Args:
+            pattern: Pattern text accepted by the safe engine.
+            ignore_case: Enable case-insensitive matching.
+            multiline: Make `^` and `$` match line boundaries inside the text.
+            dotall: Let `.` match newline characters.
+            verbose: Enable the engine's ignore-whitespace pattern mode.
+
+        Returns:
+            `Ok(Regex)` for a compiled pattern, or `Err(RegexError)` when the engine rejects the pattern.
+        """
+        mut builder = RegexBuilder.new(pattern)
+        builder.case_insensitive(ignore_case)
+        builder.multi_line(multiline)
+        builder.dot_matches_new_line(dotall)
+        builder.ignore_whitespace(verbose)
+        return builder.build().map((value) => Regex(raw=value)).map_err((err) => RegexError(kind_value="compile_error", detail=err.to_string()))
+
+    def is_match(self, text: str) -> bool:
+        """
+        Check whether the pattern matches anywhere in `text`.
+
+        Args:
+            text: Text to search.
+
+        Returns:
+            `true` when at least one match exists.
+        """
+        match self.find(text):
+            Some(_) => return true
+            None => return false
+
+    def find(self, text: str) -> Option[Match]:
+        """
+        Return the first match in `text`.
+
+        The returned `Match` owns the matched substring and stores byte offsets into the original text. This avoids
+        leaking engine-borrowed lifetimes through the public Incan value.
+
+        Args:
+            text: Text to search.
+
+        Returns:
+            `Some(Match)` for the leftmost match, or `None` when the pattern does not match.
+        """
+        if let Some(found) = self.raw.find(text):
+            return Some(Match(
+                text=found.as_str().to_string(),
+                start_offset=_offset_from_usize(found.start()),
+                end_offset=_offset_from_usize(found.end()),
+            ))
+        return None
+
+    def find_iter(self, text: str) -> MatchIterator:
+        """
+        Iterate over non-overlapping matches in `text`.
+
+        Matches are collected left-to-right into owned `Match` values before iteration begins. The iterator can
+        therefore outlive the engine's temporary borrowed match views.
+
+        Args:
+            text: Text to search.
+
+        Returns:
+            A `MatchIterator` that yields each non-overlapping match.
+        """
+        mut items: list[Match] = []
+        for found in self.raw.find_iter(text):
+            items.append(Match(
+                text=found.as_str().to_string(),
+                start_offset=_offset_from_usize(found.start()),
+                end_offset=_offset_from_usize(found.end()),
+            ))
+        return MatchIterator(items=items, index=0)
+
+    def captures(self, text: str) -> Option[Captures]:
+        """
+        Return capture groups for the first match in `text`.
+
+        Group `0` is the full match. Participating groups are copied into owned `Match` values, and optional groups
+        that did not participate stay as `None`.
+
+        Args:
+            text: Text to search.
+
+        Returns:
+            `Some(Captures)` for the leftmost match, or `None` when the pattern does not match.
+        """
+        if let Some(raw_caps) = self.raw.captures(text):
+            capture_count = _offset_from_usize(raw_caps.len())
+            # Pre-fill with `None` so nonparticipating optional groups keep their slot.
+            missing_capture: Option[Match] = None
+            mut indexed: list[Option[Match]] = list.repeat(missing_capture, capture_count)
+            for index in range(0, capture_count):
+                maybe_raw_index: Option[usize] = index.try_resize()
+                raw_index = maybe_raw_index.unwrap()
+                if let Some(found) = raw_caps.get(raw_index):
+                    indexed[index] = Some(Match(
+                        text=found.as_str().to_string(),
+                        start_offset=_offset_from_usize(found.start()),
+                        end_offset=_offset_from_usize(found.end()),
+                    ))
+
+            mut named: Dict[str, Option[Match]] = {}
+            # The engine yields `None` slots for unnamed groups; only named slots belong in `groupdict()`.
+            for maybe_name in self.raw.capture_names():
+                if let Some(raw_name) = maybe_name:
+                    name = raw_name.to_string()
+                    named[name] = None
+                    if let Some(found) = raw_caps.name(raw_name):
+                        named[name] = Some(Match(
+                            text=found.as_str().to_string(),
+                            start_offset=_offset_from_usize(found.start()),
+                            end_offset=_offset_from_usize(found.end()),
+                        ))
+
+            return Some(Captures(indexed=indexed, named=named))
+        return None
+
+    def captures_iter(self, text: str) -> CapturesIterator:
+        """
+        Iterate over capture sets for non-overlapping matches in `text`.
+
+        Each yielded `Captures` value preserves indexed and named groups using the same ownership and `None` rules as
+        `captures()`.
+
+        Args:
+            text: Text to search.
+
+        Returns:
+            A `CapturesIterator` that yields one capture set per non-overlapping match.
+        """
+        mut items: list[Captures] = []
+        for raw_caps in self.raw.captures_iter(text):
+            capture_count = _offset_from_usize(raw_caps.len())
+            # Pre-fill with `None` so nonparticipating optional groups keep their slot.
+            missing_capture: Option[Match] = None
+            mut indexed: list[Option[Match]] = list.repeat(missing_capture, capture_count)
+            for index in range(0, capture_count):
+                maybe_raw_index: Option[usize] = index.try_resize()
+                raw_index = maybe_raw_index.unwrap()
+                if let Some(found) = raw_caps.get(raw_index):
+                    indexed[index] = Some(Match(
+                        text=found.as_str().to_string(),
+                        start_offset=_offset_from_usize(found.start()),
+                        end_offset=_offset_from_usize(found.end()),
+                    ))
+
+            mut named: Dict[str, Option[Match]] = {}
+            # The engine yields `None` slots for unnamed groups; only named slots belong in `groupdict()`.
+            for maybe_name in self.raw.capture_names():
+                if let Some(raw_name) = maybe_name:
+                    name = raw_name.to_string()
+                    named[name] = None
+                    if let Some(found) = raw_caps.name(raw_name):
+                        named[name] = Some(Match(
+                            text=found.as_str().to_string(),
+                            start_offset=_offset_from_usize(found.start()),
+                            end_offset=_offset_from_usize(found.end()),
+                        ))
+            items.append(Captures(indexed=indexed, named=named))
+        return CapturesIterator(items=items, index=0)
+
+    def full_match(self, text: str) -> Option[Captures]:
+        """
+        Return captures only when the pattern spans the whole input.
+
+        Args:
+            text: Text to match.
+
+        Returns:
+            `Some(Captures)` when group `0` starts at byte offset `0` and ends at `len(text)`, otherwise `None`.
+        """
+        if let Some(caps) = self.captures(text):
+            if let Some(full) = caps.full_match():
+                start, end = full.span()
+                if start == 0 and end == len(text):
+                    return Some(caps)
+        return None
+
+    def split(self, text: str) -> SplitIterator:
+        """
+        Split `text` around every non-overlapping match.
+
+        Args:
+            text: Text to split.
+
+        Returns:
+            A `SplitIterator` yielding every field, including empty fields at boundaries.
+        """
+        return SplitIterator(matches=self.find_iter(text), text=text, limit=-1, produced=0, last_end=0, done=false)
+
+    def splitn(self, text: str, limit: int) -> SplitIterator:
+        """
+        Split `text` around matches with a field limit.
+
+        Args:
+            text: Text to split.
+            limit: Maximum number of fields to produce. A negative limit is normalized to `0`.
+
+        Returns:
+            A `SplitIterator` that yields at most `limit` fields.
+        """
+        mut normalized = limit
+        if normalized < 0:
+            normalized = 0
+        return SplitIterator(matches=self.find_iter(text), text=text, limit=normalized, produced=0, last_end=0, done=false)
+
+    def replace(self, text: str, repl: str | Callable[Captures, str]) -> str:
+        """
+        Replace the first match.
+
+        String replacements expand `$1`, `$name`, `${name}`, and `$$`. Callable replacements receive the full
+        `Captures` value for the match and return the replacement text.
+
+        Args:
+            text: Text to rewrite.
+            repl: Replacement template or callback.
+
+        Returns:
+            Rewritten text with at most one replacement.
+        """
+        if isinstance(repl, str):
+            return self._replacen_expanded(text, 1, repl)
+        else:
+            return self.replacen(text, 1, repl)
+
+    def replace_all(self, text: str, repl: str | Callable[Captures, str]) -> str:
+        """
+        Replace every non-overlapping match.
+
+        Args:
+            text: Text to rewrite.
+            repl: Replacement template or callback.
+
+        Returns:
+            Rewritten text after applying replacements left-to-right.
+        """
+        if isinstance(repl, str):
+            return self._replacen_expanded(text, -1, repl)
+        else:
+            mut out = ""
+            mut last_end = 0
+            mut captures = self.captures_iter(text)
+
+            while let Some(caps) = captures.__next__():
+                if let Some(full) = caps.full_match():
+                    start, end = full.span()
+                    out += text[last_end:start]
+                    out += repl(caps)
+                    last_end = end
+
+            out += text[last_end:]
+            return out
+
+    def replacen(self, text: str, limit: int, repl: str | Callable[Captures, str]) -> str:
+        """
+        Replace up to `limit` non-overlapping matches.
+
+        Args:
+            text: Text to rewrite.
+            limit: Maximum number of replacements. Negative limits are normalized to `0`.
+            repl: Replacement template or callback.
+
+        Returns:
+            Rewritten text after applying at most `limit` replacements.
+        """
+        mut normalized = limit
+        if normalized < 0:
+            normalized = 0
+        if isinstance(repl, str):
+            return self._replacen_expanded(text, normalized, repl)
+        else:
+            if normalized == 0:
+                return text
+
+            mut out = ""
+            mut last_end = 0
+            mut replaced = 0
+            mut captures = self.captures_iter(text)
+
+            while let Some(caps) = captures.__next__():
+                if replaced >= normalized:
+                    break
+
+                if let Some(full) = caps.full_match():
+                    start, end = full.span()
+                    out += text[last_end:start]
+                    out += repl(caps)
+                    last_end = end
+                    replaced += 1
+
+            out += text[last_end:]
+            return out
+
+    def replace_literal(self, text: str, repl: str) -> str:
+        """
+        Replace the first match with literal text.
+
+        Unlike `replace()`, the replacement string is inserted as-is; `$1`, `${name}`, and `$$` are not interpreted.
+
+        Args:
+            text: Text to rewrite.
+            repl: Literal replacement text.
+
+        Returns:
+            Rewritten text with at most one replacement.
+        """
+        return self._replacen_literal(text, 1, repl)
+
+    def replace_all_literal(self, text: str, repl: str) -> str:
+        """
+        Replace every non-overlapping match with literal text.
+
+        Args:
+            text: Text to rewrite.
+            repl: Literal replacement text.
+
+        Returns:
+            Rewritten text after applying replacements left-to-right.
+        """
+        return self._replacen_literal(text, -1, repl)
+
+    def replacen_literal(self, text: str, limit: int, repl: str) -> str:
+        """
+        Replace up to `limit` matches with literal text.
+
+        Args:
+            text: Text to rewrite.
+            limit: Maximum number of replacements. Negative limits are normalized to `0`.
+            repl: Literal replacement text.
+
+        Returns:
+            Rewritten text after applying at most `limit` replacements.
+        """
+        mut normalized = limit
+        if normalized < 0:
+            normalized = 0
+        return self._replacen_literal(text, normalized, repl)
+
+    def _replacen_expanded(self, text: str, limit: int, repl: str) -> str:
+        """
+        Replace matches using `$` capture interpolation.
+
+        Args:
+            text: Text to rewrite.
+            limit: Maximum number of replacements; `0` leaves text unchanged and negative values replace all matches.
+            repl: Replacement template.
+
+        Returns:
+            Rewritten text.
+        """
+        return self._replacen_string(text, limit, repl, false)
+
+    def _replacen_literal(self, text: str, limit: int, repl: str) -> str:
+        """
+        Replace matches using literal replacement text.
+
+        Args:
+            text: Text to rewrite.
+            limit: Maximum number of replacements; `0` leaves text unchanged and negative values replace all matches.
+            repl: Literal replacement text.
+
+        Returns:
+            Rewritten text.
+        """
+        return self._replacen_string(text, limit, repl, true)
+
+    def _replacen_string(self, text: str, limit: int, repl: str, literal: bool) -> str:
+        """
+        Shared string-replacement loop for literal and capture-expanded replacements.
+
+        Args:
+            text: Text to rewrite.
+            limit: Maximum number of replacements; `0` leaves text unchanged and negative values replace all matches.
+            repl: Replacement template or literal text.
+            literal: When `true`, insert `repl` without `$` interpolation.
+
+        Returns:
+            Rewritten text.
+        """
+        if limit == 0:
+            return text
+
+        mut out = ""
+        mut last_end = 0
+        mut replaced = 0
+        mut captures = self.captures_iter(text)
+
+        while let Some(caps) = captures.__next__():
+            if limit > 0 and replaced >= limit:
+                break
+
+            if let Some(full) = caps.full_match():
+                start, end = full.span()
+                out += text[last_end:start]
+                out += _string_replacement(repl, caps, literal)
+                last_end = end
+                replaced += 1
+
+        out += text[last_end:]
+        return out
+
+
+def _string_replacement(repl: str, caps: Captures, literal: bool) -> str:
+    """
+    Return the replacement text for one match.
+
+    Literal replacements bypass `$` interpolation; template replacements are expanded against the match's capture set.
+    """
+    if literal:
+        return repl
+    return _expand_replacement(repl, caps)
+
+
+pub def compile(pattern: str, ignore_case: bool = False, multiline: bool = False, dotall: bool = False, verbose: bool = False) -> Result[Regex, RegexError]:
+    """
+    Compile `pattern` into a `Regex`.
+
+    This function is equivalent to `Regex.compile(pattern, ...)` and direct `Regex(pattern, ...)` construction.
+
+    Args:
+        pattern: Pattern text accepted by the safe engine.
+        ignore_case: Enable case-insensitive matching.
+        multiline: Make `^` and `$` match line boundaries inside the text.
+        dotall: Let `.` match newline characters.
+        verbose: Enable the engine's ignore-whitespace pattern mode.
+
+    Returns:
+        `Ok(Regex)` for a compiled pattern, or `Err(RegexError)` when the engine rejects the pattern.
+    """
+    return Regex.compile(pattern, ignore_case, multiline, dotall, verbose)

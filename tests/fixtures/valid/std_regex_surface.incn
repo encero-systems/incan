@@ -1,0 +1,83 @@
+from std.regex import Captures, Regex, RegexError
+
+def show(value: Option[str]) -> str:
+    match value:
+        Some(text) => return text
+        None => return "<none>"
+
+def show_span(value: Option[Tuple[int, int]]) -> str:
+    match value:
+        Some(span) =>
+            start, end = span
+            return f"{start}:{end}"
+        None => return "<none>"
+
+def flip_name(caps: Captures) -> str:
+    return f"{show(caps.group('last'))}, {show(caps.group('first'))}"
+
+def run() -> Result[None, RegexError]:
+    flags = Regex("^alpha$", ignore_case=true, multiline=true, dotall=true, verbose=true)?
+    println(flags.is_match("ALPHA"))
+
+    token_re = Regex("(?P<word>\\w+)(?:-(?P<num>\\d+))?")?
+    match token_re.find("xx ALPHA-12 yy"):
+        Some(found) => println(f"{found.as_str()}@{found.start()}:{found.end()}")
+        None => println("missing-find")
+
+    match token_re.full_match("ALPHA-12"):
+        Some(caps) => println(show(caps.group(0)))
+        None => println("missing-full")
+
+    match token_re.captures("beta"):
+        Some(caps) =>
+            println(show(caps.group(1)))
+            println(show(caps.group("word")))
+            println(show_span(caps.span("word")))
+            println(show(caps.group("num")))
+            named = caps.groupdict()
+            println(show(named["num"]))
+            mut groups: list[str] = []
+            for group in caps.groups():
+                groups.append(show(group))
+            println("|".join(groups))
+        None => println("missing-captures")
+
+    word_re = Regex("\\w+")?
+    mut words: list[str] = []
+    for found in word_re.find_iter("one two"):
+        words.append(found.as_str())
+    println(",".join(words))
+
+    pair_re = Regex("(?P<key>\\w+)=(?P<value>\\d+)")?
+    mut pairs: list[str] = []
+    for caps in pair_re.captures_iter("a=1 b=2"):
+        pairs.append(f"{show(caps.group('key'))}:{show(caps.group(2))}")
+    println(",".join(pairs))
+
+    comma_re = Regex("\\s*,\\s*")?
+    mut parts: list[str] = []
+    for part in comma_re.split("a, b,c"):
+        parts.append(part)
+    println("|".join(parts))
+
+    mut limited_parts: list[str] = []
+    for part in comma_re.splitn("a, b,c", 2):
+        limited_parts.append(part)
+    println("|".join(limited_parts))
+
+    println(comma_re.replace("a, b,c", "|"))
+    println(comma_re.replace_all("a, b,c", "|"))
+
+    name_re = Regex("(?P<first>\\w+)\\s+(?P<last>\\w+)")?
+    println(name_re.replace_all("Ada Lovelace", "$2, $1"))
+    println(name_re.replace_all("Ada Lovelace", "${last}/${first}"))
+    println(name_re.replace_all("Ada Lovelace", flip_name))
+    println(name_re.replace_all_literal("Ada Lovelace", "$2, $1"))
+    println(word_re.replacen("one two three", 2, "x"))
+    println(word_re.replacen_literal("one two", 1, "$1"))
+    return Ok(None)
+
+def main() -> None:
+    match run():
+        Ok(_) => pass
+        Err(err) => println(err.message())

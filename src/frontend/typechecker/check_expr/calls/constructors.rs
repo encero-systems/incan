@@ -7,6 +7,8 @@ use crate::frontend::symbols::{CallableParam, FieldInfo, ResolvedType, SymbolKin
 use crate::frontend::typechecker::helpers::option_ty;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 
+const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
+
 impl TypeChecker {
     /// Validate model/class constructor arguments, including RFC 017 coercions for typed field initializers.
     pub(in crate::frontend::typechecker::check_expr::calls) fn check_model_or_class_constructor_call(
@@ -221,6 +223,39 @@ impl TypeChecker {
         self.constructor_result_type_with_bindings(name, &std::collections::HashMap::new())
     }
 
+    /// Compute a constructor result type from explicit call-site type arguments.
+    pub(in crate::frontend::typechecker::check_expr::calls) fn explicit_constructor_result_type(
+        &mut self,
+        name: &str,
+        type_info: &TypeInfo,
+        type_args: &[Spanned<Type>],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        if type_args.is_empty() {
+            return None;
+        }
+        let type_params = match type_info {
+            TypeInfo::Model(info) => &info.type_params,
+            TypeInfo::Class(info) => &info.type_params,
+            TypeInfo::Newtype(info) => &info.type_params,
+            TypeInfo::Enum(info) => &info.type_params,
+            _ => return None,
+        };
+        if type_args.len() != type_params.len() {
+            self.errors.push(errors::explicit_type_arg_arity(
+                name,
+                type_params.len(),
+                type_args.len(),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        Some(ResolvedType::Generic(
+            name.to_string(),
+            type_args.iter().map(|ty| self.resolve_type_checked(ty)).collect(),
+        ))
+    }
+
     /// Compute the constructor result surface type, substituting any generic bindings inferred from constructor fields.
     ///
     /// Unbound type parameters remain `Unknown` so callers can continue typechecking even when inference is partial.
@@ -272,6 +307,12 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
+        if let Some(type_info) = self.lookup_type_info(name).cloned()
+            && let Some(ret) = self.check_type_constructor_hook_call(name, &type_info, &[], args, span)
+        {
+            return ret;
+        }
+
         self.check_call_args(args);
 
         if self
@@ -371,6 +412,83 @@ impl TypeChecker {
                 self.errors.push(errors::unknown_symbol(name, span));
                 ResolvedType::Unknown
             }
+        }
+    }
+
+    /// Type-check a type constructor call by delegating to its source-defined static `__incan_new` method.
+    pub(in crate::frontend::typechecker::check_expr::calls) fn check_type_constructor_hook_call(
+        &mut self,
+        type_name: &str,
+        type_info: &TypeInfo,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        if Self::is_named_field_constructor_call(type_info, args) {
+            return None;
+        }
+        let hook = Self::constructor_hook_method(type_info)?;
+        if hook.receiver.is_some() {
+            return None;
+        }
+        let type_params = Self::constructor_hook_owner_type_params(type_info);
+        if !type_args.is_empty() && type_args.len() != type_params.len() {
+            self.errors.push(errors::explicit_type_arg_arity(
+                type_name,
+                type_params.len(),
+                type_args.len(),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        let resolved_type_args = type_args
+            .iter()
+            .map(|ty| self.resolve_type_checked(ty))
+            .collect::<Vec<_>>();
+        let receiver_ty = if resolved_type_args.is_empty() {
+            ResolvedType::Named(type_name.to_string())
+        } else {
+            ResolvedType::Generic(type_name.to_string(), resolved_type_args)
+        };
+        Some(self.check_generic_method_call(TYPE_CONSTRUCTOR_HOOK, hook, &[], args, &[], span, &receiver_ty))
+    }
+
+    /// Return whether a call's named arguments exactly describe normal model/class field construction.
+    pub(in crate::frontend::typechecker::check_expr::calls) fn is_named_field_constructor_call(
+        type_info: &TypeInfo,
+        args: &[CallArg],
+    ) -> bool {
+        let fields = match type_info {
+            TypeInfo::Model(info) => &info.fields,
+            TypeInfo::Class(info) => &info.fields,
+            _ => return false,
+        };
+        !args.is_empty()
+            && args.iter().all(|arg| match arg {
+                CallArg::Named(field, _) => fields.contains_key(field),
+                _ => false,
+            })
+    }
+
+    /// Resolve the static constructor hook method for a type that supports direct checked construction.
+    fn constructor_hook_method(type_info: &TypeInfo) -> Option<crate::frontend::symbols::MethodInfo> {
+        match type_info {
+            TypeInfo::Model(info) => info.methods.get(TYPE_CONSTRUCTOR_HOOK).cloned(),
+            TypeInfo::Class(info) => info.methods.get(TYPE_CONSTRUCTOR_HOOK).cloned(),
+            TypeInfo::Enum(info) => info.methods.get(TYPE_CONSTRUCTOR_HOOK).cloned(),
+            TypeInfo::Newtype(info) => info.methods.get(TYPE_CONSTRUCTOR_HOOK).cloned(),
+            _ => None,
+        }
+    }
+
+    /// Return owner type parameters whose explicit constructor arguments specialize the `Self` receiver.
+    fn constructor_hook_owner_type_params(type_info: &TypeInfo) -> &[String] {
+        match type_info {
+            TypeInfo::Model(info) => &info.type_params,
+            TypeInfo::Class(info) => &info.type_params,
+            TypeInfo::Enum(info) => &info.type_params,
+            TypeInfo::Newtype(info) => &info.type_params,
+            _ => &[],
         }
     }
 }

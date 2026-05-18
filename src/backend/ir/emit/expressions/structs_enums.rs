@@ -68,13 +68,6 @@ impl<'a> IrEmitter<'a> {
             //
             // Fill omitted fields using declared defaults (if present). If a required field is missing, fail emission
             // (the typechecker should reject this earlier).
-            let mut provided: std::collections::HashMap<&str, &TypedExpr> = std::collections::HashMap::new();
-            for (fname, fval) in fields {
-                if !fname.is_empty() {
-                    provided.insert(fname.as_str(), fval);
-                }
-            }
-
             let Some(metadata) = self.struct_constructor_metadata_for_fields(name, fields) else {
                 // Unknown or ambiguous struct to the emitter; fall back to emitting only provided fields.
                 tracing::debug!(
@@ -96,6 +89,12 @@ impl<'a> IrEmitter<'a> {
                 return Ok(quote! { #n { #(#field_tokens),* } });
             };
             let field_names = &metadata.fields;
+            let mut provided: std::collections::HashMap<&str, &TypedExpr> = std::collections::HashMap::new();
+            for (fname, fval) in fields {
+                if let Some(canonical) = metadata.canonical_field_name(fname) {
+                    provided.insert(canonical, fval);
+                }
+            }
 
             if field_names.is_empty() {
                 return Ok(quote! { #n {} });

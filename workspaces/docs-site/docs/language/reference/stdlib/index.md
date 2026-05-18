@@ -17,6 +17,7 @@ Pages in this section are curated and checked into the repository.
 - [`std.hash`](hash.md) (curated)
 - [`std.io`](io.md) (curated)
 - [`std.logging`](logging.md) (curated)
+- [`std.regex`](regex.md) (curated)
 - [`std.uuid`](uuid.md) (curated)
 - [`std.tempfile`](tempfile.md) (curated)
 - [`std.reflection`](reflection.md) (curated)

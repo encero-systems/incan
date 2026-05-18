@@ -1,0 +1,23 @@
+"""
+Regular expressions, matches, captures, and replacement helpers.
+
+`std.regex` uses the safe Rust-regex/RE2-style engine. Patterns support literals, character classes, quantifiers,
+anchors, alternation, Unicode matching, and indexed or named capture groups. Backtracking-only constructs such as
+lookaround and pattern backreferences are rejected by this module's contract.
+
+Use `Regex(pattern)?` or `compile(pattern)?` once, then reuse the compiled pattern for matching, splitting, and
+replacement. Match and capture values are owned Incan data with byte offsets into the searched string.
+
+Example:
+
+```incan
+from std.regex import Regex
+
+re = Regex(r"(?P<word>\w+)")?
+for found in re.find_iter("one two"):
+    println(found.as_str())
+```
+"""
+
+from std.regex._core import Regex, RegexError, compile
+from std.regex.types import Captures, CapturesIterator, Match, MatchIterator, SplitIterator
