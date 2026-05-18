@@ -107,3 +107,10 @@ match gzip.decompress(blob):
 `std.compression` does not provide archive containers such as ZIP or TAR, dictionary training APIs, authenticated
 encryption, checksums, or password hashing. Those require separate APIs because their compatibility and security
 contracts are different from byte compression.
+
+## See Also
+
+- [Compress and decompress data](../../how-to/compression.md)
+- [`std.io` reference](io.md)
+- [`std.fs` reference](fs.md)
+- [`std.encoding` reference](encoding.md)
