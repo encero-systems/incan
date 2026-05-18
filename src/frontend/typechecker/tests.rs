@@ -3419,6 +3419,76 @@ def render[T](value: Label[T]) -> str:
 
 #[cfg(feature = "rust_inspect")]
 #[test]
+fn test_rusttype_alias_resolves_underlying_rust_methods() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::std::string import String as RustString
+
+type Label = rusttype RustString
+
+def render(value: Label) -> str:
+    return value.as_str()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "std::string::String".to_string(),
+                definition_path: Some("std::string::String".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: vec![RustMethodSig {
+                        name: "as_str".to_string(),
+                        signature: RustFunctionSig {
+                            params: vec![RustParam {
+                                name: Some("self".to_string()),
+                                type_display: "&self".to_string(),
+                            }],
+                            return_type: "&str".to_string(),
+                            is_async: false,
+                            is_unsafe: false,
+                        },
+                    }],
+                    implemented_traits: Vec::new(),
+                    fields: vec![],
+                    variants: vec![],
+                }),
+            },
+        )
+        .map_err(|e| std::io::Error::other(format!("seed rust-inspect: {e}")))?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected rusttype alias receiver to expose underlying Rust methods: {errs:?}"
+        ))
+    })?;
+    let info = checker.type_info();
+    assert!(
+        info.expressions
+            .expr_types
+            .values()
+            .any(|ty| matches!(ty, ResolvedType::Str)),
+        "expected underlying rusttype method call to resolve to str, got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.rust
+            .return_coercions
+            .values()
+            .any(|c| c.rust_target_type == "String" && matches!(c.target_type, ResolvedType::Str)),
+        "expected borrowed Rust method return to be owned as Incan str, got {:?}",
+        info.rust.return_coercions
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
 fn test_rust_field_access_preserves_type_for_nested_match_binding() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def id[T](x: T) -> T:

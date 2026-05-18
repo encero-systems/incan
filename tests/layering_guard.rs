@@ -149,7 +149,7 @@ fn std_uuid_source_has_no_rust_backed_type_markers() {
 }
 
 #[test]
-fn std_regex_keeps_rust_runtime_at_snapshot_boundary() {
+fn std_regex_keeps_behavior_in_incan_source() {
     let source_path = std::path::Path::new("crates/incan_stdlib/stdlib/regex.incn");
     let source = std::fs::read_to_string(source_path).expect("std.regex source should exist");
     assert!(
@@ -157,23 +157,17 @@ fn std_regex_keeps_rust_runtime_at_snapshot_boundary() {
         "std.regex should dogfood direct regex crate interop for engine construction"
     );
     assert!(
+        !source.contains("from rust::incan_stdlib::regex"),
+        "std.regex should not call a Rust snapshot-helper module"
+    );
+    assert!(
         source.contains("def _replacen_string") && source.contains("def _expand_replacement"),
         "std.regex replacement behavior should stay in Incan source"
     );
 
     let rust_path = std::path::Path::new("crates/incan_stdlib/src/regex.rs");
-    let rust = std::fs::read_to_string(rust_path).expect("std.regex runtime helpers should exist");
-    for forbidden in [
-        "pub struct RawRegex",
-        "use regex::RegexBuilder",
-        "RegexBuilder::",
-        "pub fn is_match",
-        "pub fn split",
-        "pub fn replace",
-    ] {
-        assert!(
-            !rust.contains(forbidden),
-            "`{forbidden}` is not allowed in the std.regex Rust snapshot boundary"
-        );
-    }
+    assert!(
+        !rust_path.exists(),
+        "std.regex should not keep a Rust runtime-helper module for source-level behavior"
+    );
 }

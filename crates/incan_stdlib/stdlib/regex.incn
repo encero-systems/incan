@@ -6,14 +6,9 @@ anchors, alternation, Unicode matching, and named or indexed capture groups. Loo
 not part of this stdlib contract; use a separately versioned package when a backtracking regex engine is required.
 """
 
-from rust::incan_stdlib::regex import captures as _raw_captures, captures_all as _raw_captures_all, find as _raw_find, find_all as _raw_find_all
 from rust::regex import Regex as RustRegex, RegexBuilder
 from std.derives.collection import Iterator
 from std.derives.copying import Clone
-
-
-type _RawMatch = Tuple[str, int, int]
-type _RawCaptures = Tuple[list[Option[_RawMatch]], Dict[str, Option[_RawMatch]]]
 
 
 pub model RegexError:
@@ -268,8 +263,13 @@ pub model Regex:
         """
         Return the first match anywhere in `text`.
         """
-        match _raw_find(self.raw, text):
-            Some(value) => return Some(_match_from_raw(value))
+        match self.raw.find(text):
+            Some(found) =>
+                return Some(Match(
+                    text=found.as_str().to_string(),
+                    start_offset=_offset_from_usize(found.start()),
+                    end_offset=_offset_from_usize(found.end()),
+                ))
             None => return None
 
     def find_iter(self, text: str) -> MatchIterator:
@@ -277,16 +277,48 @@ pub model Regex:
         Iterate left-to-right over non-overlapping matches.
         """
         mut items: list[Match] = []
-        for raw in _raw_find_all(self.raw, text):
-            items.append(_match_from_raw(raw))
+        for found in self.raw.find_iter(text):
+            items.append(Match(
+                text=found.as_str().to_string(),
+                start_offset=_offset_from_usize(found.start()),
+                end_offset=_offset_from_usize(found.end()),
+            ))
         return MatchIterator(items=items, index=0)
 
     def captures(self, text: str) -> Option[Captures]:
         """
         Return capture groups for the first match anywhere in `text`.
         """
-        match _raw_captures(self.raw, text):
-            Some(value) => return Some(_captures_from_raw(value))
+        match self.raw.captures(text):
+            Some(raw_caps) =>
+                mut indexed: list[Option[Match]] = []
+                for index in range(0, _offset_from_usize(raw_caps.len())):
+                    maybe_raw_index: Option[usize] = index.try_resize()
+                    raw_index = maybe_raw_index.unwrap()
+                    match raw_caps.get(raw_index):
+                        Some(found) =>
+                            indexed.append(Some(Match(
+                                text=found.as_str().to_string(),
+                                start_offset=_offset_from_usize(found.start()),
+                                end_offset=_offset_from_usize(found.end()),
+                            )))
+                        None => indexed.append(None)
+
+                mut named: Dict[str, Option[Match]] = {}
+                for maybe_name in self.raw.capture_names():
+                    match maybe_name:
+                        Some(raw_name) =>
+                            name = raw_name.to_string()
+                            match raw_caps.name(raw_name):
+                                Some(found) =>
+                                    named[name] = Some(Match(
+                                        text=found.as_str().to_string(),
+                                        start_offset=_offset_from_usize(found.start()),
+                                        end_offset=_offset_from_usize(found.end()),
+                                    ))
+                                None => named[name] = None
+                        None => pass
+                return Some(Captures(indexed=indexed, named=named))
             None => return None
 
     def captures_iter(self, text: str) -> CapturesIterator:
@@ -294,8 +326,35 @@ pub model Regex:
         Iterate left-to-right over non-overlapping capture groups.
         """
         mut items: list[Captures] = []
-        for raw in _raw_captures_all(self.raw, text):
-            items.append(_captures_from_raw(raw))
+        for raw_caps in self.raw.captures_iter(text):
+            mut indexed: list[Option[Match]] = []
+            for index in range(0, _offset_from_usize(raw_caps.len())):
+                maybe_raw_index: Option[usize] = index.try_resize()
+                raw_index = maybe_raw_index.unwrap()
+                match raw_caps.get(raw_index):
+                    Some(found) =>
+                        indexed.append(Some(Match(
+                            text=found.as_str().to_string(),
+                            start_offset=_offset_from_usize(found.start()),
+                            end_offset=_offset_from_usize(found.end()),
+                        )))
+                    None => indexed.append(None)
+
+            mut named: Dict[str, Option[Match]] = {}
+            for maybe_name in self.raw.capture_names():
+                match maybe_name:
+                    Some(raw_name) =>
+                        name = raw_name.to_string()
+                        match raw_caps.name(raw_name):
+                            Some(found) =>
+                                named[name] = Some(Match(
+                                    text=found.as_str().to_string(),
+                                    start_offset=_offset_from_usize(found.start()),
+                                    end_offset=_offset_from_usize(found.end()),
+                                ))
+                            None => named[name] = None
+                    None => pass
+            items.append(Captures(indexed=indexed, named=named))
         return CapturesIterator(items=items, index=0)
 
     def full_match(self, text: str) -> Option[Captures]:
@@ -455,29 +514,14 @@ pub def compile(pattern: str, ignore_case: bool = False, multiline: bool = False
     return Regex.compile(pattern, ignore_case, multiline, dotall, verbose)
 
 
-def _match_from_raw(raw: _RawMatch) -> Match:
-    text, start, end = raw
-    return Match(text=text, start_offset=start, end_offset=end)
-
-
-def _match_from_raw_option(raw: Option[_RawMatch]) -> Option[Match]:
-    match raw:
-        Some(value) => return Some(_match_from_raw(value))
-        None => return None
-
-
-def _captures_from_raw(raw: _RawCaptures) -> Captures:
-    raw_groups_value, raw_names_value = raw
-    raw_groups: list[Option[_RawMatch]] = raw_groups_value
-    raw_names: Dict[str, Option[_RawMatch]] = raw_names_value
-    mut indexed: list[Option[Match]] = []
-    for value in raw_groups:
-        indexed.append(_match_from_raw_option(value))
-
-    mut named: Dict[str, Option[Match]] = {}
-    for name in raw_names.keys():
-        named[name] = _match_from_raw_option(raw_names[name])
-    return Captures(indexed=indexed, named=named)
+def _offset_from_usize(value: usize) -> int:
+    """
+    Convert Rust byte offsets to Incan `int`, saturating only if a host offset exceeds `i64::MAX`.
+    """
+    maybe_offset: Option[int] = value.try_resize()
+    match maybe_offset:
+        Some(offset) => return offset
+        None => return 9223372036854775807
 
 
 def _match_text(value: Option[Match]) -> Option[str]:

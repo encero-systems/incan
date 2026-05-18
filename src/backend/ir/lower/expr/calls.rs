@@ -1328,12 +1328,12 @@ impl AstLowering {
         Ok(None)
     }
 
-    /// Wrap the result of a method call in an `InteropCoerce` node when the typechecker recorded a return coercion for
-    /// the call expression span.
+    /// Wrap a Rust call result in an `InteropCoerce` node when the typechecker recorded a return coercion for the
+    /// expression span.
     ///
-    /// This handles the case where a `rusttype` method is declared in Incan with return type `str` but the actual Rust
-    /// method returns `&str`. The metadata-driven coercion detection records the mismatch; this function inserts
-    /// `.to_string()` (or equivalent) in the IR so the generated Rust code compiles without type errors.
+    /// This handles metadata-backed Rust calls that surface borrowed scalar-like returns (`&str`, `&[u8]`) as owned
+    /// Incan values. The typechecker records the mismatch; lowering inserts `.to_string()` or `.to_vec()` before the
+    /// value reaches ordinary Incan storage and return sites.
     pub(in crate::backend::ir::lower) fn wrap_with_rust_return_coercion(
         &mut self,
         expr: TypedExpr,
