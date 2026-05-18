@@ -94,6 +94,7 @@ pub model Captures:
             return _match_text(self.match_index(key))
         elif isinstance(key, str):
             return _match_text(self.match_name(key))
+        return None
 
     def span(self, key: int | str) -> Option[Tuple[int, int]]:
         """
@@ -109,6 +110,7 @@ pub model Captures:
             return _match_span(self.match_index(key))
         elif isinstance(key, str):
             return _match_span(self.match_name(key))
+        return None
 
     def groups(self) -> list[Option[str]]:
         """
@@ -292,24 +294,24 @@ pub def _offset_from_usize(value: usize) -> int:
     panicking while constructing a public match value.
     """
     maybe_offset: Option[int] = value.try_resize()
-    match maybe_offset:
-        Some(offset) => return offset
-        None => return 9223372036854775807
+    if let Some(offset) = maybe_offset:
+        return offset
+    return 9223372036854775807
 
 
 def _match_text(value: Option[Match]) -> Option[str]:
     """
     Convert an optional match to optional text.
     """
-    match value:
-        Some(found) => return Some(found.as_str())
-        None => return None
+    if let Some(found) = value:
+        return Some(found.as_str())
+    return None
 
 
 def _match_span(value: Option[Match]) -> Option[Tuple[int, int]]:
     """
     Convert an optional match to an optional byte span.
     """
-    match value:
-        Some(found) => return Some(found.span())
-        None => return None
+    if let Some(found) = value:
+        return Some(found.span())
+    return None
