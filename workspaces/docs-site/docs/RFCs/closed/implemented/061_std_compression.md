@@ -11,7 +11,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/339
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** v0.3.0-dev.47
+- **Shipped in:** 0.3.0
 
 ## Summary
 
