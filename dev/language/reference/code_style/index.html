@@ -5827,7 +5827,8 @@ You can print it with <code>incan run -c "import this"</code>.</p>
 <li>Treat <code>120</code> characters as the target line length.</li>
 <li>This is a best-effort target, not an absolute hard cap.</li>
 <li>When a constructor call or ordinary call overflows, rewrite it vertically with one argument per line.</li>
-<li>Some signatures, strings, and complex nested expressions may still require manual judgment.</li>
+<li>When a class adopts many traits, use a parenthesized <code>with (...)</code> list with one trait per line.</li>
+<li>Some strings and complex nested expressions may still require manual judgment.</li>
 </ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="kt">result</span> <span class="o">=</span> <span class="n">build_report</span><span class="p">(</span>
     <span class="n">source_uri</span><span class="p">,</span>
@@ -5835,6 +5836,13 @@ You can print it with <code>incan run -c "import this"</code>.</p>
     <span class="n">include_lineage</span><span class="o">=</span><span class="k">true</span><span class="p">,</span>
     <span class="n">include_statistics</span><span class="o">=</span><span class="k">true</span><span class="p">,</span>
 <span class="p">)</span>
+</code></pre></div>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">class</span><span class="w"> </span><span class="nc">Buffer</span> <span class="k">with</span> <span class="p">(</span>
+    <span class="nc">BinaryReader</span><span class="p">,</span>
+    <span class="nc">BinaryRead</span><span class="p">[</span><span class="kt">u8</span><span class="p">],</span>
+    <span class="nc">BinaryWrite</span><span class="p">[</span><span class="kt">u8</span><span class="p">],</span>
+<span class="p">):</span>
+    <span class="n">handle</span><span class="p">:</span> <span class="nc">Cursor</span><span class="p">[</span><span class="nb">bytes</span><span class="p">]</span>
 </code></pre></div>
 <h3 id="naming">Naming<a class="headerlink" href="#naming" title="Permanent link">&para;</a></h3>
 <p>Use naming that matches the kind of thing being declared:</p>

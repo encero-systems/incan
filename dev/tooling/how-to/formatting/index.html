@@ -5613,6 +5613,7 @@ In particular, the current formatter contract includes:</p>
 <ul>
 <li><code>4</code>-space indentation</li>
 <li>a <code>120</code>-character line-length target</li>
+<li>wrapping for long class trait adoption headers into parenthesized one-trait-per-line <code>with (...)</code> lists</li>
 <li>best-effort wrapping for long parenthesized logical expression chains at <code>and</code> / <code>or</code> breakpoints</li>
 <li>top-level double-blank-line spacing only where the style guide permits it</li>
 <li>preservation of one authored readability gap inside ordinary code blocks</li>
@@ -5700,7 +5701,7 @@ Unlike some formatters that can tolerate partial or broken code, <code>incan fmt
 <h3 id="line-length-is-best-effort">Line length is best-effort<a class="headerlink" href="#line-length-is-best-effort" title="Permanent link">&para;</a></h3>
 <p>The <code>120</code>-character line length is a target, not a strict hard limit.
 The formatter does not yet rewrite every possible overflowing construct.
-Very long strings, signatures, fluent call chains, and some nested expressions may still require manual judgment.</p>
+Very long strings, fluent call chains, and some nested expressions may still require manual judgment.</p>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../../language/reference/code_style/">Incan Code Style Guide</a></li>
