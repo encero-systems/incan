@@ -6652,6 +6652,32 @@ def main() -> None:
 
     #[test]
     fn test_std_compression_surface_runs_generated_project() -> Result<(), Box<dyn std::error::Error>> {
+        // Keep std.compression's generated-project dependencies in the root Cargo graph so CI fetches them before this
+        // smoke runs the generated project under CARGO_NET_OFFLINE.
+        use std::io::{Cursor, Read as _};
+
+        let sample = b"abc";
+        let mut gzip = flate2::read::GzEncoder::new(Cursor::new(sample), flate2::Compression::new(6));
+        let mut gzip_out = Vec::new();
+        gzip.read_to_end(&mut gzip_out)?;
+        assert!(!gzip_out.is_empty());
+
+        let zstd_out = zstd::stream::encode_all(Cursor::new(sample), 0)?;
+        assert!(!zstd_out.is_empty());
+
+        let mut bz2 = bzip2::read::BzEncoder::new(Cursor::new(sample), bzip2::Compression::new(6));
+        let mut bz2_out = Vec::new();
+        bz2.read_to_end(&mut bz2_out)?;
+        assert!(!bz2_out.is_empty());
+
+        let mut lzma = xz2::read::XzEncoder::new(Cursor::new(sample), 6);
+        let mut lzma_out = Vec::new();
+        lzma.read_to_end(&mut lzma_out)?;
+        assert!(!lzma_out.is_empty());
+
+        let mut snappy = snap::raw::Encoder::new();
+        assert!(!snappy.compress_vec(sample)?.is_empty());
+
         let output = Command::new(incan_debug_binary())
             .args(["run", "tests/fixtures/valid/std_compression_surface.incn"])
             .env("CARGO_NET_OFFLINE", "true")
