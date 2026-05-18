@@ -11,21 +11,25 @@
       
       
       
+        <link rel="prev" href="../collections/">
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+        <link rel="next" href="../derives/">
+      
+      
+      <link rel="icon" href="../../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFC 061: std.compression — codec-based compression and decompression - Incan Documentation</title>
+        <title>std.compression - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,11 +48,11 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../../stylesheets/pygments.css">
     
       <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-061-stdcompression-codec-based-compression-and-decompression" class="md-skip">
+        <a href="#stdcompression-reference" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +98,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 061: std.compression — codec-based compression and decompression
+              std.compression
             
           </span>
         </div>
@@ -212,7 +216,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -241,7 +245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -292,7 +296,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../start_here/" class="md-nav__link ">
+            <a href="../../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -325,7 +329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -346,7 +350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -367,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -388,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -445,7 +449,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../comparisons/" class="md-nav__link ">
+            <a href="../../../../comparisons/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -478,7 +482,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/python/" class="md-nav__link">
+      <a href="../../../../comparisons/python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -499,7 +503,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/rust/" class="md-nav__link">
+      <a href="../../../../comparisons/rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -520,7 +524,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/python_compatibility_tools/" class="md-nav__link">
+      <a href="../../../../comparisons/python_compatibility_tools/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -545,6 +549,8 @@
       
   
   
+    
+  
   
   
     
@@ -570,16 +576,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -596,7 +602,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             Language
@@ -707,7 +713,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -740,7 +746,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -761,7 +767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -782,7 +788,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -803,7 +809,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -824,7 +830,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -845,7 +851,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -866,7 +872,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -887,7 +893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -908,7 +914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -929,7 +935,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -950,7 +956,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -971,7 +977,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -992,7 +998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1021,7 +1027,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/dates_and_times/" class="md-nav__link">
+      <a href="../../../tutorials/dates_and_times/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1042,7 +1048,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1063,7 +1069,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../../../tutorials/fallible_and_infallible_paths/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1084,7 +1090,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1114,6 +1120,8 @@
   
     
     
+      
+        
       
         
       
@@ -1192,7 +1200,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../../how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1213,7 +1221,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../../how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1234,7 +1242,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/dates_and_times/" class="md-nav__link">
+      <a href="../../../how-to/dates_and_times/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1255,7 +1263,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../../how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1276,7 +1284,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../../how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1297,7 +1305,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../../how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1318,7 +1326,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/binary_text_encoding/" class="md-nav__link">
+      <a href="../../../how-to/binary_text_encoding/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1339,7 +1347,28 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/generators/" class="md-nav__link">
+      <a href="../../../how-to/compression/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1360,7 +1389,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../../how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1381,7 +1410,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../../how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1402,7 +1431,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_collections/" class="md-nav__link">
+      <a href="../../../how-to/choosing_collections/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1423,7 +1452,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+      <a href="../../../how-to/choosing_numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1444,7 +1473,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../../how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1465,7 +1494,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+      <a href="../../../how-to/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1486,7 +1515,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../../how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1507,7 +1536,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../../how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1528,7 +1557,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/working_with_uuids/" class="md-nav__link">
+      <a href="../../../how-to/working_with_uuids/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1549,7 +1578,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/performance/" class="md-nav__link">
+      <a href="../../../how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1570,7 +1599,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../../how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1591,7 +1620,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../../how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1617,8 +1646,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1665,11 +1696,11 @@
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" checked>
         
           
           <label class="md-nav__link" for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
@@ -1683,7 +1714,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4_4">
             <span class="md-nav__icon md-icon"></span>
             Reference
@@ -1697,7 +1728,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/language/" class="md-nav__link">
+      <a href="../../language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1718,7 +1749,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/feature_inventory/" class="md-nav__link">
+      <a href="../../feature_inventory/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1739,7 +1770,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../code_style/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1760,7 +1791,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/functions/" class="md-nav__link">
+      <a href="../../functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1781,7 +1812,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/generators/" class="md-nav__link">
+      <a href="../../generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1802,7 +1833,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+      <a href="../../symbol_aliases/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1823,7 +1854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/callable_presets/" class="md-nav__link">
+      <a href="../../callable_presets/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1844,7 +1875,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1865,7 +1896,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1886,7 +1917,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1907,7 +1938,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1928,7 +1959,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1949,7 +1980,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+      <a href="../../project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1970,7 +2001,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/strings/" class="md-nav__link">
+      <a href="../../strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1991,7 +2022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2012,7 +2043,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2030,6 +2061,8 @@
                 
   
   
+    
+  
   
   
     
@@ -2073,21 +2106,23 @@
       
         
       
+        
+      
     
     
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4_17" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4_17" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2104,7 +2139,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_4_17_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_4_17_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4_4_17">
             <span class="md-nav__icon md-icon"></span>
             Standard library
@@ -2120,7 +2155,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2141,7 +2176,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/collections/" class="md-nav__link">
+      <a href="../collections/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2159,10 +2194,134 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    std.compression
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    std.compression
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#codec-modules" class="md-nav__link">
+    <span class="md-ellipsis">
+      Codec Modules
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#streaming" class="md-nav__link">
+    <span class="md-ellipsis">
+      Streaming
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#levels" class="md-nav__link">
+    <span class="md-ellipsis">
+      Levels
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#autodetection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Autodetection
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#errors" class="md-nav__link">
+    <span class="md-ellipsis">
+      Errors
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#boundaries" class="md-nav__link">
+    <span class="md-ellipsis">
+      Boundaries
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      See Also
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2183,7 +2342,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/datetime/" class="md-nav__link">
+      <a href="../datetime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2204,7 +2363,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/encoding/" class="md-nav__link">
+      <a href="../encoding/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2225,7 +2384,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
+      <a href="../fs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2246,7 +2405,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/graph/" class="md-nav__link">
+      <a href="../graph/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2267,7 +2426,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/hash/" class="md-nav__link">
+      <a href="../hash/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2288,7 +2447,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/io/" class="md-nav__link">
+      <a href="../io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2309,7 +2468,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/logging/" class="md-nav__link">
+      <a href="../logging/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2330,7 +2489,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/uuid/" class="md-nav__link">
+      <a href="../uuid/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2351,7 +2510,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/tempfile/" class="md-nav__link">
+      <a href="../tempfile/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2372,7 +2531,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2393,7 +2552,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/result/" class="md-nav__link">
+      <a href="../result/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2414,7 +2573,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2435,7 +2594,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2456,7 +2615,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2519,7 +2678,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2552,7 +2711,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2573,7 +2732,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2594,7 +2753,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2615,7 +2774,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+      <a href="../../stdlib_traits/awaitable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2636,7 +2795,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2657,7 +2816,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2678,7 +2837,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2758,7 +2917,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2779,7 +2938,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2800,7 +2959,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2821,7 +2980,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2842,7 +3001,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2863,7 +3022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2983,7 +3142,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../../explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3004,7 +3163,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../../explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3025,7 +3184,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../../explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3046,7 +3205,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+      <a href="../../../explanation/compile_time_and_runtime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3067,7 +3226,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+      <a href="../../../explanation/rust_shaped_confidence/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3088,7 +3247,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../../explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3109,7 +3268,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/callable_presets/" class="md-nav__link">
+      <a href="../../../explanation/callable_presets/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3130,7 +3289,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/closures/" class="md-nav__link">
+      <a href="../../../explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3151,7 +3310,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/consts/" class="md-nav__link">
+      <a href="../../../explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3172,7 +3331,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/generators/" class="md-nav__link">
+      <a href="../../../explanation/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3193,7 +3352,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../../explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3214,7 +3373,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+      <a href="../../../explanation/numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3235,7 +3394,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/datetime_model/" class="md-nav__link">
+      <a href="../../../explanation/datetime_model/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3256,7 +3415,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3277,7 +3436,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../../explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3298,7 +3457,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../../explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3319,7 +3478,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/enums/" class="md-nav__link">
+      <a href="../../../explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3340,7 +3499,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../../explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3361,7 +3520,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../../explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3406,7 +3565,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../../explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3439,7 +3598,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3460,7 +3619,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../../explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3489,7 +3648,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../../explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3510,7 +3669,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../../explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3577,7 +3736,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tooling/" class="md-nav__link ">
+            <a href="../../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3655,7 +3814,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3676,7 +3835,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3697,7 +3856,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3781,7 +3940,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3802,7 +3961,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3823,7 +3982,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3844,7 +4003,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3865,7 +4024,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3886,7 +4045,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3907,7 +4066,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3928,7 +4087,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4000,7 +4159,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4021,7 +4180,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4099,7 +4258,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4120,7 +4279,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/contract_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4141,7 +4300,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+      <a href="../../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4162,7 +4321,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4183,7 +4342,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4244,7 +4403,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../whitepapers/" class="md-nav__link ">
+            <a href="../../../../whitepapers/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4277,7 +4436,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+      <a href="../../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4345,7 +4504,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/" class="md-nav__link ">
+            <a href="../../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4455,7 +4614,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4488,7 +4647,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4509,7 +4668,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4530,7 +4689,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4551,7 +4710,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4572,7 +4731,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4593,7 +4752,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4614,7 +4773,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4635,7 +4794,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4721,7 +4880,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4742,7 +4901,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4763,7 +4922,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4784,7 +4943,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4805,7 +4964,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4885,7 +5044,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4906,7 +5065,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/duckborrowing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4927,7 +5086,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4948,7 +5107,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4969,7 +5128,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4990,7 +5149,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5019,7 +5178,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../../../RFCs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5076,7 +5235,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../release_notes/" class="md-nav__link ">
+            <a href="../../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -5109,7 +5268,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_3/" class="md-nav__link">
+      <a href="../../../../release_notes/0_3/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5130,7 +5289,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5151,7 +5310,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5179,7 +5338,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../roadmap/" class="md-nav__link">
+      <a href="../../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5199,7 +5358,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stability/" class="md-nav__link">
+      <a href="../../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5239,255 +5398,63 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#codec-modules" class="md-nav__link">
     <span class="md-ellipsis">
-      Summary
+      Codec Modules
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#core-model" class="md-nav__link">
+  <a href="#streaming" class="md-nav__link">
     <span class="md-ellipsis">
-      Core model
+      Streaming
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#motivation" class="md-nav__link">
+  <a href="#levels" class="md-nav__link">
     <span class="md-ellipsis">
-      Motivation
+      Levels
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
+  <a href="#autodetection" class="md-nav__link">
     <span class="md-ellipsis">
-      Goals
+      Autodetection
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
+  <a href="#errors" class="md-nav__link">
     <span class="md-ellipsis">
-      Non-Goals
+      Errors
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#guide-level-explanation" class="md-nav__link">
+  <a href="#boundaries" class="md-nav__link">
     <span class="md-ellipsis">
-      Guide-level explanation
+      Boundaries
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#reference-level-explanation" class="md-nav__link">
+  <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
-      Reference-level explanation
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Reference-level explanation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#module-scope" class="md-nav__link">
-    <span class="md-ellipsis">
-      Module scope
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#capability-areas" class="md-nav__link">
-    <span class="md-ellipsis">
-      Capability areas
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#api-direction" class="md-nav__link">
-    <span class="md-ellipsis">
-      API direction
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#public-api-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Public API surface
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#codec-behavior" class="md-nav__link">
-    <span class="md-ellipsis">
-      Codec behavior
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#autodetection-contract" class="md-nav__link">
-    <span class="md-ellipsis">
-      Autodetection contract
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#error-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      Error model
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-details" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design details
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Design details">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#why-compression-deserves-its-own-module" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why compression deserves its own module
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#why-codec-submodules" class="md-nav__link">
-    <span class="md-ellipsis">
-      Why codec submodules
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#codec-set-and-scope" class="md-nav__link">
-    <span class="md-ellipsis">
-      Codec set and scope
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#one-shot-and-streaming-support" class="md-nav__link">
-    <span class="md-ellipsis">
-      One-shot and streaming support
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#autodetection-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      Autodetection policy
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#snappy-raw-interop-surface" class="md-nav__link">
-    <span class="md-ellipsis">
-      Snappy raw interop surface
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-existing-stdlib-work" class="md-nav__link">
-    <span class="md-ellipsis">
-      Interaction with existing stdlib work
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compatibility-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compatibility / migration
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      Alternatives considered
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#drawbacks" class="md-nav__link">
-    <span class="md-ellipsis">
-      Drawbacks
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layers-affected" class="md-nav__link">
-    <span class="md-ellipsis">
-      Layers affected
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-decisions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design Decisions
+      See Also
     </span>
   </a>
   
@@ -5511,282 +5478,155 @@
   
 
 
-<h1 id="rfc-061-stdcompression-codec-based-compression-and-decompression">RFC 061: <code>std.compression</code> — codec-based compression and decompression<a class="headerlink" href="#rfc-061-stdcompression-codec-based-compression-and-decompression" title="Permanent link">&para;</a></h1>
-<ul>
-<li><strong>Status:</strong> Planned</li>
-<li><strong>Created:</strong> 2026-04-14</li>
-<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong><ul>
-<li>RFC 022 (namespaced stdlib modules and compiler handoff)</li>
-<li>RFC 023 (compilable stdlib and Rust module binding)</li>
-<li>RFC 055 (<code>std.fs</code> path-centric filesystem APIs)</li>
-<li>RFC 056 (<code>std.io</code> in-memory byte streams and binary parsing helpers)</li>
-</ul>
-</li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/339</li>
-<li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.2</li>
-<li><strong>Shipped in:</strong> —</li>
-</ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes <code>std.compression</code> as Incan's standard library module for byte-oriented compression and decompression. The module standardizes a codec-submodule surface for common codecs, supports both one-shot (<code>bytes -&gt; bytes</code>) and streaming workflows, and keeps codec autodetection explicit and opt-in. The goal is to make compression a first-class Incan capability without leaking backend crate APIs into the language contract.</p>
-<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
-<p><code>std.compression</code> is a codec layer over bytes and binary streams. Codec submodules own normal encode/decode workflows, while the top-level module owns explicit autodetection helpers and shared vocabulary such as <code>Codec</code> and <code>CompressionError</code>.</p>
-<p>The stable public contract has three parts:</p>
-<ul>
-<li>per-codec one-shot APIs for callers that already have a <code>bytes</code> payload;</li>
-<li>per-codec stream APIs for callers that need to move data between <code>std.fs.File</code> and <code>std.io.BytesIO</code> without materializing the whole payload;</li>
-<li>explicit top-level autodetection APIs for decompression only.</li>
-</ul>
-<p>The module must not expose backend crate names, backend option structs, or backend-specific error types as the user-facing contract. Implementations may use any backend that preserves the observable codec behavior, error categories, streaming semantics, and supported option rules defined here.</p>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Compression is a recurring systems and data task: users archive logs, exchange compressed API payloads, read compressed datasets, and build pipeline stages that transform compressed files. Without a standard module, users either fall into Rust interop immediately or reinvent compression wrappers per project.</p>
-<p>This matters because compression sits directly on top of stdlib capabilities already being defined:</p>
-<ul>
-<li><code>std.fs</code> handles path and file I/O;</li>
-<li><code>std.io</code> handles in-memory bytes and cursor-like workflows;</li>
-<li><code>std.compression</code> should provide the codec layer these modules feed into.</li>
-</ul>
-<p>Compression should therefore be explicit in the language standard library instead of remaining ecosystem-only glue code.</p>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Provide a standard byte-oriented compression and decompression surface.</li>
-<li>Standardize a concrete initial codec set: <code>gzip</code>, <code>zlib</code>, <code>deflate</code>, <code>zstd</code>, <code>bz2</code>, <code>lzma</code>, and <code>snappy</code>.</li>
-<li>Support both one-shot and streaming usage patterns in the core contract.</li>
-<li>Keep the public contract codec-first and Incan-native rather than backend-crate-shaped.</li>
-<li>Keep autodetection explicit and opt-in rather than implicit in normal codec calls.</li>
-</ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Standardizing archive container formats such as ZIP or TAR in this RFC.</li>
-<li>Replacing specialized domain-specific compression libraries.</li>
-<li>Standardizing every compression codec and feature flag in the first iteration.</li>
-<li>Hiding codec choice behind implicit autodetection in normal API calls.</li>
-<li>Defining dictionary training APIs or advanced codec-tuning systems in this RFC.</li>
-</ul>
-<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>Authors should be able to compress and decompress bytes directly:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.compression</span><span class="w"> </span><span class="kn">import</span> <span class="n">gzip</span>
-
-<span class="n">compressed</span> <span class="o">=</span> <span class="n">gzip</span><span class="o">.</span><span class="n">compress</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span><span class="o">?</span>
+<h1 id="stdcompression-reference">std.compression reference<a class="headerlink" href="#stdcompression-reference" title="Permanent link">&para;</a></h1>
+<p><code>std.compression</code> provides codec-based compression and decompression for byte payloads, <code>BytesIO</code> streams, and
+<code>std.fs.File</code> handles.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.compression</span><span class="w"> </span><span class="kn">import</span> <span class="n">gzip</span><span class="p">,</span> <span class="n">decompress_auto</span><span class="p">,</span> <span class="nc">Codec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span>
+</code></pre></div>
+<p>Use explicit codec modules when the data format is known. Use autodetection only when the input may be one of several
+framed formats and the caller is willing to handle a no-match error.</p>
+<h2 id="codec-modules">Codec Modules<a class="headerlink" href="#codec-modules" title="Permanent link">&para;</a></h2>
+<p><code>std.compression</code> exposes these codec namespaces:</p>
+<table>
+<thead>
+<tr>
+<th>Namespace</th>
+<th>Format</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gzip</code></td>
+<td>gzip-wrapped deflate</td>
+</tr>
+<tr>
+<td><code>zlib</code></td>
+<td>zlib-wrapped deflate</td>
+</tr>
+<tr>
+<td><code>deflate</code></td>
+<td>raw deflate</td>
+</tr>
+<tr>
+<td><code>zstd</code></td>
+<td>zstd frames</td>
+</tr>
+<tr>
+<td><code>bz2</code></td>
+<td>bzip2 streams</td>
+</tr>
+<tr>
+<td><code>lzma</code></td>
+<td>XZ/LZMA-family streams</td>
+</tr>
+<tr>
+<td><code>snappy</code></td>
+<td>framed Snappy</td>
+</tr>
+<tr>
+<td><code>snappy.raw</code></td>
+<td>raw Snappy blocks for advanced interop</td>
+</tr>
+</tbody>
+</table>
+<p>Each top-level codec namespace exposes one-shot helpers:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">compressed</span> <span class="o">=</span> <span class="n">gzip</span><span class="o">.</span><span class="n">compress</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="kc">None</span><span class="p">)</span><span class="o">?</span>
 <span class="n">plain</span> <span class="o">=</span> <span class="n">gzip</span><span class="o">.</span><span class="n">decompress</span><span class="p">(</span><span class="n">compressed</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
-<p>Streaming workflows should be equally direct:</p>
+<p>The default <code>snappy</code> namespace uses framed Snappy. Raw Snappy is available under <code>std.compression.snappy.raw</code>, but it is
+not part of autodetection because raw blocks do not carry a reliable frame signature.</p>
+<h2 id="streaming">Streaming<a class="headerlink" href="#streaming" title="Permanent link">&para;</a></h2>
+<p>Every required codec module exposes stream helpers over <code>std.io.BytesIO</code> and <code>std.fs.File</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.compression</span><span class="w"> </span><span class="kn">import</span> <span class="n">zstd</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
 
 <span class="n">source</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;events.jsonl.zst&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;rb&quot;</span><span class="p">)</span><span class="o">?</span>
 <span class="n">target</span> <span class="o">=</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;events.jsonl&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="s2">&quot;wb&quot;</span><span class="p">)</span><span class="o">?</span>
 <span class="n">zstd</span><span class="o">.</span><span class="n">decompress_stream</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">target</span><span class="p">)</span><span class="o">?</span>
+<span class="n">target</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span><span class="o">?</span>
 </code></pre></div>
-<p>Autodetection should be explicit and opt-in:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std</span><span class="w"> </span><span class="kn">import</span> <span class="n">compression</span>
-
-<span class="n">codec</span><span class="p">,</span> <span class="n">plain</span> <span class="o">=</span> <span class="n">compression</span><span class="o">.</span><span class="n">decompress_auto</span><span class="p">(</span><span class="n">blob</span><span class="p">)</span><span class="o">?</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">codec</span><span class="p">)</span>
+<p><code>compress_stream(source, target, level=None, chunk_size=65536)</code> reads plain bytes from <code>source</code> and writes compressed
+bytes to <code>target</code>. <code>decompress_stream(source, target, chunk_size=65536)</code> reads compressed bytes and writes plain bytes.</p>
+<p><code>chunk_size</code> must be positive. A non-positive value returns a <code>CompressionError</code> with <code>kind == "invalid_chunk_size"</code>.</p>
+<h2 id="levels">Levels<a class="headerlink" href="#levels" title="Permanent link">&para;</a></h2>
+<p><code>level=None</code> selects the codec default.</p>
+<table>
+<thead>
+<tr>
+<th>Codec</th>
+<th>Supported levels</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>gzip</code>, <code>zlib</code>, <code>deflate</code>, <code>bz2</code>, <code>lzma</code></td>
+<td><code>0</code> through <code>9</code></td>
+</tr>
+<tr>
+<td><code>zstd</code></td>
+<td><code>-7</code> through <code>22</code></td>
+</tr>
+<tr>
+<td><code>snappy</code>, <code>snappy.raw</code></td>
+<td>no configurable level</td>
+</tr>
+</tbody>
+</table>
+<p>Codecs with numeric levels return <code>CompressionError(kind="invalid_level", ...)</code> for out-of-range values. Snappy returns
+<code>CompressionError(kind="unsupported_option", ...)</code> when a level is supplied.</p>
+<h2 id="autodetection">Autodetection<a class="headerlink" href="#autodetection" title="Permanent link">&para;</a></h2>
+<p>Autodetection is explicit and decompression-only:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">codec</span><span class="p">,</span> <span class="n">plain</span> <span class="o">=</span> <span class="n">decompress_auto</span><span class="p">(</span><span class="n">blob</span><span class="p">,</span> <span class="n">allowed</span><span class="o">=</span><span class="p">[</span><span class="nc">Codec</span><span class="o">.</span><span class="nc">Gzip</span><span class="p">,</span> <span class="nc">Codec</span><span class="o">.</span><span class="nc">Zstd</span><span class="p">])</span><span class="o">?</span>
 </code></pre></div>
-<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="module-scope">Module scope<a class="headerlink" href="#module-scope" title="Permanent link">&para;</a></h3>
-<p><code>std.compression</code> must provide:</p>
+<p><code>decompress_auto(data, allowed=Codec.all())</code> returns <code>(Codec, bytes)</code>. <code>decompress_auto_stream(source, target,
+allowed=Codec.all(), chunk_size=65536)</code> writes the decoded stream to <code>target</code> and returns the detected <code>Codec</code>.</p>
+<p>The <code>allowed</code> list is binding. An empty list or a payload whose signature does not match any allowed codec returns
+<code>CompressionError(kind="unsupported_codec", ...)</code>.</p>
+<p>Autodetection uses signatures and framing bytes only. It does not inspect file extensions, paths, or MIME types. Raw
+deflate and raw Snappy are not guessed because they do not have reliable framing signatures.</p>
+<h2 id="errors">Errors<a class="headerlink" href="#errors" title="Permanent link">&para;</a></h2>
+<p>Fallible helpers return <code>Result[..., CompressionError]</code>.</p>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>kind</code></td>
+<td>Stable category such as <code>invalid_data</code>, <code>truncated_input</code>, <code>unsupported_codec</code>, <code>unsupported_option</code>, <code>invalid_level</code>, <code>invalid_chunk_size</code>, <code>io</code>, or <code>backend</code>.</td>
+</tr>
+<tr>
+<td><code>codec</code></td>
+<td>The codec involved in the failure, when known.</td>
+</tr>
+<tr>
+<td><code>operation</code></td>
+<td>The operation that failed, such as <code>compress</code>, <code>decompress_stream</code>, or <code>decompress_auto_stream</code>.</td>
+</tr>
+<tr>
+<td><code>detail</code></td>
+<td>Backend or stdlib validation detail for diagnostics.</td>
+</tr>
+</tbody>
+</table>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="n">gzip</span><span class="o">.</span><span class="n">decompress</span><span class="p">(</span><span class="n">blob</span><span class="p">):</span>
+    <span class="nb">Ok</span><span class="p">(</span><span class="n">plain</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">plain</span><span class="p">))</span>
+    <span class="nb">Err</span><span class="p">(</span><span class="n">err</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="n">err</span><span class="o">.</span><span class="n">kind</span><span class="p">)</span>
+</code></pre></div>
+<h2 id="boundaries">Boundaries<a class="headerlink" href="#boundaries" title="Permanent link">&para;</a></h2>
+<p><code>std.compression</code> does not provide archive containers such as ZIP or TAR, dictionary training APIs, authenticated
+encryption, checksums, or password hashing. Those require separate APIs because their compatibility and security
+contracts are different from byte compression.</p>
+<h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li>codec submodules:</li>
-<li><code>std.compression.gzip</code></li>
-<li><code>std.compression.zlib</code></li>
-<li><code>std.compression.deflate</code></li>
-<li><code>std.compression.zstd</code></li>
-<li><code>std.compression.bz2</code></li>
-<li><code>std.compression.lzma</code></li>
-<li><code>std.compression.snappy</code></li>
-<li>one-shot <code>bytes -&gt; bytes</code> operations per codec;</li>
-<li>streaming operations per codec over <code>std.fs.File</code> and <code>std.io.BytesIO</code>;</li>
-<li>explicit top-level autodetection helpers for decompression.</li>
-</ul>
-<p>The top-level module must also expose:</p>
-<ul>
-<li><code>Codec</code>, a stable enum-like codec value used by autodetection results and <code>allowed</code> filters;</li>
-<li><code>CompressionError</code>, the stable error boundary for codec, option, stream, and I/O failures.</li>
-</ul>
-<p><code>Codec</code> must represent at least <code>Gzip</code>, <code>Zlib</code>, <code>Deflate</code>, <code>Zstd</code>, <code>Bz2</code>, <code>Lzma</code>, and <code>Snappy</code>. <code>Codec.all()</code> must return those codecs in a stable order and must not include raw Snappy.</p>
-<h3 id="capability-areas">Capability areas<a class="headerlink" href="#capability-areas" title="Permanent link">&para;</a></h3>
-<p>The contract must cover:</p>
-<ul>
-<li>compression and decompression over <code>bytes</code>;</li>
-<li>streaming compression and decompression without forcing full in-memory materialization;</li>
-<li>codec-accurate error reporting for invalid data and truncated input;</li>
-<li>explicit codec naming in normal workflows;</li>
-<li>explicit opt-in autodetection only through dedicated functions.</li>
-</ul>
-<h3 id="api-direction">API direction<a class="headerlink" href="#api-direction" title="Permanent link">&para;</a></h3>
-<p>The surface must be codec-submodule-first and consistent across codecs.</p>
-<p>Per-codec baseline APIs:</p>
-<ul>
-<li><code>compress(data: bytes, level: int | None = None) -&gt; Result[bytes, CompressionError]</code></li>
-<li><code>decompress(data: bytes) -&gt; Result[bytes, CompressionError]</code></li>
-<li><code>compress_stream(source: File | BytesIO, target: File | BytesIO, level: int | None = None, chunk_size: int = 65536) -&gt; Result[None, CompressionError]</code></li>
-<li><code>decompress_stream(source: File | BytesIO, target: File | BytesIO, chunk_size: int = 65536) -&gt; Result[None, CompressionError]</code></li>
-</ul>
-<p>Top-level autodetection APIs:</p>
-<ul>
-<li><code>decompress_auto(data: bytes, allowed: List[Codec] = Codec.all()) -&gt; Result[(Codec, bytes), CompressionError]</code></li>
-<li><code>decompress_auto_stream(source: File | BytesIO, target: File | BytesIO, allowed: List[Codec] = Codec.all(), chunk_size: int = 65536) -&gt; Result[Codec, CompressionError]</code></li>
-</ul>
-<p>Autodetection should not be coupled to file extensions. It should use codec signatures and framing checks where applicable and fail explicitly when detection is ambiguous or unsupported.</p>
-<h3 id="public-api-surface">Public API surface<a class="headerlink" href="#public-api-surface" title="Permanent link">&para;</a></h3>
-<p>Each required codec submodule must expose the baseline API above. The meaning of the baseline API is:</p>
-<ul>
-<li><code>compress(...)</code> returns a complete compressed byte payload for the codec represented by the submodule.</li>
-<li><code>decompress(...)</code> returns the complete decompressed bytes and must reject invalid or truncated input with <code>CompressionError</code>.</li>
-<li><code>compress_stream(...)</code> reads binary input from <code>source</code>, writes compressed output to <code>target</code>, and must not require full input materialization.</li>
-<li><code>decompress_stream(...)</code> reads compressed binary input from <code>source</code>, writes decompressed output to <code>target</code>, and must not require full input materialization.</li>
-</ul>
-<p>Each stream API must process data incrementally using <code>chunk_size</code>. <code>chunk_size</code> must be positive. A non-positive chunk size must return <code>CompressionError.invalid_chunk_size</code> or the equivalent stable category.</p>
-<p>The <code>level</code> argument is a portable compression-level request, not a backend option bag. <code>None</code> means the codec's documented default level. Codecs with level support must reject unsupported numeric levels with <code>CompressionError.invalid_level</code>. Codecs without configurable levels, including framed Snappy, must reject non-<code>None</code> levels with <code>CompressionError.unsupported_option</code>.</p>
-<h3 id="codec-behavior">Codec behavior<a class="headerlink" href="#codec-behavior" title="Permanent link">&para;</a></h3>
-<p>The required codec submodules must have these default meanings:</p>
-<ul>
-<li><code>gzip</code> must read and write gzip-wrapped deflate streams.</li>
-<li><code>zlib</code> must read and write zlib-wrapped deflate streams.</li>
-<li><code>deflate</code> must read and write raw deflate streams.</li>
-<li><code>zstd</code> must read and write zstd frames.</li>
-<li><code>bz2</code> must read and write bzip2 streams.</li>
-<li><code>lzma</code> must read and write XZ/LZMA-family streams through the documented stdlib surface.</li>
-<li><code>snappy</code> must read and write framed Snappy streams by default.</li>
-</ul>
-<p>Compressed bytes produced by a codec submodule must be accepted by the same submodule's <code>decompress(...)</code> and <code>decompress_stream(...)</code> APIs. Cross-codec behavior is not implicit: <code>gzip.decompress(...)</code> must not silently fall back to zlib, deflate, or autodetection.</p>
-<h3 id="autodetection-contract">Autodetection contract<a class="headerlink" href="#autodetection-contract" title="Permanent link">&para;</a></h3>
-<p>Autodetection is decompression-only in this RFC. <code>decompress_auto(...)</code> and <code>decompress_auto_stream(...)</code> must examine codec signatures and framing data where the codec has a reliable signature. They must return the detected <code>Codec</code> together with the decompressed output, or fail with a stable <code>CompressionError</code> category when no allowed codec matches.</p>
-<p>The <code>allowed</code> argument must restrict the candidate set. An empty <code>allowed</code> list must return <code>CompressionError.unsupported_codec</code> or an equivalent stable category. Implementations must not try codecs outside <code>allowed</code>.</p>
-<p>Autodetection must not use file extensions, path names, or MIME-type guesses as part of the contract. Stream autodetection may buffer enough prefix data to identify the codec, but it must preserve that data for decompression and must not require reading the whole stream before it starts producing output.</p>
-<p>When signatures are ambiguous or a codec has no reliable signature, autodetection must fail explicitly instead of guessing. Raw Snappy is excluded from autodetection.</p>
-<h3 id="error-model">Error model<a class="headerlink" href="#error-model" title="Permanent link">&para;</a></h3>
-<p><code>CompressionError</code> must distinguish at least:</p>
-<ul>
-<li>invalid or corrupted compressed data;</li>
-<li>truncated input;</li>
-<li>unsupported codec;</li>
-<li>unsupported option;</li>
-<li>invalid compression level;</li>
-<li>invalid chunk size;</li>
-<li>ambiguous autodetection;</li>
-<li>I/O failure while reading from or writing to streams;</li>
-<li>backend failure after stdlib-level validation.</li>
-</ul>
-<p>Codec-specific details may be preserved as metadata, but the top-level error type must remain stable and codec-neutral.</p>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="why-compression-deserves-its-own-module">Why compression deserves its own module<a class="headerlink" href="#why-compression-deserves-its-own-module" title="Permanent link">&para;</a></h3>
-<p>Compression is not a generic <code>bytes</code> helper. It has codec-specific semantics, error behavior, streaming tradeoffs, and compatibility constraints. A dedicated <code>std.compression</code> module keeps these concerns explicit and avoids burying codec behavior inside <code>std.io</code> or <code>std.fs</code>.</p>
-<h3 id="why-codec-submodules">Why codec submodules<a class="headerlink" href="#why-codec-submodules" title="Permanent link">&para;</a></h3>
-<p>Submodules keep callsites explicit and readable:</p>
-<ul>
-<li><code>gzip.compress(...)</code></li>
-<li><code>zstd.decompress_stream(...)</code></li>
-</ul>
-<p>This preserves predictability and makes cross-codec behavior easy to compare without turning the API into one overloaded function family with hidden mode switches.</p>
-<h3 id="codec-set-and-scope">Codec set and scope<a class="headerlink" href="#codec-set-and-scope" title="Permanent link">&para;</a></h3>
-<p>The initial codec set is:</p>
-<ul>
-<li><code>gzip</code></li>
-<li><code>zlib</code></li>
-<li><code>deflate</code></li>
-<li><code>zstd</code></li>
-<li><code>bz2</code></li>
-<li><code>lzma</code></li>
-<li><code>snappy</code></li>
-</ul>
-<p>This set covers the dominant interchange and data-processing codecs while avoiding archive-container scope creep.</p>
-<p>For Snappy, the standard-library default should be the framed format surface. Raw Snappy format should exist as an advanced interop surface (for example Parquet-style page compression paths), but it should not be the default path because it weakens streaming and autodetection behavior.</p>
-<h3 id="one-shot-and-streaming-support">One-shot and streaming support<a class="headerlink" href="#one-shot-and-streaming-support" title="Permanent link">&para;</a></h3>
-<p><code>bytes -&gt; bytes</code> APIs are required for simple usage and small payloads. Streaming APIs are also part of the core contract because large-file and pipeline workflows are a first-class use case and must not require immediate Rust interop.</p>
-<p>Streaming support in this RFC is intentionally concrete and practical:</p>
-<ul>
-<li><code>source</code> and <code>target</code> accept <code>std.fs.File</code> and <code>std.io.BytesIO</code>;</li>
-<li>chunked processing is explicit via <code>chunk_size</code>;</li>
-<li>stream APIs are per-codec and do not depend on future generic Reader/Writer protocol RFCs.</li>
-</ul>
-<h3 id="autodetection-policy">Autodetection policy<a class="headerlink" href="#autodetection-policy" title="Permanent link">&para;</a></h3>
-<p>Autodetection is useful but dangerous when implicit. The module should therefore expose autodetection only through dedicated APIs (<code>decompress_auto</code> / <code>decompress_auto_stream</code>) and keep normal codec APIs explicit.</p>
-<p>This creates a clear policy boundary:</p>
-<ul>
-<li>explicit codec call for predictable behavior;</li>
-<li>explicit autodetection call when convenience is needed.</li>
-</ul>
-<p>Snappy autodetection applies to the framed Snappy format. Raw Snappy streams are out of scope for autodetection in this RFC.</p>
-<h3 id="snappy-raw-interop-surface">Snappy raw interop surface<a class="headerlink" href="#snappy-raw-interop-surface" title="Permanent link">&para;</a></h3>
-<p><code>std.compression.snappy</code> must expose:</p>
-<ul>
-<li>framed APIs as the default (<code>compress</code>, <code>decompress</code>, stream helpers);</li>
-<li>advanced raw APIs under a nested namespace such as <code>snappy.raw</code>.</li>
-</ul>
-<p>Raw Snappy support is included for systems integrations that need block-level behavior (for example Parquet-family readers and writers), but this is intentionally not the primary path for general application compression workflows.</p>
-<h3 id="interaction-with-existing-stdlib-work">Interaction with existing stdlib work<a class="headerlink" href="#interaction-with-existing-stdlib-work" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>std.fs</code> remains responsible for path and file operations.</li>
-<li><code>std.io</code> remains responsible for in-memory byte and cursor behavior.</li>
-<li><code>std.compression</code> provides codec behavior on top of those modules.</li>
-</ul>
-<p>This keeps module boundaries clean and avoids blending filesystem, cursor, and codec concerns into one API surface.</p>
-<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>This feature is additive. Existing Rust interop or third-party compression code can continue to work, but common codec operations should have a standard Incan path once this module exists.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Push compression entirely to Rust interop</strong></li>
-<li>
-<p>Too low-level and too inconsistent for a batteries-included language standard library.</p>
-</li>
-<li>
-<p><strong>Fold compression into <code>std.io</code></strong></p>
-</li>
-<li>
-<p>Wrong boundary. Compression is codec semantics, not generic byte cursor behavior.</p>
-</li>
-<li>
-<p><strong>Only <code>bytes -&gt; bytes</code> in core, stream support later</strong></p>
-</li>
-<li>
-<p>Too small for the north star and forces immediate escape hatches for common large-file workflows.</p>
-</li>
-<li>
-<p><strong>Hidden autodetection by default</strong></p>
-</li>
-<li>
-<p>Too implicit for reliable systems and data pipelines.</p>
-</li>
-<li>
-<p><strong>Expose backend option structs directly</strong></p>
-</li>
-<li>Too backend-shaped for a stable language contract and likely to make future backend changes breaking.</li>
-</ol>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Supporting seven codecs in core stdlib increases implementation and test surface area.</li>
-<li>Streaming APIs over multiple backends require careful behavior and error-contract consistency.</li>
-<li>Different codecs have different level/option semantics, so docs must be explicit to avoid false uniformity.</li>
-</ul>
-<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Stdlib / runtime</strong>: must provide codec modules, <code>Codec</code>, <code>CompressionError</code>, one-shot helpers, streaming helpers, and explicit autodetection helpers.</li>
-<li><strong>Language surface</strong>: the module and codec submodules must be importable as specified, with stable function signatures and error categories.</li>
-<li><strong>Execution handoff</strong>: implementations must preserve codec behavior, stream incrementally, and avoid backend API leakage.</li>
-<li><strong>Docs / examples</strong>: must standardize bytes, stream, compression-level, error, Snappy raw, and autodetection usage patterns.</li>
-</ul>
-<h2 id="design-decisions">Design Decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
-<ul>
-<li><code>std.compression</code> is a dedicated codec module and is not folded into <code>std.io</code> or <code>std.fs</code>.</li>
-<li>The initial codec set is <code>gzip</code>, <code>zlib</code>, <code>deflate</code>, <code>zstd</code>, <code>bz2</code>, <code>lzma</code>, and <code>snappy</code>.</li>
-<li>The public surface is codec-submodule-based (<code>std.compression.gzip</code>, etc.).</li>
-<li>Core contract includes both one-shot (<code>bytes -&gt; bytes</code>) and streaming APIs.</li>
-<li>Streaming APIs operate directly on <code>std.fs.File</code> and <code>std.io.BytesIO</code> in this RFC.</li>
-<li>Stream APIs must process input incrementally and reject non-positive chunk sizes.</li>
-<li><code>Codec</code> and <code>CompressionError</code> are top-level shared vocabulary for autodetection and error handling.</li>
-<li>Compression level is a portable integer request, with <code>None</code> selecting the codec default.</li>
-<li>Unsupported levels and unsupported level options fail through stable <code>CompressionError</code> categories.</li>
-<li>Codec autodetection is in scope only via explicit opt-in APIs.</li>
-<li>Normal codec operations remain explicit and never rely on hidden autodetection.</li>
-<li>Autodetection uses signatures and framing checks, not file extensions.</li>
-<li>The <code>allowed</code> autodetection list is binding and must not be bypassed.</li>
-<li>Snappy support is framed-format-first in core stdlib.</li>
-<li>Raw Snappy is available as an advanced <code>snappy.raw</code> surface and is not part of autodetection.</li>
-<li>Archive container formats remain out of scope for this RFC.</li>
+<li><a href="../../../how-to/compression/">Compress and decompress data</a></li>
+<li><a href="../io/"><code>std.io</code> reference</a></li>
+<li><a href="../fs/"><code>std.fs</code> reference</a></li>
+<li><a href="../encoding/"><code>std.encoding</code> reference</a></li>
 </ul>
 
 
@@ -5836,18 +5676,18 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>
