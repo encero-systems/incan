@@ -1,6 +1,6 @@
 # `std.uuid`
 
-`std.uuid` provides RFC 9562 UUID values as ordinary Incan source-defined data. The module stores each `UUID` as a nominal `u128` wrapper and owns parsing, formatting, byte layout, version bits, and variant bits in Incan source. Rust interop is limited to primitive inputs for randomness, clock access, MD5, SHA-1, and UTF-8 string bytes.
+`std.uuid` provides RFC 9562 UUID values as ordinary Incan source-defined data. The module stores each `UUID` as a nominal `u128` wrapper and owns parsing, formatting, byte layout, version bits, and variant bits in Incan source. Rust interop is limited to primitive inputs for randomness, clock access, and UTF-8 string bytes; name-based UUID hashing dogfoods `std.hash`.
 
 ## Imports
 
