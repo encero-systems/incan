@@ -18,7 +18,6 @@ from rust::zstd::stream::read @ "0.13" import Decoder as ZstdReadDecoder
 from std.compression._core import (
     Codec,
     CompressionError,
-    _allowed,
     _codec_error,
     _io_error,
     _looks_like_bz2,
@@ -27,7 +26,6 @@ from std.compression._core import (
     _looks_like_xz,
     _looks_like_zlib,
     _looks_like_zstd,
-    _validate_allowed,
     _validate_chunk_size,
     _write_sink_bytes,
 )
@@ -39,6 +37,56 @@ from std.compression.lzma import decompress as _lzma_decompress
 from std.compression.snappy import decompress as _snappy_decompress
 from std.fs import File
 from std.io import _BytesIO
+
+
+def _detect_codec(data: bytes, allowed: list[Codec], operation: str) -> Result[Option[Codec], CompressionError]:
+    """
+    Return the first allowed codec whose reliable framing signature matches.
+    """
+    if len(allowed) == 0:
+        return Err(
+            CompressionError(
+                kind="unsupported_codec",
+                codec=None,
+                operation=operation,
+                detail="allowed codec list must not be empty",
+            ),
+        )
+
+    for candidate in allowed:
+        match candidate:
+            Codec.Gzip =>
+                if _looks_like_gzip(data):
+                    return Ok(Some(Codec.Gzip))
+            Codec.Zlib =>
+                if _looks_like_zlib(data):
+                    return Ok(Some(Codec.Zlib))
+            Codec.Deflate => pass
+            Codec.Zstd =>
+                if _looks_like_zstd(data):
+                    return Ok(Some(Codec.Zstd))
+            Codec.Bz2 =>
+                if _looks_like_bz2(data):
+                    return Ok(Some(Codec.Bz2))
+            Codec.Lzma =>
+                if _looks_like_xz(data):
+                    return Ok(Some(Codec.Lzma))
+            Codec.Snappy =>
+                if _looks_like_snappy_frame(data):
+                    return Ok(Some(Codec.Snappy))
+    return Ok(None)
+
+
+def _unsupported_autodetect_error(operation: str) -> CompressionError:
+    """
+    Build the stable no-signature-match autodetection error.
+    """
+    return CompressionError(
+        kind="unsupported_codec",
+        codec=None,
+        operation=operation,
+        detail="no allowed compression codec matched the input signature",
+    )
 
 
 pub def decompress_auto(data: bytes, allowed: list[Codec] = Codec.all()) -> Result[tuple[Codec, bytes], CompressionError]:
@@ -53,27 +101,16 @@ pub def decompress_auto(data: bytes, allowed: list[Codec] = Codec.all()) -> Resu
         `Ok((codec, plain))` when an allowed codec signature matches, or `Err(CompressionError)` when the filter is
         empty, no signature matches, or the matched codec rejects the payload.
     """
-    _validate_allowed(allowed)?
-    if _allowed(allowed.clone(), Codec.Gzip) and _looks_like_gzip(data):
-        return Ok((Codec.Gzip, _gzip_decompress(data)?))
-    elif _allowed(allowed, Codec.Zstd) and _looks_like_zstd(data):
-        return Ok((Codec.Zstd, _zstd_decompress(data)?))
-    elif _allowed(allowed, Codec.Bz2) and _looks_like_bz2(data):
-        return Ok((Codec.Bz2, _bz2_decompress(data)?))
-    elif _allowed(allowed, Codec.Lzma) and _looks_like_xz(data):
-        return Ok((Codec.Lzma, _lzma_decompress(data)?))
-    elif _allowed(allowed, Codec.Snappy) and _looks_like_snappy_frame(data):
-        return Ok((Codec.Snappy, _snappy_decompress(data)?))
-    elif _allowed(allowed, Codec.Zlib) and _looks_like_zlib(data):
-        return Ok((Codec.Zlib, _zlib_decompress(data)?))
-    return Err(
-        CompressionError(
-            kind="unsupported_codec",
-            codec=None,
-            operation="decompress_auto",
-            detail="no allowed compression codec matched the input signature",
-        ),
-    )
+    match _detect_codec(data, allowed, "decompress_auto")?:
+        Some(Codec.Gzip) => return Ok((Codec.Gzip, _gzip_decompress(data)?))
+        Some(Codec.Zlib) => return Ok((Codec.Zlib, _zlib_decompress(data)?))
+        Some(Codec.Zstd) => return Ok((Codec.Zstd, _zstd_decompress(data)?))
+        Some(Codec.Bz2) => return Ok((Codec.Bz2, _bz2_decompress(data)?))
+        Some(Codec.Lzma) => return Ok((Codec.Lzma, _lzma_decompress(data)?))
+        Some(Codec.Snappy) => return Ok((Codec.Snappy, _snappy_decompress(data)?))
+        Some(Codec.Deflate) => pass
+        None => pass
+    return Err(_unsupported_autodetect_error("decompress_auto"))
 
 
 pub def decompress_auto_stream(
@@ -98,34 +135,29 @@ pub def decompress_auto_stream(
         `Ok(Codec)` with the detected codec after writing to `target`, or `Err(CompressionError)`.
     """
     _validate_chunk_size(None, "decompress_auto_stream", chunk_size)?
-    _validate_allowed(allowed, "decompress_auto_stream")?
     prefix = _read_prefix(source)?
-    if _allowed(allowed.clone(), Codec.Gzip) and _looks_like_gzip(prefix):
-        _decompress_gzip_stream(prefix, source, target, chunk_size)?
-        return Ok(Codec.Gzip)
-    elif _allowed(allowed.clone(), Codec.Zstd) and _looks_like_zstd(prefix):
-        _decompress_zstd_stream(prefix, source, target, chunk_size)?
-        return Ok(Codec.Zstd)
-    elif _allowed(allowed.clone(), Codec.Bz2) and _looks_like_bz2(prefix):
-        _decompress_bz2_stream(prefix, source, target, chunk_size)?
-        return Ok(Codec.Bz2)
-    elif _allowed(allowed.clone(), Codec.Lzma) and _looks_like_xz(prefix):
-        _decompress_lzma_stream(prefix, source, target, chunk_size)?
-        return Ok(Codec.Lzma)
-    elif _allowed(allowed.clone(), Codec.Snappy) and _looks_like_snappy_frame(prefix):
-        _decompress_snappy_stream(prefix, source, target, chunk_size)?
-        return Ok(Codec.Snappy)
-    elif _allowed(allowed, Codec.Zlib) and _looks_like_zlib(prefix):
-        _decompress_zlib_stream(prefix, source, target, chunk_size)?
-        return Ok(Codec.Zlib)
-    return Err(
-        CompressionError(
-            kind="unsupported_codec",
-            codec=None,
-            operation="decompress_auto_stream",
-            detail="no allowed compression codec matched the input signature",
-        ),
-    )
+    match _detect_codec(prefix, allowed, "decompress_auto_stream")?:
+        Some(Codec.Gzip) =>
+            _decompress_gzip_stream(prefix, source, target, chunk_size)?
+            return Ok(Codec.Gzip)
+        Some(Codec.Zlib) =>
+            _decompress_zlib_stream(prefix, source, target, chunk_size)?
+            return Ok(Codec.Zlib)
+        Some(Codec.Zstd) =>
+            _decompress_zstd_stream(prefix, source, target, chunk_size)?
+            return Ok(Codec.Zstd)
+        Some(Codec.Bz2) =>
+            _decompress_bz2_stream(prefix, source, target, chunk_size)?
+            return Ok(Codec.Bz2)
+        Some(Codec.Lzma) =>
+            _decompress_lzma_stream(prefix, source, target, chunk_size)?
+            return Ok(Codec.Lzma)
+        Some(Codec.Snappy) =>
+            _decompress_snappy_stream(prefix, source, target, chunk_size)?
+            return Ok(Codec.Snappy)
+        Some(Codec.Deflate) => pass
+        None => pass
+    return Err(_unsupported_autodetect_error("decompress_auto_stream"))
 
 
 def _read_prefix(source: Union[_BytesIO, File]) -> Result[bytes, CompressionError]:

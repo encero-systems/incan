@@ -158,32 +158,6 @@ pub def _write_sink_bytes(
             Err(err) => return Err(_io_error(codec, operation, err.message()))
 
 
-pub def _validate_allowed(allowed: list[Codec], operation: str = "decompress_auto") -> Result[None, CompressionError]:
-    """
-    Reject an empty autodetection candidate set.
-    """
-    if len(allowed) == 0:
-        return Err(
-            CompressionError(
-                kind="unsupported_codec",
-                codec=None,
-                operation=operation,
-                detail="allowed codec list must not be empty",
-            ),
-        )
-    return Ok(None)
-
-
-pub def _allowed(allowed: list[Codec], codec: Codec) -> bool:
-    """
-    Return whether `codec` is present in an explicit autodetection filter.
-    """
-    for candidate in allowed:
-        if candidate == codec:
-            return true
-    return false
-
-
 pub def _byte_at(data: bytes, index: int) -> int:
     """
     Read one byte as an integer for signature checks.
