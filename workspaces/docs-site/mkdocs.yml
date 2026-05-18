@@ -163,6 +163,7 @@ nav:
               - Overview: language/reference/stdlib/index.md
               - std.async: language/reference/stdlib/async.md
               - std.collections: language/reference/stdlib/collections.md
+              - std.compression: language/reference/stdlib/compression.md
               - std.derives.*: language/reference/stdlib/derives.md
               - std.datetime: language/reference/stdlib/datetime.md
               - std.encoding: language/reference/stdlib/encoding.md

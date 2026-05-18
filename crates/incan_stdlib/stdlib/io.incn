@@ -117,7 +117,7 @@ pub class _BytesIO with BinaryReader, BinaryRead[u8], BinaryRead[i8], BinaryRead
     ```
     """
 
-    handle: Rc[RefCell[Cursor[bytes]]]
+    pub handle: Rc[RefCell[Cursor[bytes]]]
 
     def read(self, size: int = -1) -> Result[bytes, IoError]:
         """

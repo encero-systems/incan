@@ -1,5 +1,8 @@
-from std.compression import Codec, CompressionError, bz2, deflate, decompress_auto, gzip, lzma, snappy, zlib, zstd
+from std.compression import Codec, CompressionError, bz2, deflate, decompress_auto, decompress_auto_stream, gzip, lzma, snappy, zlib, zstd
 from std.compression.snappy.raw import compress as raw_snappy_compress, decompress as raw_snappy_decompress
+from std.fs import Path
+from std.io import BytesIO, IoError
+from std.tempfile import TemporaryDirectory
 
 
 def assert_round_trip(name: str, plain: bytes, decoded: bytes) -> None:
@@ -7,22 +10,148 @@ def assert_round_trip(name: str, plain: bytes, decoded: bytes) -> None:
     println(f"{name} round trip ok")
 
 
+def assert_auto(compressed: bytes, expected: Codec, plain: bytes) -> Result[None, CompressionError]:
+    codec, decoded = decompress_auto(compressed, [expected])?
+    assert codec == expected
+    assert decoded == plain
+
+    target = BytesIO()
+    stream_codec = decompress_auto_stream(BytesIO(compressed), target, [expected], 2)?
+    assert stream_codec == expected
+    assert target.getvalue() == plain
+    return Ok(None)
+
+
+def must_compression_none(result: Result[None, CompressionError]) -> None:
+    match result:
+        Ok(_) => return
+        Err(_) => assert false
+
+
+def exercise_file_stream(data: bytes) -> Result[None, IoError]:
+    scratch = TemporaryDirectory.try_new()?
+    root: Path = scratch.path()
+    source_path = root.joinpath("plain.bin")
+    compressed_path = root.joinpath("plain.bin.gz")
+    output_path = root.joinpath("plain.out")
+
+    source_path.write_bytes(data)?
+    source = source_path.open("rb")?
+    compressed = compressed_path.open("wb")?
+    must_compression_none(gzip.compress_stream(source, compressed, None, 4))
+    compressed.flush()?
+
+    compressed_source = compressed_path.open("rb")?
+    output = output_path.open("wb")?
+    must_compression_none(gzip.decompress_stream(compressed_source, output, 3))
+    output.flush()?
+
+    assert output_path.read_bytes()? == data
+    println("file stream round trip ok")
+    return Ok(None)
+
+
 def exercise_compression() -> Result[None, CompressionError]:
     data = b"Incan compression dogfood"
 
     gzip_data = gzip.compress(data, None)?
     assert_round_trip("gzip", data, gzip.decompress(gzip_data)?)
-    codec, decoded = decompress_auto(gzip_data, [Codec.Gzip])?
-    assert codec == Codec.Gzip
-    assert decoded == data
+    assert_auto(gzip_data, Codec.Gzip, data)?
 
-    assert_round_trip("zlib", data, zlib.decompress(zlib.compress(data, None)?)?)
+    zlib_data = zlib.compress(data, None)?
+    zstd_data = zstd.compress(data, None)?
+    bz2_data = bz2.compress(data, None)?
+    lzma_data = lzma.compress(data, None)?
+    snappy_data = snappy.compress(data, None)?
+
+    assert_round_trip("zlib", data, zlib.decompress(zlib_data)?)
     assert_round_trip("deflate", data, deflate.decompress(deflate.compress(data, None)?)?)
-    assert_round_trip("zstd", data, zstd.decompress(zstd.compress(data, None)?)?)
-    assert_round_trip("bz2", data, bz2.decompress(bz2.compress(data, None)?)?)
-    assert_round_trip("lzma", data, lzma.decompress(lzma.compress(data, None)?)?)
-    assert_round_trip("snappy", data, snappy.decompress(snappy.compress(data, None)?)?)
+    assert_round_trip("zstd", data, zstd.decompress(zstd_data)?)
+    assert_round_trip("bz2", data, bz2.decompress(bz2_data)?)
+    assert_round_trip("lzma", data, lzma.decompress(lzma_data)?)
+    assert_round_trip("snappy", data, snappy.decompress(snappy_data)?)
     assert_round_trip("snappy.raw", data, raw_snappy_decompress(raw_snappy_compress(data, None)?)?)
+
+    assert_auto(zlib_data, Codec.Zlib, data)?
+    assert_auto(zstd_data, Codec.Zstd, data)?
+    assert_auto(bz2_data, Codec.Bz2, data)?
+    assert_auto(lzma_data, Codec.Lzma, data)?
+    assert_auto(snappy_data, Codec.Snappy, data)?
+    println("autodetection ok")
+
+    gzip_stream = BytesIO()
+    gzip.compress_stream(BytesIO(data), gzip_stream, None, 3)?
+    gzip_plain = BytesIO()
+    gzip.decompress_stream(BytesIO(gzip_stream.getvalue()), gzip_plain, 2)?
+    assert gzip_plain.getvalue() == data
+
+    zlib_stream = BytesIO()
+    zlib.compress_stream(BytesIO(data), zlib_stream, None, 3)?
+    zlib_plain = BytesIO()
+    zlib.decompress_stream(BytesIO(zlib_stream.getvalue()), zlib_plain, 2)?
+    assert zlib_plain.getvalue() == data
+
+    deflate_stream = BytesIO()
+    deflate.compress_stream(BytesIO(data), deflate_stream, None, 3)?
+    deflate_plain = BytesIO()
+    deflate.decompress_stream(BytesIO(deflate_stream.getvalue()), deflate_plain, 2)?
+    assert deflate_plain.getvalue() == data
+
+    zstd_stream = BytesIO()
+    zstd.compress_stream(BytesIO(data), zstd_stream, None, 3)?
+    zstd_plain = BytesIO()
+    zstd.decompress_stream(BytesIO(zstd_stream.getvalue()), zstd_plain, 2)?
+    assert zstd_plain.getvalue() == data
+
+    bz2_stream = BytesIO()
+    bz2.compress_stream(BytesIO(data), bz2_stream, None, 3)?
+    bz2_plain = BytesIO()
+    bz2.decompress_stream(BytesIO(bz2_stream.getvalue()), bz2_plain, 2)?
+    assert bz2_plain.getvalue() == data
+
+    lzma_stream = BytesIO()
+    lzma.compress_stream(BytesIO(data), lzma_stream, None, 3)?
+    lzma_plain = BytesIO()
+    lzma.decompress_stream(BytesIO(lzma_stream.getvalue()), lzma_plain, 2)?
+    assert lzma_plain.getvalue() == data
+
+    snappy_stream = BytesIO()
+    snappy.compress_stream(BytesIO(data), snappy_stream, None, 3)?
+    snappy_plain = BytesIO()
+    snappy.decompress_stream(BytesIO(snappy_stream.getvalue()), snappy_plain, 2)?
+    assert snappy_plain.getvalue() == data
+    println("stream round trips ok")
+    match exercise_file_stream(data):
+        Ok(_) => pass
+        Err(_) => assert false
+
+    match gzip.compress_stream(BytesIO(data), BytesIO(), None, 0):
+        Ok(_) => assert false
+        Err(err) => assert err.kind == "invalid_chunk_size"
+    match gzip.decompress_stream(BytesIO(gzip_data), BytesIO(), 0):
+        Ok(_) => assert false
+        Err(err) => assert err.kind == "invalid_chunk_size"
+    match decompress_auto_stream(BytesIO(gzip_data), BytesIO(), [Codec.Gzip], 0):
+        Ok(_) => assert false
+        Err(err) => assert err.kind == "invalid_chunk_size"
+    match snappy.compress_stream(BytesIO(data), BytesIO(), Some(1), 3):
+        Ok(_) => assert false
+        Err(err) => assert err.kind == "unsupported_option"
+    match zstd.compress(data, Some(99)):
+        Ok(_) => assert false
+        Err(err) => assert err.kind == "invalid_level"
+
+    allowed: list[Codec] = []
+    match decompress_auto(gzip_data, allowed):
+        Ok(_) => assert false
+        Err(err) => assert err.kind == "unsupported_codec"
+    match decompress_auto(gzip_data, [Codec.Zstd]):
+        Ok(_) => assert false
+        Err(err) => assert err.kind == "unsupported_codec"
+    match decompress_auto_stream(BytesIO(gzip_data), BytesIO(), [Codec.Zstd], 2):
+        Ok(_) => assert false
+        Err(err) => assert err.kind == "unsupported_codec"
+    println("option and chunk errors ok")
 
     return Ok(None)
 

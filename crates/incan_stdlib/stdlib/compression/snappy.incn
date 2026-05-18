@@ -7,7 +7,9 @@ autodetection. Raw block helpers live under `std.compression.snappy.raw`.
 
 from rust::std::io import Cursor, Read
 from rust::snap::read @ "1" import FrameDecoder, FrameEncoder
-from std.compression._core import Codec, CompressionError, _codec_error, _reject_level
+from std.compression._core import Codec, CompressionError, _codec_error, _reject_level, _validate_chunk_size, _write_sink_bytes
+from std.fs import File
+from std.io import _BytesIO
 
 
 pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
@@ -44,3 +46,132 @@ pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
     match reader.read_to_end(out):
         Ok(_) => return Ok(out)
         Err(err) => return Err(_codec_error(Codec.Snappy, "decompress", err.to_string()))
+
+
+pub def compress_stream(
+    source: Union[_BytesIO, File],
+    target: Union[_BytesIO, File],
+    level: Option[int] = None,
+    chunk_size: int = 65536,
+) -> Result[None, CompressionError]:
+    """
+    Compress a binary stream as framed Snappy bytes.
+
+    Args:
+        source: `BytesIO` or `File` positioned at plain input bytes.
+        target: `BytesIO` or `File` that receives framed Snappy bytes.
+        level: Must be `None`; Snappy does not expose a portable compression level.
+        chunk_size: Positive number of compressed bytes to move per step.
+
+    Returns:
+        `Ok(None)` after streaming the framed Snappy payload, or `Err(CompressionError)`.
+    """
+    _validate_chunk_size(Some(Codec.Snappy), "compress_stream", chunk_size)?
+    _reject_level(Codec.Snappy, level)?
+    if isinstance(source, _BytesIO):
+        return _compress_bytesio_stream(source, target, chunk_size)
+    elif isinstance(source, File):
+        return _compress_file_stream(source, target, chunk_size)
+
+
+pub def decompress_stream(
+    source: Union[_BytesIO, File],
+    target: Union[_BytesIO, File],
+    chunk_size: int = 65536,
+) -> Result[None, CompressionError]:
+    """
+    Decompress a framed Snappy binary stream.
+
+    Args:
+        source: `BytesIO` or `File` positioned at framed Snappy bytes.
+        target: `BytesIO` or `File` that receives plain bytes.
+        chunk_size: Positive number of decompressed bytes to move per step.
+
+    Returns:
+        `Ok(None)` after streaming the payload, or `Err(CompressionError)`.
+    """
+    _validate_chunk_size(Some(Codec.Snappy), "decompress_stream", chunk_size)?
+    if isinstance(source, _BytesIO):
+        return _decompress_bytesio_stream(source, target, chunk_size)
+    elif isinstance(source, File):
+        return _decompress_file_stream(source, target, chunk_size)
+
+
+def _compress_bytesio_stream(
+    source: _BytesIO,
+    target: Union[_BytesIO, File],
+    chunk_size: int,
+) -> Result[None, CompressionError]:
+    """
+    Compress bytes from an in-memory stream into a binary sink.
+    """
+    mut handle = source.handle.borrow_mut()
+    mut reader = FrameEncoder.new(Read.by_ref(handle))
+    while true:
+        mut chunk: bytes = b""
+        match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            Ok(_) =>
+                if len(chunk) == 0:
+                    return Ok(None)
+                _write_sink_bytes(Some(Codec.Snappy), "compress_stream", target, chunk)?
+            Err(err) => return Err(_codec_error(Codec.Snappy, "compress_stream", err.to_string()))
+
+
+def _compress_file_stream(
+    source: File,
+    target: Union[_BytesIO, File],
+    chunk_size: int,
+) -> Result[None, CompressionError]:
+    """
+    Compress bytes from a file stream into a binary sink.
+    """
+    mut handle = source.handle.borrow_mut()
+    mut reader = FrameEncoder.new(Read.by_ref(handle))
+    while true:
+        mut chunk: bytes = b""
+        match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            Ok(_) =>
+                if len(chunk) == 0:
+                    return Ok(None)
+                _write_sink_bytes(Some(Codec.Snappy), "compress_stream", target, chunk)?
+            Err(err) => return Err(_codec_error(Codec.Snappy, "compress_stream", err.to_string()))
+
+
+def _decompress_bytesio_stream(
+    source: _BytesIO,
+    target: Union[_BytesIO, File],
+    chunk_size: int,
+) -> Result[None, CompressionError]:
+    """
+    Decompress framed Snappy bytes from an in-memory stream into a binary sink.
+    """
+    mut handle = source.handle.borrow_mut()
+    mut reader = FrameDecoder.new(Read.by_ref(handle))
+    while true:
+        mut chunk: bytes = b""
+        match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            Ok(_) =>
+                if len(chunk) == 0:
+                    return Ok(None)
+                _write_sink_bytes(Some(Codec.Snappy), "decompress_stream", target, chunk)?
+            Err(err) => return Err(_codec_error(Codec.Snappy, "decompress_stream", err.to_string()))
+
+
+def _decompress_file_stream(
+    source: File,
+    target: Union[_BytesIO, File],
+    chunk_size: int,
+) -> Result[None, CompressionError]:
+    """
+    Decompress framed Snappy bytes from a file stream into a binary sink.
+    """
+    mut handle = source.handle.borrow_mut()
+    mut reader = FrameDecoder.new(Read.by_ref(handle))
+    while true:
+        mut chunk: bytes = b""
+        match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            Ok(_) =>
+                if len(chunk) == 0:
+                    return Ok(None)
+                _write_sink_bytes(Some(Codec.Snappy), "decompress_stream", target, chunk)?
+            Err(err) => return Err(_codec_error(Codec.Snappy, "decompress_stream", err.to_string()))

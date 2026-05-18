@@ -6,7 +6,9 @@ The public `std.compression.lzma` name exposes XZ-framed LZMA-family data throug
 
 from rust::std::io import Cursor, Read
 from rust::xz2::read @ "0.1" import XzDecoder, XzEncoder
-from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default
+from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default, _validate_chunk_size, _write_sink_bytes
+from std.fs import File
+from std.io import _BytesIO
 
 
 pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
@@ -44,6 +46,55 @@ pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
         Err(err) => return Err(_codec_error(Codec.Lzma, "decompress", err.to_string()))
 
 
+pub def compress_stream(
+    source: Union[_BytesIO, File],
+    target: Union[_BytesIO, File],
+    level: Option[int] = None,
+    chunk_size: int = 65536,
+) -> Result[None, CompressionError]:
+    """
+    Compress a binary stream as XZ/LZMA-family bytes.
+
+    Args:
+        source: `BytesIO` or `File` positioned at plain input bytes.
+        target: `BytesIO` or `File` that receives XZ/LZMA-family bytes.
+        level: Optional portable compression level from 0 through 9.
+        chunk_size: Positive number of compressed bytes to move per step.
+
+    Returns:
+        `Ok(None)` after streaming the XZ/LZMA-family payload, or `Err(CompressionError)`.
+    """
+    _validate_chunk_size(Some(Codec.Lzma), "compress_stream", chunk_size)?
+    compression = _xz_level(level)?
+    if isinstance(source, _BytesIO):
+        return _compress_bytesio_stream(source, target, compression, chunk_size)
+    elif isinstance(source, File):
+        return _compress_file_stream(source, target, compression, chunk_size)
+
+
+pub def decompress_stream(
+    source: Union[_BytesIO, File],
+    target: Union[_BytesIO, File],
+    chunk_size: int = 65536,
+) -> Result[None, CompressionError]:
+    """
+    Decompress an XZ/LZMA-family binary stream.
+
+    Args:
+        source: `BytesIO` or `File` positioned at XZ/LZMA-family bytes.
+        target: `BytesIO` or `File` that receives plain bytes.
+        chunk_size: Positive number of decompressed bytes to move per step.
+
+    Returns:
+        `Ok(None)` after streaming the payload, or `Err(CompressionError)`.
+    """
+    _validate_chunk_size(Some(Codec.Lzma), "decompress_stream", chunk_size)?
+    if isinstance(source, _BytesIO):
+        return _decompress_bytesio_stream(source, target, chunk_size)
+    elif isinstance(source, File):
+        return _decompress_file_stream(source, target, chunk_size)
+
+
 def _xz_level(level: Option[int]) -> Result[u32, CompressionError]:
     """
     Convert a portable LZMA level into the `xz2` numeric level.
@@ -53,3 +104,85 @@ def _xz_level(level: Option[int]) -> Result[u32, CompressionError]:
     match maybe:
         Some(value) => return Ok(value)
         None => return Err(_codec_error(Codec.Lzma, "compress", "level does not fit u32"))
+
+
+def _compress_bytesio_stream(
+    source: _BytesIO,
+    target: Union[_BytesIO, File],
+    compression: u32,
+    chunk_size: int,
+) -> Result[None, CompressionError]:
+    """
+    Compress bytes from an in-memory stream into a binary sink.
+    """
+    mut handle = source.handle.borrow_mut()
+    mut reader = XzEncoder.new(Read.by_ref(handle), compression)
+    while true:
+        mut chunk: bytes = b""
+        match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            Ok(_) =>
+                if len(chunk) == 0:
+                    return Ok(None)
+                _write_sink_bytes(Some(Codec.Lzma), "compress_stream", target, chunk)?
+            Err(err) => return Err(_codec_error(Codec.Lzma, "compress_stream", err.to_string()))
+
+
+def _compress_file_stream(
+    source: File,
+    target: Union[_BytesIO, File],
+    compression: u32,
+    chunk_size: int,
+) -> Result[None, CompressionError]:
+    """
+    Compress bytes from a file stream into a binary sink.
+    """
+    mut handle = source.handle.borrow_mut()
+    mut reader = XzEncoder.new(Read.by_ref(handle), compression)
+    while true:
+        mut chunk: bytes = b""
+        match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            Ok(_) =>
+                if len(chunk) == 0:
+                    return Ok(None)
+                _write_sink_bytes(Some(Codec.Lzma), "compress_stream", target, chunk)?
+            Err(err) => return Err(_codec_error(Codec.Lzma, "compress_stream", err.to_string()))
+
+
+def _decompress_bytesio_stream(
+    source: _BytesIO,
+    target: Union[_BytesIO, File],
+    chunk_size: int,
+) -> Result[None, CompressionError]:
+    """
+    Decompress XZ/LZMA bytes from an in-memory stream into a binary sink.
+    """
+    mut handle = source.handle.borrow_mut()
+    mut reader = XzDecoder.new(Read.by_ref(handle))
+    while true:
+        mut chunk: bytes = b""
+        match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            Ok(_) =>
+                if len(chunk) == 0:
+                    return Ok(None)
+                _write_sink_bytes(Some(Codec.Lzma), "decompress_stream", target, chunk)?
+            Err(err) => return Err(_codec_error(Codec.Lzma, "decompress_stream", err.to_string()))
+
+
+def _decompress_file_stream(
+    source: File,
+    target: Union[_BytesIO, File],
+    chunk_size: int,
+) -> Result[None, CompressionError]:
+    """
+    Decompress XZ/LZMA bytes from a file stream into a binary sink.
+    """
+    mut handle = source.handle.borrow_mut()
+    mut reader = XzDecoder.new(Read.by_ref(handle))
+    while true:
+        mut chunk: bytes = b""
+        match reader.by_ref().take(chunk_size).read_to_end(chunk):
+            Ok(_) =>
+                if len(chunk) == 0:
+                    return Ok(None)
+                _write_sink_bytes(Some(Codec.Lzma), "decompress_stream", target, chunk)?
+            Err(err) => return Err(_codec_error(Codec.Lzma, "decompress_stream", err.to_string()))

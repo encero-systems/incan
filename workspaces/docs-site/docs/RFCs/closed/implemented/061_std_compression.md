@@ -1,6 +1,6 @@
 # RFC 061: `std.compression` — codec-based compression and decompression
 
-- **Status:** In Progress
+- **Status:** Implemented
 - **Created:** 2026-04-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -11,7 +11,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/339
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** v0.3.0-dev.47
 
 ## Summary
 
@@ -323,13 +323,11 @@ This feature is additive. Existing Rust interop or third-party compression code 
 
 ## Progress Checklist
 
-Implementation note: the dogfooded `.incn` pass avoids new `@rust.extern` surfaces and builds as a generated Rust
-project for one-shot compression, decompression, and explicit byte autodetection. Issue
-[#548](https://github.com/dannys-code-corner/incan/issues/548) was resolved in this implementation loop by preserving
-public stdlib dependency APIs in generated projects and fixing the Rust boundary cases surfaced by the RFC 061 fixture.
-Streaming APIs are intentionally not exposed until they can satisfy the `std.fs.File | std.io.BytesIO` incremental
-contract instead of pretending that whole-buffer wrappers are stream support. Authored docs, release notes, versioning,
-and broader integration coverage remain open.
+Implementation note: the dogfooded `.incn` implementation avoids new `@rust.extern` surfaces and builds as a generated
+Rust project for one-shot compression, stream compression/decompression, explicit byte autodetection, and explicit
+stream autodetection. Issue [#548](https://github.com/dannys-code-corner/incan/issues/548) was resolved in this
+implementation loop by preserving public stdlib dependency APIs in generated projects and fixing the Rust boundary cases
+surfaced by the RFC 061 fixture.
 
 ### Spec / lifecycle
 
@@ -357,15 +355,15 @@ and broader integration coverage remain open.
 
 - [x] Implement one-shot `compress` and `decompress` for every required codec at the source/typecheck layer.
 - [x] Implement one-shot `compress` and `decompress` for every required codec in a Rust-buildable generated project.
-- [ ] Implement stream `compress_stream` and `decompress_stream` for every required codec.
-- [ ] Reject non-positive `chunk_size` values at the source/typecheck layer.
+- [x] Implement stream `compress_stream` and `decompress_stream` for every required codec.
+- [x] Reject non-positive `chunk_size` values at the source/typecheck layer.
 - [x] Reject unsupported compression levels through stable error categories at the source/typecheck layer.
 - [x] Normalize invalid data, truncated input, I/O, and backend failures into `CompressionError` at the source/typecheck layer.
 
 ### Autodetection
 
 - [x] Implement `decompress_auto` at the source/typecheck layer.
-- [ ] Implement `decompress_auto_stream` at the source/typecheck layer.
+- [x] Implement `decompress_auto_stream` at the source/typecheck layer.
 - [x] Enforce the `allowed` codec filter exactly at the source/typecheck layer.
 - [x] Reject empty `allowed` lists at the source/typecheck layer.
 - [x] Exclude raw Snappy from autodetection.
@@ -376,18 +374,18 @@ and broader integration coverage remain open.
 - [x] Add typechecker tests for imports and public symbols.
 - [x] Add codegen snapshot coverage for root and codec stdlib modules.
 - [x] Add integration tests for bytes round trips.
-- [ ] Add integration tests for stream round trips.
-- [ ] Add integration tests for option/chunk-size errors.
-- [ ] Add integration tests for autodetection.
+- [x] Add integration tests for stream round trips.
+- [x] Add integration tests for option/chunk-size errors.
+- [x] Add integration tests for autodetection.
 
 ### Docs / release / version
 
-- [ ] Add authored stdlib reference docs for `std.compression`.
-- [ ] Add release notes entry for RFC 061 / issue #339.
-- [ ] Bump the workspace dev version when the implementation lands.
-- [ ] Regenerate RFC snippets/index if lifecycle metadata changes require it.
-- [ ] Run docs build.
-- [ ] Run repository verification gate.
+- [x] Add authored stdlib reference docs for `std.compression`.
+- [x] Add release notes entry for RFC 061 / issue #339.
+- [x] Bump the workspace dev version when the implementation lands.
+- [x] Regenerate RFC snippets/index if lifecycle metadata changes require it.
+- [x] Run docs build.
+- [x] Run repository verification gate.
 
 ## Design Decisions
 

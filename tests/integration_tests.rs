@@ -6677,6 +6677,10 @@ def main() -> None:
                 "lzma round trip ok",
                 "snappy round trip ok",
                 "snappy.raw round trip ok",
+                "autodetection ok",
+                "stream round trips ok",
+                "file stream round trip ok",
+                "option and chunk errors ok",
             ],
             "unexpected std.compression output: {stdout}"
         );

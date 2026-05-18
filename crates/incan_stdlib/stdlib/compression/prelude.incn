@@ -6,4 +6,4 @@ decompression when the caller deliberately opts in.
 """
 
 from std.compression._core import Codec, CompressionError
-from std.compression._auto import decompress_auto
+from std.compression._auto import decompress_auto, decompress_auto_stream

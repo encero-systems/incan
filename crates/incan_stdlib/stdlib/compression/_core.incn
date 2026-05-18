@@ -5,6 +5,8 @@ Public callers should import `Codec`, `CompressionError`, and codec modules from
 helpers in this module are implementation details shared by sibling codec modules and the autodetection module.
 """
 
+from std.fs import File
+from std.io import _BytesIO
 from std.traits.error import Error
 
 
@@ -118,7 +120,45 @@ pub def _io_error(codec: Option[Codec], operation: str, detail: str) -> Compress
     return CompressionError(kind="io", codec=codec, operation=operation, detail=detail)
 
 
-pub def _validate_allowed(allowed: list[Codec]) -> Result[None, CompressionError]:
+pub def _validate_chunk_size(codec: Option[Codec], operation: str, chunk_size: int) -> Result[None, CompressionError]:
+    """
+    Reject a non-positive stream chunk size before touching source or target streams.
+    """
+    if chunk_size <= 0:
+        return Err(
+            CompressionError(
+                kind="invalid_chunk_size",
+                codec=codec,
+                operation=operation,
+                detail="chunk_size must be positive",
+            ),
+        )
+    return Ok(None)
+
+
+pub def _write_sink_bytes(
+    codec: Option[Codec],
+    operation: str,
+    target: Union[_BytesIO, File],
+    data: bytes,
+) -> Result[None, CompressionError]:
+    """
+    Write one compressed or decompressed chunk to a `BytesIO` or `File` sink.
+
+    Stream helpers keep codec adapters in their codec modules, but use this shared sink boundary so `IoError`
+    normalization stays identical across modules.
+    """
+    if isinstance(target, _BytesIO):
+        match target.write_bytes(data):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(codec, operation, err.message()))
+    elif isinstance(target, File):
+        match target.write_bytes(data):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(codec, operation, err.message()))
+
+
+pub def _validate_allowed(allowed: list[Codec], operation: str = "decompress_auto") -> Result[None, CompressionError]:
     """
     Reject an empty autodetection candidate set.
     """
@@ -127,7 +167,7 @@ pub def _validate_allowed(allowed: list[Codec]) -> Result[None, CompressionError
             CompressionError(
                 kind="unsupported_codec",
                 codec=None,
-                operation="decompress_auto",
+                operation=operation,
                 detail="allowed codec list must not be empty",
             ),
         )
