@@ -688,6 +688,25 @@ impl AstLowering {
         }
     }
 
+    /// Return whether a required trait method is supplied by a backend derive instead of by a source method body.
+    ///
+    /// Serde JSON derives implement the Rust-side conversion hooks during codegen. Imported stdlib trait declarations
+    /// still make those hooks visible to lowering, so this keeps the trait impl obligation aligned with the backend
+    /// expansion without making all missing stdlib trait methods optional.
+    fn backend_default_trait_method(trait_name: &str, method_name: &str) -> bool {
+        let short_name = trait_name
+            .rsplit(['.', ':'])
+            .find(|segment| !segment.is_empty())
+            .unwrap_or(trait_name);
+        matches!(
+            (short_name, method_name),
+            ("Serialize", "to_json")
+                | ("JsonSerialize", "to_json")
+                | ("Deserialize", "from_json")
+                | ("JsonDeserialize", "from_json")
+        )
+    }
+
     /// Return whether a method is safe to emit into an imported trait impl when the trait declaration is missing.
     fn method_matches_imported_trait_without_decl(&self, method: &ast::MethodDecl, trait_name: &str) -> bool {
         if method.trait_target.is_some() {
@@ -942,6 +961,12 @@ impl AstLowering {
                 // Otherwise, expand a default method body into the impl (RFC 000: defaults may assume adopter fields).
                 if trait_method.node.body.is_some() {
                     methods.push(self.lower_impl_method_for_trait(&trait_method.node, Some(&type_param_names))?);
+                    continue;
+                }
+
+                // Some stdlib traits expose source-level obligations that are intentionally satisfied by backend
+                // derive expansion. Keep collecting ordinary missing-method errors for all other traits.
+                if Self::backend_default_trait_method(trait_name, method_name) {
                     continue;
                 }
 
