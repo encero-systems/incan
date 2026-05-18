@@ -488,6 +488,42 @@ def MixedName() -> int:
     }
 
     #[test]
+    fn test_format_source_wraps_long_class_trait_adoption_header() -> Result<(), FormatError> {
+        let source = r#"pub class _BytesIO with BinaryReader, BinaryRead[u8], BinaryRead[i8], BinaryRead[u16], BinaryRead[i16], BinaryRead[u32], BinaryRead[i32], BinaryRead[u64], BinaryRead[i64], BinaryWrite[u8], BinaryWrite[i8], BinaryWrite[u16], BinaryWrite[i16], BinaryWrite[u32], BinaryWrite[i32], BinaryWrite[u64], BinaryWrite[i64]:
+  handle: Cursor[bytes]
+"#;
+        let formatted = format_source(source)?;
+        let expected = r#"pub class _BytesIO with (
+    BinaryReader,
+    BinaryRead[u8],
+    BinaryRead[i8],
+    BinaryRead[u16],
+    BinaryRead[i16],
+    BinaryRead[u32],
+    BinaryRead[i32],
+    BinaryRead[u64],
+    BinaryRead[i64],
+    BinaryWrite[u8],
+    BinaryWrite[i8],
+    BinaryWrite[u16],
+    BinaryWrite[i16],
+    BinaryWrite[u32],
+    BinaryWrite[i32],
+    BinaryWrite[u64],
+    BinaryWrite[i64],
+):
+    handle: Cursor[bytes]
+"#;
+        assert_eq!(formatted, expected);
+        assert_eq!(format_source(&formatted)?, expected);
+        assert!(
+            formatted.lines().all(|line| line.len() <= 120),
+            "expected wrapped class trait adoption header to stay within 120 columns; got:\n{formatted}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_invalid_syntax() {
         let source = "def foo(";
         let result = format_source(source);

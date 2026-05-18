@@ -56,7 +56,8 @@ def calculate(x: int) -> int:
 - Treat `120` characters as the target line length.
 - This is a best-effort target, not an absolute hard cap.
 - When a constructor call or ordinary call overflows, rewrite it vertically with one argument per line.
-- Some signatures, strings, and complex nested expressions may still require manual judgment.
+- When a class adopts many traits, use a parenthesized `with (...)` list with one trait per line.
+- Some strings and complex nested expressions may still require manual judgment.
 
 ```incan
 result = build_report(
@@ -65,6 +66,15 @@ result = build_report(
     include_lineage=true,
     include_statistics=true,
 )
+```
+
+```incan
+pub class Buffer with (
+    BinaryReader,
+    BinaryRead[u8],
+    BinaryWrite[u8],
+):
+    handle: Cursor[bytes]
 ```
 
 ### Naming
