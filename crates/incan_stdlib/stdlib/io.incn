@@ -99,7 +99,33 @@ pub enum Endian:
 
 
 @derive(Debug)
-pub class _BytesIO with BinaryReader, BinaryRead[u8], BinaryRead[i8], BinaryRead[u16], BinaryRead[i16], BinaryRead[u32], BinaryRead[i32], BinaryRead[u64], BinaryRead[i64], BinaryRead[u128], BinaryRead[i128], BinaryRead[f32], BinaryRead[f64], BinaryWrite[u8], BinaryWrite[i8], BinaryWrite[u16], BinaryWrite[i16], BinaryWrite[u32], BinaryWrite[i32], BinaryWrite[u64], BinaryWrite[i64], BinaryWrite[u128], BinaryWrite[i128], BinaryWrite[f32], BinaryWrite[f64]:
+pub class _BytesIO with (
+    BinaryReader,
+    BinaryRead[u8],
+    BinaryRead[i8],
+    BinaryRead[u16],
+    BinaryRead[i16],
+    BinaryRead[u32],
+    BinaryRead[i32],
+    BinaryRead[u64],
+    BinaryRead[i64],
+    BinaryRead[u128],
+    BinaryRead[i128],
+    BinaryRead[f32],
+    BinaryRead[f64],
+    BinaryWrite[u8],
+    BinaryWrite[i8],
+    BinaryWrite[u16],
+    BinaryWrite[i16],
+    BinaryWrite[u32],
+    BinaryWrite[i32],
+    BinaryWrite[u64],
+    BinaryWrite[i64],
+    BinaryWrite[u128],
+    BinaryWrite[i128],
+    BinaryWrite[f32],
+    BinaryWrite[f64],
+):
     """
     Writable and seekable byte stream over an in-memory buffer.
 

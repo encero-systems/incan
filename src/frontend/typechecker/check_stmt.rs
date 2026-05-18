@@ -761,7 +761,9 @@ impl TypeChecker {
     /// Resolve the type argument used by a narrowing expression.
     fn resolve_narrowing_type_expr(&self, expr: &Spanned<Expr>) -> Option<ResolvedType> {
         match &expr.node {
-            Expr::Ident(name) => Some(resolve_type(&Type::Simple(name.clone()), &self.symbols)),
+            Expr::Ident(name) => {
+                Some(self.expand_type_aliases(resolve_type(&Type::Simple(name.clone()), &self.symbols)))
+            }
             Expr::Paren(inner) => self.resolve_narrowing_type_expr(inner),
             _ => None,
         }

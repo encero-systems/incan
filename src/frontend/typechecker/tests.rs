@@ -2710,6 +2710,77 @@ def normalize(value: int | str) -> str:
 }
 
 #[test]
+fn test_issue562_type_aliases_are_transparent_for_dict_and_union_surfaces() -> Result<(), String> {
+    let source = r#"
+type FieldValue = str | bool | int | float | None
+type Fields = Dict[str, FieldValue]
+
+model Logger:
+  fields: Fields = {}
+
+  def copy_fields(self, extra: Fields) -> Fields:
+    mut merged: Fields = {}
+    for key in self.fields.keys():
+      merged[key] = self.fields[key]
+    for key in extra.keys():
+      merged[key] = extra[key]
+    return merged
+
+def to_text(value: FieldValue) -> str:
+  match value:
+    str(text) =>
+      return text
+    bool(flag) =>
+      if flag:
+        return "true"
+      return "false"
+    int(number) =>
+      return str(number)
+    float(number) =>
+      return str(number)
+    None =>
+      return "none"
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn test_generic_type_alias_expands_in_dict_contexts() -> Result<(), String> {
+    let source = r#"
+type NamedValues[T] = Dict[str, T]
+
+def build() -> NamedValues[int]:
+  mut values: NamedValues[int] = {}
+  values["count"] = 1
+  return values
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn test_type_alias_expands_in_narrowing_type_positions() -> Result<(), String> {
+    let source = r#"
+type Text = str
+type MaybeText = Text | int | None
+
+def normalize(value: MaybeText) -> str:
+  if isinstance(value, Text):
+    return value.upper()
+  return "missing"
+
+def describe(value: MaybeText) -> str:
+  match value:
+    Text(text) =>
+      return text.upper()
+    int(number) =>
+      return str(number)
+    None =>
+      return "missing"
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
 fn test_union_match_requires_exhaustive_type_patterns() {
     let source = r#"
 def normalize(value: int | str) -> str:

@@ -42,6 +42,7 @@ In particular, the current formatter contract includes:
 
 - `4`-space indentation
 - a `120`-character line-length target
+- wrapping for long class trait adoption headers into parenthesized one-trait-per-line `with (...)` lists
 - best-effort wrapping for long parenthesized logical expression chains at `and` / `or` breakpoints
 - top-level double-blank-line spacing only where the style guide permits it
 - preservation of one authored readability gap inside ordinary code blocks
@@ -123,7 +124,7 @@ Fix syntax errors before formatting.
 
 The `120`-character line length is a target, not a strict hard limit.
 The formatter does not yet rewrite every possible overflowing construct.
-Very long strings, signatures, fluent call chains, and some nested expressions may still require manual judgment.
+Very long strings, fluent call chains, and some nested expressions may still require manual judgment.
 
 ## Next Steps
 

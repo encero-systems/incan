@@ -4328,6 +4328,72 @@ def main() -> None:
     }
 
     #[test]
+    fn test_issue562_type_alias_dict_and_union_surfaces_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+type FieldValue = str | bool | int | float | None
+type Fields = Dict[str, FieldValue]
+
+model Logger:
+    fields: Fields = {}
+
+    def copy_fields(self, extra: Fields) -> Fields:
+        mut merged: Fields = {}
+        for key in self.fields.keys():
+            merged[key] = self.fields[key]
+        for key in extra.keys():
+            merged[key] = extra[key]
+        return merged
+
+def to_text(value: FieldValue) -> str:
+    match value:
+        str(text) =>
+            return text
+        bool(flag) =>
+            if flag:
+                return "true"
+            return "false"
+        int(number) =>
+            return str(number)
+        float(number) =>
+            return str(number)
+        None =>
+            return "none"
+
+def main() -> None:
+    logger = Logger(fields={"base": "one"})
+    merged = logger.copy_fields({"count": 7, "flag": True, "ratio": 2.5, "none": None})
+    println(to_text(merged["base"]))
+    println(to_text(merged["count"]))
+    println(to_text(merged["flag"]))
+    println(to_text(merged["ratio"]))
+    println(to_text(merged["none"]))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "issue #562 alias transparency run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["one", "7", "true", "2.5", "none"],
+            "unexpected issue #562 alias transparency output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_issue502_independent_union_narrowing_branches_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([

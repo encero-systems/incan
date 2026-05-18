@@ -51,7 +51,7 @@ impl TypeChecker {
 
     /// Resolve the member type targeted by a union type pattern.
     fn union_pattern_member_type(&self, expected_ty: &ResolvedType, name: &str) -> Option<ResolvedType> {
-        let target_ty = resolve_type(&Type::Simple(name.to_string()), &self.symbols);
+        let target_ty = self.expand_type_aliases(resolve_type(&Type::Simple(name.to_string()), &self.symbols));
         let members = if let Some(members) = expected_ty.union_members() {
             members
         } else if let Some(inner) = expected_ty.option_inner_type() {
@@ -800,7 +800,8 @@ impl TypeChecker {
                         .option_inner_type()
                         .is_some_and(|inner| inner.union_members().is_some())
                 {
-                    resolve_type(&Type::Simple(name.clone()), &self.symbols).to_string()
+                    self.expand_type_aliases(resolve_type(&Type::Simple(name.clone()), &self.symbols))
+                        .to_string()
                 } else if name.contains("::") {
                     name.split("::").last().unwrap_or(name).to_string()
                 } else {
