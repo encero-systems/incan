@@ -1,0 +1,144 @@
+"""
+Replacement-template helpers for `std.regex`.
+
+This private module is intentionally small and source-level. It parses the `$` replacement syntax used by string
+replacement methods while `std.regex._core` owns the match loop.
+"""
+
+from std.regex.types import Captures
+
+
+pub def _expand_replacement(repl: str, caps: Captures) -> str:
+    """
+    Expand a replacement template against one capture set.
+
+    Supported markers are `$$` for a literal dollar, `$1` for numeric groups, `$name` for named groups, and `${name}`
+    for braced named or numeric groups. Unknown, missing, and nonparticipating groups expand to the empty string.
+    Malformed markers keep the literal `$` so replacement remains total.
+    """
+    mut out = ""
+    mut index = 0
+
+    while index < len(repl):
+        ch = repl[index:index + 1]
+        if ch != "$":
+            out += ch
+            index += 1
+        elif index + 1 >= len(repl):
+            out += "$"
+            index += 1
+        else:
+            next = repl[index + 1:index + 2]
+            if next == "$":
+                out += "$"
+                index += 2
+            elif next == "{":
+                close = _find_char(repl, "}", index + 2)
+                if close < 0:
+                    out += "$"
+                    index += 1
+                else:
+                    name = repl[index + 2:close]
+                    out += _replacement_group(caps, name)
+                    index = close + 1
+            elif _is_ascii_digit(next):
+                start = index + 1
+                mut end = start
+                while end < len(repl) and _is_ascii_digit(repl[end:end + 1]):
+                    end += 1
+                out += _replacement_group(caps, repl[start:end])
+                index = end
+            elif _is_name_start(next):
+                start = index + 1
+                mut end = start
+                while end < len(repl) and _is_name_continue(repl[end:end + 1]):
+                    end += 1
+                out += _replacement_group(caps, repl[start:end])
+                index = end
+            else:
+                out += "$"
+                index += 1
+
+    return out
+
+
+def _replacement_group(caps: Captures, name: str) -> str:
+    """
+    Resolve a numeric or named replacement group.
+
+    Missing groups, unknown names, and optional groups that did not participate all resolve to `""`.
+    """
+    if _is_digit_text(name):
+        match caps.group(int(name)):
+            Some(value) => return value
+            None => return ""
+
+    match caps.group(name):
+        Some(value) => return value
+        None => return ""
+
+
+def _is_digit_text(value: str) -> bool:
+    """
+    Return whether `value` is a non-empty ASCII digit sequence.
+    """
+    if len(value) == 0:
+        return false
+    for ch in value:
+        if not _is_ascii_digit(ch):
+            return false
+    return true
+
+
+def _find_char(value: str, needle: str, start: int) -> int:
+    """
+    Return the next index of `needle` at or after `start`, or `-1` when absent.
+    """
+    mut index = start
+    while index < len(value):
+        if value[index:index + 1] == needle:
+            return index
+        index += 1
+    return -1
+
+
+def _is_ascii_digit(ch: str) -> bool:
+    """
+    Return whether `ch` is one ASCII digit.
+    """
+    match ch:
+        "0" => return true
+        "1" => return true
+        "2" => return true
+        "3" => return true
+        "4" => return true
+        "5" => return true
+        "6" => return true
+        "7" => return true
+        "8" => return true
+        "9" => return true
+        _ => return false
+
+
+def _is_name_start(ch: str) -> bool:
+    """
+    Return whether `ch` can start an unbraced replacement group name.
+    """
+    return _is_ascii_letter(ch) or ch == "_"
+
+
+def _is_name_continue(ch: str) -> bool:
+    """
+    Return whether `ch` can continue an unbraced replacement group name.
+    """
+    return _is_name_start(ch) or _is_ascii_digit(ch)
+
+
+def _is_ascii_letter(ch: str) -> bool:
+    """
+    Return whether `ch` is one ASCII letter.
+    """
+    for candidate in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz":
+        if candidate == ch:
+            return true
+    return false

@@ -150,8 +150,17 @@ fn std_uuid_source_has_no_rust_backed_type_markers() {
 
 #[test]
 fn std_regex_keeps_behavior_in_incan_source() {
-    let source_path = std::path::Path::new("crates/incan_stdlib/stdlib/regex.incn");
-    let source = std::fs::read_to_string(source_path).expect("std.regex source should exist");
+    let source_paths = [
+        "crates/incan_stdlib/stdlib/regex/prelude.incn",
+        "crates/incan_stdlib/stdlib/regex/_core.incn",
+        "crates/incan_stdlib/stdlib/regex/types.incn",
+        "crates/incan_stdlib/stdlib/regex/_replacement.incn",
+    ];
+    let mut source = String::new();
+    for source_path in source_paths {
+        source.push_str(&std::fs::read_to_string(source_path).expect("std.regex source module should exist"));
+        source.push('\n');
+    }
     assert!(
         source.contains("from rust::regex import Regex as RustRegex, RegexBuilder"),
         "std.regex should dogfood direct regex crate interop for engine construction"

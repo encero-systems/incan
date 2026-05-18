@@ -324,7 +324,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
             crate_name: "regex",
             source: StdlibExtraCrateSource::Version("1.0"),
         }],
-        submodules: &[],
+        submodules: &["_core", "_replacement", "types", "prelude"],
         typechecker_only: false,
     },
     StdlibNamespace {
@@ -585,6 +585,10 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "datetime", "civil", "offset"])));
         assert!(is_known_stdlib_module(&segs(&["std", "graph"])));
         assert!(is_known_stdlib_module(&segs(&["std", "uuid"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "regex"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "regex", "_core"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "regex", "_replacement"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "regex", "types"])));
         assert!(is_known_stdlib_module(&segs(&["std", "io"])));
         assert!(is_known_stdlib_module(&segs(&["std", "encoding"])));
         assert!(is_known_stdlib_module(&segs(&["std", "encoding", "_shared"])));
@@ -657,6 +661,14 @@ mod tests {
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "uuid"])),
             Some("stdlib/uuid.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "regex"])),
+            Some("stdlib/regex/prelude.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "regex", "_core"])),
+            Some("stdlib/regex/_core.incn".to_string())
         );
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "datetime"])),
