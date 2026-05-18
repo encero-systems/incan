@@ -72,6 +72,9 @@ def run() -> Result[None, RegexError]:
     println(name_re.replace_all("Ada Lovelace", "$2, $1"))
     println(name_re.replace_all("Ada Lovelace", "${last}/${first}"))
     println(name_re.replace_all("Ada Lovelace", flip_name))
+    println(name_re.replace_all_literal("Ada Lovelace", "$2, $1"))
+    println(word_re.replacen("one two three", 2, "x"))
+    println(word_re.replacen_literal("one two", 1, "$1"))
     return Ok(None)
 
 def main() -> None:

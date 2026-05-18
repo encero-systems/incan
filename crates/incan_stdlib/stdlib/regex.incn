@@ -6,127 +6,43 @@ anchors, alternation, Unicode matching, and named or indexed capture groups. Loo
 not part of this stdlib contract; use a separately versioned package when a backtracking regex engine is required.
 """
 
-from rust::incan_stdlib::regex import RawCaptures, RawCapturesIterator, RawMatch, RawMatchIterator, RawRegex, RawSplitIterator, RegexError as RawRegexError
+from rust::incan_stdlib::regex import captures as _raw_captures, captures_all as _raw_captures_all, find as _raw_find, find_all as _raw_find_all
+from rust::regex import Regex as RustRegex, RegexBuilder
 from std.derives.collection import Iterator
 from std.derives.copying import Clone
 
 
-pub type RegexError = rusttype RawRegexError:
+type _RawMatch = Tuple[str, int, int]
+type _RawCaptures = Tuple[list[Option[_RawMatch]], Dict[str, Option[_RawMatch]]]
+
+
+pub model RegexError:
     """
     Pattern compilation failure from `std.regex`.
 
-    `kind` is a stable category such as `compile_error`; `message()` returns the engine detail.
+    `kind()` is a stable category such as `compile_error`; `message()` returns the engine detail.
     """
 
+    kind_value: str
+    detail: str
+
     def kind(self) -> str:
-        ...
+        """
+        Return the stable error category.
+        """
+        return self.kind_value
 
     def message(self) -> str:
-        ...
+        """
+        Return the human-readable detail string.
+        """
+        return self.detail
 
 
-type _RawRegex = rusttype RawRegex:
-    def compile(pattern: str, ignore_case: bool, multiline: bool, dotall: bool, verbose: bool) -> Result[_RawRegex, RegexError]:
-        ...
-
-    def is_match(self, text: str) -> bool:
-        ...
-
-    def find(self, text: str) -> Option[_RawMatch]:
-        ...
-
-    def find_iter(self, text: str) -> _RawMatchIterator:
-        ...
-
-    def captures(self, text: str) -> Option[_RawCaptures]:
-        ...
-
-    def captures_iter(self, text: str) -> _RawCapturesIterator:
-        ...
-
-    def full_match(self, text: str) -> Option[_RawCaptures]:
-        ...
-
-    def split(self, text: str) -> _RawSplitIterator:
-        ...
-
-    def splitn(self, text: str, limit: int) -> _RawSplitIterator:
-        ...
-
-    def replace(self, text: str, replacement: str) -> str:
-        ...
-
-    def replace_all(self, text: str, replacement: str) -> str:
-        ...
-
-    def replacen(self, text: str, limit: int, replacement: str) -> str:
-        ...
-
-    def replace_literal(self, text: str, replacement: str) -> str:
-        ...
-
-    def replace_all_literal(self, text: str, replacement: str) -> str:
-        ...
-
-    def replacen_literal(self, text: str, limit: int, replacement: str) -> str:
-        ...
+type _RawRegex = rusttype RustRegex
 
 
-type _RawMatch = rusttype RawMatch:
-    def as_str(self) -> str:
-        ...
-
-    def start(self) -> int:
-        ...
-
-    def end(self) -> int:
-        ...
-
-    def span(self) -> Tuple[int, int]:
-        ...
-
-
-type _RawCaptures = rusttype RawCaptures:
-    def full_match(self) -> Option[_RawMatch]:
-        ...
-
-    def group_index(self, index: int) -> Option[str]:
-        ...
-
-    def group_name(self, name: str) -> Option[str]:
-        ...
-
-    def span_index(self, index: int) -> Option[Tuple[int, int]]:
-        ...
-
-    def span_name(self, name: str) -> Option[Tuple[int, int]]:
-        ...
-
-    def groups(self) -> list[Option[str]]:
-        ...
-
-    def groupdict(self) -> Dict[str, Option[str]]:
-        ...
-
-    def match_index(self, index: int) -> Option[_RawMatch]:
-        ...
-
-
-type _RawMatchIterator = rusttype RawMatchIterator:
-    def __next__(mut self) -> Option[_RawMatch]:
-        ...
-
-
-type _RawCapturesIterator = rusttype RawCapturesIterator:
-    def __next__(mut self) -> Option[_RawCaptures]:
-        ...
-
-
-type _RawSplitIterator = rusttype RawSplitIterator:
-    def __next__(mut self) -> Option[str]:
-        ...
-
-
+@derive(Clone)
 pub model Match:
     """
     One regex match span.
@@ -134,31 +50,33 @@ pub model Match:
     `start()` and `end()` return byte offsets into the searched string, matching the safe engine's span model.
     """
 
-    raw: _RawMatch
+    text: str
+    start_offset: int
+    end_offset: int
 
     def as_str(self) -> str:
         """
         Return the matched substring.
         """
-        return self.raw.as_str()
+        return self.text
 
     def start(self) -> int:
         """
         Return the start byte offset.
         """
-        return self.raw.start()
+        return self.start_offset
 
     def end(self) -> int:
         """
         Return the exclusive end byte offset.
         """
-        return self.raw.end()
+        return self.end_offset
 
     def span(self) -> Tuple[int, int]:
         """
         Return `(start, end)` for the match span.
         """
-        return self.raw.span()
+        return (self.start_offset, self.end_offset)
 
 
 @derive(Clone)
@@ -170,45 +88,66 @@ pub model Captures:
     accessors instead of being converted to empty strings.
     """
 
-    raw: _RawCaptures
+    indexed: list[Option[Match]]
+    named: Dict[str, Option[Match]]
 
     def full_match(self) -> Option[Match]:
         """
         Return the full match as group `0`.
         """
-        match self.raw.full_match():
-            Some(value) => return Some(Match(raw=value))
-            None => return None
+        return self.match_index(0)
 
     def group(self, key: int | str) -> Option[str]:
         """
         Return a capture group by numeric index or name.
         """
         if isinstance(key, int):
-            return self.raw.group_index(key)
+            return _match_text(self.match_index(key))
         elif isinstance(key, str):
-            return self.raw.group_name(key)
+            return _match_text(self.match_name(key))
 
     def span(self, key: int | str) -> Option[Tuple[int, int]]:
         """
         Return a capture span by numeric index or name.
         """
         if isinstance(key, int):
-            return self.raw.span_index(key)
+            return _match_span(self.match_index(key))
         elif isinstance(key, str):
-            return self.raw.span_name(key)
+            return _match_span(self.match_name(key))
 
     def groups(self) -> list[Option[str]]:
         """
         Return indexed capture values, excluding group `0`.
         """
-        return self.raw.groups()
+        mut out: list[Option[str]] = []
+        for index in range(1, len(self.indexed)):
+            out.append(_match_text(self.indexed[index]))
+        return out
 
     def groupdict(self) -> Dict[str, Option[str]]:
         """
         Return named capture values.
         """
-        return self.raw.groupdict()
+        mut out: Dict[str, Option[str]] = {}
+        for name in self.named.keys():
+            out[name] = _match_text(self.named[name])
+        return out
+
+    def match_index(self, index: int) -> Option[Match]:
+        """
+        Return a captured match by numeric index.
+        """
+        if index < 0 or index >= len(self.indexed):
+            return None
+        return self.indexed[index]
+
+    def match_name(self, name: str) -> Option[Match]:
+        """
+        Return a captured match by name.
+        """
+        if name not in self.named:
+            return None
+        return self.named[name]
 
 
 pub model MatchIterator with Iterator[Match]:
@@ -216,15 +155,18 @@ pub model MatchIterator with Iterator[Match]:
     Left-to-right, non-overlapping iterator over `Match` values.
     """
 
-    raw: _RawMatchIterator
+    items: list[Match]
+    index: int
 
     def __iter__(self) -> MatchIterator:
         return self
 
     def __next__(mut self) -> Option[Match]:
-        match self.raw.__next__():
-            Some(value) => return Some(Match(raw=value))
-            None => return None
+        if self.index >= len(self.items):
+            return None
+        value = self.items[self.index]
+        self.index += 1
+        return Some(value)
 
 
 pub model CapturesIterator with Iterator[Captures]:
@@ -232,15 +174,18 @@ pub model CapturesIterator with Iterator[Captures]:
     Left-to-right, non-overlapping iterator over `Captures` values.
     """
 
-    raw: _RawCapturesIterator
+    items: list[Captures]
+    index: int
 
     def __iter__(self) -> CapturesIterator:
         return self
 
     def __next__(mut self) -> Option[Captures]:
-        match self.raw.__next__():
-            Some(value) => return Some(Captures(raw=value))
-            None => return None
+        if self.index >= len(self.items):
+            return None
+        value = self.items[self.index]
+        self.index += 1
+        return Some(value)
 
 
 pub model SplitIterator with Iterator[str]:
@@ -248,13 +193,38 @@ pub model SplitIterator with Iterator[str]:
     Iterator over text fields produced by regex splitting.
     """
 
-    raw: _RawSplitIterator
+    matches: MatchIterator
+    text: str
+    limit: int
+    produced: int
+    last_end: int
+    done: bool
 
     def __iter__(self) -> SplitIterator:
         return self
 
     def __next__(mut self) -> Option[str]:
-        return self.raw.__next__()
+        if self.done:
+            return None
+        if self.limit == 0:
+            self.done = true
+            return None
+        if self.limit > 0 and self.produced >= self.limit - 1:
+            self.done = true
+            self.produced += 1
+            return Some(self.text[self.last_end:])
+
+        match self.matches.__next__():
+            Some(found) =>
+                start, end = found.span()
+                part = self.text[self.last_end:start]
+                self.last_end = end
+                self.produced += 1
+                return Some(part)
+            None =>
+                self.done = true
+                self.produced += 1
+                return Some(self.text[self.last_end:])
 
 
 pub model Regex:
@@ -279,68 +249,91 @@ pub model Regex:
         """
         Compile a pattern into a reusable regex.
         """
-        return _RawRegex.compile(pattern, ignore_case, multiline, dotall, verbose).map((value) => Regex(raw=value))
+        mut builder = RegexBuilder.new(pattern)
+        builder.case_insensitive(ignore_case)
+        builder.multi_line(multiline)
+        builder.dot_matches_new_line(dotall)
+        builder.ignore_whitespace(verbose)
+        return builder.build().map((value) => Regex(raw=value)).map_err((err) => RegexError(kind_value="compile_error", detail=err.to_string()))
 
     def is_match(self, text: str) -> bool:
         """
         Return whether the pattern matches anywhere in `text`.
         """
-        return self.raw.is_match(text)
+        match self.find(text):
+            Some(_) => return true
+            None => return false
 
     def find(self, text: str) -> Option[Match]:
         """
         Return the first match anywhere in `text`.
         """
-        match self.raw.find(text):
-            Some(value) => return Some(Match(raw=value))
+        match _raw_find(self.raw, text):
+            Some(value) => return Some(_match_from_raw(value))
             None => return None
 
     def find_iter(self, text: str) -> MatchIterator:
         """
         Iterate left-to-right over non-overlapping matches.
         """
-        return MatchIterator(raw=self.raw.find_iter(text))
+        mut items: list[Match] = []
+        for raw in _raw_find_all(self.raw, text):
+            items.append(_match_from_raw(raw))
+        return MatchIterator(items=items, index=0)
 
     def captures(self, text: str) -> Option[Captures]:
         """
         Return capture groups for the first match anywhere in `text`.
         """
-        match self.raw.captures(text):
-            Some(value) => return Some(Captures(raw=value))
+        match _raw_captures(self.raw, text):
+            Some(value) => return Some(_captures_from_raw(value))
             None => return None
 
     def captures_iter(self, text: str) -> CapturesIterator:
         """
         Iterate left-to-right over non-overlapping capture groups.
         """
-        return CapturesIterator(raw=self.raw.captures_iter(text))
+        mut items: list[Captures] = []
+        for raw in _raw_captures_all(self.raw, text):
+            items.append(_captures_from_raw(raw))
+        return CapturesIterator(items=items, index=0)
 
     def full_match(self, text: str) -> Option[Captures]:
         """
         Return captures only when the pattern spans the whole input.
         """
-        match self.raw.full_match(text):
-            Some(value) => return Some(Captures(raw=value))
-            None => return None
+        match self.captures(text):
+            Some(caps) =>
+                match caps.full_match():
+                    Some(full) =>
+                        start, end = full.span()
+                        if start == 0 and end == len(text):
+                            return Some(caps)
+                    None => pass
+            None => pass
+        return None
 
     def split(self, text: str) -> SplitIterator:
         """
         Split `text` around every match.
         """
-        return SplitIterator(raw=self.raw.split(text))
+        return SplitIterator(matches=self.find_iter(text), text=text, limit=-1, produced=0, last_end=0, done=false)
 
     def splitn(self, text: str, limit: int) -> SplitIterator:
         """
         Split `text` around matches, producing at most `limit` fields.
         """
-        return SplitIterator(raw=self.raw.splitn(text, limit))
+        mut normalized = limit
+        if normalized < 0:
+            normalized = 0
+        return SplitIterator(matches=self.find_iter(text), text=text, limit=normalized, produced=0, last_end=0, done=false)
 
     def replace(self, text: str, repl: str | Callable[Captures, str]) -> str:
         """
         Replace the first match with a capture-aware string or callable.
         """
         if isinstance(repl, str):
-            return self.raw.replace(text, repl)
+            return self._replacen_expanded(text, 1, repl)
         else:
             return self.replacen_with(text, 1, repl)
 
@@ -349,7 +342,7 @@ pub model Regex:
         Replace every match with a capture-aware string or callable.
         """
         if isinstance(repl, str):
-            return self.raw.replace_all(text, repl)
+            return self._replacen_expanded(text, -1, repl)
         else:
             return self.replacen_with(text, -1, repl)
 
@@ -357,48 +350,93 @@ pub model Regex:
         """
         Replace at most `limit` matches with a capture-aware string or callable.
         """
+        mut normalized = limit
+        if normalized < 0:
+            normalized = 0
         if isinstance(repl, str):
-            return self.raw.replacen(text, limit, repl)
+            return self._replacen_expanded(text, normalized, repl)
         else:
-            return self.replacen_with(text, limit, repl)
+            return self.replacen_with(text, normalized, repl)
 
     def replace_literal(self, text: str, repl: str) -> str:
         """
         Replace the first match literally, without `$1` or `${name}` interpolation.
         """
-        return self.raw.replace_literal(text, repl)
+        return self._replacen_literal(text, 1, repl)
 
     def replace_all_literal(self, text: str, repl: str) -> str:
         """
         Replace every match literally, without `$1` or `${name}` interpolation.
         """
-        return self.raw.replace_all_literal(text, repl)
+        return self._replacen_literal(text, -1, repl)
 
     def replacen_literal(self, text: str, limit: int, repl: str) -> str:
         """
         Replace at most `limit` matches literally, without `$1` or `${name}` interpolation.
         """
-        return self.raw.replacen_literal(text, limit, repl)
+        mut normalized = limit
+        if normalized < 0:
+            normalized = 0
+        return self._replacen_literal(text, normalized, repl)
 
     def replacen_with(self, text: str, limit: int, repl: Callable[Captures, str]) -> str:
         """
         Replace matches with a callable that receives `Captures`.
         """
+        if limit == 0:
+            return text
+
         mut out = ""
         mut last_end = 0
         mut replaced = 0
         mut captures = self.captures_iter(text)
 
-        loop:
+        while true:
             match captures.__next__():
                 Some(caps) =>
-                    if limit >= 0 and replaced >= limit:
+                    if limit > 0 and replaced >= limit:
                         break
                     match caps.full_match():
                         Some(full) =>
                             start, end = full.span()
                             out += text[last_end:start]
                             out += repl(caps.clone())
+                            last_end = end
+                            replaced += 1
+                        None => pass
+                None => break
+
+        out += text[last_end:]
+        return out
+
+    def _replacen_expanded(self, text: str, limit: int, repl: str) -> str:
+        return self._replacen_string(text, limit, repl, false)
+
+    def _replacen_literal(self, text: str, limit: int, repl: str) -> str:
+        return self._replacen_string(text, limit, repl, true)
+
+    def _replacen_string(self, text: str, limit: int, repl: str, literal: bool) -> str:
+        if limit == 0:
+            return text
+
+        mut out = ""
+        mut last_end = 0
+        mut replaced = 0
+        mut captures = self.captures_iter(text)
+
+        while true:
+            match captures.__next__():
+                Some(caps) =>
+                    if limit > 0 and replaced >= limit:
+                        break
+                    match caps.full_match():
+                        Some(full) =>
+                            start, end = full.span()
+                            out += text[last_end:start]
+                            if literal:
+                                out += repl
+                            else:
+                                out += _expand_replacement(repl, caps)
                             last_end = end
                             replaced += 1
                         None => pass
@@ -415,3 +453,146 @@ pub def compile(pattern: str, ignore_case: bool = False, multiline: bool = False
     Direct `Regex(pattern, ...)` construction uses the same implementation.
     """
     return Regex.compile(pattern, ignore_case, multiline, dotall, verbose)
+
+
+def _match_from_raw(raw: _RawMatch) -> Match:
+    text, start, end = raw
+    return Match(text=text, start_offset=start, end_offset=end)
+
+
+def _match_from_raw_option(raw: Option[_RawMatch]) -> Option[Match]:
+    match raw:
+        Some(value) => return Some(_match_from_raw(value))
+        None => return None
+
+
+def _captures_from_raw(raw: _RawCaptures) -> Captures:
+    raw_groups_value, raw_names_value = raw
+    raw_groups: list[Option[_RawMatch]] = raw_groups_value
+    raw_names: Dict[str, Option[_RawMatch]] = raw_names_value
+    mut indexed: list[Option[Match]] = []
+    for value in raw_groups:
+        indexed.append(_match_from_raw_option(value))
+
+    mut named: Dict[str, Option[Match]] = {}
+    for name in raw_names.keys():
+        named[name] = _match_from_raw_option(raw_names[name])
+    return Captures(indexed=indexed, named=named)
+
+
+def _match_text(value: Option[Match]) -> Option[str]:
+    match value:
+        Some(found) => return Some(found.as_str())
+        None => return None
+
+
+def _match_span(value: Option[Match]) -> Option[Tuple[int, int]]:
+    match value:
+        Some(found) => return Some(found.span())
+        None => return None
+
+
+def _expand_replacement(repl: str, caps: Captures) -> str:
+    mut out = ""
+    mut index = 0
+
+    while index < len(repl):
+        ch = repl[index:index + 1]
+        if ch != "$":
+            out += ch
+            index += 1
+        elif index + 1 >= len(repl):
+            out += "$"
+            index += 1
+        else:
+            next = repl[index + 1:index + 2]
+            if next == "$":
+                out += "$"
+                index += 2
+            elif next == "{":
+                close = _find_char(repl, "}", index + 2)
+                if close < 0:
+                    out += "$"
+                    index += 1
+                else:
+                    name = repl[index + 2:close]
+                    out += _replacement_group(caps, name)
+                    index = close + 1
+            elif _is_ascii_digit(next):
+                start = index + 1
+                mut end = start
+                while end < len(repl) and _is_ascii_digit(repl[end:end + 1]):
+                    end += 1
+                out += _replacement_group(caps, repl[start:end])
+                index = end
+            elif _is_name_start(next):
+                start = index + 1
+                mut end = start
+                while end < len(repl) and _is_name_continue(repl[end:end + 1]):
+                    end += 1
+                out += _replacement_group(caps, repl[start:end])
+                index = end
+            else:
+                out += "$"
+                index += 1
+
+    return out
+
+
+def _replacement_group(caps: Captures, name: str) -> str:
+    if _is_digit_text(name):
+        match caps.group(int(name)):
+            Some(value) => return value
+            None => return ""
+
+    match caps.group(name):
+        Some(value) => return value
+        None => return ""
+
+
+def _is_digit_text(value: str) -> bool:
+    if len(value) == 0:
+        return false
+    for ch in value:
+        if not _is_ascii_digit(ch):
+            return false
+    return true
+
+
+def _find_char(value: str, needle: str, start: int) -> int:
+    mut index = start
+    while index < len(value):
+        if value[index:index + 1] == needle:
+            return index
+        index += 1
+    return -1
+
+
+def _is_ascii_digit(ch: str) -> bool:
+    match ch:
+        "0" => return true
+        "1" => return true
+        "2" => return true
+        "3" => return true
+        "4" => return true
+        "5" => return true
+        "6" => return true
+        "7" => return true
+        "8" => return true
+        "9" => return true
+        _ => return false
+
+
+def _is_name_start(ch: str) -> bool:
+    return _is_ascii_letter(ch) or ch == "_"
+
+
+def _is_name_continue(ch: str) -> bool:
+    return _is_name_start(ch) or _is_ascii_digit(ch)
+
+
+def _is_ascii_letter(ch: str) -> bool:
+    for candidate in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz":
+        if candidate == ch:
+            return true
+    return false

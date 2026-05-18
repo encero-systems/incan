@@ -5977,6 +5977,9 @@ async def main() -> None:
                 "Lovelace, Ada",
                 "Lovelace/Ada",
                 "Lovelace, Ada",
+                "$2, $1",
+                "x x three",
+                "$1 two",
             ],
             "unexpected std.regex output:\n{stdout}"
         );
