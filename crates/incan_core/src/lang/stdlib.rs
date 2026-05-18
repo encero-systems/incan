@@ -361,6 +361,45 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "compression",
+        feature: None,
+        extra_crate_deps: &[
+            StdlibExtraCrateDep {
+                crate_name: "flate2",
+                source: StdlibExtraCrateSource::Version("1"),
+            },
+            StdlibExtraCrateDep {
+                crate_name: "zstd",
+                source: StdlibExtraCrateSource::Version("0.13"),
+            },
+            StdlibExtraCrateDep {
+                crate_name: "bzip2",
+                source: StdlibExtraCrateSource::Version("0.6"),
+            },
+            StdlibExtraCrateDep {
+                crate_name: "xz2",
+                source: StdlibExtraCrateSource::Version("0.1"),
+            },
+            StdlibExtraCrateDep {
+                crate_name: "snap",
+                source: StdlibExtraCrateSource::Version("1"),
+            },
+        ],
+        submodules: &[
+            "_core",
+            "_auto",
+            "gzip",
+            "zlib",
+            "deflate",
+            "zstd",
+            "bz2",
+            "lzma",
+            "snappy",
+            "snappy.raw",
+        ],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "tempfile",
         feature: None,
         extra_crate_deps: &[],
@@ -556,6 +595,11 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "encoding", "base58"])));
         assert!(is_known_stdlib_module(&segs(&["std", "encoding", "bech32"])));
         assert!(is_known_stdlib_module(&segs(&["std", "hash"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "compression"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "compression", "_core"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "compression", "_auto"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "compression", "gzip"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "compression", "snappy", "raw"])));
         assert!(is_known_stdlib_module(&segs(&["std", "tempfile"])));
         assert!(is_known_stdlib_module(&segs(&["std", "collections"])));
         assert!(is_known_stdlib_module(&segs(&["std", "rust"])));
@@ -641,6 +685,26 @@ mod tests {
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "hash"])),
             Some("stdlib/hash/prelude.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "compression"])),
+            Some("stdlib/compression/prelude.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "compression", "_core"])),
+            Some("stdlib/compression/_core.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "compression", "_auto"])),
+            Some("stdlib/compression/_auto.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "compression", "gzip"])),
+            Some("stdlib/compression/gzip.incn".to_string())
+        );
+        assert_eq!(
+            stdlib_stub_path(&segs(&["std", "compression", "snappy", "raw"])),
+            Some("stdlib/compression/snappy/raw.incn".to_string())
         );
         assert_eq!(
             stdlib_stub_path(&segs(&["std", "tempfile"])),
@@ -746,6 +810,7 @@ mod tests {
         let hash_ns = find_namespace("hash");
         let datetime_ns = find_namespace("datetime");
         let collections_ns = find_namespace("collections");
+        let compression_ns = find_namespace("compression");
 
         assert_eq!(async_ns.and_then(|ns| ns.feature), Some("async"));
         assert_eq!(reflection_ns.map(|ns| ns.submodules.is_empty()), Some(true));
@@ -785,6 +850,20 @@ mod tests {
         assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_core")), Some(true));
         assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_streaming")), Some(true));
         assert_eq!(hash_ns.map(|ns| ns.typechecker_only), Some(false));
+        assert_eq!(compression_ns.map(|ns| ns.feature), Some(None));
+        assert_eq!(compression_ns.map(|ns| ns.submodules.contains(&"_core")), Some(true));
+        assert_eq!(compression_ns.map(|ns| ns.submodules.contains(&"_auto")), Some(true));
+        assert_eq!(compression_ns.map(|ns| ns.submodules.contains(&"gzip")), Some(true));
+        assert_eq!(
+            compression_ns.map(|ns| ns.submodules.contains(&"snappy.raw")),
+            Some(true)
+        );
+        assert_eq!(
+            compression_ns
+                .and_then(|ns| ns.extra_crate_deps.first())
+                .map(|dep| dep.crate_name),
+            Some("flate2")
+        );
         assert_eq!(datetime_ns.map(|ns| ns.feature), Some(None));
         assert_eq!(datetime_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
         assert_eq!(datetime_ns.map(|ns| ns.submodules.contains(&"civil.naive")), Some(true));

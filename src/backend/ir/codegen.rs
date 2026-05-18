@@ -105,37 +105,13 @@ fn generated_module_path_for_source_import(path: &ImportPath, current_module_pat
 
 /// True when a dependency module should keep its public API even if the main module does not import every item.
 fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_stdlib_public_items: bool) -> bool {
-    if module_path_matches_any_std_root(module_path, &["derives", "collection"])
-        || module_path_matches_any_std_root(module_path, &["result"])
-        || module_path_matches_any_std_root(module_path, &["serde", "json"])
-        || module_path_matches_any_std_root(module_path, &["logging"])
-    {
+    if matches!(
+        module_path.first().map(String::as_str),
+        Some(stdlib::STDLIB_ROOT | stdlib::INCAN_STD_NAMESPACE)
+    ) {
         return true;
     }
-    if !preserve_non_stdlib_public_items {
-        return false;
-    }
-    !matches!(
-        module_path.first().map(String::as_str),
-        Some(stdlib::INCAN_STD_NAMESPACE)
-    )
-}
-
-/// Return whether a generated module path exactly matches a static path literal.
-fn module_path_matches_any_std_root(module_path: &[String], tail: &[&str]) -> bool {
-    if module_path.len() != tail.len() + 1 {
-        return false;
-    }
-    if !matches!(
-        module_path.first().map(String::as_str),
-        Some(stdlib::STDLIB_ROOT) | Some(stdlib::INCAN_STD_NAMESPACE)
-    ) {
-        return false;
-    }
-    module_path[1..]
-        .iter()
-        .zip(tail.iter())
-        .all(|(actual, expected)| actual == expected)
+    preserve_non_stdlib_public_items
 }
 
 /// Return whether a function carries the stdlib-backed web route decorator that lowers to a Rust proc-macro attribute.
@@ -1682,6 +1658,42 @@ def main() -> None:
         );
         assert!(!constants_code.contains("default_timeout"), "{constants_code}");
         assert_no_generated_unused_lint_allows(constants_code);
+    }
+
+    #[test]
+    fn normal_codegen_preserves_stdlib_dependency_public_items_for_generated_projects() {
+        let gzip_module = parse_program(
+            r#"
+pub def compress(data: bytes) -> bytes:
+  return data
+
+pub def decompress(data: bytes) -> bytes:
+  return data
+"#,
+        );
+        let main_module = parse_program(
+            r#"
+from std.compression.gzip import decompress
+
+def main() -> None:
+  _ = decompress(b"data")
+"#,
+        );
+        let gzip_path = vec!["__incan_std".to_string(), "compression".to_string(), "gzip".to_string()];
+        let mut codegen = IrCodegen::new();
+        codegen.set_preserve_dependency_public_items(false);
+        codegen.add_module_with_path_segments("__incan_std_compression_gzip", &gzip_module, gzip_path.clone());
+
+        let (_main_code, rust_modules) =
+            must_ok(codegen.try_generate_multi_file_nested(&main_module, std::slice::from_ref(&gzip_path)));
+        let gzip_code = must_some(
+            rust_modules.get(&gzip_path),
+            "missing generated std.compression.gzip module",
+        );
+
+        assert!(gzip_code.contains("pub fn compress"), "{gzip_code}");
+        assert!(gzip_code.contains("pub fn decompress"), "{gzip_code}");
+        assert_no_generated_unused_lint_allows(gzip_code);
     }
 
     #[test]

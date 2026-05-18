@@ -6738,6 +6738,69 @@ def main() -> None:
     }
 
     #[test]
+    fn test_std_compression_surface_runs_generated_project() -> Result<(), Box<dyn std::error::Error>> {
+        // Keep std.compression's generated-project dependencies in the root Cargo graph so CI fetches them before this
+        // smoke runs the generated project under CARGO_NET_OFFLINE.
+        use std::io::{Cursor, Read as _};
+
+        let sample = b"abc";
+        let mut gzip = flate2::read::GzEncoder::new(Cursor::new(sample), flate2::Compression::new(6));
+        let mut gzip_out = Vec::new();
+        gzip.read_to_end(&mut gzip_out)?;
+        assert!(!gzip_out.is_empty());
+
+        let zstd_out = zstd::stream::encode_all(Cursor::new(sample), 0)?;
+        assert!(!zstd_out.is_empty());
+
+        let mut bz2 = bzip2::read::BzEncoder::new(Cursor::new(sample), bzip2::Compression::new(6));
+        let mut bz2_out = Vec::new();
+        bz2.read_to_end(&mut bz2_out)?;
+        assert!(!bz2_out.is_empty());
+
+        let mut lzma = xz2::read::XzEncoder::new(Cursor::new(sample), 6);
+        let mut lzma_out = Vec::new();
+        lzma.read_to_end(&mut lzma_out)?;
+        assert!(!lzma_out.is_empty());
+
+        let mut snappy = snap::raw::Encoder::new();
+        assert!(!snappy.compress_vec(sample)?.is_empty());
+
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/std_compression_surface.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "std.compression surface run failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec![
+                "gzip round trip ok",
+                "zlib round trip ok",
+                "deflate round trip ok",
+                "zstd round trip ok",
+                "bz2 round trip ok",
+                "lzma round trip ok",
+                "snappy round trip ok",
+                "snappy.raw round trip ok",
+                "autodetection ok",
+                "stream round trips ok",
+                "file stream round trip ok",
+                "option and chunk errors ok",
+            ],
+            "unexpected std.compression output: {stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_rust_associated_call_in_elif_branch_uses_path_syntax() {
         let Ok(output) = Command::new(incan_debug_binary())
             .args([

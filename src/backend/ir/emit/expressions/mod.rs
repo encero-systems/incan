@@ -1002,7 +1002,7 @@ impl<'a> IrEmitter<'a> {
                                 quote! { (#inner) as #target }
                             }
                             incan_core::interop::CoercionPolicy::Borrow => match rust_target.as_str() {
-                                "&str" | "&[u8]" => quote! { #inner },
+                                "&str" | "&[u8]" => quote! { &#inner },
                                 "&String" | "&std::string::String" | "&alloc::string::String" => {
                                     quote! { &(#inner).to_string() }
                                 }
@@ -1350,6 +1350,45 @@ mod tests {
         assert!(
             rendered.contains("\"host\" . to_string ()") || rendered.contains("\"host\".to_string()"),
             "expected generic collection target to preserve concrete string item conversion, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn interop_borrowed_bytes_slice_coercion_borrows_owned_bytes() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "data".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Bytes,
+                )),
+                from_ty: IrType::Bytes,
+                to_ty: IrType::Ref(Box::new(IrType::Bytes)),
+                kind: IrInteropCoercionKind::Builtin {
+                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    rust_target: "&[u8]".to_string(),
+                },
+            },
+            IrType::Ref(Box::new(IrType::Bytes)),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.starts_with("&"),
+            "expected borrowed bytes slice, got `{rendered}`"
+        );
+        assert!(
+            rendered.contains("data"),
+            "expected borrowed bytes coercion to preserve the source expression, got `{rendered}`"
         );
         Ok(())
     }

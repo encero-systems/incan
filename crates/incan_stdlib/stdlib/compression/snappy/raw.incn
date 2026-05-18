@@ -1,0 +1,43 @@
+"""
+Raw Snappy block helpers.
+
+Raw Snappy is an advanced interop surface for systems that store individual Snappy blocks. It is intentionally excluded
+from `std.compression` autodetection because raw blocks have no stable stream signature.
+"""
+
+from rust::snap::raw @ "1" import Decoder as RawDecoder, Encoder as RawEncoder
+from std.compression._core import Codec, CompressionError, _codec_error, _reject_level
+
+
+pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
+    """
+    Compress bytes using raw Snappy block format.
+
+    Args:
+        data: Plain input bytes.
+        level: Must be `None`; raw Snappy does not expose a portable compression level.
+
+    Returns:
+        `Ok(bytes)` with a raw Snappy block, or `Err(CompressionError)` for unsupported options or codec failures.
+    """
+    _reject_level(Codec.Snappy, level)?
+    mut encoder = RawEncoder.new()
+    match encoder.compress_vec(data.as_slice()):
+        Ok(out) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Snappy, "raw.compress", err))
+
+
+pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
+    """
+    Decompress bytes using raw Snappy block format.
+
+    Args:
+        data: Raw Snappy block bytes.
+
+    Returns:
+        `Ok(bytes)` with the decompressed payload, or `Err(CompressionError)` for invalid block data.
+    """
+    mut decoder = RawDecoder.new()
+    match decoder.decompress_vec(data.as_slice()):
+        Ok(out) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Snappy, "raw.decompress", err))

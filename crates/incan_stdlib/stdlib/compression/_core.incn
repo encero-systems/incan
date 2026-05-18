@@ -1,0 +1,214 @@
+"""
+Shared `std.compression` vocabulary and internal helpers.
+
+Public callers should import `Codec`, `CompressionError`, and codec modules from `std.compression`. The underscored
+helpers in this module are implementation details shared by sibling codec modules and the autodetection module.
+"""
+
+from std.fs import File
+from std.io import _BytesIO
+from std.traits.error import Error
+
+
+pub enum Codec(str):
+    """
+    Compression codec identity used by `std.compression` autodetection.
+    """
+
+    Gzip = "gzip"
+    Zlib = "zlib"
+    Deflate = "deflate"
+    Zstd = "zstd"
+    Bz2 = "bz2"
+    Lzma = "lzma"
+    Snappy = "snappy"
+
+    @staticmethod
+    def all() -> list[Codec]:
+        """
+        Return the stable codec order used by default autodetection filters.
+
+        Raw Snappy block compression is intentionally absent because it has no framing signature.
+        """
+        return [Codec.Gzip, Codec.Zlib, Codec.Deflate, Codec.Zstd, Codec.Bz2, Codec.Lzma, Codec.Snappy]
+
+
+@derive(Clone)
+pub model CompressionError with Error:
+    """
+    Stable compression failure boundary.
+
+    `kind` is intended for branching on categories such as `invalid_data`, `truncated_input`, `unsupported_codec`,
+    `unsupported_option`, `invalid_level`, `invalid_chunk_size`, `ambiguous_autodetection`, `io`, and `backend`.
+    """
+
+    pub kind: str
+    pub codec: Option[Codec]
+    pub operation: str
+    pub detail: str
+
+    def message(self) -> str:
+        """
+        Return the human-readable error detail.
+        """
+        return self.detail
+
+    def source(self) -> Option[str]:
+        """
+        Return a structured source error when one is available.
+
+        Compression currently normalizes backend details into `detail`, so there is no nested source value.
+        """
+        return None
+
+
+pub def _level_or_default(codec: Codec, level: Option[int], default: int, minimum: int, maximum: int) -> Result[int, CompressionError]:
+    """
+    Validate a portable integer compression-level request.
+    """
+    match level:
+        Some(value) =>
+            if value < minimum or value > maximum:
+                return Err(
+                    CompressionError(
+                        kind="invalid_level",
+                        codec=Some(codec),
+                        operation="compress",
+                        detail=f"level for {codec.value()} must be between {minimum} and {maximum}",
+                    ),
+                )
+            return Ok(value)
+        None => return Ok(default)
+
+
+pub def _reject_level(codec: Codec, level: Option[int]) -> Result[None, CompressionError]:
+    """
+    Reject a level argument for codecs without level support.
+    """
+    match level:
+        Some(_) =>
+            return Err(
+                CompressionError(
+                    kind="unsupported_option",
+                    codec=Some(codec),
+                    operation="compress",
+                    detail=f"{codec.value()} does not support configurable compression levels",
+                ),
+            )
+        None => return Ok(None)
+
+
+pub def _codec_error(codec: Codec, operation: str, detail: str) -> CompressionError:
+    """
+    Build a codec failure from backend error text.
+
+    Backend crates expose different error enums and messages. The first source pass keeps a stable Incan `kind` by
+    classifying the most common invalid/truncated markers and otherwise preserving the backend text as `backend`.
+    """
+    mut kind = "backend"
+    if detail.contains("EOF") or detail.contains("eof") or detail.contains("early") or detail.contains("truncated"):
+        kind = "truncated_input".to_string()
+    elif detail.contains("invalid") or detail.contains("corrupt") or detail.contains("checksum"):
+        kind = "invalid_data".to_string()
+    return CompressionError(kind=kind, codec=Some(codec), operation=operation, detail=detail)
+
+
+pub def _io_error(codec: Option[Codec], operation: str, detail: str) -> CompressionError:
+    """
+    Build an I/O failure.
+    """
+    return CompressionError(kind="io", codec=codec, operation=operation, detail=detail)
+
+
+pub def _validate_chunk_size(codec: Option[Codec], operation: str, chunk_size: int) -> Result[None, CompressionError]:
+    """
+    Reject a non-positive stream chunk size before touching source or target streams.
+    """
+    if chunk_size <= 0:
+        return Err(
+            CompressionError(
+                kind="invalid_chunk_size",
+                codec=codec,
+                operation=operation,
+                detail="chunk_size must be positive",
+            ),
+        )
+    return Ok(None)
+
+
+pub def _write_sink_bytes(
+    codec: Option[Codec],
+    operation: str,
+    target: Union[_BytesIO, File],
+    data: bytes,
+) -> Result[None, CompressionError]:
+    """
+    Write one compressed or decompressed chunk to a `BytesIO` or `File` sink.
+
+    Stream helpers keep codec adapters in their codec modules, but use this shared sink boundary so `IoError`
+    normalization stays identical across modules.
+    """
+    if isinstance(target, _BytesIO):
+        match target.write_bytes(data):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(codec, operation, err.message()))
+    elif isinstance(target, File):
+        match target.write_bytes(data):
+            Ok(_) => return Ok(None)
+            Err(err) => return Err(_io_error(codec, operation, err.message()))
+
+
+pub def _byte_at(data: bytes, index: int) -> int:
+    """
+    Read one byte as an integer for signature checks.
+    """
+    return int(data[index])
+
+
+pub def _looks_like_gzip(data: bytes) -> bool:
+    """
+    Return whether `data` starts with the gzip magic bytes.
+    """
+    return len(data) >= 2 and _byte_at(data, 0) == 31 and _byte_at(data, 1) == 139
+
+
+pub def _looks_like_zstd(data: bytes) -> bool:
+    """
+    Return whether `data` starts with the zstd frame magic bytes.
+    """
+    return len(data) >= 4 and _byte_at(data, 0) == 40 and _byte_at(data, 1) == 181 and _byte_at(data, 2) == 47 and _byte_at(data, 3) == 253
+
+
+pub def _looks_like_bz2(data: bytes) -> bool:
+    """
+    Return whether `data` starts with the bzip2 stream signature.
+    """
+    return len(data) >= 3 and _byte_at(data, 0) == 66 and _byte_at(data, 1) == 90 and _byte_at(data, 2) == 104
+
+
+pub def _looks_like_xz(data: bytes) -> bool:
+    """
+    Return whether `data` starts with the XZ container magic bytes.
+    """
+    return len(data) >= 6 and _byte_at(data, 0) == 253 and _byte_at(data, 1) == 55 and _byte_at(data, 2) == 122 and _byte_at(data, 3) == 88 and _byte_at(data, 4) == 90 and _byte_at(data, 5) == 0
+
+
+pub def _looks_like_snappy_frame(data: bytes) -> bool:
+    """
+    Return whether `data` starts with the framed Snappy stream identifier.
+    """
+    return len(data) >= 10 and _byte_at(data, 0) == 255 and _byte_at(data, 1) == 6 and _byte_at(data, 2) == 0 and _byte_at(data, 3) == 0 and _byte_at(data, 4) == 115 and _byte_at(data, 5) == 78 and _byte_at(data, 6) == 97 and _byte_at(data, 7) == 80 and _byte_at(data, 8) == 112 and _byte_at(data, 9) == 89
+
+
+pub def _looks_like_zlib(data: bytes) -> bool:
+    """
+    Return whether `data` has a valid zlib header.
+
+    Zlib's header does not have a fixed magic sequence. The RFC 1950 check below validates the compression method and
+    header checksum; decompression still owns the final data-validity decision.
+    """
+    if len(data) < 2:
+        return false
+    cmf = _byte_at(data, 0)
+    flg = _byte_at(data, 1)
+    return cmf % 16 == 8 and ((cmf * 256 + flg) % 31 == 0)

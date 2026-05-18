@@ -146,6 +146,44 @@ fn render_shape_display(shape: &RustTypeShape) -> String {
     }
 }
 
+fn is_exact_numeric_display(text: &str) -> bool {
+    matches!(
+        text,
+        "f32"
+            | "f64"
+            | "i8"
+            | "i16"
+            | "i32"
+            | "i64"
+            | "i128"
+            | "isize"
+            | "u8"
+            | "u16"
+            | "u32"
+            | "u64"
+            | "u128"
+            | "usize"
+    )
+}
+
+/// Return the canonical Rust numeric display when `text` is exactly a primitive numeric type or reference.
+fn exact_numeric_boundary_display(text: &str) -> Option<String> {
+    let normalized = normalize_display_path(text)
+        .replace("'static ", "")
+        .replace("'_", "")
+        .replace(' ', "");
+    if is_exact_numeric_display(normalized.as_str()) {
+        return Some(normalized);
+    }
+    if let Some(inner) = normalized.strip_prefix('&') {
+        let inner = inner.strip_prefix("mut").unwrap_or(inner).trim();
+        if is_exact_numeric_display(inner) {
+            return Some(format!("&{inner}"));
+        }
+    }
+    None
+}
+
 fn resolve_source_path(text: &str, crate_name: &str, module: Module, db: &RootDatabase) -> Option<String> {
     let text = text.trim().replace(' ', "");
     if text.is_empty() {
@@ -412,8 +450,12 @@ fn rust_type_shape(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> RustT
 }
 
 fn function_sig_type_display(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> String {
+    let raw = normalize_display_path(format_ty(ty, db, dt).as_str());
+    if let Some(display) = exact_numeric_boundary_display(raw.as_str()) {
+        return display;
+    }
     match rust_type_shape(ty, db, dt) {
-        RustTypeShape::Unknown => normalize_display_path(format_ty(ty, db, dt).as_str()),
+        RustTypeShape::Unknown => raw,
         other => render_shape_display(&other),
     }
 }
@@ -433,6 +475,9 @@ fn source_function_return_type_display(f: Function, db: &RootDatabase) -> Option
         .display_name(db)
         .map(|name| name.canonical_name().as_str().to_owned())?;
     let shape = source_type_shape(text.as_str(), crate_name.as_str(), module, db);
+    if let Some(display) = exact_numeric_boundary_display(text.as_str()) {
+        return Some(display);
+    }
     Some(match shape {
         RustTypeShape::Unknown => normalize_display_path(text.as_str()),
         other => render_shape_display(&other),
@@ -564,6 +609,9 @@ fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>,
         .display_name(db)
         .map(|name| name.canonical_name().as_str().to_owned())?;
     let shape = source_type_shape(text.as_str(), crate_name.as_str(), module, db);
+    if let Some(display) = exact_numeric_boundary_display(text.as_str()) {
+        return Some(display);
+    }
     if matches!(shape, RustTypeShape::TypeParam(_))
         && let Some(imported_display) = canonicalize_imported_single_segment_type_display(text.as_str(), f, db)
     {
@@ -952,7 +1000,14 @@ mod tests {
 
     use incan_core::interop::RustItemKind;
 
-    use super::{RustWorkspace, extract_rust_item};
+    use super::{RustWorkspace, exact_numeric_boundary_display, extract_rust_item};
+
+    #[test]
+    fn exact_numeric_boundary_display_preserves_widths() {
+        assert_eq!(exact_numeric_boundary_display("u32").as_deref(), Some("u32"));
+        assert_eq!(exact_numeric_boundary_display("& i32").as_deref(), Some("&i32"));
+        assert_eq!(exact_numeric_boundary_display("String"), None);
+    }
 
     #[test]
     fn type_metadata_records_direct_trait_impls() -> Result<(), Box<dyn std::error::Error>> {

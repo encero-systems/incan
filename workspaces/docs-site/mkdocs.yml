@@ -129,6 +129,7 @@ nav:
           - Error messages: language/how-to/error_messages.md
           - File I/O: language/how-to/file_io.md
           - Binary-text encoding: language/how-to/binary_text_encoding.md
+          - Compression: language/how-to/compression.md
           - Generators: language/how-to/generators.md
           - Imports and modules: language/how-to/imports_and_modules.md
           - Module state: language/how-to/module_state.md
@@ -163,6 +164,7 @@ nav:
               - Overview: language/reference/stdlib/index.md
               - std.async: language/reference/stdlib/async.md
               - std.collections: language/reference/stdlib/collections.md
+              - std.compression: language/reference/stdlib/compression.md
               - std.derives.*: language/reference/stdlib/derives.md
               - std.datetime: language/reference/stdlib/datetime.md
               - std.encoding: language/reference/stdlib/encoding.md

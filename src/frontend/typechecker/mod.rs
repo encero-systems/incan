@@ -671,6 +671,60 @@ impl TypeChecker {
         ResolvedType::Function(params, Box::new(ret))
     }
 
+    /// Replace Rust metadata's `Self` placeholder with the concrete receiver path at a call site.
+    fn substitute_rust_self_type(ty: ResolvedType, rust_path: &str) -> ResolvedType {
+        match ty {
+            ResolvedType::RustPath(path) if path == "Self" => ResolvedType::RustPath(rust_path.to_string()),
+            ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(Self::substitute_rust_self_type(*inner, rust_path))),
+            ResolvedType::RefMut(inner) => {
+                ResolvedType::RefMut(Box::new(Self::substitute_rust_self_type(*inner, rust_path)))
+            }
+            ResolvedType::Generic(name, args) => ResolvedType::Generic(
+                name,
+                args.into_iter()
+                    .map(|arg| Self::substitute_rust_self_type(arg, rust_path))
+                    .collect(),
+            ),
+            ResolvedType::Tuple(items) => ResolvedType::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| Self::substitute_rust_self_type(item, rust_path))
+                    .collect(),
+            ),
+            ResolvedType::FrozenList(inner) => {
+                ResolvedType::FrozenList(Box::new(Self::substitute_rust_self_type(*inner, rust_path)))
+            }
+            ResolvedType::FrozenSet(inner) => {
+                ResolvedType::FrozenSet(Box::new(Self::substitute_rust_self_type(*inner, rust_path)))
+            }
+            ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(
+                Box::new(Self::substitute_rust_self_type(*key, rust_path)),
+                Box::new(Self::substitute_rust_self_type(*value, rust_path)),
+            ),
+            ResolvedType::Function(params, ret) => ResolvedType::Function(
+                params
+                    .into_iter()
+                    .map(|param| CallableParam {
+                        ty: Self::substitute_rust_self_type(param.ty, rust_path),
+                        ..param
+                    })
+                    .collect(),
+                Box::new(Self::substitute_rust_self_type(*ret, rust_path)),
+            ),
+            other => other,
+        }
+    }
+
+    /// Build a Rust function type and resolve `Self` return or parameter positions against `rust_path`.
+    pub(crate) fn resolved_function_type_from_rust_sig_for_path(
+        &self,
+        sig: &RustFunctionSig,
+        drop_receiver: bool,
+        rust_path: &str,
+    ) -> ResolvedType {
+        Self::substitute_rust_self_type(self.resolved_function_type_from_rust_sig(sig, drop_receiver), rust_path)
+    }
+
     /// Render `path` with generic arguments as `path<A, B, ...>` for embedding in [`ResolvedType::RustPath`].
     ///
     /// When `args` is empty, returns `path` unchanged (no angle brackets).

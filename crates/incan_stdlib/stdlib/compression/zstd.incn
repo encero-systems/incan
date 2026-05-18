@@ -1,0 +1,198 @@
+"""
+Zstandard compression helpers.
+
+This module exposes zstd frames through one-shot byte helpers and keeps backend-specific error details behind
+`CompressionError`.
+"""
+
+from rust::std::io import Cursor, Read
+from rust::zstd::stream @ "0.13" import decode_all, encode_all
+from rust::zstd::stream::read @ "0.13" import Decoder as ZstdReadDecoder, Encoder as ZstdReadEncoder
+from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default, _validate_chunk_size, _write_sink_bytes
+from std.fs import File
+from std.io import _BytesIO
+
+
+pub def compress(data: bytes, level: Option[int] = None) -> Result[bytes, CompressionError]:
+    """
+    Compress bytes as a zstd frame.
+
+    Args:
+        data: Plain input bytes.
+        level: Optional portable zstd level from -7 through 22.
+
+    Returns:
+        `Ok(bytes)` with a zstd frame, or `Err(CompressionError)` for invalid levels or codec failures.
+    """
+    match encode_all(Cursor.new(data), _zstd_level(level)?):
+        Ok(out) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Zstd, "compress", err))
+
+
+pub def decompress(data: bytes) -> Result[bytes, CompressionError]:
+    """
+    Decompress a zstd frame.
+
+    Args:
+        data: Zstd-compressed bytes.
+
+    Returns:
+        `Ok(bytes)` with the decompressed payload, or `Err(CompressionError)` for invalid or truncated data.
+    """
+    match decode_all(Cursor.new(data)):
+        Ok(out) => return Ok(out)
+        Err(err) => return Err(_codec_error(Codec.Zstd, "decompress", err))
+
+
+pub def compress_stream(
+    source: Union[_BytesIO, File],
+    target: Union[_BytesIO, File],
+    level: Option[int] = None,
+    chunk_size: int = 65536,
+) -> Result[None, CompressionError]:
+    """
+    Compress a binary stream as zstd frame bytes.
+
+    Args:
+        source: `BytesIO` or `File` positioned at plain input bytes.
+        target: `BytesIO` or `File` that receives zstd frame bytes.
+        level: Optional portable zstd level from -7 through 22.
+        chunk_size: Positive number of compressed bytes to move per step.
+
+    Returns:
+        `Ok(None)` after streaming the zstd payload, or `Err(CompressionError)`.
+    """
+    _validate_chunk_size(Some(Codec.Zstd), "compress_stream", chunk_size)?
+    compression = _zstd_level(level)?
+    if isinstance(source, _BytesIO):
+        return _compress_bytesio_stream(source, target, compression, chunk_size)
+    elif isinstance(source, File):
+        return _compress_file_stream(source, target, compression, chunk_size)
+
+
+pub def decompress_stream(
+    source: Union[_BytesIO, File],
+    target: Union[_BytesIO, File],
+    chunk_size: int = 65536,
+) -> Result[None, CompressionError]:
+    """
+    Decompress a zstd binary stream.
+
+    Args:
+        source: `BytesIO` or `File` positioned at zstd bytes.
+        target: `BytesIO` or `File` that receives plain bytes.
+        chunk_size: Positive number of decompressed bytes to move per step.
+
+    Returns:
+        `Ok(None)` after streaming the payload, or `Err(CompressionError)`.
+    """
+    _validate_chunk_size(Some(Codec.Zstd), "decompress_stream", chunk_size)?
+    if isinstance(source, _BytesIO):
+        return _decompress_bytesio_stream(source, target, chunk_size)
+    elif isinstance(source, File):
+        return _decompress_file_stream(source, target, chunk_size)
+
+
+def _zstd_level(level: Option[int]) -> Result[i32, CompressionError]:
+    """
+    Convert a portable zstd level into the backend's `i32` level.
+    """
+    selected = _level_or_default(Codec.Zstd, level, 0, -7, 22)?
+    maybe: Option[i32] = selected.try_resize()
+    match maybe:
+        Some(value) => return Ok(value)
+        None => return Err(_codec_error(Codec.Zstd, "compress", "level does not fit i32"))
+
+
+def _compress_bytesio_stream(
+    source: _BytesIO,
+    target: Union[_BytesIO, File],
+    compression: i32,
+    chunk_size: int,
+) -> Result[None, CompressionError]:
+    """
+    Compress bytes from an in-memory stream into a binary sink.
+    """
+    mut handle = source.handle.borrow_mut()
+    match ZstdReadEncoder.new(Read.by_ref(handle), compression):
+        Ok(reader) =>
+            mut adapter = reader
+            while true:
+                mut chunk: bytes = b""
+                match adapter.by_ref().take(chunk_size).read_to_end(chunk):
+                    Ok(_) =>
+                        if len(chunk) == 0:
+                            return Ok(None)
+                        _write_sink_bytes(Some(Codec.Zstd), "compress_stream", target, chunk)?
+                    Err(err) => return Err(_codec_error(Codec.Zstd, "compress_stream", err.to_string()))
+        Err(err) => return Err(_codec_error(Codec.Zstd, "compress_stream", err.to_string()))
+
+
+def _compress_file_stream(
+    source: File,
+    target: Union[_BytesIO, File],
+    compression: i32,
+    chunk_size: int,
+) -> Result[None, CompressionError]:
+    """
+    Compress bytes from a file stream into a binary sink.
+    """
+    mut handle = source.handle.borrow_mut()
+    match ZstdReadEncoder.new(Read.by_ref(handle), compression):
+        Ok(reader) =>
+            mut adapter = reader
+            while true:
+                mut chunk: bytes = b""
+                match adapter.by_ref().take(chunk_size).read_to_end(chunk):
+                    Ok(_) =>
+                        if len(chunk) == 0:
+                            return Ok(None)
+                        _write_sink_bytes(Some(Codec.Zstd), "compress_stream", target, chunk)?
+                    Err(err) => return Err(_codec_error(Codec.Zstd, "compress_stream", err.to_string()))
+        Err(err) => return Err(_codec_error(Codec.Zstd, "compress_stream", err.to_string()))
+
+
+def _decompress_bytesio_stream(
+    source: _BytesIO,
+    target: Union[_BytesIO, File],
+    chunk_size: int,
+) -> Result[None, CompressionError]:
+    """
+    Decompress zstd bytes from an in-memory stream into a binary sink.
+    """
+    mut handle = source.handle.borrow_mut()
+    match ZstdReadDecoder.new(Read.by_ref(handle)):
+        Ok(reader) =>
+            mut adapter = reader
+            while true:
+                mut chunk: bytes = b""
+                match adapter.by_ref().take(chunk_size).read_to_end(chunk):
+                    Ok(_) =>
+                        if len(chunk) == 0:
+                            return Ok(None)
+                        _write_sink_bytes(Some(Codec.Zstd), "decompress_stream", target, chunk)?
+                    Err(err) => return Err(_codec_error(Codec.Zstd, "decompress_stream", err.to_string()))
+        Err(err) => return Err(_codec_error(Codec.Zstd, "decompress_stream", err.to_string()))
+
+
+def _decompress_file_stream(
+    source: File,
+    target: Union[_BytesIO, File],
+    chunk_size: int,
+) -> Result[None, CompressionError]:
+    """
+    Decompress zstd bytes from a file stream into a binary sink.
+    """
+    mut handle = source.handle.borrow_mut()
+    match ZstdReadDecoder.new(Read.by_ref(handle)):
+        Ok(reader) =>
+            mut adapter = reader
+            while true:
+                mut chunk: bytes = b""
+                match adapter.by_ref().take(chunk_size).read_to_end(chunk):
+                    Ok(_) =>
+                        if len(chunk) == 0:
+                            return Ok(None)
+                        _write_sink_bytes(Some(Codec.Zstd), "decompress_stream", target, chunk)?
+                    Err(err) => return Err(_codec_error(Codec.Zstd, "decompress_stream", err.to_string()))
+        Err(err) => return Err(_codec_error(Codec.Zstd, "decompress_stream", err.to_string()))

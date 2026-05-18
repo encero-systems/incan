@@ -1,6 +1,6 @@
 # RFC 061: `std.compression` — codec-based compression and decompression
 
-- **Status:** Planned
+- **Status:** Implemented
 - **Created:** 2026-04-14
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:**
@@ -11,7 +11,7 @@
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/339
 - **RFC PR:** —
 - **Written against:** v0.2
-- **Shipped in:** —
+- **Shipped in:** 0.3.0
 
 ## Summary
 
@@ -296,6 +296,96 @@ This feature is additive. Existing Rust interop or third-party compression code 
 - **Language surface**: the module and codec submodules must be importable as specified, with stable function signatures and error categories.
 - **Execution handoff**: implementations must preserve codec behavior, stream incrementally, and avoid backend API leakage.
 - **Docs / examples**: must standardize bytes, stream, compression-level, error, Snappy raw, and autodetection usage patterns.
+
+## Implementation Plan
+
+### Phase 1: RFC lifecycle, registry, and source-defined surface
+
+- Move the RFC to `In Progress` and use this plan/checklist as the implementation source of truth.
+- Register `std.compression` and its codec submodules in the stdlib namespace registry.
+- Add source-defined Incan stdlib modules for `Codec`, `CompressionError`, per-codec APIs, one-shot autodetection helpers, and `snappy.raw`.
+- Preserve the dogfooding constraint: implement the stdlib surface in `.incn` over normal Rust crate imports where needed, without new `@rust.extern` function or type implementation surfaces.
+
+### Phase 2: Codec behavior and dependency handoff
+
+- Add stdlib-managed crate dependencies for the codec backends needed by generated projects.
+- Implement one-shot compression/decompression for `gzip`, `zlib`, `deflate`, `zstd`, `bz2`, `lzma`, framed `snappy`, and raw `snappy`.
+- Implement stream helpers by chunking through `std.fs.File` and `std.io.BytesIO` read/write methods.
+- Normalize codec, option, chunk-size, and I/O failures into `CompressionError`.
+
+### Phase 3: Autodetection, validation, and docs
+
+- Implement top-level decompression autodetection with explicit `allowed` filtering and signature/framing checks.
+- Add typechecker/registry tests and generated-code snapshots for the new stdlib modules.
+- Add integration tests for round trips, invalid options, chunk-size errors, and autodetection behavior.
+- Update authored stdlib docs and release notes for the new user-visible module.
+- Bump the active dev version by one dev increment once the implementation lands.
+
+## Progress Checklist
+
+Implementation note: the dogfooded `.incn` implementation avoids new `@rust.extern` surfaces and builds as a generated
+Rust project for one-shot compression, stream compression/decompression, explicit byte autodetection, and explicit
+stream autodetection. Issue [#548](https://github.com/dannys-code-corner/incan/issues/548) was resolved in this
+implementation loop by preserving public stdlib dependency APIs in generated projects and fixing the Rust boundary cases
+surfaced by the RFC 061 fixture.
+
+### Spec / lifecycle
+
+- [x] RFC moved to `Planned` with settled design decisions and issue #339 relabeled as `feature`.
+- [x] RFC moved to `In Progress` with implementation plan and progress checklist.
+- [x] GitHub issue #339 has the In Progress traceability comment.
+
+### Stdlib registry / dependency handoff
+
+- [x] Register `std.compression` and codec submodules in `STDLIB_NAMESPACES`.
+- [x] Add registry tests for known module paths and stub path resolution.
+- [x] Add stdlib-managed crate dependencies for codec backends.
+- [x] Verify generated projects receive the codec dependencies through the stdlib registry.
+
+### Source-defined stdlib surface
+
+- [x] Add `crates/incan_stdlib/stdlib/compression/prelude.incn`.
+- [x] Add internal `_core` and `_auto` source modules for shared vocabulary and autodetection implementation.
+- [x] Add `Codec` and `CompressionError` as Incan-authored public types.
+- [x] Add per-codec submodules for `gzip`, `zlib`, `deflate`, `zstd`, `bz2`, `lzma`, and `snappy`.
+- [x] Add `snappy.raw` advanced interop surface.
+- [x] Avoid new `@rust.extern` function or type implementation surfaces.
+
+### Codec behavior
+
+- [x] Implement one-shot `compress` and `decompress` for every required codec at the source/typecheck layer.
+- [x] Implement one-shot `compress` and `decompress` for every required codec in a Rust-buildable generated project.
+- [x] Implement stream `compress_stream` and `decompress_stream` for every required codec.
+- [x] Reject non-positive `chunk_size` values at the source/typecheck layer.
+- [x] Reject unsupported compression levels through stable error categories at the source/typecheck layer.
+- [x] Normalize invalid data, truncated input, I/O, and backend failures into `CompressionError` at the source/typecheck layer.
+
+### Autodetection
+
+- [x] Implement `decompress_auto` at the source/typecheck layer.
+- [x] Implement `decompress_auto_stream` at the source/typecheck layer.
+- [x] Enforce the `allowed` codec filter exactly at the source/typecheck layer.
+- [x] Reject empty `allowed` lists at the source/typecheck layer.
+- [x] Exclude raw Snappy from autodetection.
+- [x] Avoid extension/path/MIME guessing.
+
+### Tests
+
+- [x] Add typechecker tests for imports and public symbols.
+- [x] Add codegen snapshot coverage for root and codec stdlib modules.
+- [x] Add integration tests for bytes round trips.
+- [x] Add integration tests for stream round trips.
+- [x] Add integration tests for option/chunk-size errors.
+- [x] Add integration tests for autodetection.
+
+### Docs / release / version
+
+- [x] Add authored stdlib reference docs for `std.compression`.
+- [x] Add release notes entry for RFC 061 / issue #339.
+- [x] Bump the workspace dev version when the implementation lands.
+- [x] Regenerate RFC snippets/index if lifecycle metadata changes require it.
+- [x] Run docs build.
+- [x] Run repository verification gate.
 
 ## Design Decisions
 
