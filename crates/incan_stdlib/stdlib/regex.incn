@@ -1,0 +1,417 @@
+"""
+Regular expressions, matches, captures, and replacement helpers.
+
+`std.regex` uses the safe default Rust-regex/RE2-style engine. Patterns support literals, classes, quantifiers,
+anchors, alternation, Unicode matching, and named or indexed capture groups. Lookaround and pattern backreferences are
+not part of this stdlib contract; use a separately versioned package when a backtracking regex engine is required.
+"""
+
+from rust::incan_stdlib::regex import RawCaptures, RawCapturesIterator, RawMatch, RawMatchIterator, RawRegex, RawSplitIterator, RegexError as RawRegexError
+from std.derives.collection import Iterator
+from std.derives.copying import Clone
+
+
+pub type RegexError = rusttype RawRegexError:
+    """
+    Pattern compilation failure from `std.regex`.
+
+    `kind` is a stable category such as `compile_error`; `message()` returns the engine detail.
+    """
+
+    def kind(self) -> str:
+        ...
+
+    def message(self) -> str:
+        ...
+
+
+type _RawRegex = rusttype RawRegex:
+    def compile(pattern: str, ignore_case: bool, multiline: bool, dotall: bool, verbose: bool) -> Result[_RawRegex, RegexError]:
+        ...
+
+    def is_match(self, text: str) -> bool:
+        ...
+
+    def find(self, text: str) -> Option[_RawMatch]:
+        ...
+
+    def find_iter(self, text: str) -> _RawMatchIterator:
+        ...
+
+    def captures(self, text: str) -> Option[_RawCaptures]:
+        ...
+
+    def captures_iter(self, text: str) -> _RawCapturesIterator:
+        ...
+
+    def full_match(self, text: str) -> Option[_RawCaptures]:
+        ...
+
+    def split(self, text: str) -> _RawSplitIterator:
+        ...
+
+    def splitn(self, text: str, limit: int) -> _RawSplitIterator:
+        ...
+
+    def replace(self, text: str, replacement: str) -> str:
+        ...
+
+    def replace_all(self, text: str, replacement: str) -> str:
+        ...
+
+    def replacen(self, text: str, limit: int, replacement: str) -> str:
+        ...
+
+    def replace_literal(self, text: str, replacement: str) -> str:
+        ...
+
+    def replace_all_literal(self, text: str, replacement: str) -> str:
+        ...
+
+    def replacen_literal(self, text: str, limit: int, replacement: str) -> str:
+        ...
+
+
+type _RawMatch = rusttype RawMatch:
+    def as_str(self) -> str:
+        ...
+
+    def start(self) -> int:
+        ...
+
+    def end(self) -> int:
+        ...
+
+    def span(self) -> Tuple[int, int]:
+        ...
+
+
+type _RawCaptures = rusttype RawCaptures:
+    def full_match(self) -> Option[_RawMatch]:
+        ...
+
+    def group_index(self, index: int) -> Option[str]:
+        ...
+
+    def group_name(self, name: str) -> Option[str]:
+        ...
+
+    def span_index(self, index: int) -> Option[Tuple[int, int]]:
+        ...
+
+    def span_name(self, name: str) -> Option[Tuple[int, int]]:
+        ...
+
+    def groups(self) -> list[Option[str]]:
+        ...
+
+    def groupdict(self) -> Dict[str, Option[str]]:
+        ...
+
+    def match_index(self, index: int) -> Option[_RawMatch]:
+        ...
+
+
+type _RawMatchIterator = rusttype RawMatchIterator:
+    def __next__(mut self) -> Option[_RawMatch]:
+        ...
+
+
+type _RawCapturesIterator = rusttype RawCapturesIterator:
+    def __next__(mut self) -> Option[_RawCaptures]:
+        ...
+
+
+type _RawSplitIterator = rusttype RawSplitIterator:
+    def __next__(mut self) -> Option[str]:
+        ...
+
+
+pub model Match:
+    """
+    One regex match span.
+
+    `start()` and `end()` return byte offsets into the searched string, matching the safe engine's span model.
+    """
+
+    raw: _RawMatch
+
+    def as_str(self) -> str:
+        """
+        Return the matched substring.
+        """
+        return self.raw.as_str()
+
+    def start(self) -> int:
+        """
+        Return the start byte offset.
+        """
+        return self.raw.start()
+
+    def end(self) -> int:
+        """
+        Return the exclusive end byte offset.
+        """
+        return self.raw.end()
+
+    def span(self) -> Tuple[int, int]:
+        """
+        Return `(start, end)` for the match span.
+        """
+        return self.raw.span()
+
+
+@derive(Clone)
+pub model Captures:
+    """
+    Capture groups for one successful regex match.
+
+    Group `0` is the full match. Optional groups that did not participate return `None` in one-at-a-time and bulk
+    accessors instead of being converted to empty strings.
+    """
+
+    raw: _RawCaptures
+
+    def full_match(self) -> Option[Match]:
+        """
+        Return the full match as group `0`.
+        """
+        match self.raw.full_match():
+            Some(value) => return Some(Match(raw=value))
+            None => return None
+
+    def group(self, key: int | str) -> Option[str]:
+        """
+        Return a capture group by numeric index or name.
+        """
+        if isinstance(key, int):
+            return self.raw.group_index(key)
+        elif isinstance(key, str):
+            return self.raw.group_name(key)
+
+    def span(self, key: int | str) -> Option[Tuple[int, int]]:
+        """
+        Return a capture span by numeric index or name.
+        """
+        if isinstance(key, int):
+            return self.raw.span_index(key)
+        elif isinstance(key, str):
+            return self.raw.span_name(key)
+
+    def groups(self) -> list[Option[str]]:
+        """
+        Return indexed capture values, excluding group `0`.
+        """
+        return self.raw.groups()
+
+    def groupdict(self) -> Dict[str, Option[str]]:
+        """
+        Return named capture values.
+        """
+        return self.raw.groupdict()
+
+
+pub model MatchIterator with Iterator[Match]:
+    """
+    Left-to-right, non-overlapping iterator over `Match` values.
+    """
+
+    raw: _RawMatchIterator
+
+    def __iter__(self) -> MatchIterator:
+        return self
+
+    def __next__(mut self) -> Option[Match]:
+        match self.raw.__next__():
+            Some(value) => return Some(Match(raw=value))
+            None => return None
+
+
+pub model CapturesIterator with Iterator[Captures]:
+    """
+    Left-to-right, non-overlapping iterator over `Captures` values.
+    """
+
+    raw: _RawCapturesIterator
+
+    def __iter__(self) -> CapturesIterator:
+        return self
+
+    def __next__(mut self) -> Option[Captures]:
+        match self.raw.__next__():
+            Some(value) => return Some(Captures(raw=value))
+            None => return None
+
+
+pub model SplitIterator with Iterator[str]:
+    """
+    Iterator over text fields produced by regex splitting.
+    """
+
+    raw: _RawSplitIterator
+
+    def __iter__(self) -> SplitIterator:
+        return self
+
+    def __next__(mut self) -> Option[str]:
+        return self.raw.__next__()
+
+
+pub model Regex:
+    """
+    Compiled regular expression.
+
+    Construct with `Regex(pattern)?` for the default safe engine settings or pass keyword flags such as
+    `ignore_case=true`, `multiline=true`, `dotall=true`, and `verbose=true`.
+    """
+
+    raw: _RawRegex
+
+    @staticmethod
+    def __incan_new(pattern: str, ignore_case: bool = False, multiline: bool = False, dotall: bool = False, verbose: bool = False) -> Result[Regex, RegexError]:
+        """
+        Construct a compiled regex through direct `Regex(...)` syntax.
+        """
+        return Regex.compile(pattern, ignore_case, multiline, dotall, verbose)
+
+    @staticmethod
+    def compile(pattern: str, ignore_case: bool = False, multiline: bool = False, dotall: bool = False, verbose: bool = False) -> Result[Regex, RegexError]:
+        """
+        Compile a pattern into a reusable regex.
+        """
+        return _RawRegex.compile(pattern, ignore_case, multiline, dotall, verbose).map((value) => Regex(raw=value))
+
+    def is_match(self, text: str) -> bool:
+        """
+        Return whether the pattern matches anywhere in `text`.
+        """
+        return self.raw.is_match(text)
+
+    def find(self, text: str) -> Option[Match]:
+        """
+        Return the first match anywhere in `text`.
+        """
+        match self.raw.find(text):
+            Some(value) => return Some(Match(raw=value))
+            None => return None
+
+    def find_iter(self, text: str) -> MatchIterator:
+        """
+        Iterate left-to-right over non-overlapping matches.
+        """
+        return MatchIterator(raw=self.raw.find_iter(text))
+
+    def captures(self, text: str) -> Option[Captures]:
+        """
+        Return capture groups for the first match anywhere in `text`.
+        """
+        match self.raw.captures(text):
+            Some(value) => return Some(Captures(raw=value))
+            None => return None
+
+    def captures_iter(self, text: str) -> CapturesIterator:
+        """
+        Iterate left-to-right over non-overlapping capture groups.
+        """
+        return CapturesIterator(raw=self.raw.captures_iter(text))
+
+    def full_match(self, text: str) -> Option[Captures]:
+        """
+        Return captures only when the pattern spans the whole input.
+        """
+        match self.raw.full_match(text):
+            Some(value) => return Some(Captures(raw=value))
+            None => return None
+
+    def split(self, text: str) -> SplitIterator:
+        """
+        Split `text` around every match.
+        """
+        return SplitIterator(raw=self.raw.split(text))
+
+    def splitn(self, text: str, limit: int) -> SplitIterator:
+        """
+        Split `text` around matches, producing at most `limit` fields.
+        """
+        return SplitIterator(raw=self.raw.splitn(text, limit))
+
+    def replace(self, text: str, repl: str | Callable[Captures, str]) -> str:
+        """
+        Replace the first match with a capture-aware string or callable.
+        """
+        if isinstance(repl, str):
+            return self.raw.replace(text, repl)
+        else:
+            return self.replacen_with(text, 1, repl)
+
+    def replace_all(self, text: str, repl: str | Callable[Captures, str]) -> str:
+        """
+        Replace every match with a capture-aware string or callable.
+        """
+        if isinstance(repl, str):
+            return self.raw.replace_all(text, repl)
+        else:
+            return self.replacen_with(text, -1, repl)
+
+    def replacen(self, text: str, limit: int, repl: str | Callable[Captures, str]) -> str:
+        """
+        Replace at most `limit` matches with a capture-aware string or callable.
+        """
+        if isinstance(repl, str):
+            return self.raw.replacen(text, limit, repl)
+        else:
+            return self.replacen_with(text, limit, repl)
+
+    def replace_literal(self, text: str, repl: str) -> str:
+        """
+        Replace the first match literally, without `$1` or `${name}` interpolation.
+        """
+        return self.raw.replace_literal(text, repl)
+
+    def replace_all_literal(self, text: str, repl: str) -> str:
+        """
+        Replace every match literally, without `$1` or `${name}` interpolation.
+        """
+        return self.raw.replace_all_literal(text, repl)
+
+    def replacen_literal(self, text: str, limit: int, repl: str) -> str:
+        """
+        Replace at most `limit` matches literally, without `$1` or `${name}` interpolation.
+        """
+        return self.raw.replacen_literal(text, limit, repl)
+
+    def replacen_with(self, text: str, limit: int, repl: Callable[Captures, str]) -> str:
+        """
+        Replace matches with a callable that receives `Captures`.
+        """
+        mut out = ""
+        mut last_end = 0
+        mut replaced = 0
+        mut captures = self.captures_iter(text)
+
+        loop:
+            match captures.__next__():
+                Some(caps) =>
+                    if limit >= 0 and replaced >= limit:
+                        break
+                    match caps.full_match():
+                        Some(full) =>
+                            start, end = full.span()
+                            out += text[last_end:start]
+                            out += repl(caps.clone())
+                            last_end = end
+                            replaced += 1
+                        None => pass
+                None => break
+
+        out += text[last_end:]
+        return out
+
+
+pub def compile(pattern: str, ignore_case: bool = False, multiline: bool = False, dotall: bool = False, verbose: bool = False) -> Result[Regex, RegexError]:
+    """
+    Compile `pattern` into a `Regex`.
+
+    Direct `Regex(pattern, ...)` construction uses the same implementation.
+    """
+    return Regex.compile(pattern, ignore_case, multiline, dotall, verbose)

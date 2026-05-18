@@ -21,6 +21,8 @@ use incan_core::lang::stdlib::{STDLIB_BUILTINS, STDLIB_ROOT};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::surface::types as surface_types;
 
+const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
+
 impl AstLowering {
     /// Return the builtin member name for an explicit `std.builtins.<name>` callee.
     pub(in crate::backend::ir::lower::expr) fn explicit_builtin_member_name(
@@ -1468,7 +1470,7 @@ impl AstLowering {
                 && matches!(self.lookup_var(name), IrType::Unknown)
                 && let Some(owner_name) = self.current_classmethod_constructor.clone()
             {
-                return self.lower_constructor_call(&owner_name, args);
+                return self.lower_constructor_call(&owner_name, type_args, args, call_span);
             }
 
             // Constructor lowering must follow typechecker resolution, not identifier casing. Local declarations are
@@ -1481,7 +1483,7 @@ impl AstLowering {
                 .is_some_and(|info| matches!(info.ident_kind(f.span), Some(IdentKind::TypeName)));
 
             if is_known_struct || is_resolved_type_name {
-                return self.lower_constructor_call(&constructor_name, args);
+                return self.lower_constructor_call(&constructor_name, type_args, args, call_span);
             }
         }
 
@@ -1638,8 +1640,14 @@ impl AstLowering {
     fn lower_constructor_call(
         &mut self,
         name: &str,
+        type_args: &[ast::Spanned<ast::Type>],
         args: &[ast::CallArg],
+        call_span: ast::Span,
     ) -> Result<(IrExprKind, IrType), LoweringError> {
+        if let Some(hook_call) = self.lower_type_constructor_hook_call(name, type_args, args, call_span)? {
+            return Ok(hook_call);
+        }
+
         if name == surface_types::as_str(surface_types::SurfaceTypeId::ValidationError) {
             let mut message = None;
             let mut code = None;
@@ -1776,6 +1784,87 @@ impl AstLowering {
             },
             struct_ty,
         ))
+    }
+
+    /// Lower imported stdlib type construction through a source-defined static `__incan_new` method when present.
+    fn lower_type_constructor_hook_call(
+        &mut self,
+        name: &str,
+        type_args: &[ast::Spanned<ast::Type>],
+        args: &[ast::CallArg],
+        call_span: ast::Span,
+    ) -> Result<Option<(IrExprKind, IrType)>, LoweringError> {
+        let Some(type_path) = self.import_aliases.get(name).cloned() else {
+            return Ok(None);
+        };
+        if type_path.len() < 2 {
+            return Ok(None);
+        }
+        let Some(type_name) = type_path.last().cloned() else {
+            return Ok(None);
+        };
+        let module_path = &type_path[..type_path.len() - 1];
+        let Some(type_info) = self.stdlib_cache.lookup_type(module_path, &type_name) else {
+            return Ok(None);
+        };
+        if Self::is_named_field_constructor_call(&type_info, args) {
+            return Ok(None);
+        }
+        let Some(hook) = self
+            .stdlib_cache
+            .lookup_type_method_decl(module_path, &type_name, TYPE_CONSTRUCTOR_HOOK)
+        else {
+            return Ok(None);
+        };
+        if hook.receiver.is_some() {
+            return Ok(None);
+        }
+
+        let args_ir = self.lower_call_args(args)?;
+        let lowered_type_args = self.lower_call_site_type_args(call_span, type_args);
+        let receiver_ty = if lowered_type_args.is_empty() {
+            self.struct_names
+                .get(name)
+                .cloned()
+                .unwrap_or_else(|| IrType::Struct(name.to_string()))
+        } else {
+            IrType::NamedGeneric(name.to_string(), lowered_type_args)
+        };
+        let ret_ty = self.lower_type(&hook.return_type.node);
+        Ok(Some((
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: name.to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::TypeName,
+                    },
+                    receiver_ty,
+                )),
+                method: TYPE_CONSTRUCTOR_HOOK.to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: args_ir,
+                callable_signature: self
+                    .callable_signature_for_imported_stdlib_type_method_path(&type_path, TYPE_CONSTRUCTOR_HOOK),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            ret_ty,
+        )))
+    }
+
+    /// Return whether a constructor call is an ordinary named-field model/class construction.
+    fn is_named_field_constructor_call(type_info: &crate::frontend::symbols::TypeInfo, args: &[ast::CallArg]) -> bool {
+        let fields = match type_info {
+            crate::frontend::symbols::TypeInfo::Model(info) => &info.fields,
+            crate::frontend::symbols::TypeInfo::Class(info) => &info.fields,
+            _ => return false,
+        };
+        !args.is_empty()
+            && args.iter().all(|arg| match arg {
+                ast::CallArg::Named(field, _) => fields.contains_key(field),
+                _ => false,
+            })
     }
 
     /// Lower call arguments to IR expressions.

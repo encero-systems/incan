@@ -1817,6 +1817,84 @@ mod tests {
     }
 
     #[test]
+    fn test_load_regex_module_exports_rfc059_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let path = vec!["std".to_string(), "regex".to_string()];
+        let module = load_stdlib_module_data(&path).ok_or("failed to load stdlib/regex.incn")?;
+        let names = module
+            .types
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+
+        for expected in ["Regex", "Match", "Captures", "RegexError"] {
+            assert!(names.contains(expected), "std.regex should export {expected}");
+        }
+
+        let regex = module
+            .types
+            .iter()
+            .find(|(name, _)| name == "Regex")
+            .ok_or("Regex export not found")?;
+        let regex_methods = match &regex.1 {
+            TypeInfo::Newtype(info) => &info.methods,
+            TypeInfo::Model(info) => &info.methods,
+            TypeInfo::Class(info) => &info.methods,
+            _ => return Err("Regex should expose importable method metadata".into()),
+        };
+        for expected in [
+            "is_match",
+            "find",
+            "find_iter",
+            "captures",
+            "captures_iter",
+            "full_match",
+            "split",
+            "splitn",
+            "replace",
+            "replace_all",
+            "replacen",
+        ] {
+            assert!(
+                regex_methods.contains_key(expected),
+                "std.regex Regex should expose method {expected}"
+            );
+        }
+
+        let find = regex_methods.get("find").ok_or("missing Regex.find")?;
+        assert_eq!(
+            find.return_type,
+            ResolvedType::Generic("Option".to_string(), vec![ResolvedType::Named("Match".to_string())]),
+            "Regex.find should return Option[Match]"
+        );
+        let full_match = regex_methods.get("full_match").ok_or("missing Regex.full_match")?;
+        assert_eq!(
+            full_match.return_type,
+            ResolvedType::Generic("Option".to_string(), vec![ResolvedType::Named("Captures".to_string())]),
+            "Regex.full_match should return Option[Captures]"
+        );
+
+        let captures = module
+            .types
+            .iter()
+            .find(|(name, _)| name == "Captures")
+            .ok_or("Captures export not found")?;
+        let captures_methods = match &captures.1 {
+            TypeInfo::Newtype(info) => &info.methods,
+            TypeInfo::Model(info) => &info.methods,
+            TypeInfo::Class(info) => &info.methods,
+            _ => return Err("Captures should expose importable method metadata".into()),
+        };
+        for expected in ["full_match", "group", "span", "groups", "groupdict"] {
+            assert!(
+                captures_methods.contains_key(expected),
+                "std.regex Captures should expose method {expected}"
+            );
+        }
+
+        Ok(())
+    }
+
+    #[test]
     fn extract_type_signatures_preserves_same_name_method_overloads() -> Result<(), Box<dyn std::error::Error>> {
         let source = r#"
 pub trait Convert[T]:

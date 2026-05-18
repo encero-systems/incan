@@ -318,6 +318,16 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         typechecker_only: false,
     },
     StdlibNamespace {
+        name: "regex",
+        feature: None,
+        extra_crate_deps: &[StdlibExtraCrateDep {
+            crate_name: "regex",
+            source: StdlibExtraCrateSource::Version("1.0"),
+        }],
+        submodules: &[],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
         name: "collections",
         feature: None,
         extra_crate_deps: &[],
