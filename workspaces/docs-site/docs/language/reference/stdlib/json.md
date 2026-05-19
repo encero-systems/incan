@@ -85,28 +85,17 @@ Extraction helpers return `Option[...]` when the requested shape may be absent a
 Direct indexing is checked and optional:
 
 ```incan
-from std.json import JsonValue
+from std.json import JsonError, JsonValue
+
+def first_item_name(source: str) -> Result[str, JsonError]:
+    data = JsonValue.parse(source)?
+    name = data.require_pointer("/items/0/name")?
+    return name.expect_str()
 
 def main() -> None:
-    match JsonValue.parse('{"items":[{"name":"Ada"}]}'):
-        case Ok(data):
-            match data["items"]:
-                case Some(items):
-                    match items[0]:
-                        case Some(first):
-                            match first["name"]:
-                                case Some(name):
-                                    match name.as_str():
-                                        case Some(text):
-                                            println(text)
-                                        case None:
-                                            pass
-                                case None:
-                                    pass
-                        case None:
-                            pass
-                case None:
-                    pass
+    match first_item_name('{"items":[{"name":"Ada"}]}'):
+        case Ok(text):
+            println(text)
         case Err(err):
             println(err.message())
 ```
@@ -116,6 +105,7 @@ def main() -> None:
 `value[index]` returns `Option[JsonValue]` for array lookup. It returns `Some(value)` for an in-bounds non-negative index and `None` for non-arrays, negative indices, and out-of-range indices.
 
 Use `get(key)` and `at(index)` for named optional helpers. Use `require(key)`, `require_key(key)`, and `require_index(index)` for JSON-specific errors.
+For nested required paths, prefer `require_pointer(path)?` over stacking optional lookups by hand.
 
 ## Object Helpers
 
