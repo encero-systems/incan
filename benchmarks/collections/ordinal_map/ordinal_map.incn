@@ -1,0 +1,158 @@
+"""
+Benchmark `std.collections.OrdinalMap[str]` against deterministic column-key probes.
+
+The workload models a wide-table column index: keys are stable `field_00000000`-style names, probes use a fixed linear
+congruential sequence, and every lookup path contributes to a checksum so optimized builds cannot drop the work.
+"""
+
+from std.collections import OrdinalMap, OrdinalMapError
+from std.datetime import Instant
+
+
+def make_keys(count: int) -> list[str]:
+    """
+    Build deterministic column-name keys for the benchmark.
+    """
+    mut keys: list[str] = []
+    mut idx = 0
+    while idx < count:
+        keys.append(f"field_{idx:08d}")
+        idx = idx + 1
+    return keys
+
+
+def make_probe_indexes(key_count: int, probe_count: int) -> list[int]:
+    """
+    Build a repeatable pseudo-random probe sequence over the key range.
+    """
+    mut indexes: list[int] = []
+    mut idx = 0
+    while idx < probe_count:
+        indexes.append((idx * 1103515245 + 12345) % key_count)
+        idx = idx + 1
+    return indexes
+
+
+def main() -> None:
+    """
+    Construct the map once, then time safe, required, unchecked, and batch lookup paths.
+    """
+    key_count = 100_000
+    probe_count = 1_000_000
+
+    keys = make_keys(key_count)
+
+    build_started = Instant.now()
+    map_result = OrdinalMap.from_keys(keys)
+    build_nanoseconds = build_started.elapsed().total_nanoseconds()
+
+    match map_result:
+        Ok(columns) => run_lookup(columns, keys, key_count, probe_count, build_nanoseconds)
+        Err(err) => println(err.message())
+
+
+def run_lookup(columns: OrdinalMap[str], keys: list[str], key_count: int, probe_count: int, build_nanoseconds: int) -> None:
+    """
+    Time lookup variants over the same probe sequence and report checksum-preserving durations.
+    """
+    probe_indexes = make_probe_indexes(key_count, probe_count)
+
+    get_started = Instant.now()
+    mut get_checksum = 0
+    for index in probe_indexes:
+        match columns.get(keys[index]):
+            Some(value) => get_checksum = get_checksum + value
+            None => println("missing key")
+    get_nanoseconds = get_started.elapsed().total_nanoseconds()
+
+    require_started = Instant.now()
+    mut require_checksum = 0
+    for index in probe_indexes:
+        match columns.require(keys[index]):
+            Ok(value) => require_checksum = require_checksum + value
+            Err(err) => println(err.message())
+    require_nanoseconds = require_started.elapsed().total_nanoseconds()
+
+    unchecked_started = Instant.now()
+    mut unchecked_checksum = 0
+    for index in probe_indexes:
+        unchecked_checksum = unchecked_checksum + columns.get_unchecked(keys[index])
+    unchecked_nanoseconds = unchecked_started.elapsed().total_nanoseconds()
+
+    mut probe_keys: list[str] = []
+    for index in probe_indexes:
+        probe_keys.append(keys[index])
+
+    batch_started = Instant.now()
+    batch_values = columns.require_many(probe_keys)
+    batch_require_nanoseconds = batch_started.elapsed().total_nanoseconds()
+
+    batch_unchecked_started = Instant.now()
+    batch_unchecked_values = columns.get_many_unchecked(probe_keys)
+    batch_unchecked_nanoseconds = batch_unchecked_started.elapsed().total_nanoseconds()
+
+    match batch_values:
+        Ok(values) => print_results(
+            columns,
+            get_checksum,
+            require_checksum,
+            unchecked_checksum,
+            sum_ints(values),
+            sum_ints(batch_unchecked_values),
+            key_count,
+            probe_count,
+            build_nanoseconds,
+            get_nanoseconds,
+            require_nanoseconds,
+            unchecked_nanoseconds,
+            batch_require_nanoseconds,
+            batch_unchecked_nanoseconds,
+        )
+        Err(err) => println(err.message())
+
+
+def sum_ints(values: list[int]) -> int:
+    """
+    Sum batch lookup results into a checksum.
+    """
+    mut total = 0
+    for value in values:
+        total = total + value
+    return total
+
+
+def print_results(
+    columns: OrdinalMap[str],
+    get_checksum: int,
+    require_checksum: int,
+    unchecked_checksum: int,
+    batch_require_checksum: int,
+    batch_unchecked_checksum: int,
+    key_count: int,
+    probe_count: int,
+    build_nanoseconds: int,
+    get_nanoseconds: int,
+    require_nanoseconds: int,
+    unchecked_nanoseconds: int,
+    batch_require_nanoseconds: int,
+    batch_unchecked_nanoseconds: int,
+) -> None:
+    """
+    Print machine-readable benchmark counters and storage-size metrics.
+    """
+    println("implementation=incan_ordinal_map")
+    println(f"keys={key_count}")
+    println(f"probes={probe_count}")
+    println(f"get_checksum={get_checksum}")
+    println(f"require_checksum={require_checksum}")
+    println(f"unchecked_checksum={unchecked_checksum}")
+    println(f"batch_require_checksum={batch_require_checksum}")
+    println(f"batch_unchecked_checksum={batch_unchecked_checksum}")
+    println(f"build_nanoseconds={build_nanoseconds}")
+    println(f"get_nanoseconds={get_nanoseconds}")
+    println(f"require_nanoseconds={require_nanoseconds}")
+    println(f"unchecked_nanoseconds={unchecked_nanoseconds}")
+    println(f"batch_require_nanoseconds={batch_require_nanoseconds}")
+    println(f"batch_unchecked_nanoseconds={batch_unchecked_nanoseconds}")
+    println(f"storage_bytes={columns.storage_bytes()}")
+    println(f"serialized_size={columns.serialized_size()}")

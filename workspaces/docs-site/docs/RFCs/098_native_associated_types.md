@@ -10,7 +10,10 @@
     - RFC 054 (explicit call-site generic arguments)
     - RFC 065 (`std.hash`)
     - RFC 088 (iterator adapter surface)
+    - RFC 099 (generic trait-targeted methods)
+    - RFC 101 (`std.collections.OrdinalMap`)
 - **Issue:** https://github.com/dannys-code-corner/incan/issues/580
+- **Blocks:** https://github.com/dannys-code-corner/incan/issues/596 (v0.5 RFC 101 trait-system bridge removal)
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —
@@ -165,6 +168,8 @@ Associated types enter the model at the trait boundary. A trait body may declare
 
 An adopting type binds an associated type with `type Name = TypeExpression` when the associated type name is unambiguous among the adopted trait and its supertraits. If multiple adopted traits or supertraits expose the same associated type name, the adoption must use the targeted form `type Name for TraitExpression = TypeExpression` so the binding's owner is explicit. The `TypeExpression` may use ordinary Incan type syntax, including the adopting type's generic parameters, and must be checked like any other type annotation. If the type expression cannot be resolved, cannot be lowered for the target backend, or violates a trait-imposed constraint, the compiler must reject the adoption.
 
+Trait-owned capability families from RFC 099 may also provide associated type bindings when the binding is determined by language metadata rather than an authored type body. For example, a storage-backed integer capability can bind `Storage` from the newtype's checked storage carrier, and a deterministic key capability can expose representation metadata for language scalar families. These bindings must enter the same implementation metadata as ordinary authored bindings; generic projection must not care whether the binding came from a type body or from a proven trait-owned capability family.
+
 ### Projection and resolution
 
 After an associated type is declared and bound, source code refers to the chosen type through projection syntax. Trait methods may use `Self.Name` to refer to an associated type declared by the trait or by exactly one of its supertraits. Generic functions, methods, and type aliases may use `T.Name` when `T` is a type parameter or concrete type whose active bounds or implementation metadata expose exactly one associated type named `Name`. Associated-type projection is valid only in type positions; it must not be treated as value-field access.
@@ -219,7 +224,7 @@ The simple `H.Digest` form is preferred when it is unambiguous. The trait-qualif
 
 ### Adjacent trait-system features
 
-Associated types are one trait-system feature, not the whole trait-system roadmap, but they sit close to several other features that need to be named rather than accidentally accepted or excluded. Generic associated types extend the idea by giving the associated type its own parameters: a normal trait says `type Item`, while a lending or borrowed-view trait might eventually want `type Item[Borrow]` and projections such as `Self.Item[SomeBorrow]`. That is more powerful because the implementation no longer chooses one concrete type member; it chooses a family of related types. Associated constants move in a different direction: they are trait-owned value members, such as `const DIGEST_SIZE: int` on a digest trait or `const RANK: int` on a matrix trait, and they require value-level rules for constant evaluation and backend representation rather than type projection alone.
+Associated types are one trait-system feature, not the whole trait-system roadmap, but they sit close to several other features that need to be named rather than accidentally accepted or excluded. Generic associated types extend the idea by giving the associated type its own parameters: a normal trait says `type Item`, while a lending or borrowed-view trait might eventually want `type Item[Borrow]` and projections such as `Self.Item[SomeBorrow]`. That is more powerful because the implementation no longer chooses one concrete type member; it chooses a family of related types. Associated constants move in a different direction: they are trait-owned value members, such as `const DIGEST_SIZE: int` on a digest trait or `const RANK: int` on a matrix trait, and they require value-level rules for constant evaluation and backend representation rather than type projection alone. Trait-owned capability families, as described by RFC 099, are adjacent because they may supply associated type bindings from language metadata without reopening an existing type declaration.
 
 Defaults and dispatch-related features are adjacent for different reasons. Default associated types let a trait provide a fallback binding, such as `type Error = Never`, which can remove boilerplate but also changes ambiguity, semver, and inheritance behavior. Specialization would let a more specific implementation or method body override a generic one, raising coherence questions that should not enter through the side door of associated types. Trait-object dispatch for projected types, such as a hypothetical `Box[StreamingHash with Digest = bytes]`, is likewise not just surface syntax: it needs object-safety rules, method-availability rules, mutability rules, and a way to keep projected types known after dynamic dispatch.
 
@@ -314,7 +319,7 @@ This section is non-normative. The contract is the language behavior above; comp
 ## Layers affected
 
 - **Parser / AST**: trait bodies and adopting type bodies must accept associated type declarations and targeted associated type bindings. Type annotations must accept associated type projections in type positions.
-- **Typechecker / Symbol resolution**: trait metadata must record associated type declarations, adoption metadata must record bindings, projections must resolve through active bounds and concrete implementations, and signature compatibility must substitute associated type bindings.
+- **Typechecker / Symbol resolution**: trait metadata must record associated type declarations, adoption metadata and RFC 099 trait-owned capability metadata must record bindings, projections must resolve through active bounds and concrete implementations, and signature compatibility must substitute associated type bindings.
 - **IR Lowering**: checked associated type projections must remain visible enough for backend type lowering and diagnostics rather than degrading to unknown types.
 - **Emission**: Rust emission should lower native associated types to Rust associated type items where possible and substitute concrete bindings in generated method signatures as required.
 - **Stdlib / Runtime (`incan_stdlib`)**: stdlib traits such as streaming hashers, iterators, parsers, codecs, and adapters may use associated types to remove duplicated shape-specific abstractions.

@@ -276,6 +276,10 @@ pub struct TypeParamExport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TypeBoundExport {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub module_path: Option<Vec<String>>,
     pub type_args: Vec<TypeRef>,
 }
 
@@ -423,6 +427,9 @@ pub struct ClassExport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TraitExport {
     pub name: String,
+    /// Original source declaration name before a library reexport alias, when it differs from `name`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_name: Option<String>,
     pub type_params: Vec<TypeParamExport>,
     /// Direct supertraits from the trait's `with` clause (RFC 042).
     #[serde(default)]
@@ -453,6 +460,9 @@ pub struct EnumExport {
     /// Primitive backing type for RFC 032 value enums.
     #[serde(default)]
     pub value_type: Option<EnumValueTypeExport>,
+    /// Stable `OrdinalKey` type identity used by value-enum serialized maps.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ordinal_type_identity: Option<String>,
     pub variants: Vec<EnumVariantExport>,
     /// Variant aliases exposed by this enum.
     #[serde(default)]
@@ -557,8 +567,14 @@ impl LibraryManifest {
         version: impl Into<String>,
         checked_exports: &[CheckedNamedExport],
     ) -> Self {
-        let mut manifest = Self::new(name, version);
+        let name = name.into();
+        let mut manifest = Self::new(name.clone(), version);
         manifest.exports = LibraryExports::from_checked_exports(checked_exports);
+        for enum_export in &mut manifest.exports.enums {
+            if enum_export.value_type.is_some() && enum_export.ordinal_type_identity.is_none() {
+                enum_export.ordinal_type_identity = Some(format!("{name}.{}", enum_export.name));
+            }
+        }
         manifest
     }
 
@@ -746,9 +762,12 @@ fn type_param_from_checked(type_param: &CheckedTypeParam) -> TypeParamExport {
     }
 }
 
+/// Convert checked trait-bound metadata into the serialized manifest shape.
 fn type_bound_from_checked(bound: &CheckedTypeBound) -> TypeBoundExport {
     TypeBoundExport {
         name: bound.name.clone(),
+        source_name: bound.source_name.clone(),
+        module_path: bound.module_path.clone(),
         type_args: bound.type_args.iter().map(type_ref_from_resolved).collect(),
     }
 }
@@ -851,18 +870,13 @@ fn class_export_from_checked(export: &CheckedClassExport) -> ClassExport {
     }
 }
 
+/// Convert a checked trait export into the serialized manifest trait shape.
 fn trait_export_from_checked(export: &CheckedTraitExport) -> TraitExport {
     TraitExport {
         name: export.name.clone(),
+        source_name: (export.source_name != export.name).then(|| export.source_name.clone()),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
-        supertraits: export
-            .supertraits
-            .iter()
-            .map(|(trait_name, args)| TypeBoundExport {
-                name: trait_name.clone(),
-                type_args: args.iter().map(type_ref_from_resolved).collect(),
-            })
-            .collect(),
+        supertraits: export.supertraits.iter().map(type_bound_from_checked).collect(),
         requires: export
             .requires
             .iter()
@@ -883,6 +897,7 @@ fn enum_export_from_checked(export: &CheckedEnumExport) -> EnumExport {
         traits: export.traits.clone(),
         trait_adoptions: export.trait_adoptions.iter().map(type_bound_from_checked).collect(),
         value_type: export.value_type.map(value_enum_type_from_checked),
+        ordinal_type_identity: None,
         variants: export
             .variants
             .iter()

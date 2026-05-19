@@ -13,7 +13,7 @@ from rust::sha1 @ "0.10" import Sha1
 from rust::sha2 @ "0.10" import Digest, Sha224, Sha256, Sha384, Sha512
 from rust::sha3 @ "0.10" import Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256
 from rust::sha3::digest @ "0.10" import ExtendableOutputReset, Update, XofReader
-from rust::xxhash_rust::xxh3 @ "0.8" with ["xxh3"] import Xxh3Default
+from rust::xxhash_rust::xxh3 @ "0.8" with ["xxh3"] import Xxh3Default, xxh3_64 as rust_xxh3_64, xxh3_128 as rust_xxh3_128
 from rust::xxhash_rust::xxh32 @ "0.8" with ["xxh32"] import Xxh32
 from rust::xxhash_rust::xxh64 @ "0.8" with ["xxh64"] import Xxh64
 from std.traits.error import Error
@@ -864,18 +864,14 @@ def _xxh3_64_hash(data: bytes) -> u64:
     """
     Run XXH3 with native 64-bit output over one byte payload.
     """
-    mut hasher = xxh3_64.new()
-    hasher.update(data)
-    return hasher.finalize_u64()
+    return rust_xxh3_64(data.as_slice())
 
 
 def _xxh3_128_hash(data: bytes) -> u128:
     """
     Run XXH3 with native 128-bit output over one byte payload.
     """
-    mut hasher = xxh3_128.new()
-    hasher.update(data)
-    return hasher.finalize_u128()
+    return rust_xxh3_128(data.as_slice())
 
 
 def _must_digest_bytes(data: bytes, algorithm: str, length: int) -> bytes:

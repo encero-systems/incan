@@ -9,6 +9,8 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
             name: "T".to_string(),
             bounds: vec![TypeBoundExport {
                 name: "Clone".to_string(),
+                source_name: None,
+                module_path: None,
                 type_args: Vec::new(),
             }],
         }],
@@ -353,9 +355,12 @@ fn manifest_io_round_trip_preserves_trait_supertraits() -> Result<(), Box<dyn st
     let mut manifest = LibraryManifest::new("mylib", "0.1.0");
     manifest.exports.traits.push(TraitExport {
         name: "Ord".to_string(),
+        source_name: None,
         type_params: Vec::new(),
         supertraits: vec![TypeBoundExport {
             name: "Eq".to_string(),
+            source_name: None,
+            module_path: None,
             type_args: Vec::new(),
         }],
         requires: Vec::new(),
@@ -380,6 +385,7 @@ fn manifest_io_round_trip_preserves_value_enum_metadata() -> Result<(), Box<dyn 
         traits: Vec::new(),
         trait_adoptions: Vec::new(),
         value_type: Some(EnumValueTypeExport::Str),
+        ordinal_type_identity: Some("mylib.Status".to_string()),
         variants: vec![
             EnumVariantExport {
                 name: "Active".to_string(),
@@ -402,6 +408,7 @@ fn manifest_io_round_trip_preserves_value_enum_metadata() -> Result<(), Box<dyn 
         traits: Vec::new(),
         trait_adoptions: Vec::new(),
         value_type: Some(EnumValueTypeExport::Int),
+        ordinal_type_identity: Some("mylib.HttpStatus".to_string()),
         variants: vec![
             EnumVariantExport {
                 name: "Ok".to_string(),
@@ -437,6 +444,7 @@ fn manifest_io_round_trip_preserves_enum_traits_and_methods() -> Result<(), Box<
         traits: vec!["Labelled".to_string()],
         trait_adoptions: Vec::new(),
         value_type: None,
+        ordinal_type_identity: None,
         variants: vec![EnumVariantExport {
             name: "Active".to_string(),
             fields: Vec::new(),
@@ -583,6 +591,8 @@ fn manifest_io_round_trip_preserves_generic_method_type_params() -> Result<(), B
                 name: "T".to_string(),
                 bounds: vec![TypeBoundExport {
                     name: "Clone".to_string(),
+                    source_name: None,
+                    module_path: None,
                     type_args: Vec::new(),
                 }],
             }],
@@ -645,12 +655,16 @@ fn manifest_io_round_trip_preserves_type_trait_adoptions() -> Result<(), Box<dyn
     let mut manifest = LibraryManifest::new("mylib", "0.1.0");
     let convert_int = TypeBoundExport {
         name: "Convert".to_string(),
+        source_name: None,
+        module_path: None,
         type_args: vec![TypeRef::Named {
             name: "int".to_string(),
         }],
     };
     let convert_float = TypeBoundExport {
         name: "Convert".to_string(),
+        source_name: None,
+        module_path: None,
         type_args: vec![TypeRef::Named {
             name: "float".to_string(),
         }],
@@ -671,6 +685,8 @@ fn manifest_io_round_trip_preserves_type_trait_adoptions() -> Result<(), Box<dyn
         traits: vec!["Decode".to_string()],
         trait_adoptions: vec![TypeBoundExport {
             name: "Decode".to_string(),
+            source_name: None,
+            module_path: None,
             type_args: vec![TypeRef::Named {
                 name: "str".to_string(),
             }],
@@ -685,6 +701,7 @@ fn manifest_io_round_trip_preserves_type_trait_adoptions() -> Result<(), Box<dyn
         traits: vec!["Convert".to_string(), "Convert".to_string()],
         trait_adoptions: vec![convert_int, convert_float],
         value_type: None,
+        ordinal_type_identity: None,
         variants: vec![EnumVariantExport {
             name: "Number".to_string(),
             fields: Vec::new(),

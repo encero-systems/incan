@@ -853,6 +853,12 @@ fn validate_value_enum_export(enum_export: &EnumExport) -> Result<(), LibraryMan
     }
 
     let Some(value_type) = enum_export.value_type else {
+        if enum_export.ordinal_type_identity.is_some() {
+            return Err(LibraryManifestError::Invalid(format!(
+                "enum `{}` has ordinal_type_identity but no enum value_type",
+                enum_export.name
+            )));
+        }
         for variant in &enum_export.variants {
             if variant.value.is_some() {
                 return Err(LibraryManifestError::Invalid(format!(
@@ -867,6 +873,12 @@ fn validate_value_enum_export(enum_export: &EnumExport) -> Result<(), LibraryMan
     if !enum_export.type_params.is_empty() {
         return Err(LibraryManifestError::Invalid(format!(
             "value enum `{}` cannot have type parameters",
+            enum_export.name
+        )));
+    }
+    if enum_export.ordinal_type_identity.as_deref().is_some_and(str::is_empty) {
+        return Err(LibraryManifestError::Invalid(format!(
+            "value enum `{}` has an empty ordinal_type_identity",
             enum_export.name
         )));
     }

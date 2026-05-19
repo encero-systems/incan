@@ -7,7 +7,7 @@ use std::collections::HashMap;
 
 use crate::frontend::ast::{
     AliasDecl, ClassDecl, Declaration, DictEntry, EnumDecl, Expr, FunctionDecl, ListEntry, Literal, ModelDecl,
-    NewtypeDecl, PartialDecl, Program, TraitBound, TraitDecl, TypeAliasDecl, TypeParam, Visibility,
+    NewtypeDecl, PartialDecl, Program, Spanned, TraitBound, TraitDecl, TypeAliasDecl, TypeParam, Visibility,
 };
 use crate::frontend::symbols::{
     CallableParam, ClassInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, SymbolKind,
@@ -24,7 +24,9 @@ pub struct CheckedTypeParam {
 #[derive(Debug, Clone)]
 pub struct CheckedTypeBound {
     pub name: String,
+    pub source_name: Option<String>,
     pub type_args: Vec<ResolvedType>,
+    pub module_path: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -145,9 +147,10 @@ pub struct CheckedClassExport {
 #[derive(Debug, Clone)]
 pub struct CheckedTraitExport {
     pub name: String,
+    pub source_name: String,
     pub type_params: Vec<CheckedTypeParam>,
-    /// Direct supertraits `(trait_name, type_arguments)` after typechecking (RFC 042).
-    pub supertraits: Vec<(String, Vec<ResolvedType>)>,
+    /// Direct supertraits after typechecking (RFC 042), including resolved owner module metadata.
+    pub supertraits: Vec<CheckedTypeBound>,
     pub requires: Vec<(String, ResolvedType)>,
     pub methods: Vec<CheckedMethod>,
 }
@@ -579,28 +582,21 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
     })
 }
 
+/// Extract the checked public trait contract, preserving resolved supertrait identities for package consumers.
 fn checked_trait_export(trait_decl: &TraitDecl, checker: &TypeChecker) -> Option<CheckedTraitExport> {
     let symbol = checker.lookup_symbol(trait_decl.name.as_str())?;
-    let SymbolKind::Trait(TraitInfo {
-        requires,
-        methods,
-        supertraits,
-        ..
-    }) = &symbol.kind
-    else {
+    let SymbolKind::Trait(TraitInfo { requires, methods, .. }) = &symbol.kind else {
         return None;
     };
 
     let mut sorted_requires = requires.clone();
     sorted_requires.sort_by(|(left, _), (right, _)| left.cmp(right));
 
-    let mut sorted_supertraits = supertraits.clone();
-    sorted_supertraits.sort_by(|(left, _), (right, _)| left.cmp(right));
-
     Some(CheckedTraitExport {
         name: trait_decl.name.clone(),
+        source_name: trait_decl.name.clone(),
         type_params: checked_type_params(&trait_decl.type_params, checker),
-        supertraits: sorted_supertraits,
+        supertraits: sorted_type_bounds(checked_spanned_trait_bounds(&trait_decl.traits, checker)),
         requires: sorted_requires,
         methods: map_methods(methods),
     })
@@ -718,18 +714,31 @@ fn checked_type_params(type_params: &[TypeParam], checker: &TypeChecker) -> Vec<
         .collect()
 }
 
+/// Resolve source trait bounds into checked export metadata.
 fn checked_trait_bounds(bounds: &[TraitBound], checker: &TypeChecker) -> Vec<CheckedTypeBound> {
+    bounds.iter().map(|bound| checked_trait_bound(bound, checker)).collect()
+}
+
+/// Resolve source trait bounds that still carry their parse spans.
+fn checked_spanned_trait_bounds(bounds: &[Spanned<TraitBound>], checker: &TypeChecker) -> Vec<CheckedTypeBound> {
     bounds
         .iter()
-        .map(|bound| CheckedTypeBound {
-            name: bound.name.clone(),
-            type_args: bound
-                .type_args
-                .iter()
-                .map(|type_arg| resolve_type(&type_arg.node, &checker.symbols))
-                .collect(),
-        })
+        .map(|bound| checked_trait_bound(&bound.node, checker))
         .collect()
+}
+
+/// Resolve one source trait bound into checked export metadata.
+fn checked_trait_bound(bound: &TraitBound, checker: &TypeChecker) -> CheckedTypeBound {
+    CheckedTypeBound {
+        name: bound.name.clone(),
+        source_name: checker.trait_bound_source_name(&bound.name),
+        type_args: bound
+            .type_args
+            .iter()
+            .map(|type_arg| resolve_type(&type_arg.node, &checker.symbols))
+            .collect(),
+        module_path: checker.trait_bound_module_path(&bound.name),
+    }
 }
 
 /// Convert collected trait adoption metadata into the manifest-ready checked bound shape.
@@ -738,7 +747,9 @@ fn map_type_bound_infos(bounds: &[TypeBoundInfo]) -> Vec<CheckedTypeBound> {
         .iter()
         .map(|bound| CheckedTypeBound {
             name: bound.name.clone(),
+            source_name: bound.source_name.clone(),
             type_args: bound.type_args.clone(),
+            module_path: bound.module_path.clone(),
         })
         .collect()
 }
@@ -777,6 +788,7 @@ fn map_fields(fields: &HashMap<String, FieldInfo>) -> Vec<CheckedField> {
 fn map_methods(methods: &HashMap<String, MethodInfo>) -> Vec<CheckedMethod> {
     let mut entries: Vec<_> = methods
         .iter()
+        .filter(|(name, _)| is_exported_method_name(name))
         .map(|(name, info)| checked_method_from_info(name, info))
         .collect();
     entries.sort_by(|left, right| left.name.cmp(&right.name));
@@ -787,6 +799,7 @@ fn map_methods(methods: &HashMap<String, MethodInfo>) -> Vec<CheckedMethod> {
 fn map_method_overloads(method_overloads: &HashMap<String, Vec<MethodInfo>>) -> Vec<CheckedMethod> {
     let mut entries: Vec<_> = method_overloads
         .iter()
+        .filter(|(name, _)| is_exported_method_name(name))
         .flat_map(|(name, overloads)| overloads.iter().map(|info| checked_method_from_info(name, info)))
         .collect();
     entries.sort_by(|left, right| {
@@ -795,6 +808,11 @@ fn map_method_overloads(method_overloads: &HashMap<String, Vec<MethodInfo>>) -> 
             .then_with(|| method_signature_sort_key(left).cmp(&method_signature_sort_key(right)))
     });
     entries
+}
+
+/// Return whether a method belongs in public API metadata.
+fn is_exported_method_name(name: &str) -> bool {
+    !name.starts_with('_') || name.starts_with("__")
 }
 
 /// Convert one semantic method entry into the checked export shape.
@@ -815,7 +833,9 @@ fn checked_method_from_info(name: &str, info: &MethodInfo) -> CheckedMethod {
                     .into_iter()
                     .map(|bound| CheckedTypeBound {
                         name: bound.name,
+                        source_name: bound.source_name,
                         type_args: bound.type_args,
+                        module_path: bound.module_path,
                     })
                     .collect(),
             })

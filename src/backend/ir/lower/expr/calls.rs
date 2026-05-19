@@ -84,7 +84,11 @@ impl AstLowering {
                     FunctionParam {
                         name: param.node.name.clone(),
                         ty,
-                        mutability: super::super::super::types::Mutability::Immutable,
+                        mutability: if param.node.is_mut {
+                            super::super::super::types::Mutability::Mutable
+                        } else {
+                            super::super::super::types::Mutability::Immutable
+                        },
                         is_self: false,
                         kind: param.node.kind,
                         default: param
@@ -112,7 +116,11 @@ impl AstLowering {
                     FunctionParam {
                         name: param.node.name.clone(),
                         ty,
-                        mutability: super::super::super::types::Mutability::Immutable,
+                        mutability: if param.node.is_mut {
+                            super::super::super::types::Mutability::Mutable
+                        } else {
+                            super::super::super::types::Mutability::Immutable
+                        },
                         is_self: false,
                         kind: param.node.kind,
                         default: param
@@ -1488,7 +1496,9 @@ impl AstLowering {
         }
 
         let imported_callee_path = match &f.node {
-            ast::Expr::Ident(name) => self.import_aliases.get(name).cloned(),
+            ast::Expr::Ident(name) => self
+                .active_trait_default_function_path(name)
+                .or_else(|| self.import_aliases.get(name).cloned()),
             _ => None,
         };
         let mut func = self.lower_expr_spanned(f)?;

@@ -1,0 +1,39 @@
+from std.collections import OrdinalKey
+
+enum Status(str):
+    Paid = "paid"
+    Open = "open"
+
+enum HttpStatus(int):
+    Ok = 200
+    NotFound = 404
+
+pub def key_bytes[T with OrdinalKey](value: T) -> bytes:
+    return value.ordinal_bytes()
+
+pub def key_encoding[T with OrdinalKey](_value: T) -> str:
+    return T.ordinal_encoding()
+
+pub def str_bytes(value: str) -> bytes:
+    return key_bytes(value)
+
+pub def i32_bytes(value: i32) -> bytes:
+    return key_bytes(value)
+
+pub def bool_encoding(value: bool) -> str:
+    return key_encoding(value)
+
+pub def decimal_bytes(value: decimal[5, 2]) -> bytes:
+    return key_bytes(value)
+
+pub def decimal_encoding(value: decimal[5, 2]) -> str:
+    return key_encoding(value)
+
+pub def status_bytes(value: Status) -> bytes:
+    return key_bytes(value)
+
+pub def status_encoding(value: Status) -> str:
+    return key_encoding(value)
+
+pub def http_status_bytes(value: HttpStatus) -> bytes:
+    return key_bytes(value)

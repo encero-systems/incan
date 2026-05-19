@@ -1409,6 +1409,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
             }],
             traits: vec![TraitExport {
                 name: "Labelled".to_string(),
+                source_name: None,
                 type_params: Vec::new(),
                 supertraits: Vec::new(),
                 requires: Vec::new(),
@@ -1431,6 +1432,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 traits: vec!["Labelled".to_string()],
                 trait_adoptions: Vec::new(),
                 value_type: Some(EnumValueTypeExport::Str),
+                ordinal_type_identity: Some("mylib.Status".to_string()),
                 variants: vec![
                     EnumVariantExport {
                         name: "Active".to_string(),
@@ -1505,6 +1507,7 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
             functions: Vec::new(),
             traits: vec![TraitExport {
                 name: "ExternBox".to_string(),
+                source_name: None,
                 type_params: vec![TypeParamExport {
                     name: "T".to_string(),
                     bounds: Vec::new(),
@@ -1541,12 +1544,16 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
 fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
     let convert_int = TypeBoundExport {
         name: "Convert".to_string(),
+        source_name: None,
+        module_path: None,
         type_args: vec![TypeRef::Named {
             name: "int".to_string(),
         }],
     };
     let convert_float = TypeBoundExport {
         name: "Convert".to_string(),
+        source_name: None,
+        module_path: None,
         type_args: vec![TypeRef::Named {
             name: "float".to_string(),
         }],
@@ -1597,6 +1604,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
             functions: Vec::new(),
             traits: vec![TraitExport {
                 name: "Convert".to_string(),
+                source_name: None,
                 type_params: vec![TypeParamExport {
                     name: "T".to_string(),
                     bounds: Vec::new(),
@@ -1620,6 +1628,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
                 traits: vec!["Convert".to_string(), "Convert".to_string()],
                 trait_adoptions: vec![convert_int.clone(), convert_float.clone()],
                 value_type: None,
+                ordinal_type_identity: None,
                 variants: vec![EnumVariantExport {
                     name: "Number".to_string(),
                     fields: Vec::new(),
@@ -1798,6 +1807,8 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                     traits: vec!["BoundedDataSet".to_string()],
                     trait_adoptions: vec![TypeBoundExport {
                         name: "BoundedDataSet".to_string(),
+                        source_name: None,
+                        module_path: None,
                         type_args: Vec::new(),
                     }],
                     derives: vec![clone_trait_name()],
@@ -1811,6 +1822,8 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                     traits: vec!["BoundedDataSet".to_string()],
                     trait_adoptions: vec![TypeBoundExport {
                         name: "BoundedDataSet".to_string(),
+                        source_name: None,
+                        module_path: None,
                         type_args: Vec::new(),
                     }],
                     derives: vec![clone_trait_name()],
@@ -1858,6 +1871,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
             traits: vec![
                 TraitExport {
                     name: "DataSet".to_string(),
+                    source_name: None,
                     type_params: vec![type_param_t.clone()],
                     supertraits: Vec::new(),
                     requires: Vec::new(),
@@ -1865,9 +1879,12 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                 },
                 TraitExport {
                     name: "BoundedDataSet".to_string(),
+                    source_name: None,
                     type_params: vec![type_param_t],
                     supertraits: vec![TypeBoundExport {
                         name: "DataSet".to_string(),
+                        source_name: None,
+                        module_path: None,
                         type_args: vec![TypeRef::TypeParam { name: "T".to_string() }],
                     }],
                     requires: Vec::new(),
@@ -12181,6 +12198,184 @@ def identity[T with Clone](value: T) -> T:
 
 def main() -> int:
   return identity(1)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_ordinal_key_bound_accepts_builtin_deterministic_keys() {
+    let source = r#"
+from std.collections import OrdinalKey
+
+def accept_key[T with OrdinalKey](value: T) -> T:
+  return value
+
+def accept_str() -> str:
+  return accept_key("abc")
+
+def accept_bytes() -> bytes:
+  return accept_key(b"abc")
+
+def accept_bool() -> bool:
+  return accept_key(true)
+
+def accept_int() -> int:
+  return accept_key(1)
+
+def accept_i32(value: i32) -> i32:
+  return accept_key(value)
+
+def accept_u8(value: u8) -> u8:
+  return accept_key(value)
+
+def accept_decimal(value: decimal[5, 2]) -> decimal[5, 2]:
+  return accept_key(value)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_ordinal_key_bound_accepts_import_alias() {
+    let source = r#"
+from std.collections import OrdinalKey as Key
+
+def accept_key[T with Key](value: T) -> T:
+  return value
+
+def accept_str() -> str:
+  return accept_key("abc")
+
+def accept_i32(value: i32) -> i32:
+  return accept_key(value)
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_ordinal_key_bound_accepts_value_enums() {
+    let source = r#"
+from std.collections import OrdinalKey
+
+enum Env(str):
+  Dev = "development"
+  Prod = "production"
+
+enum HttpStatus(int):
+  Ok = 200
+  NotFound = 404
+
+def accept_key[T with OrdinalKey](value: T) -> T:
+  return value
+
+def accept_env(value: Env) -> Env:
+  return accept_key(value)
+
+def accept_status(value: HttpStatus) -> HttpStatus:
+  return accept_key(value)
+"#;
+    assert_check_ok(source);
+}
+
+fn assert_ordinal_key_bound_rejects_builtin(type_name: &str) {
+    let source = format!(
+        r#"
+from std.collections import OrdinalKey
+
+def accept_key[T with OrdinalKey](value: T) -> T:
+  return value
+
+def accept_value(value: {type_name}) -> {type_name}:
+  return accept_key(value)
+"#
+    );
+    let errs = check_str_err(&source, &format!("{type_name} should fail explicit OrdinalKey bound"));
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("violates generic bound") && e.message.contains(type_name)),
+        "Expected explicit OrdinalKey bound error mentioning {type_name}; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_ordinal_key_bound_rejects_float_builtin() {
+    for type_name in ["float", "f32", "f64"] {
+        assert_ordinal_key_bound_rejects_builtin(type_name);
+    }
+}
+
+#[test]
+fn test_ordinal_key_bound_rejects_pointer_sized_integer_builtin() {
+    for type_name in ["usize", "isize"] {
+        assert_ordinal_key_bound_rejects_builtin(type_name);
+    }
+}
+
+#[test]
+fn test_local_ordinal_key_shape_does_not_grant_builtin_support() {
+    let source = r#"
+trait OrdinalKey:
+  def ordinal_bytes(self) -> bytes: ...
+  def ordinal_encoding() -> str: ...
+  def from_ordinal_bytes(data: bytes) -> Result[Self, str]: ...
+
+def accept_key[T with OrdinalKey](value: T) -> T:
+  return value
+
+def accept_str() -> str:
+  return accept_key("abc")
+	"#;
+    let errs = check_str_err(source, "local OrdinalKey-shaped trait should not grant builtin support");
+    assert!(
+        errs.iter().any(|e| e.message.contains("violates generic bound")),
+        "Expected explicit generic bound error; got: {:?}",
+        errs.iter().map(|e| &e.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_ordinal_map_backing_fields_are_private() {
+    let source = r#"
+from std.collections import OrdinalMap
+
+def leak(columns: OrdinalMap[str]) -> int:
+  return len(columns.key_values)
+"#;
+    let errors = check_str_err(source, "OrdinalMap backing field access should fail typechecking");
+    assert!(
+        has_private_field_error(&errors, "OrdinalMap", "key_values"),
+        "expected private field error, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_ordinal_key_bound_preserves_nominal_adoption() {
+    let source = r#"
+trait OrdinalKey:
+  def ordinal_bytes(self) -> bytes: ...
+  def ordinal_encoding() -> str: ...
+  def from_ordinal_bytes(data: bytes) -> Result[Self, str]: ...
+
+model UserId with OrdinalKey:
+  value: int
+
+  def ordinal_bytes(self) -> bytes:
+    return b"user-id"
+
+  @staticmethod
+  def ordinal_encoding() -> str:
+    return "user-id:v1"
+
+  @staticmethod
+  def from_ordinal_bytes(data: bytes) -> Result[Self, str]:
+    return Ok(UserId(value=len(data)))
+
+def accept_key[T with OrdinalKey](value: T) -> T:
+  return value
+
+def accept_user_id(value: UserId) -> UserId:
+  return accept_key(value)
 "#;
     assert_check_ok(source);
 }

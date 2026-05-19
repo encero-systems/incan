@@ -202,6 +202,7 @@ pre-commit-full-gate:
 	t2=$$(date +%s); \
 	echo "\033[1mRunning tests...\033[0m"; \
 	$(TEST_CMD); \
+	cargo test --features lsp unchecked_lookup_hover --lib; \
 	echo "\033[32mDONE\033[0m"; \
 	t3=$$(date +%s); \
 	echo "\033[1mRunning clippy...\033[0m"; \

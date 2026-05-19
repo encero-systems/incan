@@ -3554,6 +3554,50 @@ def main() -> None:
     }
 
     #[test]
+    fn test_imported_value_enum_ordinal_map_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let root = make_temp_dir("incan_imported_ordinal_enum");
+        fs::create_dir_all(root.join("pkg"))?;
+        fs::write(
+            root.join("pkg").join("status.incn"),
+            r#"
+pub enum Status(str):
+    Open = "open"
+    Paid = "paid"
+    Cancelled = "cancelled"
+"#,
+        )?;
+        let main_path = root.join("ordinal_enum.incn");
+        fs::write(
+            &main_path,
+            r#"
+from std.collections import OrdinalMap
+from pkg.status import Status
+
+def main() -> None:
+    statuses: list[Status] = [Status.Open, Status.Paid, Status.Cancelled]
+    match OrdinalMap.from_keys(statuses):
+        Ok(columns) => match columns.require(Status.Paid):
+            Ok(value) => println(value)
+            Err(err) => println(err.message())
+        Err(err) => println(err.message())
+"#,
+        )?;
+        let output = Command::new(incan_debug_binary())
+            .args(["run", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "imported value-enum OrdinalMap regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "1");
+        Ok(())
+    }
+
+    #[test]
     fn test_imported_pascal_case_function_is_not_constructor() -> Result<(), Box<dyn std::error::Error>> {
         let root = make_temp_dir("incan_imported_pascal_case_function");
         fs::create_dir_all(root.join("pkg"))?;
@@ -6003,6 +6047,24 @@ async def main() -> None:
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "std.uuid ok");
+        Ok(())
+    }
+
+    #[test]
+    fn test_run_std_ordinal_map_surface() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args(["run", "tests/fixtures/valid/std_ordinal_map_surface.incn"])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "incan run std_ordinal_map_surface failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "std.ordinal_map ok");
         Ok(())
     }
 
@@ -12693,6 +12755,155 @@ def main() -> None:\n  println(maybe_double(Some(21)))\n  println(maybe_double(N
             String::from_utf8_lossy(&consumer_build.stdout),
             String::from_utf8_lossy(&consumer_build.stderr)
         );
+        Ok(())
+    }
+
+    #[test]
+    fn build_lib_preserves_ordinal_map_for_consumers() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("ordinal_keys_lib");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"ordinal_keys_core\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/status.incn"),
+            r#"import std.collections as collections
+from std.collections import OrdinalKey as Key, OrdinalMap, OrdinalMapError
+
+pub enum Status(str):
+    Open = "open"
+    Paid = "paid"
+    Cancelled = "cancelled"
+
+
+@derive(Clone, Eq)
+pub trait StableKey with Key:
+    def stable_marker(self) -> int: ...
+
+
+@derive(Clone, Eq)
+pub model SmallKey with StableKey:
+    value: int
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        return "ordinal-keys-core:small-key-v1"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        if len(data) != 1:
+            return Err(OrdinalMapError.invalid_key_record("SmallKey requires one byte"))
+        return Ok(SmallKey(value=int(data[0])))
+
+    def ordinal_bytes(self) -> bytes:
+        value: u8 = self.value.wrapping_resize()
+        return [value]
+
+    def ordinal_hash(self) -> int:
+        return 10_000 + self.value
+
+    def stable_marker(self) -> int:
+        return self.value
+
+
+pub def echo_key[T with Key](value: T) -> T:
+    return value
+
+
+pub def status_map_bytes() -> bytes:
+    statuses: list[Status] = [Status.Open, Status.Paid, Status.Cancelled]
+    match OrdinalMap.from_keys(statuses):
+        Ok(columns) => return columns.to_bytes()
+        Err(_) => return b""
+
+
+pub def small_key_map_bytes() -> bytes:
+    alpha = SmallKey(value=1)
+    beta = SmallKey(value=2)
+    gamma = SmallKey(value=3)
+    match OrdinalMap.from_pairs([(alpha, 10), (beta, 20), (gamma, 30)]):
+        Ok(columns) => return columns.to_bytes()
+        Err(_) => return b""
+"#,
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub from status import SmallKey, StableKey as PublicStableKey, Status, echo_key, small_key_map_bytes, status_map_bytes\n",
+        )?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected `build --lib` to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+        assert!(
+            producer_root
+                .join("target")
+                .join("lib")
+                .join("ordinal_keys_core.incnlib")
+                .is_file()
+        );
+        let manifest = LibraryManifest::read_from_path(
+            &producer_root
+                .join("target")
+                .join("lib")
+                .join("ordinal_keys_core.incnlib"),
+        )?;
+        let stable_key = manifest
+            .exports
+            .traits
+            .iter()
+            .find(|trait_export| trait_export.name == "PublicStableKey")
+            .ok_or("expected aliased StableKey export")?;
+        assert_eq!(stable_key.source_name.as_deref(), Some("StableKey"));
+        assert_eq!(stable_key.supertraits[0].name, "Key");
+        assert_eq!(stable_key.supertraits[0].source_name.as_deref(), Some("OrdinalKey"));
+        let status = manifest
+            .exports
+            .enums
+            .iter()
+            .find(|enum_export| enum_export.name == "Status")
+            .ok_or("expected Status value enum export")?;
+        assert_eq!(
+            status.ordinal_type_identity.as_deref(),
+            Some("ordinal_keys_core.Status")
+        );
+
+        let consumer_root = tmp.path().join("ordinal_keys_consumer");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nordinal_keys = { path = \"../ordinal_keys_lib\" }\n",
+        )?;
+        let consumer_main = consumer_root.join("src/main.incn");
+        std::fs::write(
+            &consumer_main,
+            "from std.collections import OrdinalMap, OrdinalMapError\nfrom pub::ordinal_keys import SmallKey, Status, echo_key, small_key_map_bytes, status_map_bytes\n\ndef run() -> Result[None, OrdinalMapError]:\n  probe = echo_key(\"probe\")\n  if len(probe) == 0:\n    print(probe)\n  status_map: OrdinalMap[Status] = OrdinalMap.from_bytes(status_map_bytes())?\n  small_key_map: OrdinalMap[SmallKey] = OrdinalMap.from_bytes(small_key_map_bytes())?\n  print(status_map.require(Status.Paid)?)\n  print(small_key_map.require(SmallKey(value=2))?)\n  return Ok(None)\n\ndef main() -> None:\n  match run():\n    Ok(_) => pass\n    Err(err) => print(err.message())\n",
+        )?;
+
+        let out_dir = consumer_root.join("out");
+        let consumer_build = run_build(&consumer_main, &out_dir)?;
+        assert!(
+            consumer_build.status.success(),
+            "expected consumer build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_build.stdout),
+            String::from_utf8_lossy(&consumer_build.stderr)
+        );
+        let consumer_run = Command::new(incan_bin_path())
+            .args(["run", consumer_main.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            consumer_run.status.success(),
+            "expected consumer run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_run.stdout),
+            String::from_utf8_lossy(&consumer_run.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&consumer_run.stdout).trim(), "1\n20");
         Ok(())
     }
 

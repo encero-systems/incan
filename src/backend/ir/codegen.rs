@@ -39,10 +39,12 @@ use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
+use crate::library_manifest::{EnumValueExport, EnumValueTypeExport};
 use incan_core::lang::decorators::{self, DecoratorId};
-use incan_core::lang::stdlib;
 use incan_core::lang::traits::{self as core_traits, TraitId};
+use incan_core::lang::{stdlib, trait_capabilities};
 
+use super::emit::{ExternalOrdinalCustomKey, ExternalOrdinalValueEnum};
 use super::scanners::{
     check_for_this_import as scan_check_for_this_import, collect_rust_crates as scan_collect_rust_crates,
     detect_serde_usage,
@@ -339,6 +341,279 @@ fn collect_dependency_type_metadata(deps: &[(&str, &Program, Option<Vec<String>>
     }
 }
 
+/// Return whether a program imports the stdlib ordinal-map contract.
+fn imports_std_ordinal_contract(program: &Program) -> bool {
+    let capability = trait_capabilities::stable_ordinal_key();
+    program.declarations.iter().any(|decl| {
+        let Declaration::Import(import) = &decl.node else {
+            return false;
+        };
+        match &import.kind {
+            ImportKind::Module(_) => false,
+            ImportKind::From { module, items } if import_path_matches_capability(module, capability) => items
+                .iter()
+                .any(|item| trait_capabilities::import_triggers_capability(capability, item.name.as_str())),
+            _ => false,
+        }
+    })
+}
+
+/// Return whether an import path names the module that owns a temporary capability contract.
+fn import_path_matches_capability(path: &ImportPath, capability: &trait_capabilities::TraitCapabilityInfo) -> bool {
+    trait_capabilities::module_path_matches(capability, &path.segments)
+}
+
+/// Return whether any module in the current compilation needs value-enum `OrdinalKey` impls.
+fn compilation_imports_std_ordinal_contract(main: &Program, deps: &[(&str, &Program, Option<Vec<String>>)]) -> bool {
+    imports_std_ordinal_contract(main) || deps.iter().any(|(_, program, _)| imports_std_ordinal_contract(program))
+}
+
+/// Collect public scalar value enums from loaded `.incnlib` dependencies.
+fn external_ordinal_value_enums(index: Option<&Arc<LibraryManifestIndex>>) -> Vec<ExternalOrdinalValueEnum> {
+    let Some(index) = index else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for dependency_key in index.known_libraries() {
+        let Some(crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, metadata }) =
+            index.get(&dependency_key)
+        else {
+            continue;
+        };
+        for enum_export in &manifest.exports.enums {
+            let Some(value_type) = enum_export.value_type else {
+                continue;
+            };
+            let value_type = match value_type {
+                EnumValueTypeExport::Str => super::decl::IrEnumValueType::String,
+                EnumValueTypeExport::Int => super::decl::IrEnumValueType::Int,
+            };
+            let mut values = Vec::new();
+            let mut complete = true;
+            for variant in &enum_export.variants {
+                let Some(value) = &variant.value else {
+                    complete = false;
+                    break;
+                };
+                values.push(match value {
+                    EnumValueExport::Str(value) => super::decl::IrEnumValue::String(value.clone()),
+                    EnumValueExport::Int(value) => super::decl::IrEnumValue::Int(*value),
+                });
+            }
+            if !complete {
+                continue;
+            }
+            out.push(ExternalOrdinalValueEnum {
+                dependency_key: dependency_key.clone(),
+                name: enum_export.name.clone(),
+                type_identity: enum_export
+                    .ordinal_type_identity
+                    .clone()
+                    .unwrap_or_else(|| format!("{}.{}", metadata.manifest_name, enum_export.name)),
+                value_type,
+                values,
+            });
+        }
+    }
+    out
+}
+
+/// Return whether a serialized trait bound names the std `OrdinalKey` capability.
+fn type_bound_matches_ordinal_key(bound: &crate::library_manifest::TypeBoundExport) -> bool {
+    let capability = trait_capabilities::stable_ordinal_key();
+    let trait_name = bound
+        .source_name
+        .as_deref()
+        .unwrap_or_else(|| bound.name.rsplit('.').next().unwrap_or(bound.name.as_str()));
+    if trait_name != capability.trait_name {
+        return false;
+    }
+    let Some(module_path) = &bound.module_path else {
+        return false;
+    };
+    trait_capabilities::module_path_matches(capability, module_path)
+}
+
+/// Return whether any exported trait adoption satisfies the std `OrdinalKey` contract.
+fn export_adopts_ordinal_key(
+    trait_adoptions: &[crate::library_manifest::TypeBoundExport],
+    traits: &HashMap<String, &crate::library_manifest::TraitExport>,
+) -> bool {
+    trait_adoptions
+        .iter()
+        .any(|bound| type_bound_matches_ordinal_key(bound) || trait_bound_extends_ordinal_key(bound, traits))
+}
+
+/// Return whether a serialized trait bound resolves transitively to std `OrdinalKey`.
+fn trait_bound_extends_ordinal_key(
+    bound: &crate::library_manifest::TypeBoundExport,
+    traits: &HashMap<String, &crate::library_manifest::TraitExport>,
+) -> bool {
+    let mut seen = HashSet::new();
+    let mut work = vec![bound.name.as_str()];
+    while let Some(name) = work.pop() {
+        if !seen.insert(name.to_string()) {
+            continue;
+        }
+        let Some(trait_export) = traits.get(name) else {
+            continue;
+        };
+        for supertrait in &trait_export.supertraits {
+            if type_bound_matches_ordinal_key(supertrait) {
+                return true;
+            }
+            work.push(supertrait.name.as_str());
+        }
+    }
+    false
+}
+
+/// Return lookup keys for a manifest trait export, including its original source name when reexported under an alias.
+fn trait_export_lookup_keys(trait_export: &crate::library_manifest::TraitExport) -> Vec<String> {
+    let mut keys = vec![trait_export.name.clone()];
+    if let Some(source_name) = &trait_export.source_name
+        && source_name != &trait_export.name
+    {
+        keys.push(source_name.clone());
+    }
+    keys
+}
+
+/// Return whether a manifest method set exposes a source method or its generated alias.
+fn export_methods_include(methods: &[crate::library_manifest::MethodExport], name: &str) -> bool {
+    methods
+        .iter()
+        .any(|method| method.name == name || method.alias_of.as_deref() == Some(name))
+}
+
+/// Build custom-key bridge metadata for one exported concrete type when it adopts `OrdinalKey`.
+fn external_ordinal_custom_key(
+    dependency_key: &str,
+    name: &str,
+    type_params: &[crate::library_manifest::TypeParamExport],
+    trait_adoptions: &[crate::library_manifest::TypeBoundExport],
+    methods: &[crate::library_manifest::MethodExport],
+    traits: &HashMap<String, &crate::library_manifest::TraitExport>,
+) -> Option<ExternalOrdinalCustomKey> {
+    if !type_params.is_empty() || !export_adopts_ordinal_key(trait_adoptions, traits) {
+        return None;
+    }
+    let hooks = trait_capabilities::stable_ordinal_key().bridge_hooks?;
+    Some(ExternalOrdinalCustomKey {
+        dependency_key: dependency_key.to_string(),
+        name: name.to_string(),
+        has_ordinal_hash: export_methods_include(methods, hooks.hash_method),
+        has_ordinal_bytes_equal: export_methods_include(methods, hooks.bytes_equal_method),
+    })
+}
+
+/// Collect public user-authored `OrdinalKey` adopters from loaded `.incnlib` dependencies.
+fn external_ordinal_custom_keys(index: Option<&Arc<LibraryManifestIndex>>) -> Vec<ExternalOrdinalCustomKey> {
+    let Some(index) = index else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    for dependency_key in index.known_libraries() {
+        let Some(crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, .. }) =
+            index.get(&dependency_key)
+        else {
+            continue;
+        };
+        let traits = manifest
+            .exports
+            .traits
+            .iter()
+            .flat_map(|trait_export| {
+                trait_export_lookup_keys(trait_export)
+                    .into_iter()
+                    .map(move |key| (key, trait_export))
+            })
+            .collect::<HashMap<_, _>>();
+        for model in &manifest.exports.models {
+            if let Some(key) = external_ordinal_custom_key(
+                &dependency_key,
+                &model.name,
+                &model.type_params,
+                &model.trait_adoptions,
+                &model.methods,
+                &traits,
+            ) {
+                out.push(key);
+            }
+        }
+        for class in &manifest.exports.classes {
+            if let Some(key) = external_ordinal_custom_key(
+                &dependency_key,
+                &class.name,
+                &class.type_params,
+                &class.trait_adoptions,
+                &class.methods,
+                &traits,
+            ) {
+                out.push(key);
+            }
+        }
+        for newtype in &manifest.exports.newtypes {
+            if let Some(key) = external_ordinal_custom_key(
+                &dependency_key,
+                &newtype.name,
+                &newtype.type_params,
+                &newtype.trait_adoptions,
+                &newtype.methods,
+                &traits,
+            ) {
+                out.push(key);
+            }
+        }
+        for enum_export in &manifest.exports.enums {
+            if enum_export.value_type.is_some() {
+                continue;
+            }
+            if let Some(key) = external_ordinal_custom_key(
+                &dependency_key,
+                &enum_export.name,
+                &enum_export.type_params,
+                &enum_export.trait_adoptions,
+                &enum_export.methods,
+                &traits,
+            ) {
+                out.push(key);
+            }
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone)]
+struct OrdinalBridgeConfig {
+    emit_std_ordinal_value_enum_impls: bool,
+    external_value_enums: Vec<ExternalOrdinalValueEnum>,
+    external_custom_keys: Vec<ExternalOrdinalCustomKey>,
+}
+
+impl OrdinalBridgeConfig {
+    /// Build a bridge configuration for generated internal modules.
+    fn for_internal_module(uses_std_ordinal_contract: bool) -> Self {
+        Self {
+            emit_std_ordinal_value_enum_impls: uses_std_ordinal_contract,
+            external_value_enums: Vec::new(),
+            external_custom_keys: Vec::new(),
+        }
+    }
+
+    /// Build a bridge configuration for crate-root emission where dependency adapters live.
+    fn for_crate_root(uses_std_ordinal_contract: bool, index: Option<&Arc<LibraryManifestIndex>>) -> Self {
+        if !uses_std_ordinal_contract {
+            return Self::for_internal_module(false);
+        }
+        Self {
+            emit_std_ordinal_value_enum_impls: true,
+            external_value_enums: external_ordinal_value_enums(index),
+            external_custom_keys: external_ordinal_custom_keys(index),
+        }
+    }
+}
+
 /// Return whether any loaded module derives serde serialize or deserialize through resolved JSON derive imports.
 fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bool) {
     let mut has_serialize = false;
@@ -583,6 +858,8 @@ pub struct IrCodegen<'a> {
     strict_generated_lints: bool,
     /// Private IR items called by generated code that is appended outside normal IR emission.
     externally_reachable_items: HashSet<String>,
+    /// Public serialized value-enum identities for library builds, keyed by source identity (`module.Type`).
+    public_ordinal_type_identities: HashMap<String, String>,
     /// Whether non-stdlib dependency modules keep public items that are not otherwise reachable.
     preserve_dependency_public_items: bool,
     /// Manifest/workspace root for rust-inspect-backed typechecking during IR generation.
@@ -605,6 +882,7 @@ impl<'a> IrCodegen<'a> {
             library_manifest_index: None,
             strict_generated_lints: false,
             externally_reachable_items: HashSet::new(),
+            public_ordinal_type_identities: HashMap::new(),
             preserve_dependency_public_items: true,
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
@@ -619,6 +897,24 @@ impl<'a> IrCodegen<'a> {
     /// Set private generated Rust entrypoints called by code injected after IR emission.
     pub fn set_externally_reachable_items(&mut self, names: HashSet<String>) {
         self.externally_reachable_items = names;
+    }
+
+    /// Set public serialized value-enum identities for library emission.
+    pub fn set_public_ordinal_type_identities(&mut self, identities: HashMap<String, String>) {
+        self.public_ordinal_type_identities = identities;
+    }
+
+    /// Collect the OrdinalKey bridge facts needed by the emitter for this program.
+    fn ordinal_bridge_config(&self, uses_std_ordinal_contract: bool) -> OrdinalBridgeConfig {
+        OrdinalBridgeConfig::for_crate_root(uses_std_ordinal_contract, self.library_manifest_index.as_ref())
+    }
+
+    /// Apply collected OrdinalKey bridge metadata to a freshly created emitter.
+    fn apply_ordinal_bridge_config(&self, emitter: &mut IrEmitter, config: &OrdinalBridgeConfig) {
+        emitter.set_emit_std_ordinal_value_enum_impls(config.emit_std_ordinal_value_enum_impls);
+        emitter.set_external_ordinal_value_enums(config.external_value_enums.clone());
+        emitter.set_external_ordinal_custom_keys(config.external_custom_keys.clone());
+        emitter.set_public_ordinal_type_identities(self.public_ordinal_type_identities.clone());
     }
 
     /// Set whether non-stdlib dependency modules preserve their public API surface during emission.
@@ -869,6 +1165,8 @@ impl<'a> IrCodegen<'a> {
         // for models declared in dependency modules as well.
         let global_aliases = collect_model_field_aliases(program, &deps);
         let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
+        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &self.dependency_modules);
+        let ordinal_bridge = self.ordinal_bridge_config(uses_std_ordinal_contract);
         let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
 
         // Typecheck to obtain reusable type information for lowering.
@@ -941,6 +1239,7 @@ impl<'a> IrCodegen<'a> {
             inner.set_external_rust_functions(self.external_rust_functions.clone());
             inner.set_strict_generated_lints(self.strict_generated_lints);
             inner.set_externally_reachable_items(self.externally_reachable_items.clone());
+            self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
             inner.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
             inner.set_generated_union_types(generated_union_types);
             for dep_ir in &dependency_ir_programs {
@@ -963,6 +1262,7 @@ impl<'a> IrCodegen<'a> {
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
             emitter.set_strict_generated_lints(self.strict_generated_lints);
             emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
+            self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
             emitter.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
             emitter.set_generated_union_types(generated_union_types);
             for dep_ir in &dependency_ir_programs {
@@ -1011,12 +1311,14 @@ impl<'a> IrCodegen<'a> {
             .map(|(name, _, _)| (*name).to_string())
             .collect();
 
+        let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(imports_std_ordinal_contract(program));
         let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
         if use_emit_service {
             let mut svc = EmitService::new_from_program(&ir_program);
             let inner = svc.inner_mut();
             inner.set_internal_module_roots(internal_roots);
             inner.set_externally_reachable_items(self.externally_reachable_items.clone());
+            self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
             Ok(svc.emit_program(&ir_program)?)
         } else {
             let mut emitter = IrEmitter::new(&ir_program.function_registry);
@@ -1026,6 +1328,7 @@ impl<'a> IrCodegen<'a> {
             }
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_externally_reachable_items(self.externally_reachable_items.clone());
+            self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
             Ok(emitter.emit_program(&ir_program)?)
         }
     }
@@ -1088,6 +1391,8 @@ impl<'a> IrCodegen<'a> {
             .collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
         let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
+        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &self.dependency_modules);
+        let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(uses_std_ordinal_contract);
         let dependency_reachable_items =
             collect_externally_reachable_items_by_module(program, &self.dependency_modules);
 
@@ -1168,6 +1473,7 @@ impl<'a> IrCodegen<'a> {
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
+                self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
                 for (_, _, dep_ir) in &lowered_modules {
                     inner.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
@@ -1186,6 +1492,7 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
+                self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
                 for (_, _, dep_ir) in &lowered_modules {
                     emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
@@ -1272,6 +1579,8 @@ impl<'a> IrCodegen<'a> {
             .collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
         let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
+        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &self.dependency_modules);
+        let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(uses_std_ordinal_contract);
         let dependency_reachable_items =
             collect_externally_reachable_items_by_module(program, &self.dependency_modules);
 
@@ -1352,6 +1661,7 @@ impl<'a> IrCodegen<'a> {
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
+                self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
                 for (_, dep_ir) in &lowered_modules {
                     inner.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }
@@ -1370,6 +1680,7 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
+                self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
                 for (_, dep_ir) in &lowered_modules {
                     emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
                 }

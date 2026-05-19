@@ -889,9 +889,18 @@ impl<'a> IrEmitter<'a> {
             }
         }
         let call_like_value = match &value.kind {
-            IrExprKind::Call { .. } | IrExprKind::MethodCall { .. } => true,
+            IrExprKind::Call { .. } | IrExprKind::MethodCall { .. } | IrExprKind::Try(_) => true,
             IrExprKind::InteropCoerce { expr, .. } => {
-                matches!(expr.kind, IrExprKind::Call { .. } | IrExprKind::MethodCall { .. })
+                matches!(
+                    expr.kind,
+                    IrExprKind::Call { .. } | IrExprKind::MethodCall { .. } | IrExprKind::Try(_)
+                )
+            }
+            IrExprKind::Cast { expr, .. } | IrExprKind::Await(expr) => {
+                matches!(
+                    expr.kind,
+                    IrExprKind::Call { .. } | IrExprKind::MethodCall { .. } | IrExprKind::Try(_)
+                )
             }
             _ => false,
         };
@@ -1049,8 +1058,15 @@ impl<'a> IrEmitter<'a> {
                     format!("_{name}")
                 };
                 let n = Self::rust_ident(&emitted_name);
-                let v = self.emit_assignment_value(value, Some(ty))?;
-                let converted_v = plan_value_use(value, ValueUseSite::Assignment { target_ty: Some(ty) }).apply(v);
+                let value_target_ty = type_annotation.as_ref().unwrap_or(ty);
+                let v = self.emit_assignment_value(value, Some(value_target_ty))?;
+                let converted_v = plan_value_use(
+                    value,
+                    ValueUseSite::Assignment {
+                        target_ty: Some(value_target_ty),
+                    },
+                )
+                .apply(v);
                 let annotation = type_annotation
                     .as_ref()
                     .and_then(|annotated_ty| self.emit_local_let_annotation(annotated_ty));

@@ -24,10 +24,11 @@ use std::collections::{HashMap, HashSet};
 
 use incan_core::lang::surface::result_methods::ResultMethodId;
 use incan_core::lang::traits::{self as core_traits, TraitId};
-use incan_core::lang::{conventions, magic_methods};
+use incan_core::lang::{conventions, magic_methods, stdlib as core_stdlib, trait_capabilities};
 
 use super::super::decl::{
-    IrDeclKind, IrFunction, IrImportOrigin, IrImportQualifier, IrRustTraitImport, IrTraitBound, IrTypeParam, Visibility,
+    IrDeclKind, IrEnum, IrEnumValue, IrEnumValueType, IrFunction, IrImportOrigin, IrImportQualifier, IrRustTraitImport,
+    IrTraitBound, IrTypeParam, Visibility,
 };
 use super::super::expr::{
     IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, IrMethodDispatch, MethodKind, Pattern, VarRefKind,
@@ -36,6 +37,15 @@ use super::super::stmt::AssignTarget;
 use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::super::{FunctionRegistry, FunctionSignature, IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
 use super::{EmitError, GeneratedUseAnalysis, IrEmitter};
+
+struct OrdinalValueEnumBridgeSpec {
+    type_path: TokenStream,
+    display_name: String,
+    encoding: String,
+    value_type: IrEnumValueType,
+    trait_path: TokenStream,
+    error_path: TokenStream,
+}
 
 /// Builder for generated Rust item/import usage facts.
 ///
@@ -1081,6 +1091,466 @@ impl<'program> GeneratedUseAnalyzer<'program> {
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Return whether the current emitted module defines one registry-backed temporary capability trait contract.
+    fn emitted_declarations_define_capability_trait(
+        program: &IrProgram,
+        emitted_declarations: &[&IrDecl],
+        capability: &trait_capabilities::TraitCapabilityInfo,
+    ) -> bool {
+        let Some(source_module_name) = program.source_module_name.as_deref() else {
+            return false;
+        };
+        let canonical_module = capability.module_path.join(".");
+        let generated_module = capability
+            .module_path
+            .strip_prefix(&["std"])
+            .map(|tail| format!("{}.{}", core_stdlib::INCAN_STD_NAMESPACE, tail.join(".")))
+            .unwrap_or_else(|| canonical_module.clone());
+        if source_module_name != canonical_module && source_module_name != generated_module {
+            return false;
+        }
+        emitted_declarations.iter().any(|decl| {
+            matches!(
+                &decl.kind,
+                IrDeclKind::Trait(trait_decl) if trait_decl.name == capability.trait_name
+                    && capability.required_methods.iter().all(|required| {
+                        trait_decl.methods.iter().any(|method| method.name == *required)
+                    })
+            )
+        })
+    }
+
+    /// Emit temporary RFC 101 adapter impls for deterministic builtin `OrdinalKey` families.
+    ///
+    /// Native helper behavior lives in `incan_stdlib::collections::__private`; this emitter only places impls at the
+    /// crate boundary where Rust coherence requires them until RFC 098/099 can model trait-owned capability families
+    /// in source.
+    fn emit_builtin_ordinal_key_impls(&self) -> TokenStream {
+        quote! {
+            fn __incan_ordinal_key_invalid_record(detail: String) -> OrdinalMapError {
+                OrdinalMapError::invalid_key_record(detail, -1i64)
+            }
+
+            macro_rules! __incan_ordinal_key_int_impl {
+                ($ty:ty, $encoding:expr, $width:expr) => {
+                    impl OrdinalKey for $ty {
+                        fn ordinal_bytes(&self) -> Vec<u8> {
+                            (*self).to_le_bytes().to_vec()
+                        }
+
+                        fn ordinal_hash(&self) -> i64 {
+                            incan_stdlib::collections::__private::ordinal_key_hash_bytes(&(*self).to_le_bytes())
+                        }
+
+                        fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
+                            data.as_slice() == (*self).to_le_bytes().as_slice()
+                        }
+
+                        fn ordinal_encoding() -> String {
+                            $encoding
+                        }
+
+                        fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, OrdinalMapError> {
+                            let encoding = $encoding;
+                            Ok(<$ty>::from_le_bytes(
+                                incan_stdlib::collections::__private::ordinal_key_exact_bytes::<$width>(
+                                    data,
+                                    encoding.as_str(),
+                                )
+                                .map_err(__incan_ordinal_key_invalid_record)?,
+                            ))
+                        }
+                    }
+                };
+            }
+
+            impl OrdinalKey for String {
+                fn ordinal_bytes(&self) -> Vec<u8> {
+                    self.as_bytes().to_vec()
+                }
+
+                fn ordinal_hash(&self) -> i64 {
+                    incan_stdlib::collections::__private::ordinal_key_hash_bytes(self.as_bytes())
+                }
+
+                fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
+                    self.as_bytes() == data.as_slice()
+                }
+
+                fn ordinal_encoding() -> String {
+                    incan_stdlib::collections::__private::ordinal_key_encoding_str()
+                }
+
+                fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, OrdinalMapError> {
+                    incan_stdlib::collections::__private::ordinal_key_string_from_bytes(data)
+                        .map_err(__incan_ordinal_key_invalid_record)
+                }
+            }
+
+            impl OrdinalKey for Vec<u8> {
+                fn ordinal_bytes(&self) -> Vec<u8> {
+                    self.clone()
+                }
+
+                fn ordinal_hash(&self) -> i64 {
+                    incan_stdlib::collections::__private::ordinal_key_hash_bytes(self.as_slice())
+                }
+
+                fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
+                    self.as_slice() == data.as_slice()
+                }
+
+                fn ordinal_encoding() -> String {
+                    incan_stdlib::collections::__private::ordinal_key_encoding_bytes()
+                }
+
+                fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, OrdinalMapError> {
+                    Ok(data)
+                }
+            }
+
+            impl OrdinalKey for bool {
+                fn ordinal_bytes(&self) -> Vec<u8> {
+                    vec![*self as u8]
+                }
+
+                fn ordinal_hash(&self) -> i64 {
+                    incan_stdlib::collections::__private::ordinal_key_hash_bytes(&[*self as u8])
+                }
+
+                fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
+                    data.as_slice() == [*self as u8].as_slice()
+                }
+
+                fn ordinal_encoding() -> String {
+                    incan_stdlib::collections::__private::ordinal_key_encoding_bool()
+                }
+
+                fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, OrdinalMapError> {
+                    incan_stdlib::collections::__private::ordinal_key_bool_from_bytes(data)
+                        .map_err(__incan_ordinal_key_invalid_record)
+                }
+            }
+
+            impl OrdinalKey for incan_stdlib::num::Decimal128 {
+                fn ordinal_bytes(&self) -> Vec<u8> {
+                    incan_stdlib::collections::__private::ordinal_key_decimal_bytes(self).to_vec()
+                }
+
+                fn ordinal_hash(&self) -> i64 {
+                    let out = incan_stdlib::collections::__private::ordinal_key_decimal_bytes(self);
+                    incan_stdlib::collections::__private::ordinal_key_hash_bytes(&out)
+                }
+
+                fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
+                    data.as_slice()
+                        == incan_stdlib::collections::__private::ordinal_key_decimal_bytes(self).as_slice()
+                }
+
+                fn ordinal_encoding() -> String {
+                    incan_stdlib::collections::__private::ordinal_key_encoding_decimal()
+                }
+
+                fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, OrdinalMapError> {
+                    incan_stdlib::collections::__private::ordinal_key_decimal_from_bytes(data)
+                        .map_err(__incan_ordinal_key_invalid_record)
+                }
+            }
+
+            __incan_ordinal_key_int_impl!(i8, incan_stdlib::collections::__private::ordinal_key_encoding_int(8u16), 1usize);
+            __incan_ordinal_key_int_impl!(i16, incan_stdlib::collections::__private::ordinal_key_encoding_int(16u16), 2usize);
+            __incan_ordinal_key_int_impl!(i32, incan_stdlib::collections::__private::ordinal_key_encoding_int(32u16), 4usize);
+            __incan_ordinal_key_int_impl!(i64, incan_stdlib::collections::__private::ordinal_key_encoding_int(64u16), 8usize);
+            __incan_ordinal_key_int_impl!(i128, incan_stdlib::collections::__private::ordinal_key_encoding_int(128u16), 16usize);
+            __incan_ordinal_key_int_impl!(u8, incan_stdlib::collections::__private::ordinal_key_encoding_uint(8u16), 1usize);
+            __incan_ordinal_key_int_impl!(u16, incan_stdlib::collections::__private::ordinal_key_encoding_uint(16u16), 2usize);
+            __incan_ordinal_key_int_impl!(u32, incan_stdlib::collections::__private::ordinal_key_encoding_uint(32u16), 4usize);
+            __incan_ordinal_key_int_impl!(u64, incan_stdlib::collections::__private::ordinal_key_encoding_uint(64u16), 8usize);
+            __incan_ordinal_key_int_impl!(u128, incan_stdlib::collections::__private::ordinal_key_encoding_uint(128u16), 16usize);
+        }
+    }
+
+    /// Return whether the current module imports the stdlib ordinal-map contract surface.
+    fn emitted_declarations_import_std_collections_ordinal_contract(emitted_declarations: &[&IrDecl]) -> bool {
+        let capability = trait_capabilities::stable_ordinal_key();
+        emitted_declarations.iter().any(|decl| {
+            let IrDeclKind::Import { path, items, .. } = &decl.kind else {
+                return false;
+            };
+            if !trait_capabilities::module_path_matches(capability, path) {
+                return false;
+            }
+            items
+                .iter()
+                .any(|item| trait_capabilities::import_triggers_capability(capability, item.name.as_str()))
+        })
+    }
+
+    /// Build the stable public/source identity for a string or integer value enum.
+    fn value_enum_ordinal_type_identity(&self, e: &IrEnum, source_module_name: Option<&str>) -> String {
+        let source_identity = format!(
+            "{}.{}",
+            source_module_name.filter(|name| !name.is_empty()).unwrap_or("local"),
+            e.name
+        );
+        self.public_ordinal_type_identities
+            .get(&source_identity)
+            .cloned()
+            .unwrap_or(source_identity)
+    }
+
+    /// Build the stable `OrdinalKey.ordinal_encoding()` identifier for a string or integer value enum.
+    fn value_enum_ordinal_encoding(&self, e: &IrEnum, source_module_name: Option<&str>) -> Option<String> {
+        let value_type = e.value_type?;
+        let values = e
+            .variants
+            .iter()
+            .map(|variant| variant.raw_value.clone())
+            .collect::<Option<Vec<_>>>()?;
+        Self::value_enum_ordinal_encoding_from_values(
+            value_type,
+            &self.value_enum_ordinal_type_identity(e, source_module_name),
+            &values,
+        )
+    }
+
+    /// Build the stable `OrdinalKey.ordinal_encoding()` identifier for an external scalar value enum.
+    fn external_value_enum_ordinal_encoding(e: &super::ExternalOrdinalValueEnum) -> Option<String> {
+        Self::value_enum_ordinal_encoding_from_values(e.value_type, &e.type_identity, &e.values)
+    }
+
+    /// Build a stable value-enum encoding string from exported raw variant values.
+    fn value_enum_ordinal_encoding_from_values(
+        value_type: IrEnumValueType,
+        type_identity: &str,
+        values: &[IrEnumValue],
+    ) -> Option<String> {
+        let mut records = String::new();
+        match value_type {
+            IrEnumValueType::String => {
+                for value in values {
+                    let IrEnumValue::String(raw) = value else {
+                        return None;
+                    };
+                    records.push_str(&format!("{}:{};", raw.len(), raw));
+                }
+                Some(format!("value-enum:str:{}:{}:v1", type_identity, records))
+            }
+            IrEnumValueType::Int => {
+                for value in values {
+                    let IrEnumValue::Int(raw) = value else {
+                        return None;
+                    };
+                    records.push_str(&format!("{raw};"));
+                }
+                Some(format!("value-enum:int:{}:{}:v1", type_identity, records))
+            }
+        }
+    }
+
+    /// Emit one generated `OrdinalKey` impl for a scalar value enum.
+    fn emit_ordinal_value_enum_bridge_impl(spec: OrdinalValueEnumBridgeSpec) -> TokenStream {
+        let type_path = spec.type_path;
+        let display_name = spec.display_name;
+        let encoding = spec.encoding;
+        let trait_path = spec.trait_path;
+        let error_path = spec.error_path;
+        let invalid_record = |detail: TokenStream| {
+            quote! {
+                #error_path::invalid_key_record(#detail, -1i64)
+            }
+        };
+        let invalid_utf8 = invalid_record(quote! { err.to_string() });
+        let invalid_value = invalid_record(quote! {
+            format!("invalid value for {}: {}", #display_name, value)
+        });
+        let invalid_length = invalid_record(quote! {
+            format!("{} OrdinalMap key bytes must be 8 bytes", #display_name)
+        });
+
+        match spec.value_type {
+            IrEnumValueType::String => quote! {
+                impl #trait_path for #type_path {
+                    fn ordinal_bytes(&self) -> Vec<u8> {
+                        self.value().as_bytes().to_vec()
+                    }
+
+                    fn ordinal_hash(&self) -> i64 {
+                        incan_stdlib::collections::__private::ordinal_key_hash_bytes(self.value().as_bytes())
+                    }
+
+                    fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
+                        self.value().as_bytes() == data.as_slice()
+                    }
+
+                    fn ordinal_encoding() -> String {
+                        #encoding.to_string()
+                    }
+
+                    fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, #error_path> {
+                        let value = String::from_utf8(data).map_err(|err| #invalid_utf8)?;
+                        Self::from_value(value.as_str()).ok_or_else(|| #invalid_value)
+                    }
+                }
+            },
+            IrEnumValueType::Int => quote! {
+                impl #trait_path for #type_path {
+                    fn ordinal_bytes(&self) -> Vec<u8> {
+                        self.value().to_le_bytes().to_vec()
+                    }
+
+                    fn ordinal_hash(&self) -> i64 {
+                        incan_stdlib::collections::__private::ordinal_key_hash_bytes(&self.value().to_le_bytes())
+                    }
+
+                    fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
+                        data.as_slice() == self.value().to_le_bytes().as_slice()
+                    }
+
+                    fn ordinal_encoding() -> String {
+                        #encoding.to_string()
+                    }
+
+                    fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, #error_path> {
+                        if data.len() != 8 {
+                            return Err(#invalid_length);
+                        }
+                        let mut bytes = [0u8; 8];
+                        bytes.copy_from_slice(data.as_slice());
+                        let value = i64::from_le_bytes(bytes);
+                        Self::from_value(value).ok_or_else(|| #invalid_value)
+                    }
+                }
+            },
+        }
+    }
+
+    /// Emit `OrdinalKey` impls for value enums when the ordinal-map contract is in scope.
+    fn emit_value_enum_ordinal_key_impls(
+        &self,
+        emitted_declarations: &[&IrDecl],
+        local_ordinal_key_trait: bool,
+        source_module_name: Option<&str>,
+        emit_local: bool,
+    ) -> TokenStream {
+        let local_trait_path = if local_ordinal_key_trait {
+            quote! { OrdinalKey }
+        } else {
+            quote! { crate::__incan_std::collections::OrdinalKey }
+        };
+        let local_error_path = if local_ordinal_key_trait {
+            quote! { OrdinalMapError }
+        } else {
+            quote! { crate::__incan_std::collections::OrdinalMapError }
+        };
+
+        let mut specs = Vec::new();
+        if emit_local {
+            for decl in emitted_declarations {
+                let IrDeclKind::Enum(e) = &decl.kind else {
+                    continue;
+                };
+                let Some(value_type) = e.value_type else {
+                    continue;
+                };
+                let Some(encoding) = self.value_enum_ordinal_encoding(e, source_module_name) else {
+                    continue;
+                };
+                let name = Self::rust_ident(&e.name);
+                specs.push(OrdinalValueEnumBridgeSpec {
+                    type_path: quote! { #name },
+                    display_name: e.name.clone(),
+                    encoding,
+                    value_type,
+                    trait_path: local_trait_path.clone(),
+                    error_path: local_error_path.clone(),
+                });
+            }
+        }
+
+        if !local_ordinal_key_trait {
+            let external_trait_path = quote! { crate::__incan_std::collections::OrdinalKey };
+            let external_error_path = quote! { crate::__incan_std::collections::OrdinalMapError };
+            for external in &self.external_ordinal_value_enums {
+                let Some(encoding) = Self::external_value_enum_ordinal_encoding(external) else {
+                    continue;
+                };
+                let dependency = Self::rust_ident(&external.dependency_key);
+                let name = Self::rust_ident(&external.name);
+                specs.push(OrdinalValueEnumBridgeSpec {
+                    type_path: quote! { :: #dependency :: #name },
+                    display_name: external.name.clone(),
+                    encoding,
+                    value_type: external.value_type,
+                    trait_path: external_trait_path.clone(),
+                    error_path: external_error_path.clone(),
+                });
+            }
+        }
+
+        let impls = specs
+            .into_iter()
+            .map(Self::emit_ordinal_value_enum_bridge_impl)
+            .collect::<Vec<_>>();
+
+        quote! { #(#impls)* }
+    }
+
+    /// Emit consumer-side `OrdinalKey` impls for user-authored key adopters imported from `.incnlib` dependencies.
+    fn emit_external_custom_ordinal_key_impls(&self) -> TokenStream {
+        if self.external_ordinal_custom_keys.is_empty() {
+            return quote! {};
+        }
+        let trait_path = quote! { crate::__incan_std::collections::OrdinalKey };
+        let error_path = quote! { crate::__incan_std::collections::OrdinalMapError };
+        let mut impls = Vec::new();
+        for external in &self.external_ordinal_custom_keys {
+            let dependency = Self::rust_ident(&external.dependency_key);
+            let name = Self::rust_ident(&external.name);
+            let type_path = quote! { :: #dependency :: #name };
+            let hash_body = if external.has_ordinal_hash {
+                quote! { #type_path::ordinal_hash(self) }
+            } else {
+                quote! {
+                    incan_stdlib::collections::__private::ordinal_key_hash_bytes(&#type_path::ordinal_bytes(self))
+                }
+            };
+            let bytes_equal_body = if external.has_ordinal_bytes_equal {
+                quote! { #type_path::ordinal_bytes_equal(self, data) }
+            } else {
+                quote! { #type_path::ordinal_bytes(self) == data }
+            };
+            impls.push(quote! {
+                impl #trait_path for #type_path {
+                    fn ordinal_bytes(&self) -> Vec<u8> {
+                        #type_path::ordinal_bytes(self)
+                    }
+
+                    fn ordinal_hash(&self) -> i64 {
+                        #hash_body
+                    }
+
+                    fn ordinal_bytes_equal(&self, data: Vec<u8>) -> bool {
+                        #bytes_equal_body
+                    }
+
+                    fn ordinal_encoding() -> String {
+                        #type_path::ordinal_encoding()
+                    }
+
+                    fn from_ordinal_bytes(data: Vec<u8>) -> Result<Self, #error_path> {
+                        match #type_path::from_ordinal_bytes(data) {
+                            Ok(value) => Ok(value),
+                            Err(err) => Err(#error_path::invalid_key_record(err.message(), err.index())),
+                        }
+                    }
+                }
+            });
+        }
+
+        quote! { #(#impls)* }
+    }
+
     /// Return the anonymous union shape needed by generated field overlay methods for a concrete struct.
     ///
     /// This mirrors `emit_field_overlay_methods_for_struct()` so the crate-level union definitions are available
@@ -1858,6 +2328,13 @@ impl<'a> IrEmitter<'a> {
         }
 
         // Emit all declarations.
+        let defines_ordinal_key_trait = Self::emitted_declarations_define_capability_trait(
+            program,
+            &emitted_declarations,
+            trait_capabilities::stable_ordinal_key(),
+        );
+        let imports_std_ordinal_contract =
+            Self::emitted_declarations_import_std_collections_ordinal_contract(&emitted_declarations);
         let mut decl_items = Vec::new();
         for decl in &emitted_declarations {
             decl_items.push(self.emit_decl(decl)?);
@@ -1877,7 +2354,7 @@ impl<'a> IrEmitter<'a> {
             }
         }
         let empty_methods = HashSet::new();
-        for decl in emitted_declarations {
+        for decl in &emitted_declarations {
             if let IrDeclKind::Struct(strukt) = &decl.kind
                 && let Some(overlay_impl) = self.emit_field_overlay_methods_for_struct(
                     strukt,
@@ -1890,6 +2367,20 @@ impl<'a> IrEmitter<'a> {
 
         // Add the declarations after imports
         items.extend(decl_items);
+        if defines_ordinal_key_trait {
+            items.push(self.emit_builtin_ordinal_key_impls());
+        }
+        let emit_local_ordinal_value_enums =
+            defines_ordinal_key_trait || imports_std_ordinal_contract || self.emit_std_ordinal_value_enum_impls;
+        items.push(self.emit_value_enum_ordinal_key_impls(
+            &emitted_declarations,
+            defines_ordinal_key_trait,
+            program.source_module_name.as_deref(),
+            emit_local_ordinal_value_enums,
+        ));
+        if !defines_ordinal_key_trait {
+            items.push(self.emit_external_custom_ordinal_key_impls());
+        }
 
         Ok(quote! {
             #(#items)*

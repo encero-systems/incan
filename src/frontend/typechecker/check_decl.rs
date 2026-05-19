@@ -4035,6 +4035,7 @@ impl TypeChecker {
                         .iter()
                         .map(|bound| TypeBoundInfo {
                             name: bound.name.clone(),
+                            source_name: None,
                             type_args: bound
                                 .type_args
                                 .iter()

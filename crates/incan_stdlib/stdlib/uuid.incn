@@ -5,7 +5,9 @@ UUID parsing, formatting, inspection, and generation helpers.
 """
 
 from rust::rand import Rng, thread_rng
+from rust::incan_stdlib::errors import raise_value_error
 from rust::std::string import String as RustString
+from std.collections import OrdinalKey, OrdinalMapError
 from std.datetime.runtime import SystemTime
 from std.hash import md5 as hash_md5, sha1 as hash_sha1
 from std.io import BytesIO, Endian, IoError, _BytesIO
@@ -106,7 +108,7 @@ pub model UuidError with Error:
         return self.detail
 
 @derive(Clone, Copy, Eq, Ord, Hash)
-pub type UUID = newtype u128:
+pub type UUID = newtype u128 with OrdinalKey:
     """
     RFC 9562 UUID value stored as one unsigned 128-bit integer.
 
@@ -146,6 +148,22 @@ pub type UUID = newtype u128:
             A UUID preserving exactly the supplied bits.
         """
         return UUID(value)
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """
+        Return the stable `OrdinalMap` key encoding identifier for UUID values.
+        """
+        return "uuid:rfc9562-bytes"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """
+        Decode UUID key bytes from an `OrdinalMap` payload.
+        """
+        match UUID.from_bytes(data):
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(OrdinalMapError.invalid_key_record(err.message()))
 
     @staticmethod
     def from_bytes(raw: bytes) -> Result[Self, UuidError]:
@@ -280,6 +298,14 @@ pub type UUID = newtype u128:
         writer = _uuid_writer("to_bytes")
         writer.u128(self.0)?
         return Ok(writer.raw())
+
+    def ordinal_bytes(self) -> bytes:
+        """
+        Return canonical UUID bytes for `OrdinalMap`.
+        """
+        match self.to_bytes():
+            Ok(value) => return value
+            Err(err) => return raise_value_error(err.detail)
 
     def canonical(self) -> Result[str, UuidError]:
         """

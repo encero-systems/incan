@@ -6,6 +6,32 @@ RFC 030 defines `std.collections` as an explicit stdlib namespace for specialize
 internally rather than Rust-backed dispatch.
 """
 
+from rust::incan_stdlib::errors import raise_key_error, raise_value_error
+from rust::std::string import String as RustString
+from std.hash import xxh3_64
+from std.traits.error import Error
+
+
+const _ORDINAL_MAP_VERSION: int = 1
+const _ORDINAL_MAP_FLAGS: int = 0
+const _ORDINAL_MAP_LOOKUP_OPEN_ADDRESSING: str = "open-addressing:v1"
+const _ORDINAL_MAP_VERIFY_EXACT_BYTES: int = 1
+const _ORDINAL_ENCODING_STR: str = "str:utf8"
+const _ORDINAL_ENCODING_BYTES: str = "bytes:raw"
+const _ORDINAL_ENCODING_BOOL: str = "bool:u8"
+const _ORDINAL_ENCODING_DECIMAL: str = "decimal128:coefficient-i128-le:scale-u8"
+const _ORDINAL_ENCODING_UUID: str = "uuid:rfc9562-bytes"
+const _ORDINAL_ENCODING_I8: str = "int:i8:le"
+const _ORDINAL_ENCODING_I16: str = "int:i16:le"
+const _ORDINAL_ENCODING_I32: str = "int:i32:le"
+const _ORDINAL_ENCODING_I64: str = "int:i64:le"
+const _ORDINAL_ENCODING_I128: str = "int:i128:le"
+const _ORDINAL_ENCODING_U8: str = "uint:u8:le"
+const _ORDINAL_ENCODING_U16: str = "uint:u16:le"
+const _ORDINAL_ENCODING_U32: str = "uint:u32:le"
+const _ORDINAL_ENCODING_U64: str = "uint:u64:le"
+const _ORDINAL_ENCODING_U128: str = "uint:u128:le"
+
 
 pub enum PriorityOrder:
     """
@@ -22,6 +48,533 @@ pub enum PriorityOrder:
 pub model _MapEntry[K with Clone, V with Clone]:
     pub key: K
     pub value: V
+
+
+@derive(Clone)
+pub enum OrdinalMapErrorKind(str):
+    """
+    Stable categories for `OrdinalMap` failures.
+
+    The string value is the serialized and diagnostic spelling. Prefer the enum value for source branching and use
+    `as_str()` when a stable text category is needed.
+    """
+
+    InvalidKeyRecord = "invalid_key_record"
+    InvalidKeyEncoding = "invalid_key_encoding"
+    NegativeOrdinal = "negative_ordinal"
+    DuplicateKey = "duplicate_key"
+    DuplicateOrdinal = "duplicate_ordinal"
+    HashCollision = "hash_collision"
+    InvalidMagic = "invalid_magic"
+    UnsupportedVersion = "unsupported_version"
+    UnsupportedFlags = "unsupported_flags"
+    KeyEncodingMismatch = "key_encoding_mismatch"
+    UnsupportedLookup = "unsupported_lookup"
+    UnsupportedVerification = "unsupported_verification"
+    InvalidOrdinalWidth = "invalid_ordinal_width"
+    TrailingBytes = "trailing_bytes"
+    InvalidOrdinals = "invalid_ordinals"
+    NonCanonicalOrdinalWidth = "non_canonical_ordinal_width"
+    NonCanonicalKeyPayload = "non_canonical_key_payload"
+    InvalidLookupPayload = "invalid_lookup_payload"
+    UnsupportedMetadata = "unsupported_metadata"
+    InvalidLength = "invalid_length"
+    Truncated = "truncated"
+    InvalidKeyRecords = "invalid_key_records"
+    InvalidKeyOffsets = "invalid_key_offsets"
+    MissingKey = "missing_key"
+
+    def as_str(self) -> str:
+        """
+        Return the stable error-kind spelling.
+        """
+        return self.value()
+
+
+@derive(Clone)
+pub model OrdinalMapError with Error:
+    """
+    Error returned by `OrdinalMap` construction and byte decoding.
+    """
+
+    _kind: OrdinalMapErrorKind = OrdinalMapErrorKind.InvalidKeyRecord
+    _kind_name: str = OrdinalMapErrorKind.InvalidKeyRecord.as_str()
+    _detail: str = ""
+    _index: int = -1
+
+    @staticmethod
+    def invalid_key_record(detail: str, index: int = -1) -> Self:
+        """
+        Build the standard malformed-key-record error used by `OrdinalKey.from_ordinal_bytes()`.
+        """
+        return OrdinalMapError.from_kind(OrdinalMapErrorKind.InvalidKeyRecord, detail, index)
+
+    @staticmethod
+    def from_kind(kind: OrdinalMapErrorKind, detail: str, index: int = -1) -> Self:
+        """
+        Build a structured ordinal-map error from its typed category.
+        """
+        return OrdinalMapError(
+            _kind=kind,
+            _kind_name=kind.as_str(),
+            _detail=detail,
+            _index=index,
+        )
+
+    def kind(self) -> OrdinalMapErrorKind:
+        """
+        Return the typed stable error category.
+        """
+        return self._kind
+
+    def kind_name(self) -> str:
+        """
+        Return the stable error category spelling.
+        """
+        return self._kind_name
+
+    def message(self) -> str:
+        """
+        Return the human-readable failure detail.
+        """
+        return self._detail
+
+    def index(self) -> int:
+        """
+        Return the relevant input or byte offset when the error can identify one.
+        """
+        return self._index
+
+    def source(self) -> Option[str]:
+        """
+        Ordinal map errors currently do not wrap structured source errors.
+        """
+        return None
+
+
+pub trait OrdinalKey:
+    """
+    Deterministic byte encoding contract for `OrdinalMap` keys.
+
+    Implementations must return canonical bytes: equal keys produce identical bytes, and the byte form must be stable
+    across processes. Floating point values intentionally do not adopt this trait in `std`.
+    """
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """
+        Return this key type's stable encoding identifier.
+
+        The identifier is stored in serialized maps and must change whenever the canonical byte layout changes in an
+        incompatible way. User-authored identifiers must be non-empty, namespaced, and versioned so stale payloads fail
+        clearly instead of decoding as a different key shape.
+        """
+        ...
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """
+        Decode one canonical key record from serialized bytes.
+
+        Implementations must reject malformed byte payloads with `invalid_key_record` instead of silently repairing or
+        truncating data. The decoded value must round-trip back to the same `ordinal_bytes()` output.
+        """
+        ...
+
+    def ordinal_bytes(self) -> bytes:
+        """
+        Return this value's canonical byte representation.
+
+        Equal key values must produce identical bytes across processes and supported platforms. Different values of the
+        same key type should produce different bytes so construction can detect duplicate keys before packing.
+        """
+        ...
+
+    def ordinal_hash(self) -> int:
+        """
+        Hash this key's canonical bytes for `OrdinalMap` lookup.
+
+        Builtin key implementations override this to avoid materializing a fresh byte vector before every lookup.
+        """
+        return _ordinal_hash(self.ordinal_bytes())
+
+    def ordinal_bytes_equal(self, data: bytes) -> bool:
+        """
+        Return whether `data` is this key's canonical byte representation.
+
+        Builtin key implementations override this to compare borrowed key bytes without allocating query bytes.
+        """
+        return self.ordinal_bytes() == data
+
+
+@derive(Clone)
+model _OrdinalRecord[K with (Clone, OrdinalKey)]:
+    """
+    Validated construction record before canonical ordering and compact packing.
+    """
+
+    key: K
+    key_bytes: bytes
+    ordinal: int
+    hash: int
+
+
+@derive(Clone)
+pub class OrdinalMap[K with (Clone, OrdinalKey)]:
+    """
+    Compact immutable mapping from deterministic keys to non-negative ordinals.
+
+    Construction validates duplicate keys, duplicate ordinals, negative ordinals, and stored hash collisions. Safe
+    lookup verifies canonical key bytes before returning an ordinal; unchecked lookup is explicit and skips that final
+    byte comparison after a hash match.
+    """
+
+    key_values: list[K] = []
+    key_records: bytes = b""
+    key_byte_values: list[bytes] = []
+    key_offsets: bytes = b""
+    key_offset_width: int = 1
+    ordinals: bytes = b""
+    ordinal_values: list[int] = []
+    ordinal_width: int = 1
+    hash_values: list[int] = []
+    slots: bytes = b""
+    slot_values: list[int] = []
+    slot_width: int = 1
+    slot_count_value: int = 0
+    max_ordinal_value: int = -1
+    key_encoding_value: str = ""
+    lookup_algorithm_value: str = _ORDINAL_MAP_LOOKUP_OPEN_ADDRESSING
+    verification_mode_value: int = _ORDINAL_MAP_VERIFY_EXACT_BYTES
+    metadata: bytes = b""
+
+    @staticmethod
+    def __incan_new() -> Self:
+        """
+        Create an empty ordinal map.
+        """
+        empty: list[_OrdinalRecord[K]] = []
+        key_encoding = _validate_ordinal_encoding_or_raise(K.ordinal_encoding())
+        return _ordinal_map_from_records(empty, -1, key_encoding)
+
+    @staticmethod
+    def from_keys(keys: list[K]) -> Result[Self, OrdinalMapError]:
+        """
+        Build an ordinal map where each key maps to its zero-based input position.
+
+        Duplicate keys are rejected.
+        """
+        mut pairs: list[Tuple[K, int]] = []
+        for index, key in enumerate(keys):
+            pairs.append((key, index))
+        return OrdinalMap.from_pairs(pairs)
+
+    @staticmethod
+    def from_pairs(pairs: list[Tuple[K, int]]) -> Result[Self, OrdinalMapError]:
+        """
+        Build a compact ordinal map from `(key, ordinal)` pairs.
+
+        Duplicate keys, duplicate ordinals, negative ordinals, and stored hash collisions are rejected.
+        """
+        mut records: list[_OrdinalRecord[K]] = []
+        mut seen_keys: Dict[bytes, int] = {}
+        mut seen_ordinals: Dict[int, int] = {}
+        mut seen_hashes: Dict[int, int] = {}
+        mut max_ordinal = -1
+        key_encoding = _validate_ordinal_encoding(K.ordinal_encoding())?
+        for index, pair in enumerate(pairs):
+            key, ordinal = pair
+            if ordinal < 0:
+                return Err(_ordinal_map_error(OrdinalMapErrorKind.NegativeOrdinal, "OrdinalMap ordinals must be non-negative", index))
+            key_bytes = key.ordinal_bytes()
+            hash = key.ordinal_hash()
+            if key_bytes in seen_keys:
+                return Err(_ordinal_map_error(OrdinalMapErrorKind.DuplicateKey, "OrdinalMap keys must be unique", index))
+            if ordinal in seen_ordinals:
+                return Err(_ordinal_map_error(OrdinalMapErrorKind.DuplicateOrdinal, "OrdinalMap ordinals must be unique", index))
+            if hash in seen_hashes:
+                return Err(_ordinal_map_error(OrdinalMapErrorKind.HashCollision, "OrdinalMap rejected a stored key hash collision", index))
+            seen_keys[key_bytes] = index
+            seen_ordinals[ordinal] = index
+            seen_hashes[hash] = index
+            if ordinal > max_ordinal:
+                max_ordinal = ordinal
+            records.append(_OrdinalRecord(key=key, key_bytes=key_bytes, ordinal=ordinal, hash=hash))
+        return Ok(_ordinal_map_from_records(records, max_ordinal, key_encoding))
+
+    @staticmethod
+    def from_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """
+        Decode the deterministic binary `OrdinalMap` container.
+        """
+        mut reader = _OrdinalMapReader(data=data, offset=0)
+        magic = reader.read_exact(len(_ordinal_map_magic()))?
+        if magic != _ordinal_map_magic():
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidMagic, "OrdinalMap bytes have an invalid magic prefix", 0))
+        version = reader.read_u16_le()?
+        if version != _ORDINAL_MAP_VERSION:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.UnsupportedVersion, "OrdinalMap bytes use an unsupported version", 0))
+        flags = reader.read_u16_le()?
+        if flags != _ORDINAL_MAP_FLAGS:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.UnsupportedFlags, "OrdinalMap bytes use unsupported flags", 0))
+        key_encoding = reader.read_u16_prefixed_bytes()?
+        target_key_encoding = _validate_ordinal_encoding(K.ordinal_encoding())?
+        if key_encoding != _utf8_bytes(target_key_encoding):
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.KeyEncodingMismatch, "OrdinalMap key encoding does not match the target type", 0))
+        key_count = reader.read_u64_le()?
+        ordinal_width = reader.read_u8()?
+        lookup_algorithm = reader.read_u16_prefixed_bytes()?
+        verification_mode = reader.read_u8()?
+        if lookup_algorithm != _utf8_bytes(_ORDINAL_MAP_LOOKUP_OPEN_ADDRESSING):
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.UnsupportedLookup, "OrdinalMap bytes use an unsupported lookup algorithm", 0))
+        if verification_mode != _ORDINAL_MAP_VERIFY_EXACT_BYTES:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.UnsupportedVerification, "OrdinalMap bytes use an unsupported verification mode", 0))
+        if ordinal_width != 1 and ordinal_width != 2 and ordinal_width != 4 and ordinal_width != 8:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidOrdinalWidth, "OrdinalMap bytes use an invalid ordinal width", 0))
+
+        key_section = reader.read_section()?
+        ordinal_section = reader.read_section()?
+        lookup_section = reader.read_section()?
+        metadata_section = reader.read_section()?
+        if reader.remaining() != 0:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.TrailingBytes, "OrdinalMap bytes contain trailing data", reader.offset))
+
+        records = _decode_ordinal_key_records[K](key_section, key_count)?
+        if len(ordinal_section) != key_count * ordinal_width:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidOrdinals, "OrdinalMap ordinal section length is invalid", 0))
+        mut pairs: list[Tuple[K, int]] = []
+        for index in range(key_count):
+            ordinal = _read_compact_int(ordinal_section, index * ordinal_width, ordinal_width)
+            pairs.append((records[index], ordinal))
+        decoded = OrdinalMap.from_pairs(pairs)?
+        if decoded.ordinal_width != ordinal_width:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.NonCanonicalOrdinalWidth, "OrdinalMap ordinal width is not canonical", 0))
+        expected_key_section = _ordinal_key_section(decoded.key_offset_width, decoded.key_offsets, decoded.key_records)
+        if key_section != expected_key_section:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.NonCanonicalKeyPayload, "OrdinalMap key payload is not canonical", 0))
+        expected_lookup_section = _ordinal_lookup_section(decoded.slot_width, decoded.slot_count_value, decoded.slots)
+        if lookup_section != expected_lookup_section:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidLookupPayload, "OrdinalMap lookup payload does not match stored keys and ordinals", 0))
+        if metadata_section != decoded.metadata:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.UnsupportedMetadata, "OrdinalMap metadata payload is not supported by this format version", 0))
+        return Ok(decoded)
+
+    def __len__(self) -> int:
+        """
+        Return the number of keys.
+        """
+        return len(self.key_values)
+
+    def __iter__(self) -> list[K]:
+        """
+        Iterate over keys in canonical ordinal order.
+        """
+        return self.key_values
+
+    def __contains__(self, key: K) -> bool:
+        """
+        Check whether a key is present using exact byte verification.
+        """
+        return self._find_record(key, true) >= 0
+
+    def __getitem__(self, key: K) -> int:
+        """
+        Return the ordinal for a key, raising when the key is absent.
+        """
+        match self.require(key):
+            Ok(value) => return value
+            Err(_) => return _missing_ordinal()
+
+    def get(self, key: K) -> Option[int]:
+        """
+        Safely look up a key using exact byte verification.
+        """
+        index = self._find_record(key, true)
+        if index < 0:
+            return None
+        return Some(self._ordinal_at(index))
+
+    def require(self, key: K) -> Result[int, OrdinalMapError]:
+        """
+        Safely look up a key, returning an error when it is absent.
+        """
+        match self.get(key):
+            Some(value) => return Ok(value)
+            None => return Err(_ordinal_map_error(OrdinalMapErrorKind.MissingKey, "OrdinalMap key is not present", -1))
+
+    def get_unchecked(self, key: K) -> int:
+        """
+        Look up a key without exact key-byte verification after a hash match.
+
+        Present-key lookup remains correct because construction rejects stored hash collisions. Missing-key behavior is
+        implementation-specific when the query hashes to a stored key.
+        """
+        index = self._find_record(key, false)
+        if index < 0:
+            return _missing_ordinal()
+        return self._ordinal_at(index)
+
+    def get_many(self, keys: list[K]) -> list[Option[int]]:
+        """
+        Safely look up multiple keys using exact byte verification.
+        """
+        mut out: list[Option[int]] = []
+        for key in keys:
+            index = self._find_record(key, true)
+            if index < 0:
+                out.append(None)
+            else:
+                out.append(Some(self._ordinal_at(index)))
+        return out
+
+    def require_many(self, keys: list[K]) -> Result[list[int], OrdinalMapError]:
+        """
+        Safely look up multiple keys, failing on the first missing key.
+        """
+        mut out: list[int] = []
+        for index, key in enumerate(keys):
+            record_index = self._find_record(key, true)
+            if record_index < 0:
+                return Err(_ordinal_map_error(OrdinalMapErrorKind.MissingKey, "OrdinalMap key is not present", index))
+            out.append(self._ordinal_at(record_index))
+        return Ok(out)
+
+    def get_many_unchecked(self, keys: list[K]) -> list[int]:
+        """
+        Look up multiple keys through the explicit unchecked path.
+
+        This skips exact byte verification after each hash match. Callers must already have proven every key is present;
+        missing-key behavior is implementation-specific when a query hashes to a stored key.
+        """
+        mut out: list[int] = []
+        for key in keys:
+            index = self._find_record(key, false)
+            if index < 0:
+                out.append(_missing_ordinal())
+            else:
+                out.append(self._ordinal_at(index))
+        return out
+
+    def keys(self) -> list[K]:
+        """
+        Return keys in canonical ordinal order.
+        """
+        return self.key_values
+
+    keys_list = alias keys
+
+    def max_ordinal(self) -> int:
+        """
+        Return the largest stored ordinal, or `-1` for an empty map.
+        """
+        return self.max_ordinal_value
+
+    def key_count(self) -> int:
+        """
+        Return the number of stored keys.
+        """
+        return len(self.key_values)
+
+    def ordinal_width_bytes(self) -> int:
+        """
+        Return the compact byte width used for each ordinal cell.
+        """
+        return self.ordinal_width
+
+    def slot_count(self) -> int:
+        """
+        Return the number of open-addressed lookup slots.
+        """
+        return self.slot_count_value
+
+    def storage_bytes(self) -> int:
+        """
+        Return the byte count used by compact storage sections.
+        """
+        return len(self.key_records) + len(self.key_offsets) + len(self.ordinals) + len(self.slots) + len(self.metadata)
+
+    # Compatibility spelling for callers that expect NumPy-style byte-size inspection.
+    nbytes = alias storage_bytes
+
+    def serialized_size(self) -> int:
+        """
+        Return the size of the deterministic serialized container.
+        """
+        return len(self.to_bytes())
+
+    def to_bytes(self) -> bytes:
+        """
+        Serialize this map using the deterministic `INCAN_ORDMAP` binary container.
+        """
+        key_section = _ordinal_key_section(self.key_offset_width, self.key_offsets, self.key_records)
+        lookup_section = _ordinal_lookup_section(self.slot_width, self.slot_count_value, self.slots)
+        mut out: list[u8] = []
+        _append_bytes(out, _ordinal_map_magic())
+        _append_u16_le(out, _ORDINAL_MAP_VERSION)
+        _append_u16_le(out, _ORDINAL_MAP_FLAGS)
+        _append_u16_prefixed_bytes(out, _utf8_bytes(self.key_encoding_value))
+        _append_u64_le(out, len(self.key_values))
+        _append_byte(out, self.ordinal_width)
+        _append_u16_prefixed_bytes(out, _utf8_bytes(self.lookup_algorithm_value))
+        _append_byte(out, self.verification_mode_value)
+        _append_section(out, key_section)
+        _append_section(out, self.ordinals)
+        _append_section(out, lookup_section)
+        _append_section(out, self.metadata)
+        return out
+
+    def _ordinal_at(self, record_index: int) -> int:
+        """
+        Return the stored ordinal for a compact record index.
+        """
+        if record_index < len(self.ordinal_values):
+            return self.ordinal_values[record_index]
+        return _read_compact_int(self.ordinals, record_index * self.ordinal_width, self.ordinal_width)
+
+    def _key_bytes_at(self, record_index: int) -> bytes:
+        """
+        Return the canonical key bytes stored for a compact record index.
+        """
+        if record_index < len(self.key_byte_values):
+            return self.key_byte_values[record_index]
+        start = _read_compact_int(self.key_offsets, record_index * self.key_offset_width, self.key_offset_width)
+        end = _read_compact_int(self.key_offsets, (record_index + 1) * self.key_offset_width, self.key_offset_width)
+        return self.key_records[start:end]
+
+    def _hash_at(self, record_index: int) -> int:
+        """
+        Return the stored hash for a compact record index.
+        """
+        return self.hash_values[record_index]
+
+    def _slot_at(self, slot_index: int) -> int:
+        """
+        Return the one-based record index encoded in an open-addressed slot.
+        """
+        if slot_index < len(self.slot_values):
+            return self.slot_values[slot_index]
+        return _read_compact_int(self.slots, slot_index * self.slot_width, self.slot_width)
+
+    def _find_record(self, key: K, verify_exact: bool) -> int:
+        """
+        Locate a record index by hash probe, optionally confirming exact key bytes.
+        """
+        if self.slot_count_value == 0:
+            return -1
+        hash = key.ordinal_hash()
+        mut slot = hash % self.slot_count_value
+        mut probes = 0
+        while probes < self.slot_count_value:
+            encoded = self._slot_at(slot)
+            if encoded == 0:
+                return -1
+            record_index = encoded - 1
+            if self._hash_at(record_index) == hash:
+                if not verify_exact or key.ordinal_bytes_equal(self._key_bytes_at(record_index)):
+                    return record_index
+            slot = (slot + 1) % self.slot_count_value
+            probes += 1
+        return -1
 
 
 @derive(Clone)
@@ -1623,6 +2176,473 @@ pub model PriorityQueue[T with (Clone, Ord)]:
         match self.order:
             PriorityOrder.MinFirst => return left < right
             PriorityOrder.MaxFirst => return right < left
+
+
+model _OrdinalMapReader:
+    """
+    Cursor reader for the deterministic `INCAN_ORDMAP` byte container.
+    """
+
+    data: bytes
+    offset: int
+
+    def remaining(self) -> int:
+        """
+        Return unread bytes remaining in the container.
+        """
+        return len(self.data) - self.offset
+
+    def read_u8(mut self) -> Result[int, OrdinalMapError]:
+        """
+        Read one unsigned byte from the current cursor.
+        """
+        if self.remaining() < 1:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.Truncated, "OrdinalMap bytes ended unexpectedly", self.offset))
+        value = int(self.data[self.offset])
+        self.offset += 1
+        return Ok(value)
+
+    def read_u16_le(mut self) -> Result[int, OrdinalMapError]:
+        """
+        Read a little-endian 16-bit container field.
+        """
+        raw = self.read_exact(2)?
+        return Ok(_read_u16_le(raw, 0))
+
+    def read_u16_prefixed_bytes(mut self) -> Result[bytes, OrdinalMapError]:
+        """
+        Read a UTF-8 identifier or small payload prefixed by a little-endian `u16` length.
+        """
+        size = self.read_u16_le()?
+        return self.read_exact(size)
+
+    def read_u64_le(mut self) -> Result[int, OrdinalMapError]:
+        """
+        Read a little-endian 64-bit container field.
+        """
+        raw = self.read_exact(8)?
+        return Ok(_read_u64_le(raw, 0))
+
+    def read_exact(mut self, size: int) -> Result[bytes, OrdinalMapError]:
+        """
+        Read exactly `size` bytes from the current cursor.
+        """
+        if size < 0:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidLength, "OrdinalMap section length is invalid", self.offset))
+        if self.remaining() < size:
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.Truncated, "OrdinalMap bytes ended unexpectedly", self.offset))
+        start = self.offset
+        self.offset += size
+        return Ok(self.data[start:self.offset])
+
+    def read_section(mut self) -> Result[bytes, OrdinalMapError]:
+        """
+        Read a length-prefixed container section.
+        """
+        size = self.read_u64_le()?
+        return self.read_exact(size)
+
+
+def _ordinal_map_from_records[K with (Clone, OrdinalKey)](
+    records: list[_OrdinalRecord[K]],
+    max_ordinal: int,
+    key_encoding: str,
+) -> OrdinalMap[K]:
+    """
+    Build compact storage sections and lookup slots from validated ordinal records.
+    """
+    canonical_records = _canonical_ordinal_records(records)
+    ordinal_width = _compact_width(max_ordinal)
+    key_offset_width = _compact_width(_total_key_record_bytes(canonical_records))
+    slot_count = _ordinal_slot_count(len(canonical_records))
+    slot_width = _compact_width(len(canonical_records) + 1)
+
+    mut keys: list[K] = []
+    mut key_byte_values: list[bytes] = []
+    mut key_records: list[u8] = []
+    mut key_offsets: list[u8] = []
+    mut ordinal_values: list[int] = []
+    mut ordinals: list[u8] = []
+    mut hash_values: list[int] = []
+    mut slots_values: list[int] = []
+    mut offset = 0
+    for _ in range(slot_count):
+        slots_values.append(0)
+    _append_compact_int(key_offsets, offset, key_offset_width)
+    for index in range(len(canonical_records)):
+        record = canonical_records[index]
+        keys.append(record.key)
+        key_byte_values.append(record.key_bytes)
+        _append_bytes(key_records, record.key_bytes)
+        offset += len(record.key_bytes)
+        _append_compact_int(key_offsets, offset, key_offset_width)
+        ordinal_values.append(record.ordinal)
+        _append_compact_int(ordinals, record.ordinal, ordinal_width)
+        hash_values.append(record.hash)
+        if slot_count > 0:
+            mut slot = record.hash % slot_count
+            while slots_values[slot] != 0:
+                slot = (slot + 1) % slot_count
+            slots_values[slot] = index + 1
+
+    mut slots: list[u8] = []
+    for value in slots_values:
+        _append_compact_int(slots, value, slot_width)
+
+    return OrdinalMap(
+        key_values=keys,
+        key_records=key_records,
+        key_byte_values=key_byte_values,
+        key_offsets=key_offsets,
+        key_offset_width=key_offset_width,
+        ordinals=ordinals,
+        ordinal_values=ordinal_values,
+        ordinal_width=ordinal_width,
+        hash_values=hash_values,
+        slots=slots,
+        slot_values=slots_values,
+        slot_width=slot_width,
+        slot_count_value=slot_count,
+        max_ordinal_value=max_ordinal,
+        key_encoding_value=key_encoding,
+        lookup_algorithm_value=_ORDINAL_MAP_LOOKUP_OPEN_ADDRESSING,
+        verification_mode_value=_ORDINAL_MAP_VERIFY_EXACT_BYTES,
+        metadata=b"",
+    )
+
+
+def _canonical_ordinal_records[K with (Clone, OrdinalKey)](
+    source: list[_OrdinalRecord[K]],
+) -> list[_OrdinalRecord[K]]:
+    """
+    Return records in canonical ordinal order for deterministic `from_pairs` serialization.
+    """
+    if len(source) < 2 or _ordinal_records_are_sorted(source):
+        return source
+    return _sort_ordinal_records(source)
+
+
+def _ordinal_records_are_sorted[K with (Clone, OrdinalKey)](
+    records: list[_OrdinalRecord[K]],
+) -> bool:
+    """
+    Return whether records are already in ascending ordinal order.
+    """
+    mut index = 1
+    while index < len(records):
+        if records[index].ordinal < records[index - 1].ordinal:
+            return False
+        index += 1
+    return True
+
+
+def _sort_ordinal_records[K with (Clone, OrdinalKey)](
+    records: list[_OrdinalRecord[K]],
+) -> list[_OrdinalRecord[K]]:
+    """
+    Sort records by ordinal with deterministic merge sort.
+    """
+    if len(records) < 2:
+        return records
+    midpoint = len(records) // 2
+    left = _sort_ordinal_records(records[:midpoint])
+    right = _sort_ordinal_records(records[midpoint:])
+    return _merge_ordinal_records(left, right)
+
+
+def _merge_ordinal_records[K with (Clone, OrdinalKey)](
+    left: list[_OrdinalRecord[K]],
+    right: list[_OrdinalRecord[K]],
+) -> list[_OrdinalRecord[K]]:
+    """
+    Merge two ordinal-sorted record lists.
+    """
+    mut out: list[_OrdinalRecord[K]] = []
+    mut left_index = 0
+    mut right_index = 0
+    while left_index < len(left) and right_index < len(right):
+        if left[left_index].ordinal <= right[right_index].ordinal:
+            out.append(left[left_index])
+            left_index += 1
+        else:
+            out.append(right[right_index])
+            right_index += 1
+    while left_index < len(left):
+        out.append(left[left_index])
+        left_index += 1
+    while right_index < len(right):
+        out.append(right[right_index])
+        right_index += 1
+    return out
+
+
+def _ordinal_map_magic() -> bytes:
+    """
+    Return the fixed `OrdinalMap` container magic prefix.
+    """
+    return b"INCAN_ORDMAP\0"
+
+
+def _decode_ordinal_key_records[K with (Clone, OrdinalKey)](
+    section: bytes,
+    key_count: int,
+) -> Result[list[K], OrdinalMapError]:
+    """
+    Decode canonical key records from a serialized key section.
+    """
+    if len(section) < 1:
+        return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidKeyRecords, "OrdinalMap key record section is empty", 0))
+    offset_width = int(section[0])
+    if offset_width != 1 and offset_width != 2 and offset_width != 4 and offset_width != 8:
+        return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidKeyOffsets, "OrdinalMap key offset width is invalid", 0))
+    offsets_len = (key_count + 1) * offset_width
+    if len(section) < 1 + offsets_len:
+        return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidKeyOffsets, "OrdinalMap key offsets are truncated", 0))
+    offsets = section[1:1 + offsets_len]
+    records = section[1 + offsets_len:]
+    total = _read_compact_int(offsets, key_count * offset_width, offset_width)
+    if total != len(records):
+        return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidKeyRecords, "OrdinalMap key record bytes do not match offsets", 0))
+    mut out: list[K] = []
+    mut previous = 0
+    for index in range(key_count):
+        start = _read_compact_int(offsets, index * offset_width, offset_width)
+        end = _read_compact_int(offsets, (index + 1) * offset_width, offset_width)
+        if start != previous or end < start or end > len(records):
+            return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidKeyOffsets, "OrdinalMap key offsets are not canonical", index))
+        out.append(K.from_ordinal_bytes(records[start:end])?)
+        previous = end
+    return Ok(out)
+
+
+def _total_key_record_bytes[K with (Clone, OrdinalKey)](records: list[_OrdinalRecord[K]]) -> int:
+    """
+    Return the total byte length of all canonical key records.
+    """
+    mut total = 0
+    for record in records:
+        total += len(record.key_bytes)
+    return total
+
+
+def _ordinal_slot_count(key_count: int) -> int:
+    """
+    Return the deterministic open-addressed slot count for a key count.
+    """
+    if key_count == 0:
+        return 0
+    mut slots = 1
+    target = key_count * 2
+    while slots < target:
+        slots *= 2
+    return slots
+
+
+def _ordinal_hash(data: bytes) -> int:
+    """
+    Hash canonical key bytes into the non-negative lookup domain.
+    """
+    return int(xxh3_64.hash_u64(data) % 9223372036854775807)
+
+
+def _compact_width(max_value: int) -> int:
+    """
+    Choose the smallest supported byte width for a non-negative integer domain.
+    """
+    if max_value <= 255:
+        return 1
+    if max_value <= 65535:
+        return 2
+    if max_value <= 4294967295:
+        return 4
+    return 8
+
+
+def _ordinal_key_section(offset_width: int, offsets: bytes, records: bytes) -> bytes:
+    """
+    Assemble the serialized key section from offset metadata and key bytes.
+    """
+    mut out: list[u8] = []
+    _append_byte(out, offset_width)
+    _append_bytes(out, offsets)
+    _append_bytes(out, records)
+    return out
+
+
+def _ordinal_lookup_section(slot_width: int, slot_count: int, slots: bytes) -> bytes:
+    """
+    Assemble the serialized lookup section from slot metadata.
+    """
+    mut out: list[u8] = []
+    _append_byte(out, slot_width)
+    _append_u64_le(out, slot_count)
+    _append_bytes(out, slots)
+    return out
+
+
+def _append_section(mut out: list[u8], section: bytes) -> None:
+    """
+    Append a length-prefixed binary section to a container buffer.
+    """
+    _append_u64_le(out, len(section))
+    _append_bytes(out, section)
+
+
+def _append_bytes(mut out: list[u8], data: bytes) -> None:
+    """
+    Append raw bytes to a container buffer.
+    """
+    for index in range(len(data)):
+        out.append(data[index])
+
+
+def _append_compact_int(mut out: list[u8], value: int, width: int) -> None:
+    """
+    Append a non-negative integer using the selected compact little-endian width.
+    """
+    _append_byte(out, value % 256)
+    if width >= 2:
+        _append_byte(out, (value // 256) % 256)
+    if width >= 4:
+        _append_byte(out, (value // 65536) % 256)
+        _append_byte(out, (value // 16777216) % 256)
+    if width >= 8:
+        _append_byte(out, (value // 4294967296) % 256)
+        _append_byte(out, (value // 1099511627776) % 256)
+        _append_byte(out, (value // 281474976710656) % 256)
+        _append_byte(out, (value // 72057594037927936) % 256)
+
+
+def _append_u16_le(mut out: list[u8], value: int) -> None:
+    """
+    Append a little-endian 16-bit container field.
+    """
+    _append_byte(out, value % 256)
+    _append_byte(out, (value // 256) % 256)
+
+
+def _append_u16_prefixed_bytes(mut out: list[u8], data: bytes) -> None:
+    """
+    Append a small byte payload prefixed by a little-endian `u16` length.
+    """
+    _append_u16_le(out, len(data))
+    _append_bytes(out, data)
+
+
+def _utf8_bytes(value: str) -> bytes:
+    """
+    Encode an internal container identifier as UTF-8 bytes.
+    """
+    return RustString.from(value).into_bytes()
+
+
+def _append_u64_le(mut out: list[u8], value: int) -> None:
+    """
+    Append a little-endian 64-bit container field.
+    """
+    _append_compact_int(out, value, 8)
+
+
+def _append_byte(mut out: list[u8], value: int) -> None:
+    """
+    Append the low byte of an integer to a container buffer.
+    """
+    byte: u8 = value.wrapping_resize()
+    out.append(byte)
+
+
+def _read_compact_int(data: bytes, offset: int, width: int) -> int:
+    """
+    Read a non-negative integer encoded with a compact little-endian width.
+    """
+    mut value = int(data[offset])
+    if width >= 2:
+        value += int(data[offset + 1]) * 256
+    if width >= 4:
+        value += int(data[offset + 2]) * 65536
+        value += int(data[offset + 3]) * 16777216
+    if width >= 8:
+        value += int(data[offset + 4]) * 4294967296
+        value += int(data[offset + 5]) * 1099511627776
+        value += int(data[offset + 6]) * 281474976710656
+        value += int(data[offset + 7]) * 72057594037927936
+    return value
+
+
+def _read_u16_le(data: bytes, offset: int) -> int:
+    """
+    Read a little-endian 16-bit integer from bytes.
+    """
+    return _read_compact_int(data, offset, 2)
+
+
+def _read_u64_le(data: bytes, offset: int) -> int:
+    """
+    Read a little-endian 64-bit integer from bytes.
+    """
+    return _read_compact_int(data, offset, 8)
+
+
+def _validate_ordinal_encoding(encoding: str) -> Result[str, OrdinalMapError]:
+    """
+    Validate the type-level key encoding identifier used by a serialized ordinal map.
+    """
+    if len(encoding) == 0:
+        return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidKeyEncoding, "OrdinalMap key encoding must not be empty", -1))
+    if not encoding.contains(":"):
+        return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidKeyEncoding, "OrdinalMap key encoding must be namespaced", -1))
+    if _ordinal_encoding_is_builtin(encoding) or _ordinal_encoding_is_versioned(encoding):
+        return Ok(encoding)
+    return Err(_ordinal_map_error(OrdinalMapErrorKind.InvalidKeyEncoding, "OrdinalMap user key encoding must be versioned", -1))
+
+
+def _validate_ordinal_encoding_or_raise(encoding: str) -> str:
+    """
+    Validate an ordinal encoding for constructor paths that cannot return `Result`.
+    """
+    match _validate_ordinal_encoding(encoding):
+        Ok(value) => return value
+        Err(err) => return raise_value_error(err._detail)
+
+
+def _ordinal_encoding_is_versioned(encoding: str) -> bool:
+    """
+    Return whether a user-authored encoding identifier carries an explicit version suffix.
+    """
+    return encoding.endswith(":v1") or encoding.endswith("-v1")
+
+
+def _ordinal_encoding_is_builtin(encoding: str) -> bool:
+    """
+    Return whether an unversioned identifier is one of the stdlib-defined stable key encodings.
+    """
+    if encoding == _ORDINAL_ENCODING_STR or encoding == _ORDINAL_ENCODING_BYTES or encoding == _ORDINAL_ENCODING_BOOL:
+        return True
+    if encoding == _ORDINAL_ENCODING_DECIMAL or encoding == _ORDINAL_ENCODING_UUID:
+        return True
+    if encoding == _ORDINAL_ENCODING_I8 or encoding == _ORDINAL_ENCODING_I16 or encoding == _ORDINAL_ENCODING_I32:
+        return True
+    if encoding == _ORDINAL_ENCODING_I64 or encoding == _ORDINAL_ENCODING_I128:
+        return True
+    if encoding == _ORDINAL_ENCODING_U8 or encoding == _ORDINAL_ENCODING_U16 or encoding == _ORDINAL_ENCODING_U32:
+        return True
+    if encoding == _ORDINAL_ENCODING_U64 or encoding == _ORDINAL_ENCODING_U128:
+        return True
+    return False
+
+
+def _ordinal_map_error(kind: OrdinalMapErrorKind, detail: str, index: int) -> OrdinalMapError:
+    """
+    Build a structured `OrdinalMapError`.
+    """
+    return OrdinalMapError.from_kind(kind, detail, index)
+
+
+def _missing_ordinal() -> int:
+    """
+    Raise the runtime error used by indexing and unchecked missing-key lookup.
+    """
+    return raise_key_error("OrdinalMap key is not present")
 
 
 def _highest_count_index[T with (Clone, Eq)](entries: list[_MapEntry[T, int]]) -> int:

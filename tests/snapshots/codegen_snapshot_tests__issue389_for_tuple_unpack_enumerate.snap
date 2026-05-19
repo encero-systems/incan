@@ -21,7 +21,11 @@ fn field_ref(index: i64) -> i64 {
 }
 pub fn bind(xs: Vec<String>) -> Vec<Binding> {
     let mut out: Vec<Binding> = vec![];
-    for (idx, name) in xs.iter().enumerate().map(|(idx, value)| (idx as i64, value)) {
+    for (idx, name) in xs
+        .iter()
+        .enumerate()
+        .map(|(idx, value)| (idx as i64, value.clone()))
+    {
         out.push(Binding {
             name: name.to_string(),
             output_index: idx,

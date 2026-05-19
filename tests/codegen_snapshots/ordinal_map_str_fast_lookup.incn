@@ -1,0 +1,15 @@
+from std.collections import OrdinalMap, OrdinalMapError
+
+
+pub def require_column(columns: OrdinalMap[str], key: str) -> Result[int, OrdinalMapError]:
+    return columns.require(key)
+
+
+pub def require_columns(columns: OrdinalMap[str], keys: list[str]) -> Result[list[int], OrdinalMapError]:
+    return columns.require_many(keys)
+
+
+pub def direct_literal_construction() -> Result[int, OrdinalMapError]:
+    columns: OrdinalMap[str] = OrdinalMap.from_keys(["id", "status"])?
+    explicit: OrdinalMap[str] = OrdinalMap.from_pairs([("id", 10), ("status", 20)])?
+    return Ok(columns.require("status")? + explicit.require("status")?)

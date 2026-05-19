@@ -324,6 +324,62 @@ fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> Ch
     renamed
 }
 
+/// Map exported scalar value enums to the serialized identities used by library consumers.
+fn public_ordinal_type_identities(
+    lib_module: &ParsedModule,
+    project_name: &str,
+    selected_exports: &[CheckedNamedExport],
+) -> HashMap<String, String> {
+    let exported_value_enums = selected_exports
+        .iter()
+        .filter_map(|export| match &export.kind {
+            CheckedExportKind::Enum(enum_export) if enum_export.value_type.is_some() => Some(export.name.as_str()),
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
+    if exported_value_enums.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut identities = HashMap::new();
+    for decl in &lib_module.ast.declarations {
+        let Declaration::Enum(enum_decl) = &decl.node else {
+            continue;
+        };
+        if !matches!(enum_decl.visibility, crate::frontend::ast::Visibility::Public) {
+            continue;
+        }
+        if exported_value_enums.contains(enum_decl.name.as_str()) {
+            identities.insert(
+                format!("lib.{}", enum_decl.name),
+                format!("{project_name}.{}", enum_decl.name),
+            );
+        }
+    }
+    for decl in &lib_module.ast.declarations {
+        let Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        if !matches!(import.visibility, crate::frontend::ast::Visibility::Public) {
+            continue;
+        }
+        let ImportKind::From { module, items } = &import.kind else {
+            continue;
+        };
+        let source_module = canonicalize_source_module_segments(&module.segments).join(".");
+        for item in items {
+            let exported_name = item.alias.as_deref().unwrap_or(item.name.as_str());
+            if exported_value_enums.contains(exported_name) {
+                identities.insert(
+                    format!("{source_module}.{}", item.name),
+                    format!("{project_name}.{exported_name}"),
+                );
+            }
+        }
+    }
+    identities
+}
+
 struct LibraryReexportResolver<'a> {
     module_exports: &'a HashMap<String, HashMap<String, CheckedNamedExport>>,
 }
@@ -858,6 +914,11 @@ pub fn build_library(
     codegen.set_preserve_dependency_public_items(true);
     codegen.set_declared_crate_names(declared);
     codegen.set_library_manifest_index(library_manifest_index.clone());
+    codegen.set_public_ordinal_type_identities(public_ordinal_type_identities(
+        lib_module,
+        project_name.as_str(),
+        &selected_exports,
+    ));
     for module in dep_modules {
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }

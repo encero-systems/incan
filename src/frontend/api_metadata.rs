@@ -4,7 +4,7 @@
 //! manifest type vocabulary instead of stringifying checked types, so package artifacts, CLI output, and later docs
 //! tooling can share one structural representation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use serde::{Deserialize, Serialize};
 
@@ -611,6 +611,7 @@ fn api_class(
     }
 }
 
+/// Convert a checked trait export into API metadata.
 fn api_trait(
     trait_decl: &TraitDecl,
     span: Span,
@@ -626,14 +627,7 @@ fn api_trait(
         docstring,
         decorators: decorators_metadata(&trait_decl.decorators, checker),
         type_params: type_params(&export.type_params),
-        supertraits: export
-            .supertraits
-            .iter()
-            .map(|(name, args)| TypeBoundExport {
-                name: name.clone(),
-                type_args: args.iter().map(type_ref_from_resolved).collect(),
-            })
-            .collect(),
+        supertraits: export.supertraits.iter().map(type_bound).collect(),
         requires: export
             .requires
             .iter()
@@ -791,6 +785,7 @@ fn aliases_from_items(
         .collect()
 }
 
+/// Pair AST method declarations with checked method metadata for documentation output.
 fn methods(
     ast_methods: &[Spanned<MethodDecl>],
     checked_methods: &[CheckedMethod],
@@ -798,13 +793,19 @@ fn methods(
     module_path: &[String],
     owner: &str,
 ) -> Vec<ApiMethod> {
-    let checked_by_name: HashMap<&str, &CheckedMethod> = checked_methods
-        .iter()
-        .map(|method| (method.name.as_str(), method))
-        .collect();
+    let mut checked_by_name: HashMap<&str, VecDeque<&CheckedMethod>> = HashMap::new();
+    for method in checked_methods {
+        checked_by_name
+            .entry(method.name.as_str())
+            .or_default()
+            .push_back(method);
+    }
     let mut out = Vec::new();
     for method in ast_methods {
-        let Some(checked) = checked_by_name.get(method.node.name.as_str()) else {
+        let Some(candidates) = checked_by_name.get_mut(method.node.name.as_str()) else {
+            continue;
+        };
+        let Some(checked) = take_checked_method_for_ast(&method.node, candidates, checker) else {
             continue;
         };
         let docstring = method.node.body.as_ref().and_then(|body| function_docstring(body));
@@ -828,6 +829,74 @@ fn methods(
     out
 }
 
+/// Remove the checked method that best matches one AST method declaration.
+fn take_checked_method_for_ast<'a>(
+    ast_method: &MethodDecl,
+    candidates: &mut VecDeque<&'a CheckedMethod>,
+    checker: &TypeChecker,
+) -> Option<&'a CheckedMethod> {
+    if let Some(index) = candidates
+        .iter()
+        .position(|checked| checked_method_shape_matches(ast_method, checked, checker))
+    {
+        return candidates.remove(index);
+    }
+    if let Some(index) = candidates
+        .iter()
+        .position(|checked| checked_method_param_names_match(ast_method, checked))
+    {
+        return candidates.remove(index);
+    }
+    candidates.pop_front()
+}
+
+/// Return whether an AST method and checked method have the same parameter names.
+fn checked_method_param_names_match(ast_method: &MethodDecl, checked: &CheckedMethod) -> bool {
+    ast_method.params.len() == checked.params.len()
+        && ast_method
+            .params
+            .iter()
+            .zip(checked.params.iter())
+            .all(|(ast_param, checked_param)| checked_param.name() == Some(ast_param.node.name.as_str()))
+}
+
+/// Return whether an AST method and checked method have the same callable shape.
+fn checked_method_shape_matches(ast_method: &MethodDecl, checked: &CheckedMethod, checker: &TypeChecker) -> bool {
+    let ast_type_params: Vec<&str> = ast_method
+        .type_params
+        .iter()
+        .map(|type_param| type_param.name.as_str())
+        .collect();
+    ast_method.params.len() == checked.params.len()
+        && ast_method.receiver == checked.receiver
+        && ast_method.is_async() == checked.is_async
+        && ast_type_params
+            == checked
+                .type_params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>()
+        && ast_method
+            .params
+            .iter()
+            .zip(checked.params.iter())
+            .all(|(ast_param, checked_param)| {
+                checked_param.name() == Some(ast_param.node.name.as_str())
+                    && checked_param.kind == ast_param.node.kind
+                    && checked_param.has_default == ast_param.node.default.is_some()
+                    && type_ref_from_resolved(&checked_param.ty)
+                        == type_ref_from_resolved(&crate::frontend::symbols::resolve_type(
+                            &ast_param.node.ty.node,
+                            &checker.symbols,
+                        ))
+            })
+        && type_ref_from_resolved(&checked.return_type)
+            == type_ref_from_resolved(&crate::frontend::symbols::resolve_type(
+                &ast_method.return_type.node,
+                &checker.symbols,
+            ))
+}
+
 fn type_params(type_params: &[CheckedTypeParam]) -> Vec<TypeParamExport> {
     type_params
         .iter()
@@ -838,9 +907,12 @@ fn type_params(type_params: &[CheckedTypeParam]) -> Vec<TypeParamExport> {
         .collect()
 }
 
+/// Convert a checked trait bound into the exported API metadata representation.
 fn type_bound(bound: &CheckedTypeBound) -> TypeBoundExport {
     TypeBoundExport {
         name: bound.name.clone(),
+        source_name: bound.source_name.clone(),
+        module_path: bound.module_path.clone(),
         type_args: bound.type_args.iter().map(type_ref_from_resolved).collect(),
     }
 }
@@ -1785,6 +1857,185 @@ pub def avg(values: List[float]) -> float:
                 .iter()
                 .any(|message| message.contains("documented decorator `rust.allow` does not exist")),
             "expected decorator drift diagnostic, got {messages:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_docstring_validation_matches_overloaded_method_by_params() -> Result<(), String> {
+        let source = r#"
+pub class Writer:
+    def write(self, data: bytes) -> Result[int, str]:
+        """
+        Write raw bytes.
+
+        Args:
+            data: Bytes to write.
+        """
+        return Ok(len(data))
+
+    def write(self, value: u8, _endian: str) -> Result[None, str]:
+        return Ok(None)
+"#;
+        let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+        let class = program
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Class(class) => Some(class),
+                _ => None,
+            })
+            .ok_or_else(|| "expected class declaration".to_string())?;
+        let checked_methods = vec![
+            CheckedMethod {
+                name: "write".to_string(),
+                alias_of: None,
+                type_params: Vec::new(),
+                receiver: Some(crate::frontend::ast::Receiver::Immutable),
+                params: vec![
+                    crate::frontend::symbols::CallableParam::named(
+                        "value",
+                        crate::frontend::symbols::ResolvedType::Int,
+                        crate::frontend::ast::ParamKind::Normal,
+                    ),
+                    crate::frontend::symbols::CallableParam::named(
+                        "_endian",
+                        crate::frontend::symbols::ResolvedType::Str,
+                        crate::frontend::ast::ParamKind::Normal,
+                    ),
+                ],
+                return_type: crate::frontend::symbols::ResolvedType::Unit,
+                is_async: false,
+                has_body: true,
+            },
+            CheckedMethod {
+                name: "write".to_string(),
+                alias_of: None,
+                type_params: Vec::new(),
+                receiver: Some(crate::frontend::ast::Receiver::Immutable),
+                params: vec![crate::frontend::symbols::CallableParam::named(
+                    "data",
+                    crate::frontend::symbols::ResolvedType::Bytes,
+                    crate::frontend::ast::ParamKind::Normal,
+                )],
+                return_type: crate::frontend::symbols::ResolvedType::Int,
+                is_async: false,
+                has_body: true,
+            },
+        ];
+        let checker = typechecker::TypeChecker::new();
+        let api_methods = methods(
+            &class.methods,
+            &checked_methods,
+            &checker,
+            &["demo".to_string()],
+            "Writer",
+        );
+        assert_eq!(api_methods.len(), 2);
+        assert_eq!(
+            api_methods[0]
+                .params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["data"]
+        );
+        assert_eq!(
+            api_methods[1]
+                .params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["value", "_endian"]
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_docstring_validation_matches_overloaded_method_by_type_shape() -> Result<(), String> {
+        let source = r#"
+pub class Parser:
+    def parse(self, value: str) -> str:
+        """
+        Parse text.
+        """
+        return value
+
+    def parse(self, value: bytes) -> bytes:
+        """
+        Parse bytes.
+        """
+        return value
+"#;
+        let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+        let program = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+        let class = program
+            .declarations
+            .iter()
+            .find_map(|decl| match &decl.node {
+                Declaration::Class(class) => Some(class),
+                _ => None,
+            })
+            .ok_or_else(|| "expected class declaration".to_string())?;
+        let checked_methods = vec![
+            CheckedMethod {
+                name: "parse".to_string(),
+                alias_of: None,
+                type_params: Vec::new(),
+                receiver: Some(crate::frontend::ast::Receiver::Immutable),
+                params: vec![crate::frontend::symbols::CallableParam::named(
+                    "value",
+                    crate::frontend::symbols::ResolvedType::Bytes,
+                    crate::frontend::ast::ParamKind::Normal,
+                )],
+                return_type: crate::frontend::symbols::ResolvedType::Bytes,
+                is_async: false,
+                has_body: true,
+            },
+            CheckedMethod {
+                name: "parse".to_string(),
+                alias_of: None,
+                type_params: Vec::new(),
+                receiver: Some(crate::frontend::ast::Receiver::Immutable),
+                params: vec![crate::frontend::symbols::CallableParam::named(
+                    "value",
+                    crate::frontend::symbols::ResolvedType::Str,
+                    crate::frontend::ast::ParamKind::Normal,
+                )],
+                return_type: crate::frontend::symbols::ResolvedType::Str,
+                is_async: false,
+                has_body: true,
+            },
+        ];
+        let checker = typechecker::TypeChecker::new();
+        let api_methods = methods(
+            &class.methods,
+            &checked_methods,
+            &checker,
+            &["demo".to_string()],
+            "Parser",
+        );
+        assert_eq!(api_methods.len(), 2);
+        assert_eq!(
+            api_methods[0].return_type,
+            TypeRef::Named {
+                name: "str".to_string()
+            }
+        );
+        assert_eq!(
+            api_methods[0].docstring.as_deref().unwrap_or_default().trim(),
+            "Parse text."
+        );
+        assert_eq!(
+            api_methods[1].return_type,
+            TypeRef::Named {
+                name: "bytes".to_string()
+            }
+        );
+        assert_eq!(
+            api_methods[1].docstring.as_deref().unwrap_or_default().trim(),
+            "Parse bytes."
         );
         Ok(())
     }

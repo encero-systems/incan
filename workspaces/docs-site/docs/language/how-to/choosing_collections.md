@@ -11,6 +11,7 @@ Use builtin `list`, `dict`, and `set` first. Reach for `std.collections` when th
 | Traverse in sorted order | `SortedDict[K, V]` or `SortedSet[T]` |
 | Layer overrides over defaults | `ChainMap[K, V]` |
 | Always process the next highest-priority item | `PriorityQueue[T]` |
+| Resolve a fixed key domain to stable integer positions | `OrdinalMap[K]` |
 
 ## Use `Deque` for front-and-back queues
 
@@ -165,8 +166,132 @@ def main() -> None:
     assert largest_first.pop() == 30
 ```
 
+## Use `OrdinalMap` for stable key-to-position lookup
+
+Use `OrdinalMap[K]` when the keys are known up front and each key needs a stable integer ordinal. This is a good fit for schema fields, column names, generated catalogs, dictionary-encoded scalar domains, and query-planning metadata.
+
+Use builtin `dict[K, int]` when the map is mutable, built incrementally, or does not need deterministic serialized bytes. Use `OrderedDict[K, V]` when insertion order is the contract and values are arbitrary. Use `OrdinalMap[K]` when the value is specifically the key's integer position/code and the map should be immutable after construction.
+
+### Build a schema index
+
+Use `from_keys` when the input order is the ordinal contract. The first key maps to `0`, the second key maps to `1`, and so on.
+
+```incan
+from std.collections import OrdinalMap, OrdinalMapError, OrdinalMapErrorKind
+
+def main() -> Result[None, OrdinalMapError]:
+    columns = OrdinalMap.from_keys(["order_id", "customer_id", "status", "amount"])?
+
+    assert columns.require("status")? == 2
+    assert columns.get("missing") == None
+    assert columns.require_many(["status", "amount"])? == [2, 3]
+
+    return Ok(None)
+```
+
+Construction rejects duplicate keys because the key domain must be one-to-one with ordinals.
+
+```incan
+duplicate = OrdinalMap.from_keys(["status", "status"])
+match duplicate:
+    Ok(_) => assert False
+    Err(err) => assert err.kind() == OrdinalMapErrorKind.DuplicateKey
+```
+
+### Use external ordinals
+
+Use `from_pairs` when ordinals come from an external schema, persisted catalog, or wire contract. Pair order does not affect serialization; equivalent key/ordinal pairs produce identical bytes.
+
+```incan
+field_ids = OrdinalMap.from_pairs([
+    ("order_id", 10),
+    ("customer_id", 11),
+    ("status", 12),
+])?
+
+same_ids = OrdinalMap.from_pairs([
+    ("status", 12),
+    ("order_id", 10),
+    ("customer_id", 11),
+])?
+
+assert field_ids.to_bytes() == same_ids.to_bytes()
+```
+
+`from_pairs` rejects duplicate keys, negative ordinals, and duplicate ordinals. If one ordinal should point at many labels, use a different model such as `dict[int, list[str]]`.
+
+### Choose the lookup path
+
+Use `get` when absence is normal control flow.
+
+```incan
+match columns.get("discount_code"):
+    Some(index) => println(f"column index: {index}")
+    None => println("column not present")
+```
+
+Use `require` when absence should be a recoverable error value.
+
+```incan
+status_index = columns.require("status")?
+```
+
+Use indexing only when the key is expected to be present and ordinary mapping-style failure is acceptable.
+
+```incan
+status_index = columns["status"]
+```
+
+Use `get_unchecked` only when an external invariant or prior exact check has already proven that the key is present. A query planner, for example, can validate user-supplied names once and then use unchecked lookup while executing a hot loop over already-validated fields.
+
+```incan
+if "status" in columns:
+    status_index = columns.get_unchecked("status")
+```
+
+### Use non-string keys
+
+`OrdinalMap` requires `OrdinalKey` keys with deterministic canonical bytes and a stable encoding identifier. The standard key surface covers deterministic scalar keys such as `str`, `bytes`, `bool`, integers, fixed-precision decimal values, UUID values, date/time values, stable value enums, and user-defined adopters. Floats are excluded; use a deterministic domain model, integer-scaled value, decimal value, or explicit string representation for floating-point-like concepts.
+
+```incan
+from std.collections import OrdinalMap
+from std.datetime import Date
+from std.uuid import UUID
+
+price: decimal[5, 2] = 19.99d
+fee: decimal[5, 2] = 1.25d
+amount_codes = OrdinalMap.from_pairs([(price, 1999), (fee, 125)])?
+
+statement_days = OrdinalMap.from_keys([
+    Date(year=2026, month=5, day=1),
+    Date(year=2026, month=5, day=2),
+])?
+
+tenant = UUID.from_int(113059749145936325402354257176981405696)
+tenant_slots = OrdinalMap.from_pairs([(tenant, 42)])?
+
+assert statement_days.require(Date(year=2026, month=5, day=2))? == 1
+assert tenant_slots.require(tenant)? == 42
+assert amount_codes.require(price)? == 1999
+```
+
+### Persist an index
+
+Use `to_bytes` when a generated catalog or dataset sidecar needs reproducible bytes. Use `from_bytes` with an explicit type annotation so the stored key encoding is checked against the key type you expect.
+
+```incan
+blob = columns.to_bytes()
+restored: OrdinalMap[str] = OrdinalMap.from_bytes(blob)?
+
+assert restored.to_bytes() == blob
+assert restored.require("status")? == columns.require("status")?
+```
+
+Use `serialized_size()` when comparing persisted payload size. Use `nbytes()` or `storage_bytes()` when comparing compact payload sections in memory; those values exclude ordinary object/header overhead and runtime lookup caches.
+
 ## See also
 
 - [std.collections reference](../reference/stdlib/collections.md)
+- [Why `OrdinalMap` exists](../explanation/ordinal_map.md)
 - [Collections and iteration tutorial](../tutorials/book/08_collections_and_iteration.md)
 - [Collection protocols](../reference/stdlib_traits/collection_protocols.md)

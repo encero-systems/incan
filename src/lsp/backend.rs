@@ -44,6 +44,8 @@ use crate::frontend::contract_metadata::{
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::{SourceModuleImportResolution, resolve_program_source_imports};
+use crate::frontend::symbols::{ResolvedType, SymbolKind as FrontendSymbolKind, TypeInfo};
+use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::{lexer, parser, typechecker};
 use crate::library_manifest::{
     EnumValueExport, EnumValueTypeExport, FieldExport, ParamExport, ParamKindExport, ReceiverExport, TypeBoundExport,
@@ -75,6 +77,8 @@ pub struct DocumentState {
     /// This is used to make hover text reflect the actual type of a const binding, even if the user annotated
     /// `str`/`List[T]` and the compiler froze it to `FrozenStr`/`FrozenList[T]`.
     pub const_types: HashMap<String, String>,
+    /// Resolved local value/static types with declaration spans for context-sensitive hover affordances.
+    value_types: Vec<ValueTypeFact>,
     /// Local symbols that originate from `rust::...` imports with canonical Rust path provenance.
     rust_origin_symbols: Vec<RustOriginSymbol>,
     /// For `rusttype` newtypes: maps the Incan type name to the canonical Rust path of the underlying type (e.g.
@@ -102,6 +106,19 @@ struct ClassmethodContext {
 struct ApiMetadataPreview {
     span: Span,
     markdown: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ValueTypeFact {
+    name: String,
+    span: Span,
+    kind: ValueTypeKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ValueTypeKind {
+    OrdinalMap,
+    Other,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -284,19 +301,39 @@ impl IncanLanguageServer {
 
         // Collect resolved const types for hover display (post-const-freezing).
         let mut const_types: HashMap<String, String> = HashMap::new();
+        let mut value_types = Vec::new();
+        for symbol in checker.symbols.all_symbols() {
+            match &symbol.kind {
+                FrontendSymbolKind::Variable(info) => {
+                    value_types.push(ValueTypeFact {
+                        name: symbol.name.clone(),
+                        span: symbol.span,
+                        kind: value_type_kind(&info.ty),
+                    });
+                }
+                FrontendSymbolKind::Static(info) => {
+                    value_types.push(ValueTypeFact {
+                        name: symbol.name.clone(),
+                        span: symbol.span,
+                        kind: value_type_kind(&info.ty),
+                    });
+                }
+                _ => {}
+            }
+        }
         let mut rusttype_info: HashMap<String, String> = HashMap::new();
         for decl in &ast.declarations {
             if let Declaration::Const(konst) = &decl.node
                 && let Some(id) = checker.symbols.lookup(&konst.name)
                 && let Some(sym) = checker.symbols.get(id)
-                && let crate::frontend::symbols::SymbolKind::Variable(var) = &sym.kind
+                && let FrontendSymbolKind::Variable(var) = &sym.kind
             {
                 const_types.insert(konst.name.clone(), var.ty.to_string());
             }
             if let Declaration::Static(static_decl) = &decl.node
                 && let Some(id) = checker.symbols.lookup(&static_decl.name)
                 && let Some(sym) = checker.symbols.get(id)
-                && let crate::frontend::symbols::SymbolKind::Static(info) = &sym.kind
+                && let FrontendSymbolKind::Static(info) = &sym.kind
             {
                 const_types.insert(static_decl.name.clone(), info.ty.to_string());
             }
@@ -322,6 +359,7 @@ impl IncanLanguageServer {
                     ast: Some(ast),
                     version,
                     const_types,
+                    value_types,
                     rust_origin_symbols,
                     rusttype_info,
                     api_metadata_previews,
@@ -2896,6 +2934,224 @@ fn classmethod_cls_detail(context: &ClassmethodContext) -> String {
     )
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdlibPublicItemKind {
+    Class,
+    Enum,
+    Model,
+    Type,
+    Trait,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StdlibPublicItemMetadata {
+    module_segments: Vec<String>,
+    name: String,
+    kind: StdlibPublicItemKind,
+    detail: String,
+    docs: String,
+}
+
+/// Return the prose label used in hover text for a known stdlib item kind.
+fn stdlib_item_kind_label(kind: StdlibPublicItemKind) -> &'static str {
+    match kind {
+        StdlibPublicItemKind::Class => "stdlib class",
+        StdlibPublicItemKind::Enum => "stdlib enum",
+        StdlibPublicItemKind::Model => "stdlib model",
+        StdlibPublicItemKind::Type => "stdlib type",
+        StdlibPublicItemKind::Trait => "stdlib trait",
+    }
+}
+
+/// Map stdlib metadata item kinds onto LSP completion item kinds.
+fn stdlib_item_completion_kind(kind: StdlibPublicItemKind) -> CompletionItemKind {
+    match kind {
+        StdlibPublicItemKind::Class => CompletionItemKind::CLASS,
+        StdlibPublicItemKind::Enum => CompletionItemKind::ENUM,
+        StdlibPublicItemKind::Model => CompletionItemKind::STRUCT,
+        StdlibPublicItemKind::Type => CompletionItemKind::TYPE_PARAMETER,
+        StdlibPublicItemKind::Trait => CompletionItemKind::INTERFACE,
+    }
+}
+
+/// Return whether parsed stdlib path segments match a static metadata path.
+fn stdlib_segments_match(actual: &[String], expected: &[String]) -> bool {
+    actual == expected
+}
+
+/// Return whether textual completion path segments match a static metadata path.
+fn stdlib_text_segments_match(actual: &[&str], expected: &[&str]) -> bool {
+    actual.len() == expected.len() && actual.iter().zip(expected).all(|(a, e)| a == e)
+}
+
+/// Load public stdlib item metadata for one module from the stdlib source cache.
+fn stdlib_public_items_for_module(module_segments: &[String]) -> Vec<StdlibPublicItemMetadata> {
+    let mut cache = StdlibAstCache::new();
+    let mut items = Vec::new();
+    for (name, info) in cache.list_types(module_segments) {
+        let kind = match info {
+            TypeInfo::Class(_) => StdlibPublicItemKind::Class,
+            TypeInfo::Enum(_) => StdlibPublicItemKind::Enum,
+            TypeInfo::Model(_) => StdlibPublicItemKind::Model,
+            TypeInfo::Newtype(_) | TypeInfo::TypeAlias | TypeInfo::Builtin => StdlibPublicItemKind::Type,
+        };
+        let docs = cache.lookup_type_docstring(module_segments, &name);
+        items.push(StdlibPublicItemMetadata {
+            module_segments: module_segments.to_vec(),
+            detail: stdlib_type_detail(&name, kind),
+            docs: stdlib_type_docs(docs, kind),
+            name,
+            kind,
+        });
+    }
+    for (name, _info) in cache.list_traits(module_segments) {
+        let docs = cache
+            .lookup_trait_decl(module_segments, &name)
+            .and_then(|decl| decl.docstring);
+        items.push(StdlibPublicItemMetadata {
+            module_segments: module_segments.to_vec(),
+            detail: stdlib_type_detail(&name, StdlibPublicItemKind::Trait),
+            docs: stdlib_type_docs(docs, StdlibPublicItemKind::Trait),
+            name,
+            kind: StdlibPublicItemKind::Trait,
+        });
+    }
+    items.sort_by(|left, right| left.name.cmp(&right.name));
+    items
+}
+
+/// Return the completion detail text for a stdlib public type or trait.
+fn stdlib_type_detail(name: &str, kind: StdlibPublicItemKind) -> String {
+    format!("{name}: {}", stdlib_item_kind_label(kind))
+}
+
+/// Return the hover/completion documentation text for a stdlib public type or trait.
+fn stdlib_type_docs(docstring: Option<String>, kind: StdlibPublicItemKind) -> String {
+    if let Some(docstring) = docstring {
+        let trimmed = docstring.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+    format!(
+        "Public {kind_label} exported by this stdlib module.",
+        kind_label = stdlib_item_kind_label(kind)
+    )
+}
+
+/// Look up LSP metadata for a public item exported by a stdlib module.
+fn stdlib_public_item_metadata(module_segments: &[String], name: &str) -> Option<StdlibPublicItemMetadata> {
+    stdlib_public_items_for_module(module_segments)
+        .into_iter()
+        .find(|item| stdlib_segments_match(module_segments, &item.module_segments) && item.name == name)
+}
+
+/// Render hover markdown for a known public stdlib item.
+fn stdlib_public_item_hover_markdown(item: &StdlibPublicItemMetadata) -> String {
+    let module_path = item.module_segments.join(".");
+    let stub_path = item.module_segments.to_vec();
+    let stub_note = stdlib::stdlib_stub_path(&stub_path)
+        .map(|path| format!("\n\n`{path}`"))
+        .unwrap_or_default();
+    format!(
+        "```incan\nfrom {module_path} import {}\n```\n\n*{}*\n\n{}{}",
+        item.name,
+        stdlib_item_kind_label(item.kind),
+        item.docs,
+        stub_note
+    )
+}
+
+/// Return hover markdown for a known item in a `from std.<module> import ...` declaration.
+fn stdlib_import_item_hover(ast: &Program, source: &str, offset: usize) -> Option<(String, Span)> {
+    let (ident, ident_span) = identifier_at_offset(source, offset)?;
+    for decl in &ast.declarations {
+        let Declaration::Import(import) = &decl.node else {
+            continue;
+        };
+        if !(decl.span.start <= ident_span.start && ident_span.end <= decl.span.end) {
+            continue;
+        }
+        let crate::frontend::ast::ImportKind::From { module, items } = &import.kind else {
+            continue;
+        };
+        if module.segments.first().map(|segment| segment.as_str()) != Some(stdlib::STDLIB_ROOT) {
+            continue;
+        }
+        for item in items {
+            let local_name = item.alias.as_deref().unwrap_or(item.name.as_str());
+            if ident != local_name && ident != item.name {
+                continue;
+            }
+            let metadata = stdlib_public_item_metadata(&module.segments, &item.name)?;
+            return Some((stdlib_public_item_hover_markdown(&metadata), ident_span));
+        }
+    }
+    None
+}
+
+/// Return the receiver identifier immediately before a method name span.
+fn receiver_identifier_before_method(source: &str, span: Span) -> Option<(&str, Span)> {
+    let prefix = source.get(..span.start)?;
+    let before_dot = prefix.strip_suffix('.')?.trim_end();
+    let end = before_dot.len();
+    let start = before_dot
+        .char_indices()
+        .rev()
+        .find_map(|(idx, ch)| {
+            if ch == '_' || ch.is_ascii_alphanumeric() {
+                None
+            } else {
+                Some(idx + ch.len_utf8())
+            }
+        })
+        .unwrap_or(0);
+    let ident = &before_dot[start..end];
+    if ident.is_empty() || before_dot[..start].trim_end().ends_with('.') {
+        None
+    } else {
+        Some((ident, Span::new(start, end)))
+    }
+}
+
+/// Classify a resolved local binding type for LSP affordances that need semantic type shape.
+fn value_type_kind(ty: &ResolvedType) -> ValueTypeKind {
+    match ty {
+        ResolvedType::Generic(name, _) if is_ordinal_map_type_name(name) => ValueTypeKind::OrdinalMap,
+        _ => ValueTypeKind::Other,
+    }
+}
+
+/// Return whether a resolved generic type name refers to `OrdinalMap`.
+fn is_ordinal_map_type_name(name: &str) -> bool {
+    name == "OrdinalMap" || name.ends_with(".OrdinalMap")
+}
+
+/// Return the nearest known type fact for a value before the given source offset.
+fn value_type_kind_at(facts: &[ValueTypeFact], name: &str, offset: usize) -> Option<ValueTypeKind> {
+    facts
+        .iter()
+        .filter(|fact| fact.name == name && fact.span.start <= offset)
+        .max_by_key(|fact| fact.span.start)
+        .map(|fact| fact.kind)
+}
+
+/// Return warning hover markdown for explicit unchecked `OrdinalMap` lookup methods.
+fn unchecked_lookup_hover(source: &str, value_types: &[ValueTypeFact], ident: &str, span: Span) -> Option<String> {
+    let signature = match ident {
+        "get_unchecked" => "get_unchecked(...)",
+        "get_many_unchecked" => "get_many_unchecked(...)",
+        _ => return None,
+    };
+    let (receiver, receiver_span) = receiver_identifier_before_method(source, span)?;
+    if value_type_kind_at(value_types, receiver, receiver_span.start) != Some(ValueTypeKind::OrdinalMap) {
+        return None;
+    }
+    Some(format!(
+        "```incan\n{signature}\n```\n\n*unchecked lookup* — only use when every queried key is known to be present. Missing-key behavior is implementation-specific."
+    ))
+}
+
 fn stdlib_location_for_path(path: &[String]) -> Option<Location> {
     let stub_rel = stdlib::stdlib_stub_path(path)?;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -4601,7 +4857,18 @@ impl LanguageServer for IncanLanguageServer {
                 }));
             }
 
-            // Stdlib import hover: show module path + stub path
+            // Stdlib import item hover: show public API details for known stdlib exports.
+            if let Some((markdown, span)) = stdlib_import_item_hover(ast, &doc.source, offset) {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }),
+                    range: Some(span_to_range(&doc.source, span.start, span.end)),
+                }));
+            }
+
+            // Stdlib import hover: show module path + stub path.
             if let Some(path) = find_stdlib_import_path(ast, offset) {
                 let module_path = path.join(".");
                 let stub_path = stdlib::stdlib_stub_path(&path).unwrap_or_default();
@@ -4661,6 +4928,18 @@ impl LanguageServer for IncanLanguageServer {
 
             if let Some((ident, span)) = identifier_at_offset(&doc.source, offset)
                 && let Some(markdown) = builtin_list_repeat_hover(&doc.source, &ident, span)
+            {
+                return Ok(Some(Hover {
+                    contents: HoverContents::Markup(MarkupContent {
+                        kind: MarkupKind::Markdown,
+                        value: markdown,
+                    }),
+                    range: Some(span_to_range(&doc.source, span.start, span.end)),
+                }));
+            }
+
+            if let Some((ident, span)) = identifier_at_offset(&doc.source, offset)
+                && let Some(markdown) = unchecked_lookup_hover(&doc.source, &doc.value_types, &ident, span)
             {
                 return Ok(Some(Hover {
                     contents: HoverContents::Markup(MarkupContent {
@@ -4899,6 +5178,11 @@ impl LanguageServer for IncanLanguageServer {
 
         // Extract the current line text before the cursor for context-aware completions.
         let line_prefix = line_text_before_cursor(&doc.source, position);
+
+        // ---- Context: stdlib from-import item completions (`from std.collections import ...`) ----
+        if let Some(stdlib_items) = stdlib_import_item_completions(&line_prefix) {
+            return Ok(Some(CompletionResponse::Array(stdlib_items)));
+        }
 
         // ---- Context: stdlib module completions (`from std.` / `import std::`) ----
         if let Some(stdlib_items) = stdlib_module_completions(&line_prefix) {
@@ -5280,6 +5564,49 @@ fn line_text_before_cursor(source: &str, position: Position) -> String {
     line[..col].to_string()
 }
 
+/// If the cursor is selecting items in a `from std.<module> import ...` statement,
+/// return completions for known public items in that stdlib module.
+fn stdlib_import_item_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
+    let trimmed = line_prefix.trim_start();
+    let after_from = trimmed.strip_prefix("from ")?;
+    let (module_text, _after_import) = after_from.split_once(" import ")?;
+    let module_segments: Vec<&str> = module_text.split('.').filter(|segment| !segment.is_empty()).collect();
+    if module_segments.first().copied() != Some(stdlib::STDLIB_ROOT) {
+        return None;
+    }
+    let module_segments_owned = module_segments
+        .iter()
+        .map(|segment| (*segment).to_string())
+        .collect::<Vec<_>>();
+
+    let mut items = Vec::new();
+    for metadata in stdlib_public_items_for_module(&module_segments_owned)
+        .into_iter()
+        .filter(|item| {
+            let expected = item.module_segments.iter().map(String::as_str).collect::<Vec<_>>();
+            stdlib_text_segments_match(&module_segments, &expected)
+        })
+    {
+        items.push(CompletionItem {
+            label: metadata.name.clone(),
+            kind: Some(stdlib_item_completion_kind(metadata.kind)),
+            detail: Some(metadata.detail.clone()),
+            documentation: Some(Documentation::MarkupContent(MarkupContent {
+                kind: MarkupKind::Markdown,
+                value: metadata.docs.clone(),
+            })),
+            sort_text: Some(format!("0_{}", metadata.name)),
+            ..Default::default()
+        });
+    }
+
+    if items.is_empty() {
+        return None;
+    }
+
+    Some(items)
+}
+
 /// If the cursor is inside a `from std.<...>` or `import std::<...>` context,
 /// return completions for stdlib module names. Returns `None` if not in that context.
 fn stdlib_module_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
@@ -5399,8 +5726,45 @@ fn decorator_completions(line_prefix: &str) -> Option<Vec<CompletionItem>> {
 
 #[cfg(test)]
 mod completion_tests {
-    use super::{builtin_list_member_completions, builtin_list_repeat_hover, stdlib_module_completions};
+    use super::{
+        ValueTypeFact, ValueTypeKind, builtin_list_member_completions, builtin_list_repeat_hover,
+        stdlib_import_item_completions, stdlib_import_item_hover, stdlib_module_completions, unchecked_lookup_hover,
+        value_type_kind,
+    };
     use crate::frontend::ast::Span;
+    use crate::frontend::symbols::SymbolKind as FrontendSymbolKind;
+    use crate::frontend::{lexer, parser};
+    use tower_lsp::lsp_types::CompletionItemKind;
+
+    fn parse_source(source: &str) -> Result<crate::frontend::ast::Program, String> {
+        let tokens = lexer::lex(source).map_err(|err| format!("lexer failed: {err:?}"))?;
+        parser::parse(&tokens).map_err(|errors| format!("parser failed: {errors:?}"))
+    }
+
+    fn value_type_facts_from_source(source: &str) -> Result<Vec<ValueTypeFact>, String> {
+        let ast = parse_source(source)?;
+        let mut checker = crate::frontend::typechecker::TypeChecker::new();
+        checker
+            .check_program(&ast)
+            .map_err(|errors| format!("typecheck failed: {errors:?}"))?;
+        let mut facts = Vec::new();
+        for symbol in checker.symbols.all_symbols() {
+            match &symbol.kind {
+                FrontendSymbolKind::Variable(info) => facts.push(ValueTypeFact {
+                    name: symbol.name.clone(),
+                    span: symbol.span,
+                    kind: value_type_kind(&info.ty),
+                }),
+                FrontendSymbolKind::Static(info) => facts.push(ValueTypeFact {
+                    name: symbol.name.clone(),
+                    span: symbol.span,
+                    kind: value_type_kind(&info.ty),
+                }),
+                _ => {}
+            }
+        }
+        Ok(facts)
+    }
 
     #[test]
     fn stdlib_module_completions_include_std_fs() -> Result<(), String> {
@@ -5412,6 +5776,174 @@ mod completion_tests {
                 .any(|item| item.label == "fs" && item.detail.as_deref() == Some("std.fs module")),
             "expected std.fs to be exposed through stdlib registry completions: {items:?}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn stdlib_collections_import_completions_include_ordinal_map_surface() -> Result<(), String> {
+        let items = stdlib_import_item_completions("from std.collections import Ord")
+            .ok_or_else(|| "expected std.collections item completions".to_string())?;
+        assert!(
+            items.iter().any(|item| {
+                item.label == "OrdinalMap"
+                    && item.kind == Some(CompletionItemKind::CLASS)
+                    && item.detail.as_deref() == Some("OrdinalMap: stdlib class")
+            }),
+            "expected OrdinalMap public item completion: {items:?}"
+        );
+        assert!(
+            items
+                .iter()
+                .any(|item| item.label == "OrdinalKey" && item.kind == Some(CompletionItemKind::INTERFACE)),
+            "expected OrdinalKey public item completion: {items:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn stdlib_collections_item_hover_documents_ordinal_map() -> Result<(), String> {
+        let source = "from std.collections import OrdinalMap\n";
+        let ast = parse_source(source)?;
+        let start = source
+            .find("OrdinalMap")
+            .ok_or_else(|| "expected OrdinalMap in fixture".to_string())?;
+        let (markdown, span) = stdlib_import_item_hover(&ast, source, start)
+            .ok_or_else(|| "expected OrdinalMap import item hover".to_string())?;
+        assert_eq!(span, Span::new(start, start + "OrdinalMap".len()));
+        assert!(
+            markdown.contains("from std.collections import OrdinalMap"),
+            "expected import signature in hover markdown: {markdown}"
+        );
+        assert!(
+            markdown.contains("lookup verifies canonical key bytes"),
+            "expected exact lookup detail in hover markdown: {markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unchecked_lookup_hover_warns_about_missing_key_semantics() -> Result<(), String> {
+        let source = "columns.get_unchecked(\"missing\")";
+        let start = source
+            .find("get_unchecked")
+            .ok_or_else(|| "expected get_unchecked in fixture".to_string())?;
+        let value_types = vec![ValueTypeFact {
+            name: "columns".to_string(),
+            span: Span::new(0, "columns".len()),
+            kind: ValueTypeKind::OrdinalMap,
+        }];
+        let markdown = unchecked_lookup_hover(
+            source,
+            &value_types,
+            "get_unchecked",
+            Span::new(start, start + "get_unchecked".len()),
+        )
+        .ok_or_else(|| "expected unchecked hover".to_string())?;
+        assert!(
+            markdown.contains("get_unchecked(...)"),
+            "expected unchecked signature in hover markdown: {markdown}"
+        );
+        assert!(
+            markdown.contains("Missing-key behavior is implementation-specific."),
+            "expected missing-key warning in hover markdown: {markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unchecked_lookup_hover_ignores_non_ordinal_map_receivers() -> Result<(), String> {
+        let source = "cache.get_unchecked(\"missing\")";
+        let start = source
+            .find("get_unchecked")
+            .ok_or_else(|| "expected get_unchecked in fixture".to_string())?;
+        let value_types = vec![ValueTypeFact {
+            name: "cache".to_string(),
+            span: Span::new(0, "cache".len()),
+            kind: ValueTypeKind::Other,
+        }];
+        let markdown = unchecked_lookup_hover(
+            source,
+            &value_types,
+            "get_unchecked",
+            Span::new(start, start + "get_unchecked".len()),
+        );
+        assert!(
+            markdown.is_none(),
+            "unchecked lookup hover should be scoped to OrdinalMap receivers"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unchecked_lookup_hover_uses_nearest_preceding_receiver_type() -> Result<(), String> {
+        let source = "cache = ordinal\ncache = plain\ncache.get_unchecked(\"missing\")";
+        let start = source
+            .find("get_unchecked")
+            .ok_or_else(|| "expected get_unchecked in fixture".to_string())?;
+        let value_types = vec![
+            ValueTypeFact {
+                name: "cache".to_string(),
+                span: Span::new(0, "cache".len()),
+                kind: ValueTypeKind::OrdinalMap,
+            },
+            ValueTypeFact {
+                name: "cache".to_string(),
+                span: Span::new(16, 21),
+                kind: ValueTypeKind::Other,
+            },
+        ];
+        let markdown = unchecked_lookup_hover(
+            source,
+            &value_types,
+            "get_unchecked",
+            Span::new(start, start + "get_unchecked".len()),
+        );
+        assert!(
+            markdown.is_none(),
+            "nearest same-name binding should drive unchecked lookup hover"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unchecked_lookup_hover_ignores_member_chain_receivers() -> Result<(), String> {
+        let source = "columns = ordinal\nother.columns.get_unchecked(\"missing\")";
+        let start = source
+            .find("get_unchecked")
+            .ok_or_else(|| "expected get_unchecked in fixture".to_string())?;
+        let value_types = vec![ValueTypeFact {
+            name: "columns".to_string(),
+            span: Span::new(0, "columns".len()),
+            kind: ValueTypeKind::OrdinalMap,
+        }];
+        let markdown = unchecked_lookup_hover(
+            source,
+            &value_types,
+            "get_unchecked",
+            Span::new(start, start + "get_unchecked".len()),
+        );
+        assert!(
+            markdown.is_none(),
+            "member chains should wait for real receiver typing instead of matching the final identifier"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unchecked_lookup_hover_uses_typechecked_document_facts() -> Result<(), String> {
+        let source = "from std.collections import OrdinalMap, OrdinalMapError\n\ndef run() -> Result[None, OrdinalMapError]:\n    columns: OrdinalMap[str] = OrdinalMap.from_keys([\"id\", \"status\"])?\n    columns.get_unchecked(\"id\")\n    columns.get_many_unchecked([\"status\"])\n    return Ok(None)\n";
+        let value_types = value_type_facts_from_source(source)?;
+        for method in ["get_unchecked", "get_many_unchecked"] {
+            let start = source
+                .find(method)
+                .ok_or_else(|| format!("expected {method} in fixture"))?;
+            let markdown = unchecked_lookup_hover(source, &value_types, method, Span::new(start, start + method.len()))
+                .ok_or_else(|| format!("expected unchecked hover for {method}"))?;
+            assert!(
+                markdown.contains("*unchecked lookup*"),
+                "expected unchecked lookup warning in hover markdown: {markdown}"
+            );
+        }
         Ok(())
     }
 

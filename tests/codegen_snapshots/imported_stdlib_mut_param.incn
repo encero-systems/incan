@@ -1,0 +1,7 @@
+from std.datetime.civil.naive import ordinal_key_append_byte
+
+
+def main() -> None:
+    mut out: list[u8] = []
+    ordinal_key_append_byte(out, 7)
+    assert len(out) == 1

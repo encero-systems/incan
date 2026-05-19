@@ -139,6 +139,7 @@ fn method_info_from_decl(
                     .iter()
                     .map(|bound| TypeBoundInfo {
                         name: checker.resolve_trait_bound_name(&bound.name, method.span),
+                        source_name: checker.trait_bound_source_name(&bound.name),
                         type_args: bound
                             .type_args
                             .iter()
@@ -150,7 +151,7 @@ fn method_info_from_decl(
                                 )
                             })
                             .collect(),
-                        module_path: None,
+                        module_path: checker.trait_bound_module_path(&bound.name),
                     })
                     .collect(),
             )
@@ -176,6 +177,7 @@ fn method_info_from_decl(
     );
     let trait_target = method.node.trait_target.as_ref().map(|target| TypeBoundInfo {
         name: checker.resolve_trait_bound_name(&target.node.name, target.span),
+        source_name: checker.trait_bound_source_name(&target.node.name),
         type_args: target
             .node
             .type_args
@@ -184,7 +186,7 @@ fn method_info_from_decl(
                 resolve_owner_self_reference(checker.resolve_type_checked(type_arg), owner_name, owner_self_ty)
             })
             .collect(),
-        module_path: None,
+        module_path: checker.trait_bound_module_path(&target.node.name),
     });
     MethodInfo {
         type_params,

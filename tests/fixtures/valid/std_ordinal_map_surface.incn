@@ -1,0 +1,543 @@
+"""
+Source-level exercise for `std.collections.OrdinalMap` and the deterministic `OrdinalKey` contract.
+"""
+
+from std.collections import OrdinalKey, OrdinalMap, OrdinalMapError, OrdinalMapErrorKind
+from std.datetime import Date, DateTime, DateTimeOffset, FixedOffset, Time
+from std.testing import assert_raises
+from std.uuid import UUID
+
+
+enum InvoiceStatus(str):
+    """
+    Stable value enum used to exercise compiler-backed `OrdinalKey` conformance.
+    """
+
+    Open = "open"
+    Paid = "paid"
+    Cancelled = "cancelled"
+
+
+@derive(Clone, Eq)
+model SmallKey with OrdinalKey:
+    """
+    Minimal custom key type used to exercise user-authored `OrdinalKey` adoption.
+    """
+
+    value: int
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """
+        Return the fixture encoding identifier.
+        """
+        return "test:small-key-v1"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """
+        Decode the one-byte fixture key payload.
+        """
+        if len(data) != 1:
+            return Err(OrdinalMapError.invalid_key_record("SmallKey requires one byte"))
+        return Ok(SmallKey(value=int(data[0])))
+
+    def ordinal_bytes(self) -> bytes:
+        """
+        Encode the fixture key as one byte.
+        """
+        value: u8 = self.value.wrapping_resize()
+        return [value]
+
+
+@derive(Clone, Eq)
+model CollidingKey with OrdinalKey:
+    """
+    Key type that deliberately makes every value share the same lookup hash.
+    """
+
+    value: int
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """
+        Return the fixture encoding identifier.
+        """
+        return "test:colliding-key-v1"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """
+        Decode the one-byte fixture key payload.
+        """
+        if len(data) != 1:
+            return Err(OrdinalMapError.invalid_key_record("CollidingKey requires one byte"))
+        return Ok(CollidingKey(value=int(data[0])))
+
+    def ordinal_bytes(self) -> bytes:
+        """
+        Encode the fixture key as one byte.
+        """
+        value: u8 = self.value.wrapping_resize()
+        return [value]
+
+    def ordinal_hash(self) -> int:
+        """
+        Force a deterministic query-time hash collision for exact-lookup tests.
+        """
+        return 42
+
+
+@derive(Clone, Eq)
+model LooseKey with OrdinalKey:
+    """
+    Key type that decodes multiple fixed-width payloads to the same semantic key.
+    """
+
+    value: int
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """
+        Return the fixture encoding identifier.
+        """
+        return "test:loose-key-v1"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """
+        Decode two bytes, intentionally ignoring the first one.
+        """
+        if len(data) != 2:
+            return Err(OrdinalMapError.invalid_key_record("LooseKey requires two bytes"))
+        return Ok(LooseKey(value=int(data[1])))
+
+    def ordinal_bytes(self) -> bytes:
+        """
+        Encode the fixture key with a canonical zero prefix.
+        """
+        prefix: u8 = 0
+        value: u8 = self.value.wrapping_resize()
+        return [prefix, value]
+
+
+@derive(Clone, Eq)
+model BadEncodingKey with OrdinalKey:
+    """
+    Key type with an intentionally invalid encoding identifier.
+    """
+
+    value: int
+
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """
+        Return a non-namespaced encoding identifier.
+        """
+        return "bad"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """
+        Decode one byte for completeness; construction should reject the encoding first.
+        """
+        if len(data) != 1:
+            return Err(OrdinalMapError.invalid_key_record("BadEncodingKey requires one byte"))
+        return Ok(BadEncodingKey(value=int(data[0])))
+
+    def ordinal_bytes(self) -> bytes:
+        """
+        Encode the fixture key as one byte.
+        """
+        value: u8 = self.value.wrapping_resize()
+        return [value]
+
+
+def exercise_ordinal_map() -> Result[None, OrdinalMapError]:
+    """
+    Exercise construction, lookup, compact widths, and deterministic round trips.
+    """
+    alpha = SmallKey(value=1)
+    beta = SmallKey(value=2)
+    gamma = SmallKey(value=3)
+
+    map: OrdinalMap[SmallKey] = OrdinalMap.from_pairs([(alpha, 7), (beta, 2), (gamma, 500)])?
+    assert len(map) == 3
+    assert map.key_count() == 3
+    assert map.max_ordinal() == 500
+    assert map.ordinal_width_bytes() == 2
+    assert map.slot_count() >= 6
+    assert map.storage_bytes() > 0
+    assert map.nbytes() == map.storage_bytes()
+
+    assert alpha in map
+    assert SmallKey(value=9) not in map
+    assert map.get(alpha) == Some(7)
+    assert map.require(beta)? == 2
+    assert map.__getitem__(gamma) == 500
+    assert map.get(SmallKey(value=9)) == None
+    assert map.get_unchecked(alpha) == 7
+    assert map.get_many([alpha, SmallKey(value=9), beta]) == [Some(7), None, Some(2)]
+    assert map.get_many_unchecked([alpha, beta]) == [7, 2]
+    assert map.require_many([gamma, alpha])? == [500, 7]
+
+    stored_collision = CollidingKey(value=1)
+    missing_collision = CollidingKey(value=2)
+    collision_map: OrdinalMap[CollidingKey] = OrdinalMap.from_pairs([(stored_collision, 11)])?
+    assert missing_collision not in collision_map
+    assert collision_map.get(missing_collision) == None
+    assert collision_map.get_unchecked(missing_collision) == 11
+    assert_ordinal_missing(collision_map.require(missing_collision))
+    match OrdinalMap[CollidingKey].from_pairs([(stored_collision, 11), (missing_collision, 12)]):
+        Ok(_) => assert False
+        Err(err) => assert err.kind() == OrdinalMapErrorKind.HashCollision
+
+    encoded = map.to_bytes()
+    assert encoded == map.to_bytes()
+    same_map: OrdinalMap[SmallKey] = OrdinalMap.from_pairs([(gamma, 500), (alpha, 7), (beta, 2)])?
+    assert same_map.to_bytes() == encoded
+    restored: OrdinalMap[SmallKey] = OrdinalMap.from_bytes(encoded)?
+    assert restored.to_bytes() == encoded
+    assert restored.require(alpha)? == 7
+    assert restored.require(gamma)? == 500
+    assert restored.serialized_size() == len(encoded)
+
+    text_keys: list[str] = ["id", "status"]
+    bytes_keys: list[bytes] = [b"id", b"status"]
+    text_map: OrdinalMap[str] = OrdinalMap.from_keys(text_keys)?
+    direct_text_map: OrdinalMap[str] = OrdinalMap.from_keys(["id", "status"])?
+    pair_text_map: OrdinalMap[str] = OrdinalMap.from_pairs([("id", 10), ("status", 20)])?
+    bytes_map: OrdinalMap[bytes] = OrdinalMap.from_keys(bytes_keys)?
+    bool_map: OrdinalMap[bool] = OrdinalMap.from_pairs([(false, 0), (true, 1)])?
+    one: i32 = 1
+    two: i32 = 2
+    int_map: OrdinalMap[i32] = OrdinalMap.from_pairs([(one, 10), (two, 20)])?
+    text_restored: OrdinalMap[str] = OrdinalMap.from_bytes(text_map.to_bytes())?
+    bytes_restored: OrdinalMap[bytes] = OrdinalMap.from_bytes(bytes_map.to_bytes())?
+    bool_restored: OrdinalMap[bool] = OrdinalMap.from_bytes(bool_map.to_bytes())?
+    int_restored: OrdinalMap[i32] = OrdinalMap.from_bytes(int_map.to_bytes())?
+    assert text_restored.require("status")? == 1
+    assert direct_text_map.require("status")? == 1
+    assert pair_text_map.require("status")? == 20
+    assert bytes_restored.require(b"id")? == 0
+    assert bool_restored.require(true)? == 1
+    assert int_restored.require(two)? == 20
+
+    price: decimal[5, 2] = 19.99d
+    fee: decimal[5, 2] = 1.25d
+    decimal_map: OrdinalMap[decimal[5, 2]] = OrdinalMap.from_pairs([(price, 1999), (fee, 125)])?
+    decimal_restored: OrdinalMap[decimal[5, 2]] = OrdinalMap.from_bytes(decimal_map.to_bytes())?
+    assert decimal_restored.require(price)? == 1999
+    assert decimal_restored.require(fee)? == 125
+
+    one_byte: OrdinalMap[SmallKey] = OrdinalMap.from_pairs([(alpha, 255)])?
+    assert one_byte.ordinal_width_bytes() == 1
+    four_byte: OrdinalMap[SmallKey] = OrdinalMap.from_pairs([(alpha, 70000)])?
+    assert four_byte.ordinal_width_bytes() == 4
+    eight_byte: OrdinalMap[SmallKey] = OrdinalMap.from_pairs([(alpha, 4294967296)])?
+    assert eight_byte.ordinal_width_bytes() == 8
+
+    assert_ordinal_error(OrdinalMap[SmallKey].from_pairs([(alpha, 1), (alpha, 2)]), "duplicate_key")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_pairs([(alpha, 1), (beta, 1)]), "duplicate_ordinal")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_pairs([(alpha, -1)]), "negative_ordinal")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(b"bad"), "truncated")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, 0, 0)), "invalid_magic")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, len(b"INCAN_ORDMAP\0"), 2)), "unsupported_version")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, 15, 1)), "unsupported_flags")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_key_encoding_payload_offset(), 120)), "key_encoding_mismatch")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_width_offset(encoded), 3)), "invalid_ordinal_width")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_lookup_algorithm_payload_offset(encoded), 120)), "unsupported_lookup")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_verification_mode_offset(encoded), 9)), "unsupported_verification")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_append_byte_to_bytes(encoded, 1)), "trailing_bytes")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_section_payload_offset(encoded, 0), 3)), "invalid_key_offsets")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_key_final_offset_offset(encoded), 4)), "invalid_key_records")
+    wide_map: OrdinalMap[SmallKey] = OrdinalMap.from_pairs([(alpha, 256)])?
+    wide_encoded = wide_map.to_bytes()
+    noncanonical_ordinals = _replace_byte(_replace_byte(wide_encoded, _ordinal_section_payload_offset(wide_encoded, 1), 1), _ordinal_section_payload_offset(wide_encoded, 1) + 1, 0)
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(noncanonical_ordinals), "non_canonical_ordinal_width")
+    one_key_encoded = one_byte.to_bytes()
+    invalid_ordinal_section = _remove_byte_at(_replace_byte(one_key_encoded, _ordinal_section_length_offset(one_key_encoded, 1), 0), _ordinal_section_payload_offset(one_key_encoded, 1))
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(invalid_ordinal_section), "invalid_ordinals")
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(_replace_byte(encoded, _ordinal_section_payload_offset(encoded, 2), 255)), "invalid_lookup_payload")
+    metadata_payload = _append_byte_to_bytes(_replace_byte(encoded, _ordinal_section_length_offset(encoded, 3), 1), 0)
+    assert_ordinal_error(OrdinalMap[SmallKey].from_bytes(metadata_payload), "unsupported_metadata")
+    loose = LooseKey(value=1)
+    loose_map: OrdinalMap[LooseKey] = OrdinalMap.from_pairs([(loose, 1)])?
+    loose_encoded = loose_map.to_bytes()
+    noncanonical_key_payload = _replace_byte(loose_encoded, _ordinal_key_record_payload_offset(loose_encoded, 0), 1)
+    assert_loose_ordinal_error(OrdinalMap[LooseKey].from_bytes(noncanonical_key_payload), "non_canonical_key_payload")
+    assert_bad_encoding_error(OrdinalMap.from_keys([BadEncodingKey(value=1)]), "invalid_key_encoding")
+    assert_raises[ValueError](build_bad_empty_map)
+
+    uuid = UUID.from_int(113059749145936325402354257176981405696)
+    uuid_map: OrdinalMap[UUID] = OrdinalMap.from_pairs([(uuid, 42)])?
+    assert uuid_map.require(uuid)? == 42
+    uuid_restored: OrdinalMap[UUID] = OrdinalMap.from_bytes(uuid_map.to_bytes())?
+    assert uuid_restored.require(uuid)? == 42
+
+    date = Date(year=2026, month=5, day=19)
+    assert_date_ordinal_error(Date.from_ordinal_bytes(b"\x02\xea\x07\x00\x00\x00\x00\x00\x00\x05\x13"), "invalid_key_record")
+    time = Time(hour=12, minute=34, second=56, nanosecond=789)
+    datetime = DateTime.combine(date, time)
+    offset = DateTimeOffset(datetime=datetime, offset=FixedOffset.utc())
+    date_map: OrdinalMap[Date] = OrdinalMap.from_pairs([(date, 1)])?
+    time_map: OrdinalMap[Time] = OrdinalMap.from_pairs([(time, 2)])?
+    datetime_map: OrdinalMap[DateTime] = OrdinalMap.from_pairs([(datetime, 3)])?
+    offset_map: OrdinalMap[DateTimeOffset] = OrdinalMap.from_pairs([(offset, 4)])?
+    date_restored: OrdinalMap[Date] = OrdinalMap.from_bytes(date_map.to_bytes())?
+    time_restored: OrdinalMap[Time] = OrdinalMap.from_bytes(time_map.to_bytes())?
+    datetime_restored: OrdinalMap[DateTime] = OrdinalMap.from_bytes(datetime_map.to_bytes())?
+    offset_restored: OrdinalMap[DateTimeOffset] = OrdinalMap.from_bytes(offset_map.to_bytes())?
+    assert date_restored.require(date)? == 1
+    assert time_restored.require(time)? == 2
+    assert datetime_restored.require(datetime)? == 3
+    assert offset_restored.require(offset)? == 4
+
+    statuses: list[InvoiceStatus] = [InvoiceStatus.Open, InvoiceStatus.Paid, InvoiceStatus.Cancelled]
+    status_map: OrdinalMap[InvoiceStatus] = OrdinalMap.from_keys(statuses)?
+    assert status_map.require(InvoiceStatus.Paid)? == 1
+    status_restored: OrdinalMap[InvoiceStatus] = OrdinalMap.from_bytes(status_map.to_bytes())?
+    assert status_restored.require(InvoiceStatus.Cancelled)? == 2
+
+    return Ok(None)
+
+
+def assert_ordinal_error(result: Result[OrdinalMap[SmallKey], OrdinalMapError], kind: str) -> None:
+    """
+    Assert that an `OrdinalMap` construction result failed with the expected kind.
+    """
+    match result:
+        Ok(_) => assert False
+        Err(err) =>
+            if err.kind_name() != kind:
+                println(err.kind_name())
+                println(kind)
+            assert err.kind_name() == kind
+
+
+def assert_loose_ordinal_error(result: Result[OrdinalMap[LooseKey], OrdinalMapError], kind: str) -> None:
+    """
+    Assert that a `LooseKey` map construction result failed with the expected kind.
+    """
+    match result:
+        Ok(_) => assert False
+        Err(err) =>
+            if err.kind_name() != kind:
+                println(err.kind_name())
+                println(kind)
+            assert err.kind_name() == kind
+
+
+def assert_bad_encoding_error(result: Result[OrdinalMap[BadEncodingKey], OrdinalMapError], kind: str) -> None:
+    """
+    Assert that an `OrdinalMap` construction result rejected a bad key encoding.
+    """
+    match result:
+        Ok(_) => assert False
+        Err(err) =>
+            if err.kind_name() != kind:
+                println(err.kind_name())
+                println(kind)
+            assert err.kind_name() == kind
+            assert err.kind() == OrdinalMapErrorKind.InvalidKeyEncoding
+
+
+def assert_ordinal_missing(result: Result[int, OrdinalMapError]) -> None:
+    """
+    Assert that exact lookup rejected a hash-matching key with different canonical bytes.
+    """
+    match result:
+        Ok(_) => assert False
+        Err(err) => assert err.kind_name() == "missing_key"
+
+
+def build_bad_empty_map() -> None:
+    """
+    Exercise constructor-path validation for bad user-authored key encodings.
+    """
+    OrdinalMap[BadEncodingKey]()
+
+
+def assert_date_ordinal_error(result: Result[Date, OrdinalMapError], kind: str) -> None:
+    """
+    Assert that a date ordinal-key decode failed with the expected kind.
+    """
+    match result:
+        Ok(_) => assert False
+        Err(err) => assert err.kind_name() == kind
+
+
+def _replace_byte(data: bytes, offset: int, value: int) -> bytes:
+    """
+    Return `data` with one byte replaced for serialized-payload validation probes.
+    """
+    mut out: list[u8] = []
+    for index in range(len(data)):
+        if index == offset:
+            byte: u8 = value.wrapping_resize()
+            out.append(byte)
+        else:
+            out.append(data[index])
+    return out
+
+
+def _append_byte_to_bytes(data: bytes, value: int) -> bytes:
+    """
+    Return `data` with one byte appended for trailing-payload validation probes.
+    """
+    mut out: list[u8] = []
+    for index in range(len(data)):
+        out.append(data[index])
+    byte: u8 = value.wrapping_resize()
+    out.append(byte)
+    return out
+
+
+def _remove_byte_at(data: bytes, offset: int) -> bytes:
+    """
+    Return `data` with one byte removed.
+    """
+    mut out: list[u8] = []
+    for index in range(len(data)):
+        if index != offset:
+            out.append(data[index])
+    return out
+
+
+def _read_u16_le(data: bytes, offset: int) -> int:
+    """
+    Read a little-endian u16 from fixture bytes.
+    """
+    return int(data[offset]) + (int(data[offset + 1]) * 256)
+
+
+def _read_u64_le(data: bytes, offset: int) -> int:
+    """
+    Read a little-endian u64 from fixture bytes.
+    """
+    mut value = 0
+    mut multiplier = 1
+    for index in range(8):
+        value = value + (int(data[offset + index]) * multiplier)
+        if index < 7:
+            multiplier = multiplier * 256
+    return value
+
+
+def _ordinal_key_encoding_payload_offset() -> int:
+    """
+    Return the byte offset where the key-encoding payload starts.
+    """
+    return len(b"INCAN_ORDMAP\0") + 2 + 2 + 2
+
+
+def _ordinal_lookup_algorithm_payload_offset(data: bytes) -> int:
+    """
+    Return the byte offset where the lookup algorithm payload starts.
+    """
+    mut offset = _ordinal_key_encoding_payload_offset()
+    key_encoding_length = _read_u16_le(data, offset - 2)
+    offset = offset + key_encoding_length + 8 + 1
+    return offset + 2
+
+
+def _ordinal_key_count_offset(data: bytes) -> int:
+    """
+    Return the byte offset where the key count starts.
+    """
+    offset = _ordinal_key_encoding_payload_offset()
+    key_encoding_length = _read_u16_le(data, offset - 2)
+    return offset + key_encoding_length
+
+
+def _ordinal_key_count(data: bytes) -> int:
+    """
+    Return the encoded key count.
+    """
+    return _read_u64_le(data, _ordinal_key_count_offset(data))
+
+
+def _ordinal_width_offset(data: bytes) -> int:
+    """
+    Return the byte offset where the ordinal width is stored.
+    """
+    return _ordinal_key_count_offset(data) + 8
+
+
+def _ordinal_verification_mode_offset(data: bytes) -> int:
+    """
+    Return the byte offset where the verification mode byte is stored.
+    """
+    lookup_offset = _ordinal_lookup_algorithm_payload_offset(data)
+    lookup_length = _read_u16_le(data, lookup_offset - 2)
+    return lookup_offset + lookup_length
+
+
+def _ordinal_sections_offset(data: bytes) -> int:
+    """
+    Return the byte offset where length-prefixed binary sections begin.
+    """
+    return _ordinal_verification_mode_offset(data) + 1
+
+
+def _ordinal_section_length_offset(data: bytes, section_index: int) -> int:
+    """
+    Return the length-prefix offset for a container section.
+    """
+    mut offset = _ordinal_sections_offset(data)
+    mut index = 0
+    while index < section_index:
+        length = _read_u64_le(data, offset)
+        offset = offset + 8 + length
+        index = index + 1
+    return offset
+
+
+def _ordinal_section_payload_offset(data: bytes, section_index: int) -> int:
+    """
+    Return the payload offset for a length-prefixed container section.
+    """
+    return _ordinal_section_length_offset(data, section_index) + 8
+
+
+def _ordinal_key_final_offset_offset(data: bytes) -> int:
+    """
+    Return the offset of the final encoded key-record offset.
+    """
+    key_payload = _ordinal_section_payload_offset(data, 0)
+    offset_width = int(data[key_payload])
+    return key_payload + 1 + (_ordinal_key_count(data) * offset_width)
+
+
+def _ordinal_key_record_payload_offset(data: bytes, record_index: int) -> int:
+    """
+    Return the payload offset for a serialized key record.
+    """
+    key_payload = _ordinal_section_payload_offset(data, 0)
+    offset_width = int(data[key_payload])
+    offsets_offset = key_payload + 1
+    records_offset = offsets_offset + ((_ordinal_key_count(data) + 1) * offset_width)
+    record_start = _read_compact_fixture_int(data, offsets_offset + (record_index * offset_width), offset_width)
+    return records_offset + record_start
+
+
+def _read_compact_fixture_int(data: bytes, offset: int, width: int) -> int:
+    """
+    Read a compact little-endian integer from fixture bytes.
+    """
+    mut value = 0
+    mut multiplier = 1
+    for index in range(width):
+        value = value + (int(data[offset + index]) * multiplier)
+        if index < width - 1:
+            multiplier = multiplier * 256
+    return value
+
+
+def main() -> None:
+    """
+    Run the fixture as a standalone program.
+    """
+    match exercise_ordinal_map():
+        Ok(_) => println("std.ordinal_map ok")
+        Err(err) => println(err.message())

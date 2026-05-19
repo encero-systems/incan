@@ -4,11 +4,13 @@ Fixed-offset datetime pairing for `std.datetime.civil`.
 This module keeps concrete `+HH:MM` / `-HH:MM` offset datetime values separate from named timezone support, which belongs in packages layered above `std.datetime`.
 """
 
+from std.collections import OrdinalKey, OrdinalMapError
 from std.datetime.error import DateTimeError
 from std.datetime.civil.intervals import TimeDelta, YearMonthInterval, DateTimeInterval
 from std.datetime.civil.naive import DateTime, FixedOffset, utc, _ParsedOffset, _ParsedTemporal, _parse_offset, _strptime_temporal, _strftime_datetime_inner
+from std.datetime.civil.naive import ordinal_key_append_bytes, ordinal_key_append_signed_magnitude_i64, ordinal_key_read_signed_magnitude_i64, ordinal_key_signed_magnitude_i64_is_canonical
 
-pub model DateTimeOffset:
+pub model DateTimeOffset with OrdinalKey:
     """
     Naive datetime paired with a fixed UTC offset.
 
@@ -64,6 +66,28 @@ pub model DateTimeOffset:
             return Err(DateTimeError(detail="DateTimeOffset.strptime requires %z or %:z"))
         return Ok(DateTimeOffset(datetime=parsed.datetime, offset=parsed.offset))
 
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """
+        Return the stable `OrdinalMap` key encoding identifier for `DateTimeOffset` values.
+        """
+        return "datetime-offset:gregorian-ymd-hms-nanos-offset-v1"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """
+        Decode `DateTimeOffset` key bytes from an `OrdinalMap` payload.
+        """
+        if len(data) != 27:
+            return Err(OrdinalMapError.invalid_key_record("DateTimeOffset OrdinalMap key bytes must be 27 bytes"))
+        datetime = DateTime.from_ordinal_bytes(data[0:18])?
+        if not ordinal_key_signed_magnitude_i64_is_canonical(data, 18):
+            return Err(OrdinalMapError.invalid_key_record("DateTimeOffset offset must use canonical signed-magnitude encoding"))
+        offset_seconds = ordinal_key_read_signed_magnitude_i64(data, 18)
+        match FixedOffset.seconds(offset_seconds):
+            Ok(offset) => return Ok(DateTimeOffset(datetime=datetime, offset=offset))
+            Err(err) => return Err(OrdinalMapError.invalid_key_record(err.message()))
+
     def isoformat(self) -> str:
         """
         Format this fixed-offset datetime as ISO text.
@@ -72,6 +96,15 @@ pub model DateTimeOffset:
             Local datetime followed by `Z`, `+HH:MM`, or `-HH:MM`.
         """
         return self.datetime.isoformat() + self.offset.isoformat()
+
+    def ordinal_bytes(self) -> bytes:
+        """
+        Return canonical fixed-width fixed-offset datetime bytes for `OrdinalMap`.
+        """
+        mut out: list[u8] = []
+        ordinal_key_append_bytes(out, self.datetime.ordinal_bytes())
+        ordinal_key_append_signed_magnitude_i64(out, self.offset.seconds)
+        return out
 
     def strftime(self, format: str) -> Result[str, DateTimeError]:
         """

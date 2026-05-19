@@ -173,6 +173,12 @@ pub struct RustInteropArtifacts {
 pub struct DeclarationArtifacts {
     /// Module-visible static bindings keyed by local name for lowering/runtime emission.
     pub static_bindings: HashMap<String, StaticBindingInfo>,
+    /// Same-type method aliases keyed by nominal type name (`alias -> target_method`).
+    ///
+    /// This includes imported type metadata so lowering can rewrite calls through aliases such as
+    /// `Path.__truediv__` or `OrdinalMap.nbytes` even when the alias was declared in stdlib or a dependency module
+    /// rather than the current source file.
+    pub type_method_rebindings: HashMap<String, HashMap<String, String>>,
     /// RFC 036: Module-visible function names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_function_bindings: HashMap<String, DecoratedFunctionBindingInfo>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
@@ -568,6 +574,13 @@ impl TypeCheckInfo {
                 .call_site_callable_params
                 .insert((span.start, span.end), params.to_vec());
         }
+    }
+
+    /// Record exact callable metadata when overload/source-method resolution selected a concrete callable.
+    pub(crate) fn record_call_site_callable_params_exact(&mut self, span: Span, params: &[CallableParam]) {
+        self.calls
+            .call_site_callable_params
+            .insert((span.start, span.end), params.to_vec());
     }
 
     /// Record callable metadata required by an explicit lowered dispatch path.

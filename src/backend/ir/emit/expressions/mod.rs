@@ -285,13 +285,15 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
-    /// Prefer the call-site target type unless it is still generic enough that Rust needs the literal's own type.
+    /// Prefer the call-site target type for aggregate literal elements.
+    ///
+    /// Generic targets still matter for ownership conversion: a string literal passed into `list[K]` should materialize
+    /// as an owned `String` for Incan calls, not leak Rust's `&str` literal type into the generic container.
     fn concrete_literal_target<'b>(
         target_ty: Option<&'b IrType>,
         inferred_ty: Option<&'b IrType>,
     ) -> Option<&'b IrType> {
         match target_ty {
-            Some(ty) if Self::is_unresolved_call_seed_type(ty) => inferred_ty.or(Some(ty)),
             Some(ty) => Some(ty),
             None => inferred_ty,
         }
@@ -299,6 +301,11 @@ impl<'a> IrEmitter<'a> {
 
     /// Rebuild a parent value-use site for one tuple item while preserving the parent ownership context.
     fn tuple_item_use_site<'b>(site: ValueUseSite<'b>, target_ty: Option<&'b IrType>) -> ValueUseSite<'b> {
+        Self::retarget_value_use_site(site, target_ty)
+    }
+
+    /// Rebuild a value-use site with a more specific target type while preserving the context kind.
+    fn retarget_value_use_site<'b>(site: ValueUseSite<'b>, target_ty: Option<&'b IrType>) -> ValueUseSite<'b> {
         match site {
             ValueUseSite::IncanCallArg { in_return, .. } => ValueUseSite::IncanCallArg {
                 target_ty,
@@ -313,6 +320,28 @@ impl<'a> IrEmitter<'a> {
             ValueUseSite::MatchScrutinee { .. } => ValueUseSite::MatchScrutinee { target_ty },
             ValueUseSite::MethodArg => ValueUseSite::MethodArg,
         }
+    }
+
+    /// Return the `Result[output, error]` target type for the inner expression of `output?`.
+    fn try_inner_target_type(&self, output_ty: &IrType, inner: &TypedExpr) -> Option<IrType> {
+        if matches!(output_ty, IrType::Unknown) {
+            return None;
+        }
+        let err_ty = match &inner.ty {
+            IrType::Result(_, err_ty) => Some(err_ty.as_ref().clone()),
+            _ => self
+                .current_function_return_type
+                .borrow()
+                .as_ref()
+                .and_then(|return_ty| {
+                    if let IrType::Result(_, err_ty) = return_ty {
+                        Some(err_ty.as_ref().clone())
+                    } else {
+                        None
+                    }
+                }),
+        }?;
+        Some(IrType::Result(Box::new(output_ty.clone()), Box::new(err_ty)))
     }
 
     /// Emit an expression directly against an ownership-planned sink/source boundary.
@@ -415,6 +444,17 @@ impl<'a> IrEmitter<'a> {
                     })
                     .collect::<Result<_, _>>()?;
                 return Ok(quote! { (#(#item_tokens),*) });
+            }
+            IrExprKind::Try(inner) => {
+                let site_target_ty = Self::use_site_target_ty(site);
+                let inner_tokens = if let Some(inner_target_ty) =
+                    site_target_ty.and_then(|target_ty| self.try_inner_target_type(target_ty, inner))
+                {
+                    self.emit_expr_for_use(inner, Self::retarget_value_use_site(site, Some(&inner_target_ty)))?
+                } else {
+                    self.emit_expr(inner)?
+                };
+                return Ok(quote! { #inner_tokens? });
             }
             IrExprKind::MethodCall {
                 receiver,
@@ -937,7 +977,16 @@ impl<'a> IrEmitter<'a> {
             }
 
             IrExprKind::Try(inner) => {
-                let i = self.emit_expr(inner)?;
+                let i = if let Some(inner_target_ty) = self.try_inner_target_type(&expr.ty, inner) {
+                    self.emit_expr_for_use(
+                        inner,
+                        ValueUseSite::Assignment {
+                            target_ty: Some(&inner_target_ty),
+                        },
+                    )?
+                } else {
+                    self.emit_expr(inner)?
+                };
                 Ok(quote! { #i? })
             }
 

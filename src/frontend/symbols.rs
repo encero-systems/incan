@@ -707,6 +707,7 @@ pub struct MethodInfo {
 #[derive(Debug, Clone)]
 pub struct TypeBoundInfo {
     pub name: String,
+    pub source_name: Option<String>,
     pub type_args: Vec<ResolvedType>,
     pub module_path: Option<Vec<String>>,
 }

@@ -213,6 +213,7 @@ nav:
           - Module static storage: language/explanation/static_storage.md
           - Numeric types: language/explanation/numeric_types.md
           - Date and time model: language/explanation/datetime_model.md
+          - OrdinalMap: language/explanation/ordinal_map.md
           - Derives & traits (explained): language/explanation/derives_and_traits.md
           - Why call-site type args exist: language/explanation/call_site_type_arguments.md
           - How derives work: language/explanation/how_derives_work.md

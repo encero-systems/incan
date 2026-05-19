@@ -4,6 +4,7 @@ Naive civil date, time, datetime, and fixed-offset primitives for `std.datetime.
 This module owns Gregorian calendar arithmetic, fixed-offset formatting helpers, and Python-shaped strftime/strptime support for values that do not carry named timezone rules.
 """
 
+from std.collections import OrdinalKey, OrdinalMapError
 from std.datetime.error import DateTimeError
 from std.datetime.runtime import SystemTime
 from std.datetime.civil.intervals import TimeDelta, YearMonthInterval, DateTimeInterval, _timedelta_from_nanos
@@ -29,7 +30,7 @@ model _ParsedNumber:
     next: int
 
 
-pub model Date:
+pub model Date with OrdinalKey:
     """
     Gregorian calendar date.
 
@@ -112,6 +113,29 @@ pub model Date:
         return Ok(Date(year=year, month=month, day=day))
 
     @staticmethod
+    def ordinal_encoding() -> str:
+        """
+        Return the stable `OrdinalMap` key encoding identifier for `Date` values.
+        """
+        return "date:gregorian-ymd-v1"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """
+        Decode `Date` key bytes from an `OrdinalMap` payload.
+        """
+        if len(data) != 11:
+            return Err(OrdinalMapError.invalid_key_record("Date OrdinalMap key bytes must be 11 bytes"))
+        if not ordinal_key_signed_magnitude_i64_is_canonical(data, 0):
+            return Err(OrdinalMapError.invalid_key_record("Date OrdinalMap year must use canonical signed-magnitude encoding"))
+        year = ordinal_key_read_signed_magnitude_i64(data, 0)
+        month = int(data[9])
+        day = int(data[10])
+        match Date.from_fields(year, month, day):
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(OrdinalMapError.invalid_key_record(err.message()))
+
+    @staticmethod
     def fromisocalendar(year: int, week: int, weekday: int) -> Result[Date, DateTimeError]:
         """
         Construct a date from ISO week calendar fields.
@@ -138,6 +162,16 @@ pub model Date:
             Date in `YYYY-MM-DD` form.
         """
         return _pad4(self.year) + "-" + _pad2(self.month) + "-" + _pad2(self.day)
+
+    def ordinal_bytes(self) -> bytes:
+        """
+        Return canonical fixed-width date bytes for `OrdinalMap`.
+        """
+        mut out: list[u8] = []
+        ordinal_key_append_signed_magnitude_i64(out, self.year)
+        ordinal_key_append_byte(out, self.month)
+        ordinal_key_append_byte(out, self.day)
+        return out
 
     def strftime(self, format: str) -> Result[str, DateTimeError]:
         """
@@ -335,7 +369,7 @@ pub model Date:
         return total + self.day_of_year()
 
 
-pub model Time:
+pub model Time with OrdinalKey:
     """
     Wall-clock time of day with nanosecond precision.
 
@@ -395,6 +429,28 @@ pub model Time:
         return Ok(Time(hour=hour, minute=minute, second=second, nanosecond=nanosecond))
 
     @staticmethod
+    def ordinal_encoding() -> str:
+        """
+        Return the stable `OrdinalMap` key encoding identifier for `Time` values.
+        """
+        return "time:hms-nanos-v1"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """
+        Decode `Time` key bytes from an `OrdinalMap` payload.
+        """
+        if len(data) != 7:
+            return Err(OrdinalMapError.invalid_key_record("Time OrdinalMap key bytes must be 7 bytes"))
+        hour = int(data[0])
+        minute = int(data[1])
+        second = int(data[2])
+        nanosecond = ordinal_key_read_u32_le(data, 3)
+        match Time.from_fields(hour, minute, second, nanosecond):
+            Ok(value) => return Ok(value)
+            Err(err) => return Err(OrdinalMapError.invalid_key_record(err.message()))
+
+    @staticmethod
     def strptime(value: str, format: str) -> Result[Time, DateTimeError]:
         """
         Parse a wall-clock time with an Incan-native Python-shaped format string.
@@ -423,6 +479,17 @@ pub model Time:
         if self.nanosecond == 0:
             return base
         return base + "." + _pad9(self.nanosecond)
+
+    def ordinal_bytes(self) -> bytes:
+        """
+        Return canonical fixed-width time bytes for `OrdinalMap`.
+        """
+        mut out: list[u8] = []
+        ordinal_key_append_byte(out, self.hour)
+        ordinal_key_append_byte(out, self.minute)
+        ordinal_key_append_byte(out, self.second)
+        ordinal_key_append_u32_le(out, self.nanosecond)
+        return out
 
     def strftime(self, format: str) -> Result[str, DateTimeError]:
         """
@@ -480,7 +547,7 @@ pub model Time:
         return self.seconds_since_midnight() < other.seconds_since_midnight()
 
 
-pub model DateTime:
+pub model DateTime with OrdinalKey:
     """
     Naive Gregorian date and wall-clock time.
 
@@ -557,6 +624,24 @@ pub model DateTime:
         """
         return DateTime(date=date, time=time)
 
+    @staticmethod
+    def ordinal_encoding() -> str:
+        """
+        Return the stable `OrdinalMap` key encoding identifier for `DateTime` values.
+        """
+        return "datetime:gregorian-ymd-hms-nanos-v1"
+
+    @staticmethod
+    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
+        """
+        Decode `DateTime` key bytes from an `OrdinalMap` payload.
+        """
+        if len(data) != 18:
+            return Err(OrdinalMapError.invalid_key_record("DateTime OrdinalMap key bytes must be 18 bytes"))
+        date = Date.from_ordinal_bytes(data[0:11])?
+        time = Time.from_ordinal_bytes(data[11:18])?
+        return Ok(DateTime(date=date, time=time))
+
     def isoformat(self) -> str:
         """
         Format this datetime as ISO text.
@@ -565,6 +650,15 @@ pub model DateTime:
             `YYYY-MM-DDTHH:MM:SS` with fractional seconds when needed.
         """
         return self.date.isoformat() + "T" + self.time.isoformat()
+
+    def ordinal_bytes(self) -> bytes:
+        """
+        Return canonical fixed-width datetime bytes for `OrdinalMap`.
+        """
+        mut out: list[u8] = []
+        ordinal_key_append_bytes(out, self.date.ordinal_bytes())
+        ordinal_key_append_bytes(out, self.time.ordinal_bytes())
+        return out
 
     def strftime(self, format: str) -> Result[str, DateTimeError]:
         """
@@ -1538,6 +1632,105 @@ def _datetime_from_unix_nanoseconds_utc(nanoseconds: int) -> DateTime:
         nanosecond=nanos_of_day % _NANOS_PER_SECOND,
     )
     return DateTime(date=date, time=time)
+
+
+pub def ordinal_key_append_bytes(mut out: list[u8], data: bytes) -> None:
+    """
+    Append raw bytes to an ordinal-key buffer.
+    """
+    for index in range(len(data)):
+        out.append(data[index])
+
+
+pub def ordinal_key_append_byte(mut out: list[u8], value: int) -> None:
+    """
+    Append the low byte of an integer to an ordinal-key buffer.
+    """
+    byte: u8 = value.wrapping_resize()
+    out.append(byte)
+
+
+pub def ordinal_key_append_u32_le(mut out: list[u8], value: int) -> None:
+    """
+    Append a non-negative 32-bit integer in little-endian byte order.
+    """
+    ordinal_key_append_byte(out, value % 256)
+    ordinal_key_append_byte(out, (value // 256) % 256)
+    ordinal_key_append_byte(out, (value // 65536) % 256)
+    ordinal_key_append_byte(out, (value // 16777216) % 256)
+
+
+pub def ordinal_key_append_signed_magnitude_i64(mut out: list[u8], value: int) -> None:
+    """
+    Append a sign byte followed by a 64-bit little-endian magnitude.
+
+    Date/time ordinal encodings use this form for human-domain fields that can be negative, such as Gregorian years or
+    UTC offsets, without depending on host integer representation.
+    """
+    mut sign = 0
+    mut magnitude = value
+    if value < 0:
+        sign = 1
+        magnitude = 0 - value
+    ordinal_key_append_byte(out, sign)
+    ordinal_key_append_byte(out, magnitude % 256)
+    ordinal_key_append_byte(out, (magnitude // 256) % 256)
+    ordinal_key_append_byte(out, (magnitude // 65536) % 256)
+    ordinal_key_append_byte(out, (magnitude // 16777216) % 256)
+    ordinal_key_append_byte(out, (magnitude // 4294967296) % 256)
+    ordinal_key_append_byte(out, (magnitude // 1099511627776) % 256)
+    ordinal_key_append_byte(out, (magnitude // 281474976710656) % 256)
+    ordinal_key_append_byte(out, (magnitude // 72057594037927936) % 256)
+
+
+pub def ordinal_key_read_u32_le(data: bytes, offset: int) -> int:
+    """
+    Read a non-negative 32-bit little-endian integer from ordinal-key bytes.
+    """
+    mut value = int(data[offset])
+    value += int(data[offset + 1]) * 256
+    value += int(data[offset + 2]) * 65536
+    value += int(data[offset + 3]) * 16777216
+    return value
+
+
+pub def ordinal_key_read_signed_magnitude_i64(data: bytes, offset: int) -> int:
+    """
+    Read the sign-byte plus little-endian-magnitude encoding used by date/time ordinal keys.
+    """
+    sign = int(data[offset])
+    mut value = int(data[offset + 1])
+    value += int(data[offset + 2]) * 256
+    value += int(data[offset + 3]) * 65536
+    value += int(data[offset + 4]) * 16777216
+    value += int(data[offset + 5]) * 4294967296
+    value += int(data[offset + 6]) * 1099511627776
+    value += int(data[offset + 7]) * 281474976710656
+    value += int(data[offset + 8]) * 72057594037927936
+    if sign == 1:
+        return 0 - value
+    return value
+
+
+pub def ordinal_key_signed_magnitude_i64_is_canonical(data: bytes, offset: int) -> bool:
+    """
+    Return whether a signed-magnitude ordinal integer uses a supported sign byte and canonical zero representation.
+    """
+    sign = int(data[offset])
+    if sign != 0 and sign != 1:
+        return false
+    if sign == 0:
+        return true
+    mut magnitude = 0
+    magnitude += int(data[offset + 1])
+    magnitude += int(data[offset + 2]) * 256
+    magnitude += int(data[offset + 3]) * 65536
+    magnitude += int(data[offset + 4]) * 16777216
+    magnitude += int(data[offset + 5]) * 4294967296
+    magnitude += int(data[offset + 6]) * 1099511627776
+    magnitude += int(data[offset + 7]) * 281474976710656
+    magnitude += int(data[offset + 8]) * 72057594037927936
+    return magnitude != 0
 
 
 pub def is_leap_year(year: int) -> bool:

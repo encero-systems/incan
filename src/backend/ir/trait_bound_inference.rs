@@ -2359,6 +2359,7 @@ mod tests {
                 .into_iter()
                 .map(|func| IrDecl::new(IrDeclKind::Function(func)))
                 .collect(),
+            source_module_name: None,
             entry_point: None,
             function_registry: FunctionRegistry::new(),
             rust_module_path: None,

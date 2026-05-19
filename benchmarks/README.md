@@ -18,6 +18,10 @@ Performance comparison between Incan, Rust, and Python.
 - **quicksort** — In-place quicksort (1,000,000 random integers)
 - **mergesort** — Merge sort with allocation (1,000,000 random integers)
 
+### Collections
+
+- **ordinal_map** — Standalone comparison of builtin Python `dict`, Python `fastconstmap`, Incan `OrdinalMap`, and the prior Rust spike baseline. It is intentionally not part of `run_all.sh` because `fastconstmap` is an optional Python dependency.
+
 ## Running Benchmarks
 
 ### Prerequisites

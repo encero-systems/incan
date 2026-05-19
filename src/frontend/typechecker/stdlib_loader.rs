@@ -153,11 +153,25 @@ impl StdlibAstCache {
         lookup_trait_decl_inner(module_path, trait_name, &mut HashSet::new())
     }
 
+    /// Look up a stdlib type docstring, following prelude re-exports.
+    #[cfg(feature = "lsp")]
+    pub(crate) fn lookup_type_docstring(&mut self, module_path: &[String], type_name: &str) -> Option<String> {
+        lookup_type_docstring_inner(module_path, type_name, &mut HashSet::new())
+    }
+
     /// List public type signatures in a stdlib module.
     pub fn list_types(&mut self, module_path: &[String]) -> Vec<(String, TypeInfo)> {
         self.ensure_loaded(module_path);
         let key = module_path.join(".");
         self.cache.get(&key).map(|data| data.types.clone()).unwrap_or_default()
+    }
+
+    /// List public trait signatures in a stdlib module.
+    #[cfg(feature = "lsp")]
+    pub fn list_traits(&mut self, module_path: &[String]) -> Vec<(String, TraitInfo)> {
+        self.ensure_loaded(module_path);
+        let key = module_path.join(".");
+        self.cache.get(&key).map(|data| data.traits.clone()).unwrap_or_default()
     }
 
     /// Look up a specific const binding in a stdlib module.
@@ -589,6 +603,25 @@ fn lookup_trait_decl_inner(
     result
 }
 
+/// Find a type docstring in a stdlib module, following prelude-style re-exports.
+#[cfg(feature = "lsp")]
+fn lookup_type_docstring_inner(
+    module_path: &[String],
+    type_name: &str,
+    loading: &mut HashSet<String>,
+) -> Option<String> {
+    let key = module_path.join(".");
+    if !loading.insert(key.clone()) {
+        return None;
+    }
+    let result = load_stdlib_program(module_path).and_then(|program| {
+        find_type_docstring_in_program(&program, type_name)
+            .or_else(|| find_reexported_type_docstring(module_path, &program, type_name, loading))
+    });
+    loading.remove(&key);
+    result
+}
+
 /// Parse a stdlib stub module into an AST program for metadata lookups that need source expressions.
 fn load_stdlib_program(module_path: &[String]) -> Option<ast::Program> {
     let relative = stdlib::stdlib_stub_path(module_path)?;
@@ -610,6 +643,18 @@ fn find_function_decl_in_program(program: &ast::Program, function_name: &str) ->
 fn find_trait_decl_in_program(program: &ast::Program, trait_name: &str) -> Option<ast::TraitDecl> {
     program.declarations.iter().find_map(|decl| match &decl.node {
         ast::Declaration::Trait(trait_decl) if trait_decl.name == trait_name => Some(trait_decl.clone()),
+        _ => None,
+    })
+}
+
+/// Find a top-level type docstring directly in a parsed stdlib program.
+#[cfg(feature = "lsp")]
+fn find_type_docstring_in_program(program: &ast::Program, type_name: &str) -> Option<String> {
+    program.declarations.iter().find_map(|decl| match &decl.node {
+        ast::Declaration::Model(model) if model.name == type_name => model.docstring.clone(),
+        ast::Declaration::Class(class) if class.name == type_name => class.docstring.clone(),
+        ast::Declaration::Newtype(newtype) if newtype.name == type_name => newtype.docstring.clone(),
+        ast::Declaration::Enum(enum_decl) if enum_decl.name == type_name => enum_decl.docstring.clone(),
         _ => None,
     })
 }
@@ -693,6 +738,37 @@ fn find_reexported_trait_decl(
                 return None;
             }
             lookup_trait_decl_inner(&module.segments, &item.name, loading)
+        })
+    })
+}
+
+/// Follow stdlib `from std.x.y import Type` re-exports while searching for the owning type docstring.
+#[cfg(feature = "lsp")]
+fn find_reexported_type_docstring(
+    current_module_path: &[String],
+    program: &ast::Program,
+    type_name: &str,
+    loading: &mut HashSet<String>,
+) -> Option<String> {
+    program.declarations.iter().find_map(|decl| {
+        let ast::Declaration::Import(import) = &decl.node else {
+            return None;
+        };
+        let ast::ImportKind::From { module, items } = &import.kind else {
+            return None;
+        };
+        if module.segments.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT) {
+            return None;
+        }
+        if !is_stdlib_metadata_reexport(current_module_path, program, import) {
+            return None;
+        }
+        items.iter().find_map(|item| {
+            let effective_name = item.alias.as_ref().unwrap_or(&item.name);
+            if effective_name != type_name {
+                return None;
+            }
+            lookup_type_docstring_inner(&module.segments, &item.name, loading)
         })
     })
 }
@@ -867,7 +943,10 @@ fn extract_trait_signatures(program: &ast::Program) -> Vec<(String, TraitInfo)> 
     for decl in &program.declarations {
         if let ast::Declaration::Trait(tr) = &decl.node {
             let tp_names: Vec<String> = tr.type_params.iter().map(|tp| tp.name.clone()).collect();
-            let methods = extract_method_signatures(&tr.methods, &tp_names);
+            let mut method_overloads =
+                extract_method_overloads_with_rust_imports(&tr.methods, &tp_names, &HashMap::new(), &HashMap::new());
+            let mut methods = methods_from_overloads(&method_overloads);
+            let method_aliases = apply_method_aliases(&tr.method_aliases, &mut methods, &mut method_overloads);
             let supertraits: Vec<(String, Vec<ResolvedType>)> = tr
                 .traits
                 .iter()
@@ -879,7 +958,7 @@ fn extract_trait_signatures(program: &ast::Program) -> Vec<(String, TraitInfo)> 
                     type_params: tp_names,
                     supertraits,
                     methods,
-                    method_aliases: std::collections::HashMap::new(),
+                    method_aliases,
                     properties: std::collections::HashMap::new(),
                     requires: Vec::new(),
                 },
@@ -901,13 +980,14 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
         match &decl.node {
             ast::Declaration::Model(model) if model.visibility == ast::Visibility::Public => {
                 let tp_names = type_param_names(&model.type_params);
-                let method_overloads = extract_method_overloads_with_rust_imports(
+                let mut method_overloads = extract_method_overloads_with_rust_imports(
                     &model.methods,
                     &tp_names,
                     &rust_imports,
                     &stdlib_imports,
                 );
-                let methods = methods_from_overloads(&method_overloads);
+                let mut methods = methods_from_overloads(&method_overloads);
+                let method_aliases = apply_method_aliases(&model.method_aliases, &mut methods, &mut method_overloads);
                 types.push((
                     model.name.clone(),
                     TypeInfo::Model(ModelInfo {
@@ -919,19 +999,20 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         properties: std::collections::HashMap::new(),
                         method_overloads,
                         methods,
-                        method_aliases: std::collections::HashMap::new(),
+                        method_aliases,
                     }),
                 ));
             }
             ast::Declaration::Class(class) if class.visibility == ast::Visibility::Public => {
                 let tp_names = type_param_names(&class.type_params);
-                let method_overloads = extract_method_overloads_with_rust_imports(
+                let mut method_overloads = extract_method_overloads_with_rust_imports(
                     &class.methods,
                     &tp_names,
                     &rust_imports,
                     &stdlib_imports,
                 );
-                let methods = methods_from_overloads(&method_overloads);
+                let mut methods = methods_from_overloads(&method_overloads);
+                let method_aliases = apply_method_aliases(&class.method_aliases, &mut methods, &mut method_overloads);
                 types.push((
                     class.name.clone(),
                     TypeInfo::Class(ClassInfo {
@@ -944,7 +1025,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         properties: std::collections::HashMap::new(),
                         method_overloads,
                         methods,
-                        method_aliases: std::collections::HashMap::new(),
+                        method_aliases,
                     }),
                 ));
             }
@@ -962,9 +1043,10 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                             .map(|target| (rebinding.node.name.clone(), target))
                     })
                     .collect();
-                let method_overloads =
+                let mut method_overloads =
                     extract_method_overloads_with_rust_imports(&nt.methods, &tp_names, &rust_imports, &stdlib_imports);
-                let methods = methods_from_overloads(&method_overloads);
+                let mut methods = methods_from_overloads(&method_overloads);
+                let method_aliases = apply_method_aliases(&nt.method_aliases, &mut methods, &mut method_overloads);
                 types.push((
                     nt.name.clone(),
                     TypeInfo::Newtype(NewtypeInfo {
@@ -977,7 +1059,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         method_rebindings,
                         traits: nt.traits.iter().map(|trait_ref| trait_ref.node.name.clone()).collect(),
                         trait_adoptions: trait_adoption_infos_from_bounds(&nt.traits, &tp_names, &stdlib_imports),
-                        method_aliases: std::collections::HashMap::new(),
+                        method_aliases,
                         methods,
                         method_overloads,
                     }),
@@ -1052,16 +1134,6 @@ fn rebinding_target_method_name(target: &ast::Expr) -> Option<String> {
     }
 }
 
-/// Extract method signatures from AST method declarations.
-///
-/// Converts each `MethodDecl` into a `MethodInfo` using lightweight type resolution (no full typechecker needed).
-fn extract_method_signatures(
-    methods: &[ast::Spanned<ast::MethodDecl>],
-    type_params: &[String],
-) -> HashMap<String, MethodInfo> {
-    extract_method_signatures_with_rust_imports(methods, type_params, &HashMap::new())
-}
-
 /// Convert stdlib `with` bounds into trait adoption metadata with resolved generic arguments.
 fn trait_adoption_infos_from_bounds(
     bounds: &[ast::Spanned<ast::TraitBound>],
@@ -1072,6 +1144,7 @@ fn trait_adoption_infos_from_bounds(
         .iter()
         .map(|bound| TypeBoundInfo {
             name: bound.node.name.clone(),
+            source_name: None,
             type_args: bound
                 .node
                 .type_args
@@ -1081,20 +1154,6 @@ fn trait_adoption_infos_from_bounds(
             module_path: stdlib_imports.get(&bound.node.name).cloned(),
         })
         .collect()
-}
-
-/// Extract method metadata while resolving Rust import aliases in type positions.
-fn extract_method_signatures_with_rust_imports(
-    methods: &[ast::Spanned<ast::MethodDecl>],
-    type_params: &[String],
-    rust_imports: &HashMap<String, String>,
-) -> HashMap<String, MethodInfo> {
-    methods_from_overloads(&extract_method_overloads_with_rust_imports(
-        methods,
-        type_params,
-        rust_imports,
-        &HashMap::new(),
-    ))
 }
 
 /// Extract method metadata grouped by source name, preserving same-name trait-backed overloads.
@@ -1127,6 +1186,38 @@ fn methods_from_overloads(method_overloads: &HashMap<String, Vec<MethodInfo>>) -
         .collect()
 }
 
+/// Project same-type method aliases into stdlib import metadata.
+fn apply_method_aliases(
+    aliases: &[ast::Spanned<ast::MethodAliasDecl>],
+    methods: &mut HashMap<String, MethodInfo>,
+    overloads: &mut HashMap<String, Vec<MethodInfo>>,
+) -> HashMap<String, String> {
+    let mut method_aliases = HashMap::new();
+    for alias in aliases {
+        let target = alias.node.target.clone();
+        method_aliases.insert(alias.node.name.clone(), target.clone());
+
+        if let Some(target_overloads) = overloads.get(&target).cloned() {
+            let alias_overloads: Vec<_> = target_overloads
+                .into_iter()
+                .map(|mut info| {
+                    info.alias_of = Some(target.clone());
+                    info
+                })
+                .collect();
+            if let Some(last) = alias_overloads.last().cloned() {
+                methods.insert(alias.node.name.clone(), last);
+            }
+            overloads.insert(alias.node.name.clone(), alias_overloads);
+        } else if let Some(mut info) = methods.get(&target).cloned() {
+            info.alias_of = Some(target.clone());
+            methods.insert(alias.node.name.clone(), info.clone());
+            overloads.insert(alias.node.name.clone(), vec![info]);
+        }
+    }
+    method_aliases
+}
+
 /// Convert one AST method declaration into lightweight semantic method metadata.
 fn method_info_from_ast_method(
     method: &ast::MethodDecl,
@@ -1157,6 +1248,7 @@ fn method_info_from_ast_method(
                     .iter()
                     .map(|bound| crate::frontend::symbols::TypeBoundInfo {
                         name: bound.name.clone(),
+                        source_name: None,
                         type_args: bound
                             .type_args
                             .iter()
@@ -1185,6 +1277,7 @@ fn method_info_from_ast_method(
     let return_type = ast_type_to_resolved_with_rust_imports(&method.return_type.node, &all_type_params, rust_imports);
     let trait_target = method.trait_target.as_ref().map(|target| TypeBoundInfo {
         name: target.node.name.clone(),
+        source_name: None,
         type_args: target
             .node
             .type_args
@@ -1231,6 +1324,7 @@ fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
                     .iter()
                     .map(|bound| TypeBoundInfo {
                         name: bound.name.clone(),
+                        source_name: None,
                         type_args: bound
                             .type_args
                             .iter()

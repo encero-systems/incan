@@ -71,7 +71,7 @@ impl<'a> IrEmitter<'a> {
                 args,
             } => {
                 let iter = if let Some(arg) = args.first() {
-                    self.emit_enumerate_iter(arg, true)?
+                    self.emit_enumerate_iter(arg)?
                 } else {
                     quote! { std::iter::empty::<(i64, ())>() }
                 };
@@ -271,7 +271,7 @@ impl<'a> IrEmitter<'a> {
     /// type.
     fn emit_owned_enumerate_iter(&self, args: &[TypedExpr]) -> Result<TokenStream, EmitError> {
         if let Some(arg) = args.first() {
-            self.emit_enumerate_iter(arg, true)
+            self.emit_enumerate_iter(arg)
         } else {
             Ok(quote! { std::iter::empty::<(i64, ())>() })
         }

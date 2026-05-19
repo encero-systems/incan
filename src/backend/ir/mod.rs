@@ -93,6 +93,8 @@ impl FunctionRegistry {
 pub struct IrProgram {
     /// Top-level declarations
     pub declarations: Vec<IrDecl>,
+    /// Source module path for this program when known.
+    pub source_module_name: Option<String>,
     /// Entry point function name (usually "main")
     pub entry_point: Option<String>,
     /// Function signature registry for call-site type checking
@@ -114,6 +116,7 @@ impl IrProgram {
     pub fn new() -> Self {
         Self {
             declarations: Vec::new(),
+            source_module_name: None,
             entry_point: None,
             function_registry: FunctionRegistry::new(),
             rust_module_path: None,

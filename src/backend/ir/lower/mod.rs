@@ -47,6 +47,7 @@ use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::conventions;
 use incan_core::lang::stdlib;
+use incan_core::lang::trait_capabilities;
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
@@ -101,6 +102,10 @@ pub struct AstLowering {
     pub(super) trait_methods: HashMap<String, Vec<String>>,
     /// Track full trait declarations for default-method expansion into impl blocks.
     pub(super) trait_decls: HashMap<String, ast::TraitDecl>,
+    /// Canonical helper paths needed when expanding default methods from imported traits.
+    pub(super) trait_default_function_paths: HashMap<String, HashMap<String, Vec<String>>>,
+    /// Active default-method helper paths while lowering one expanded trait default body.
+    pub(super) active_trait_default_function_paths: Vec<HashMap<String, Vec<String>>>,
     /// Concrete nominal types that explicitly adopt the stdlib Iterator protocol.
     pub(super) iterator_adopter_names: HashSet<String>,
     /// Optional typechecker output used to drive lowering (avoid heuristics).
@@ -215,6 +220,8 @@ impl AstLowering {
             class_decls: HashMap::new(),
             trait_methods: HashMap::new(),
             trait_decls: HashMap::new(),
+            trait_default_function_paths: HashMap::new(),
+            active_trait_default_function_paths: Vec::new(),
             iterator_adopter_names: HashSet::new(),
             type_info: None,
             newtype_checked_ctor: HashMap::new(),
@@ -246,6 +253,14 @@ impl AstLowering {
         self.current_source_module_name
             .clone()
             .unwrap_or_else(|| "root".to_string())
+    }
+
+    /// Return a canonical helper path visible to the currently-expanded imported trait default method.
+    pub(super) fn active_trait_default_function_path(&self, name: &str) -> Option<Vec<String>> {
+        self.active_trait_default_function_paths
+            .iter()
+            .rev()
+            .find_map(|paths| paths.get(name).cloned())
     }
 
     /// Extract generated validation constraints from a newtype underlying annotation.
@@ -810,6 +825,12 @@ impl AstLowering {
         self.type_method_rebindings
             .get(type_name)
             .and_then(|aliases| aliases.get(method_name))
+            .or_else(|| {
+                self.type_info
+                    .as_ref()
+                    .and_then(|info| info.declarations.type_method_rebindings.get(type_name))
+                    .and_then(|aliases| aliases.get(method_name))
+            })
             .cloned()
             .unwrap_or_else(|| method_name.to_string())
     }
@@ -887,6 +908,7 @@ impl AstLowering {
     #[tracing::instrument(skip_all, fields(decl_count = program.declarations.len()))]
     pub fn lower_program(&mut self, program: &ast::Program) -> Result<IrProgram, LoweringErrors> {
         let mut ir_program = IrProgram::new();
+        ir_program.source_module_name = self.current_source_module_name.clone();
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
@@ -1702,10 +1724,41 @@ impl AstLowering {
                     .iter()
                     .map(|method| method.node.name.clone())
                     .collect();
+                let default_function_paths = Self::stdlib_trait_default_function_paths(&module.segments, &item.name);
                 self.trait_methods.entry(local_name.clone()).or_insert(method_names);
+                if !default_function_paths.is_empty() {
+                    self.trait_default_function_paths
+                        .entry(local_name.clone())
+                        .or_insert(default_function_paths);
+                }
                 self.trait_decls.entry(local_name).or_insert(trait_decl);
             }
         }
+    }
+
+    /// Return helper functions that must stay qualified when imported stdlib trait defaults are expanded elsewhere.
+    fn stdlib_trait_default_function_paths(
+        module_segments: &[String],
+        trait_name: &str,
+    ) -> HashMap<String, Vec<String>> {
+        if let Some(capability) = trait_capabilities::for_trait_path(module_segments, trait_name)
+            && let Some(hooks) = capability.bridge_hooks
+        {
+            let helper = hooks.default_hash_helper;
+            return [(
+                helper.to_string(),
+                capability
+                    .module_path
+                    .iter()
+                    .copied()
+                    .chain(std::iter::once(helper))
+                    .map(str::to_string)
+                    .collect(),
+            )]
+            .into_iter()
+            .collect();
+        }
+        HashMap::new()
     }
 
     /// Return whether an imported trait declaration needs aliasing for default-body expansion.

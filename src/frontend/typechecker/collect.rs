@@ -544,17 +544,43 @@ impl TypeChecker {
     fn collect_trait_adoption_infos(&mut self, traits: &[Spanned<TraitBound>]) -> Vec<TypeBoundInfo> {
         traits
             .iter()
-            .map(|trait_ref| TypeBoundInfo {
-                name: self.resolve_trait_bound_name(&trait_ref.node.name, trait_ref.span),
-                type_args: trait_ref
-                    .node
-                    .type_args
-                    .iter()
-                    .map(|arg| self.resolve_type_checked(arg))
-                    .collect(),
-                module_path: None,
+            .map(|trait_ref| {
+                let module_path = self.trait_bound_module_path(&trait_ref.node.name);
+                TypeBoundInfo {
+                    name: self.resolve_trait_bound_name(&trait_ref.node.name, trait_ref.span),
+                    source_name: self.trait_bound_source_name(&trait_ref.node.name),
+                    type_args: trait_ref
+                        .node
+                        .type_args
+                        .iter()
+                        .map(|arg| self.resolve_type_checked(arg))
+                        .collect(),
+                    module_path,
+                }
             })
             .collect()
+    }
+
+    /// Return the source module that owns a trait bound, including direct imports and module-qualified spellings.
+    pub(crate) fn trait_bound_module_path(&self, name: &str) -> Option<Vec<String>> {
+        if let Some(path) = self.import_aliases.get(name) {
+            return path
+                .len()
+                .checked_sub(1)
+                .map(|end| path[..end].to_vec())
+                .filter(|segments| !segments.is_empty());
+        }
+        let (module_name, _trait_name) = name.rsplit_once('.')?;
+        self.module_path_for_imported_name(module_name)
+    }
+
+    /// Return the defining source trait name for imported or module-qualified trait bounds.
+    pub(crate) fn trait_bound_source_name(&self, name: &str) -> Option<String> {
+        if let Some(path) = self.import_aliases.get(name) {
+            return path.last().cloned();
+        }
+        let (_module_name, trait_name) = name.rsplit_once('.')?;
+        Some(trait_name.to_string())
     }
 
     /// Resolve a trait bound name, installing hidden symbols for module-qualified imported traits.
@@ -587,6 +613,7 @@ impl TypeChecker {
                     if !out.iter().any(|existing: &TypeBoundInfo| existing.name == canonical) {
                         out.push(TypeBoundInfo {
                             name: canonical,
+                            source_name: Some(trait_name.clone()),
                             type_args: Vec::new(),
                             module_path: None,
                         });
@@ -609,6 +636,7 @@ impl TypeChecker {
                     if !out.iter().any(|existing: &TypeBoundInfo| existing.name == *derive_name) {
                         out.push(TypeBoundInfo {
                             name: derive_name.clone(),
+                            source_name: Some(trait_name.clone()),
                             type_args: Vec::new(),
                             module_path: None,
                         });
@@ -616,6 +644,7 @@ impl TypeChecker {
                 } else if self.lookup_trait_info(derive_name).is_some() {
                     out.push(TypeBoundInfo {
                         name: derive_name.clone(),
+                        source_name: None,
                         type_args: Vec::new(),
                         module_path: None,
                     });
@@ -733,29 +762,56 @@ impl TypeChecker {
 
     /// Resolve one `with` supertrait bound to `(trait_name, type_arguments)` after validation (RFC 042).
     fn resolve_trait_supertrait_bound(&mut self, bound: &Spanned<TraitBound>) -> Option<(String, Vec<ResolvedType>)> {
-        let ty = trait_bound_to_ast_type(bound);
-        let spanned = Spanned::new(ty, bound.span);
-        let resolved = self.resolve_type_checked(&spanned);
-        let (trait_name, args) = match resolved {
-            ResolvedType::Named(n) => (n, Vec::new()),
-            ResolvedType::Generic(n, args) => (n, args),
-            _ => {
-                self.errors.push(errors::supertrait_bound_invalid(bound.span));
-                return None;
-            }
-        };
-        let Some(trait_info) = self.lookup_trait_info(&trait_name) else {
+        let trait_name = self.resolve_trait_bound_name(&bound.node.name, bound.span);
+        let args = bound
+            .node
+            .type_args
+            .iter()
+            .map(|arg| self.resolve_type_checked(arg))
+            .collect::<Vec<_>>();
+        let trait_info = if let Some(info) = self.lookup_trait_info(&trait_name).cloned() {
+            info
+        } else if let Some((hidden_name, info)) = self.resolve_imported_trait_bound_symbol(&bound.node.name, bound.span)
+        {
+            return self.validate_supertrait_bound(hidden_name, args, info, bound.span);
+        } else {
             self.errors
                 .push(errors::supertrait_bound_not_trait(&trait_name, bound.span));
             return None;
         };
+        self.validate_supertrait_bound(trait_name, args, trait_info, bound.span)
+    }
+
+    /// Define a hidden trait symbol for an imported supertrait bound that has not been collected as a declaration.
+    fn resolve_imported_trait_bound_symbol(&mut self, name: &str, span: Span) -> Option<(String, TraitInfo)> {
+        let module_path = self.trait_bound_module_path(name)?;
+        let trait_name = self
+            .import_aliases
+            .get(name)
+            .and_then(|path| path.last())
+            .cloned()
+            .unwrap_or_else(|| name.rsplit('.').next().unwrap_or(name).to_string());
+        let info = self.lookup_imported_module_trait(&module_path, &trait_name)?;
+        let symbol_name = name.to_string();
+        self.define_hidden_trait_symbol(&symbol_name, info.clone(), span);
+        Some((symbol_name, info))
+    }
+
+    /// Validate a resolved supertrait bound against the target trait arity.
+    fn validate_supertrait_bound(
+        &mut self,
+        trait_name: String,
+        args: Vec<ResolvedType>,
+        trait_info: TraitInfo,
+        span: Span,
+    ) -> Option<(String, Vec<ResolvedType>)> {
         let expected_arity = trait_info.type_params.len();
         if args.len() != expected_arity {
             self.errors.push(errors::supertrait_bound_arity_mismatch(
                 &trait_name,
                 expected_arity,
                 args.len(),
-                bound.span,
+                span,
             ));
             return None;
         }
@@ -1162,12 +1218,13 @@ impl TypeChecker {
                         .iter()
                         .map(|bound| TypeBoundInfo {
                             name: self.resolve_trait_bound_name(&bound.name, Span::default()),
+                            source_name: self.trait_bound_source_name(&bound.name),
                             type_args: bound
                                 .type_args
                                 .iter()
                                 .map(|type_arg| self.resolve_type_checked(type_arg))
                                 .collect(),
-                            module_path: None,
+                            module_path: self.trait_bound_module_path(&bound.name),
                         })
                         .collect(),
                 )
@@ -1201,14 +1258,6 @@ impl TypeChecker {
             span,
             scope: 0,
         });
-    }
-}
-
-fn trait_bound_to_ast_type(bound: &Spanned<TraitBound>) -> Type {
-    if bound.node.type_args.is_empty() {
-        Type::Simple(bound.node.name.clone())
-    } else {
-        Type::Generic(bound.node.name.clone(), bound.node.type_args.clone())
     }
 }
 

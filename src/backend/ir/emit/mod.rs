@@ -33,11 +33,39 @@ use std::collections::{HashMap, HashSet};
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::decl::{IrDeclKind, IrStruct, VariantFields, Visibility};
+use super::decl::{IrDeclKind, IrEnumValue, IrEnumValueType, IrStruct, VariantFields, Visibility};
 use super::expr::TypedExpr;
 use super::types::IrType;
 use super::{FunctionRegistry, FunctionSignature, IrProgram};
 use incan_core::lang::rust_keywords;
+
+/// Value-enum metadata loaded from a `.incnlib` dependency for consumer-side trait bridges.
+#[derive(Debug, Clone)]
+pub(crate) struct ExternalOrdinalValueEnum {
+    /// Dependency key used as the generated Rust crate alias.
+    pub dependency_key: String,
+    /// Exported enum name.
+    pub name: String,
+    /// Stable serialized type identity.
+    pub type_identity: String,
+    /// Primitive value-enum backing family.
+    pub value_type: IrEnumValueType,
+    /// Raw values in declaration/export order.
+    pub values: Vec<IrEnumValue>,
+}
+
+/// User-authored `OrdinalKey` adopter loaded from a `.incnlib` dependency for consumer-side trait bridges.
+#[derive(Debug, Clone)]
+pub(crate) struct ExternalOrdinalCustomKey {
+    /// Dependency key used as the generated Rust crate alias.
+    pub dependency_key: String,
+    /// Exported type name.
+    pub name: String,
+    /// Whether the producer exported an explicit `ordinal_hash` method.
+    pub has_ordinal_hash: bool,
+    /// Whether the producer exported an explicit `ordinal_bytes_equal` method.
+    pub has_ordinal_bytes_equal: bool,
+}
 
 /// Usage facts collected before Rust emission.
 ///
@@ -150,6 +178,14 @@ pub struct IrEmitter<'a> {
     emit_strict_generated_lint_denies: bool,
     /// Whether public source items should be emitted even when this crate does not reference them.
     preserve_public_items: bool,
+    /// Whether local value enums should receive stdlib `OrdinalKey` impls.
+    emit_std_ordinal_value_enum_impls: bool,
+    /// Public value enums imported from `.incnlib` dependencies that need this crate's local `OrdinalKey`.
+    external_ordinal_value_enums: Vec<ExternalOrdinalValueEnum>,
+    /// Public user-authored key types imported from `.incnlib` dependencies that need this crate's local `OrdinalKey`.
+    external_ordinal_custom_keys: Vec<ExternalOrdinalCustomKey>,
+    /// Public serialized identities for locally emitted value enums, keyed by source identity (`module.Type`).
+    public_ordinal_type_identities: HashMap<String, String>,
     /// Private items that generated code outside the emitted IR body will call.
     externally_reachable_items: HashSet<String>,
     /// Pre-emission usage facts used to avoid generated `dead_code` and `unused_imports` suppressions.
@@ -269,6 +305,10 @@ impl<'a> IrEmitter<'a> {
         Self {
             emit_strict_generated_lint_denies: false,
             preserve_public_items: true,
+            emit_std_ordinal_value_enum_impls: false,
+            external_ordinal_value_enums: Vec::new(),
+            external_ordinal_custom_keys: Vec::new(),
+            public_ordinal_type_identities: HashMap::new(),
             externally_reachable_items: HashSet::new(),
             generated_use_analysis: RefCell::new(GeneratedUseAnalysis::default()),
             emit_zen_in_main: false,
@@ -471,6 +511,26 @@ impl<'a> IrEmitter<'a> {
     /// Set whether public source items are treated as externally reachable during emission.
     pub fn set_preserve_public_items(&mut self, enabled: bool) {
         self.preserve_public_items = enabled;
+    }
+
+    /// Set whether value enums in this module should adopt the stdlib `OrdinalKey` trait.
+    pub fn set_emit_std_ordinal_value_enum_impls(&mut self, enabled: bool) {
+        self.emit_std_ordinal_value_enum_impls = enabled;
+    }
+
+    /// Set value-enum metadata loaded from `.incnlib` dependencies for consumer-side `OrdinalKey` impls.
+    pub(crate) fn set_external_ordinal_value_enums(&mut self, enums: Vec<ExternalOrdinalValueEnum>) {
+        self.external_ordinal_value_enums = enums;
+    }
+
+    /// Set user-authored key metadata loaded from `.incnlib` dependencies for consumer-side `OrdinalKey` impls.
+    pub(crate) fn set_external_ordinal_custom_keys(&mut self, keys: Vec<ExternalOrdinalCustomKey>) {
+        self.external_ordinal_custom_keys = keys;
+    }
+
+    /// Set public serialized value-enum identities for library emission.
+    pub(crate) fn set_public_ordinal_type_identities(&mut self, identities: HashMap<String, String>) {
+        self.public_ordinal_type_identities = identities;
     }
 
     /// Set private items that are called by compiler-generated code injected after IR emission.
@@ -764,7 +824,12 @@ impl<'a> IrEmitter<'a> {
         if type_params.len() != args.len() {
             return None;
         }
-        let subst: HashMap<&str, &IrType> = type_params.iter().map(String::as_str).zip(args.iter()).collect();
+        let subst: HashMap<&str, &IrType> = type_params
+            .iter()
+            .map(String::as_str)
+            .zip(args.iter())
+            .chain(std::iter::once(("Self", receiver_ty)))
+            .collect();
         Some(FunctionSignature {
             params: signature
                 .params
@@ -783,6 +848,7 @@ impl<'a> IrEmitter<'a> {
     fn substitute_signature_type(ty: &IrType, subst: &HashMap<&str, &IrType>) -> IrType {
         match ty {
             IrType::Generic(name) => subst.get(name.as_str()).copied().cloned().unwrap_or_else(|| ty.clone()),
+            IrType::SelfType => subst.get("Self").copied().cloned().unwrap_or_else(|| ty.clone()),
             IrType::Struct(name) if Self::is_signature_placeholder_name(name) => {
                 subst.get(name.as_str()).copied().cloned().unwrap_or_else(|| ty.clone())
             }
@@ -819,6 +885,92 @@ impl<'a> IrEmitter<'a> {
             IrType::Ref(inner) => IrType::Ref(Box::new(Self::substitute_signature_type(inner, subst))),
             IrType::RefMut(inner) => IrType::RefMut(Box::new(Self::substitute_signature_type(inner, subst))),
             _ => ty.clone(),
+        }
+    }
+
+    /// Specialize a generic signature by matching its return type against an expected result type.
+    ///
+    /// This covers associated constructors such as `OrdinalMap.from_keys(...) ?`: the callable signature still talks in
+    /// terms of `Self`/`K`, while the surrounding assignment tells us the concrete `Result[OrdinalMap[str], E]` shape.
+    pub(super) fn specialize_signature_by_result_target(
+        signature: &FunctionSignature,
+        target_ty: &IrType,
+    ) -> Option<FunctionSignature> {
+        let mut owned_subst = HashMap::<String, IrType>::new();
+        if !Self::collect_result_target_substitutions(&signature.return_type, target_ty, &mut owned_subst)
+            || owned_subst.is_empty()
+        {
+            return None;
+        }
+        let subst: HashMap<&str, &IrType> = owned_subst.iter().map(|(name, ty)| (name.as_str(), ty)).collect();
+        Some(FunctionSignature {
+            params: signature
+                .params
+                .iter()
+                .map(|param| {
+                    let mut param = param.clone();
+                    param.ty = Self::substitute_signature_type(&param.ty, &subst);
+                    param
+                })
+                .collect(),
+            return_type: Self::substitute_signature_type(&signature.return_type, &subst),
+        })
+    }
+
+    /// Collect generic substitutions by matching a signature return type against a concrete target.
+    fn collect_result_target_substitutions(
+        pattern: &IrType,
+        actual: &IrType,
+        subst: &mut HashMap<String, IrType>,
+    ) -> bool {
+        match (pattern, actual) {
+            (IrType::Generic(name), actual) => Self::insert_result_target_substitution(name, actual, subst),
+            (IrType::SelfType, actual) => Self::insert_result_target_substitution("Self", actual, subst),
+            (IrType::Struct(name), actual) if Self::is_signature_placeholder_name(name) => {
+                Self::insert_result_target_substitution(name, actual, subst)
+            }
+            (IrType::List(pattern), IrType::List(actual))
+            | (IrType::Set(pattern), IrType::Set(actual))
+            | (IrType::Option(pattern), IrType::Option(actual))
+            | (IrType::Ref(pattern), IrType::Ref(actual))
+            | (IrType::RefMut(pattern), IrType::RefMut(actual)) => {
+                Self::collect_result_target_substitutions(pattern, actual, subst)
+            }
+            (IrType::Result(pattern_ok, pattern_err), IrType::Result(actual_ok, actual_err)) => {
+                Self::collect_result_target_substitutions(pattern_ok, actual_ok, subst)
+                    && Self::collect_result_target_substitutions(pattern_err, actual_err, subst)
+            }
+            (IrType::Dict(pattern_key, pattern_value), IrType::Dict(actual_key, actual_value)) => {
+                Self::collect_result_target_substitutions(pattern_key, actual_key, subst)
+                    && Self::collect_result_target_substitutions(pattern_value, actual_value, subst)
+            }
+            (IrType::Tuple(pattern_items), IrType::Tuple(actual_items))
+                if pattern_items.len() == actual_items.len() =>
+            {
+                pattern_items
+                    .iter()
+                    .zip(actual_items.iter())
+                    .all(|(pattern, actual)| Self::collect_result_target_substitutions(pattern, actual, subst))
+            }
+            (IrType::NamedGeneric(pattern_name, pattern_args), IrType::NamedGeneric(actual_name, actual_args))
+                if pattern_name == actual_name && pattern_args.len() == actual_args.len() =>
+            {
+                pattern_args
+                    .iter()
+                    .zip(actual_args.iter())
+                    .all(|(pattern, actual)| Self::collect_result_target_substitutions(pattern, actual, subst))
+            }
+            _ => pattern == actual,
+        }
+    }
+
+    /// Insert one return-target substitution, rejecting conflicting generic bindings.
+    fn insert_result_target_substitution(name: &str, actual: &IrType, subst: &mut HashMap<String, IrType>) -> bool {
+        if let Some(existing) = subst.get(name) {
+            existing == actual
+        } else {
+            subst.insert(name.to_string(), actual.clone());
+            true
         }
     }
 

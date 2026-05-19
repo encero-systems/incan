@@ -1263,6 +1263,7 @@ impl TypeChecker {
                 .iter()
                 .map(|name| TypeBoundInfo {
                     name: name.clone(),
+                    source_name: None,
                     type_args: Vec::new(),
                     module_path: None,
                 })
@@ -1273,12 +1274,13 @@ impl TypeChecker {
             .iter()
             .map(|bound| TypeBoundInfo {
                 name: bound.name.clone(),
+                source_name: bound.source_name.clone(),
                 type_args: bound
                     .type_args
                     .iter()
                     .map(resolved_type_from_manifest_type_ref)
                     .collect(),
-                module_path: None,
+                module_path: bound.module_path.clone(),
             })
             .collect()
     }
@@ -1368,12 +1370,13 @@ impl TypeChecker {
                         .iter()
                         .map(|bound| TypeBoundInfo {
                             name: bound.name.clone(),
+                            source_name: bound.source_name.clone(),
                             type_args: bound
                                 .type_args
                                 .iter()
                                 .map(resolved_type_from_manifest_type_ref)
                                 .collect(),
-                            module_path: None,
+                            module_path: bound.module_path.clone(),
                         })
                         .collect(),
                 )
@@ -1448,12 +1451,13 @@ impl TypeChecker {
                             .iter()
                             .map(|bound| TypeBoundInfo {
                                 name: bound.name.clone(),
+                                source_name: bound.source_name.clone(),
                                 type_args: bound
                                     .type_args
                                     .iter()
                                     .map(resolved_type_from_manifest_type_ref)
                                     .collect(),
-                                module_path: None,
+                                module_path: bound.module_path.clone(),
                             })
                             .collect(),
                     )

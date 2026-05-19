@@ -448,18 +448,38 @@ impl<'a> IrEmitter<'a> {
             None
         };
         let result_target_ty = result_use_site.and_then(Self::use_site_target_ty);
+        let associated_target_ty = match result_target_ty {
+            Some(IrType::Result(ok_ty, _)) => Some(ok_ty.as_ref()),
+            other => other,
+        };
         let associated_signature = match &func.kind {
             IrExprKind::AssociatedFunction { function_name, .. } => {
-                result_target_ty.and_then(|ty| self.specialized_method_signature_for_receiver(ty, function_name))
+                associated_target_ty.and_then(|ty| self.specialized_method_signature_for_receiver(ty, function_name))
             }
             _ => None,
         };
         let callee_name = local_name.or(canonical_name);
-        let function_sig = local_name
-            .and_then(|name| self.function_registry.get(name))
-            .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name)))
-            .or(callable_signature)
-            .or(associated_signature.as_ref());
+        let registry_signature = if canonical_path.is_some() {
+            canonical_name.and_then(|name| self.function_registry.get(name))
+        } else {
+            local_name
+                .and_then(|name| self.function_registry.get(name))
+                .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name)))
+        };
+        let result_specialized_signature = callable_signature.or(registry_signature).and_then(|signature| {
+            result_target_ty.and_then(|target_ty| Self::specialize_signature_by_result_target(signature, target_ty))
+        });
+        let function_sig = associated_signature.as_ref().or_else(|| {
+            if canonical_path.is_some() {
+                result_specialized_signature
+                    .as_ref()
+                    .or(callable_signature.or(registry_signature))
+            } else {
+                result_specialized_signature
+                    .as_ref()
+                    .or(registry_signature.or(callable_signature))
+            }
+        });
         // The checked-newtype lowering path emits a compiler-internal panic marker call. This remains the narrow,
         // explicitly-tracked generated `panic!` exemption that issue #351 left to a separate follow-up. Render it as
         // the Rust `panic!` macro so generated code stays valid without colliding with user-defined functions that may
@@ -1493,6 +1513,7 @@ mod tests {
     };
     use crate::backend::ir::types::{IrType, Mutability};
     use crate::backend::ir::{FunctionRegistry, IrEmitter, TypedExpr};
+    use incan_core::lang::types::numerics::NumericTypeId;
 
     fn render(tokens: TokenStream) -> String {
         tokens.to_string().replace(' ', "")
@@ -1887,6 +1908,76 @@ mod tests {
                 ))
             })?;
         assert_eq!(render(tokens), "takes_ref_mut(&mutthing)");
+        Ok(())
+    }
+
+    #[test]
+    fn emit_canonical_call_prefers_callable_signature_over_local_registry() -> Result<(), Box<dyn std::error::Error>> {
+        let byte_list = IrType::List(Box::new(IrType::Numeric(NumericTypeId::U8)));
+        let mut registry = FunctionRegistry::new();
+        registry.register(
+            "ordinal_key_append_bytes".to_string(),
+            vec![FunctionParam {
+                name: "out".to_string(),
+                ty: byte_list.clone(),
+                mutability: Mutability::Immutable,
+                is_self: false,
+                kind: ParamKind::Normal,
+                default: None,
+            }],
+            IrType::Unit,
+        );
+        let signature = FunctionSignature {
+            params: vec![
+                FunctionParam {
+                    name: "out".to_string(),
+                    ty: byte_list.clone(),
+                    mutability: Mutability::Mutable,
+                    is_self: false,
+                    kind: ParamKind::Normal,
+                    default: None,
+                },
+                FunctionParam {
+                    name: "data".to_string(),
+                    ty: IrType::Bytes,
+                    mutability: Mutability::Immutable,
+                    is_self: false,
+                    kind: ParamKind::Normal,
+                    default: None,
+                },
+            ],
+            return_type: IrType::Unit,
+        };
+        let emitter = IrEmitter::new(&registry);
+        let func = local_arg(
+            "ordinal_key_append_bytes",
+            IrType::Function {
+                params: vec![byte_list, IrType::Bytes],
+                ret: Box::new(IrType::Unit),
+            },
+        );
+        let out = local_arg("out", IrType::List(Box::new(IrType::Numeric(NumericTypeId::U8))));
+        let data = local_arg("data", IrType::Bytes);
+        let path = vec![
+            "std".to_string(),
+            "datetime".to_string(),
+            "civil".to_string(),
+            "naive".to_string(),
+            "ordinal_key_append_bytes".to_string(),
+        ];
+        let tokens = emitter
+            .emit_call_expr(
+                &func,
+                &[],
+                &[pos_arg(out), pos_arg(data)],
+                Some(&signature),
+                Some(&path),
+            )
+            .map_err(|err| std::io::Error::other(format!("canonical mutable stdlib call should emit: {err:?}")))?;
+        assert_eq!(
+            render(tokens),
+            "crate::__incan_std::datetime::civil::naive::ordinal_key_append_bytes(&mutout,data.clone())"
+        );
         Ok(())
     }
 

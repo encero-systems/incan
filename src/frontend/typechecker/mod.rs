@@ -1140,7 +1140,7 @@ impl TypeChecker {
                 continue;
             }
 
-            if adopted_trait.name == trait_name {
+            if self.trait_name_matches(&adopted_trait.name, trait_name) {
                 return Some(direct_args);
             }
 
@@ -1148,7 +1148,7 @@ impl TypeChecker {
             let subst =
                 crate::frontend::resolved_type_subst::type_param_subst_map(&adopted_info.type_params, &direct_args);
             for (supertrait_name, supertrait_args) in closure {
-                if supertrait_name != trait_name {
+                if !self.trait_name_matches(&supertrait_name, trait_name) {
                     continue;
                 }
                 let instantiated = supertrait_args
@@ -1163,12 +1163,27 @@ impl TypeChecker {
 
     /// Whether `supertrait_name` is `subtrait_name` itself or appears in its RFC 042 transitive supertrait closure.
     fn trait_is_supertrait_of(&self, subtrait_name: &str, supertrait_name: &str) -> bool {
-        if subtrait_name == supertrait_name {
+        if self.trait_name_matches(subtrait_name, supertrait_name) {
             return true;
         }
         self.semantic_supertrait_closure(subtrait_name)
             .iter()
-            .any(|(name, _)| name == supertrait_name)
+            .any(|(name, _)| self.trait_name_matches(name, supertrait_name))
+    }
+
+    /// Return whether two visible trait spellings refer to the same source trait.
+    fn trait_name_matches(&self, candidate: &str, expected: &str) -> bool {
+        if candidate == expected {
+            return true;
+        }
+        let source_name = |name: &str| {
+            self.import_aliases
+                .get(name)
+                .and_then(|path| path.last())
+                .cloned()
+                .unwrap_or_else(|| name.rsplit('.').next().unwrap_or(name).to_string())
+        };
+        source_name(candidate) == source_name(expected)
     }
 
     /// Instantiate `supertrait_name`'s type arguments when `subtrait_name` is known with `subtrait_args`.
@@ -1186,12 +1201,12 @@ impl TypeChecker {
             return None;
         }
         let subst = crate::frontend::resolved_type_subst::type_param_subst_map(&sub_info.type_params, subtrait_args);
-        if subtrait_name == supertrait_name {
+        if self.trait_name_matches(subtrait_name, supertrait_name) {
             return Some(subtrait_args.to_vec());
         }
         let closure = self.semantic_supertrait_closure(subtrait_name);
         for (name, args) in &closure {
-            if name != supertrait_name {
+            if !self.trait_name_matches(name, supertrait_name) {
                 continue;
             }
             let instantiated: Vec<ResolvedType> = args
@@ -1218,13 +1233,17 @@ impl TypeChecker {
             _ => return false,
         };
         for t in adopted {
-            if t.name == trait_name {
+            if self.trait_name_matches(&t.name, trait_name)
+                || t.source_name
+                    .as_deref()
+                    .is_some_and(|source_name| self.trait_name_matches(source_name, trait_name))
+            {
                 return true;
             }
             if self
                 .semantic_supertrait_closure(&t.name)
                 .iter()
-                .any(|(name, _)| name == trait_name)
+                .any(|(name, _)| self.trait_name_matches(name, trait_name))
             {
                 return true;
             }
@@ -1249,6 +1268,7 @@ impl TypeChecker {
             if self.lookup_semantic_trait_info(d).is_some() && !out.iter().any(|t| t.name == *d) {
                 out.push(TypeBoundInfo {
                     name: d.clone(),
+                    source_name: None,
                     type_args: Vec::new(),
                     module_path: None,
                 });
@@ -1380,25 +1400,51 @@ impl TypeChecker {
         result
     }
 
-    /// RFC 042: Snapshot trait metadata into [`TypeCheckInfo`] for backend lowering.
+    /// Snapshot declaration metadata into [`TypeCheckInfo`] for backend lowering.
     ///
-    /// This records all visible trait symbols (local and imported), not just traits declared in the current module,
-    /// so lowering can resolve supertrait graphs and generic trait arity across module boundaries.
+    /// This records all visible trait and method-alias symbols (local and imported), not just declarations in the
+    /// current module, so lowering can resolve supertrait graphs, generic trait arity, and same-type method aliases
+    /// across module boundaries.
     fn record_trait_metadata_for_lowering(&mut self) {
         self.type_info.traits.direct_supertraits.clear();
         self.type_info.traits.type_params.clear();
+        self.type_info.declarations.type_method_rebindings.clear();
         self.type_info.derivations.derivable_modules = self.dependency_derivable_modules.clone();
         self.type_info.derivations.trait_rust_derive_paths = self.dependency_trait_rust_derive_paths.clone();
+        let mut method_rebindings = Vec::new();
         for sym in self.symbols.all_symbols() {
-            if let SymbolKind::Trait(info) = &sym.kind {
+            match &sym.kind {
+                SymbolKind::Trait(info) => {
+                    self.type_info
+                        .traits
+                        .direct_supertraits
+                        .insert(sym.name.clone(), info.supertraits.clone());
+                    self.type_info
+                        .traits
+                        .type_params
+                        .insert(sym.name.clone(), info.type_params.clone());
+                    method_rebindings.push((sym.name.clone(), info.method_aliases.clone()));
+                }
+                SymbolKind::Type(TypeInfo::Model(info)) => {
+                    method_rebindings.push((sym.name.clone(), info.method_aliases.clone()));
+                }
+                SymbolKind::Type(TypeInfo::Class(info)) => {
+                    method_rebindings.push((sym.name.clone(), info.method_aliases.clone()));
+                }
+                SymbolKind::Type(TypeInfo::Newtype(info)) => {
+                    let mut aliases = info.method_rebindings.clone();
+                    aliases.extend(info.method_aliases.clone());
+                    method_rebindings.push((sym.name.clone(), aliases));
+                }
+                _ => {}
+            }
+        }
+        for (type_name, aliases) in method_rebindings {
+            if !aliases.is_empty() {
                 self.type_info
-                    .traits
-                    .direct_supertraits
-                    .insert(sym.name.clone(), info.supertraits.clone());
-                self.type_info
-                    .traits
-                    .type_params
-                    .insert(sym.name.clone(), info.type_params.clone());
+                    .declarations
+                    .type_method_rebindings
+                    .insert(type_name, aliases);
             }
         }
     }
@@ -3233,6 +3279,11 @@ impl TypeChecker {
     /// - `module_ast`: parsed AST of the dependency module.
     /// - `_module_name`: reserved for future namespacing (currently unused).
     pub fn import_module(&mut self, module_ast: &Program, _module_name: &str) {
+        let previous_surface_context = self.surface_context.clone();
+        let previous_import_aliases = self.import_aliases.clone();
+        self.surface_context = SurfaceContext::from_program(module_ast);
+        self.import_aliases = self.surface_context.import_aliases().clone();
+
         // Collect only public declarations from the imported module.
         for decl in &module_ast.declarations {
             if is_public_decl(decl) && !matches!(decl.node, Declaration::Alias(_) | Declaration::Partial(_)) {
@@ -3249,7 +3300,10 @@ impl TypeChecker {
                 self.collect_declaration(decl);
             }
         }
+        self.resolve_pending_trait_supertraits();
         self.register_dependency_derivable_metadata(_module_name, module_ast);
+        self.surface_context = previous_surface_context;
+        self.import_aliases = previous_import_aliases;
     }
 
     /// Import all symbols from another module's AST into the symbol table.
@@ -3257,6 +3311,11 @@ impl TypeChecker {
     /// This is used for internal compiler passes that need type information across modules
     /// without enforcing `pub` visibility (e.g. codegen-only validation for dependencies).
     pub fn import_module_all(&mut self, module_ast: &Program, _module_name: &str) {
+        let previous_surface_context = self.surface_context.clone();
+        let previous_import_aliases = self.import_aliases.clone();
+        self.surface_context = SurfaceContext::from_program(module_ast);
+        self.import_aliases = self.surface_context.import_aliases().clone();
+
         for decl in &module_ast.declarations {
             if !matches!(decl.node, Declaration::Alias(_) | Declaration::Partial(_)) {
                 self.collect_declaration(decl);
@@ -3272,7 +3331,10 @@ impl TypeChecker {
                 self.collect_declaration(decl);
             }
         }
+        self.resolve_pending_trait_supertraits();
         self.register_dependency_derivable_metadata(_module_name, module_ast);
+        self.surface_context = previous_surface_context;
+        self.import_aliases = previous_import_aliases;
     }
 
     /// Register RFC 024 metadata exported by a dependency source module.

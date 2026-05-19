@@ -28,6 +28,43 @@ fn list_elem_type(ty: &IrType) -> &IrType {
     }
 }
 
+/// Return whether `enumerate()` can materialize source-level values with Rust `copied()`.
+///
+/// This is intentionally narrower than [`IrType::is_copy`]. `enumerate(xs)` yields owned `(int, T)` tuples in Incan,
+/// so reference, tuple, option, result, and generic-placeholder items use the clone path unless the element family is a
+/// scalar value with an unambiguous owned Rust representation.
+fn enumerate_elem_can_copy(ty: &IrType) -> bool {
+    matches!(
+        ty,
+        IrType::Unit
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::Numeric(_)
+            | IrType::Decimal { .. }
+            | IrType::StaticStr
+            | IrType::StaticBytes
+            | IrType::FrozenStr
+            | IrType::FrozenBytes
+            | IrType::StrRef
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enumerate_copy_policy_keeps_generic_tuple_items_owned() {
+        assert!(enumerate_elem_can_copy(&IrType::Int));
+        assert!(!enumerate_elem_can_copy(&IrType::Tuple(vec![
+            IrType::Generic("T".to_string()),
+            IrType::Int,
+        ])));
+        assert!(!enumerate_elem_can_copy(&IrType::Option(Box::new(IrType::Int))));
+    }
+}
+
 /// Check if a type is a named generic.
 fn is_named_generic(ty: &IrType, name: &str) -> bool {
     match ty {
@@ -89,11 +126,7 @@ impl<'a> IrEmitter<'a> {
     /// The frontend models `str` iteration as one-character `str` values and `bytes` iteration as Incan `int`
     /// values, so this helper materializes those language-level item types instead of leaking Rust `char`, `u8`,
     /// or reference items into generated code.
-    pub(in super::super) fn emit_enumerate_iter(
-        &self,
-        arg: &TypedExpr,
-        clone_list_items: bool,
-    ) -> Result<TokenStream, EmitError> {
+    pub(in super::super) fn emit_enumerate_iter(&self, arg: &TypedExpr) -> Result<TokenStream, EmitError> {
         let a = self.emit_expr(arg)?;
         let tokens = if is_string_iterable_type(&arg.ty) {
             quote! { (#a).chars().enumerate().map(|(idx, value)| (idx as i64, value.to_string())) }
@@ -103,12 +136,10 @@ impl<'a> IrEmitter<'a> {
             quote! { (#a).iter().enumerate().map(|(idx, value)| (idx as i64, (*value) as i64)) }
         } else if is_frozen_bytes_iterable_type(&arg.ty) {
             quote! { (#a).as_slice().iter().enumerate().map(|(idx, value)| (idx as i64, (*value) as i64)) }
-        } else if list_elem_type(&arg.ty).is_copy() {
+        } else if enumerate_elem_can_copy(list_elem_type(&arg.ty)) {
             quote! { #a.iter().copied().enumerate().map(|(idx, value)| (idx as i64, value)) }
-        } else if clone_list_items {
-            quote! { #a.iter().enumerate().map(|(idx, value)| (idx as i64, value.clone())) }
         } else {
-            quote! { #a.iter().enumerate().map(|(idx, value)| (idx as i64, value)) }
+            quote! { #a.iter().enumerate().map(|(idx, value)| (idx as i64, value.clone())) }
         };
         Ok(tokens)
     }
@@ -261,7 +292,7 @@ impl<'a> IrEmitter<'a> {
                 .map(|opt| opt.unwrap_or_else(|| quote! { 0..0 })),
             BuiltinFn::Enumerate => {
                 if let Some(arg) = args.first() {
-                    self.emit_enumerate_iter(arg, false)
+                    self.emit_enumerate_iter(arg)
                 } else {
                     Ok(quote! { std::iter::empty::<(i64, ())>() })
                 }
@@ -502,7 +533,7 @@ impl<'a> IrEmitter<'a> {
             BuiltinFnId::Range => self.emit_range_call(args),
             BuiltinFnId::Enumerate => {
                 if let Some(arg) = args.first() {
-                    self.emit_enumerate_iter(arg, false).map(Some)
+                    self.emit_enumerate_iter(arg).map(Some)
                 } else {
                     Ok(None)
                 }

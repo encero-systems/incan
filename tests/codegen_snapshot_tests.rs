@@ -2180,9 +2180,15 @@ fn test_issue389_for_tuple_unpack_enumerate_codegen() {
     let source = load_test_file("issue389_for_tuple_unpack_enumerate");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("issue389_for_tuple_unpack_enumerate", rust_code);
+    let compact_code = rust_code.split_whitespace().collect::<Vec<_>>().join(" ");
     assert!(
-        rust_code.contains("for (idx, name) in xs.iter().enumerate().map(|(idx, value)| (idx as i64, value))"),
+        compact_code
+            .contains("for (idx, name) in xs .iter() .enumerate() .map(|(idx, value)| (idx as i64, value.clone()))"),
         "expected enumerate loop to emit Incan int indices for tuple binding"
+    );
+    assert!(
+        !compact_code.contains("map(|(idx, value)| (idx as i64, value))"),
+        "enumerate loop must clone borrowed iterator values before tuple binding"
     );
 }
 
@@ -3232,6 +3238,78 @@ fn test_trait_bound_explicit_codegen() {
     let source = load_test_file("trait_bound_explicit");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("trait_bound_explicit", rust_code);
+}
+
+#[test]
+fn test_ordinal_key_builtin_impls_codegen() {
+    let source = load_test_file("ordinal_key_builtin_impls");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("pubusecrate::__incan_std::collections::OrdinalKey;"),
+        "expected imported std.collections.OrdinalKey re-export; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("implcrate::__incan_std::collections::OrdinalKeyforStatus{")
+            && compact
+                .contains("fnordinal_hash(&self)->i64{incan_stdlib::collections::__private::ordinal_key_hash_bytes")
+            && compact
+                .contains("fnordinal_bytes_equal(&self,data:Vec<u8>)->bool{self.value().as_bytes()==data.as_slice()}"),
+        "expected generated OrdinalKey impl for string value enum; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("implcrate::__incan_std::collections::OrdinalKeyforHttpStatus{")
+            && compact.contains(
+                "fnordinal_hash(&self)->i64{incan_stdlib::collections::__private::ordinal_key_hash_bytes"
+            )
+            && compact.contains("fnordinal_bytes_equal(&self,data:Vec<u8>)->bool{data.as_slice()==self.value().to_le_bytes().as_slice()}"),
+        "expected generated OrdinalKey impl for integer value enum; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("ordinal_key_builtin_impls", rust_code);
+}
+
+#[test]
+fn test_ordinal_map_str_fast_lookup_codegen() {
+    let source = load_test_file("ordinal_map_str_fast_lookup");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("columns.require(key)"),
+        "expected OrdinalMap[str].require to keep the source-defined lookup path; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("columns.require_many(keys)"),
+        "expected OrdinalMap[str].require_many to keep the source-defined batch lookup path; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("__incan_require_str_fast") && !compact.contains("__incan_require_many_str_fast"),
+        "OrdinalMap[str] calls should not route through generated method specializations; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("vec![\"id\".to_string(),\"status\".to_string()]"),
+        "expected direct string-list construction to materialize owned strings; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("vec![(\"id\".to_string(),10),(\"status\".to_string(),20)]"),
+        "expected direct string-pair construction to materialize owned strings; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("ordinal_map_str_fast_lookup", rust_code);
+}
+
+#[test]
+fn test_imported_stdlib_mut_param_codegen() {
+    let source = load_test_file("imported_stdlib_mut_param");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("::ordinal_key_append_byte(&mutout,7);"),
+        "expected imported stdlib mut parameter to pass a mutable borrow; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("::ordinal_key_append_byte(out.clone(),"),
+        "imported stdlib mut parameter was cloned instead of mutably borrowed; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("imported_stdlib_mut_param", rust_code);
 }
 
 /// RFC 023: Additional inference cases (Display, Dict key hashing, arithmetic, transitive propagation).
