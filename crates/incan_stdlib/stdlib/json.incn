@@ -15,6 +15,10 @@ from rust::incan_stdlib::json import JsonValue as RustJsonValue
 from std.traits.indexing import Index
 
 
+const _MAX_INCAN_INT_DECIMAL_PREFIX: int = 922_337_203_685_477_580
+const _MAX_INCAN_INT_LAST_DIGIT: int = 7
+
+
 pub enum JsonKind(str):
     """Runtime shape of a `JsonValue`."""
 
@@ -642,7 +646,13 @@ def _decode_json_pointer_segment(segment: str) -> Result[str, JsonError]:
 
 
 def _parse_json_pointer_index(segment: str) -> Option[int]:
-    """Parse a JSON Pointer array segment as a non-negative Incan index."""
+    """
+    Parse a JSON Pointer array token into a non-negative Incan index.
+
+    Returns `None` for tokens that cannot address an existing array element:
+    empty, `-`, leading-zero multi-digit, non-digit, or larger than Incan's
+    signed 64-bit `int` range.
+    """
     if segment == "" or segment == "-":
         return None
     if len(segment) > 1 and segment[0:1] == "0":
@@ -653,7 +663,9 @@ def _parse_json_pointer_index(segment: str) -> Option[int]:
         if ch < "0" or ch > "9":
             return None
         digit = int(ch)
-        if out > 922337203685477580 or (out == 922337203685477580 and digit > 7):
+        if out > _MAX_INCAN_INT_DECIMAL_PREFIX:
+            return None
+        if out == _MAX_INCAN_INT_DECIMAL_PREFIX and digit > _MAX_INCAN_INT_LAST_DIGIT:
             return None
         out = out * 10 + digit
     return Some(out)
