@@ -4,38 +4,28 @@
 
 Use typed models with `std.serde.json` when the schema is stable. Use `JsonValue` when part or all of the payload is exploratory, mixed-shape, or intentionally open.
 
-Import with:
+Common imports: `from std.json import JsonValue, JsonError`.
+For task-based examples, see [Work with dynamic JSON](../../how-to/dynamic_json.md).
 
-```incan
-from std.json import JsonValue
-```
+## Types
 
-## Parse and Serialize
+| Type | Contract |
+| --- | --- |
+| `JsonValue` | Dynamic JSON value. |
+| `JsonKind` | Runtime kind enum: null, bool, int, float, string, array, object. |
+| `JsonError` | Error value returned by fallible JSON APIs. |
+| `JsonErrorKind` | Error category enum: parse, type, key, index, number. |
 
-```incan
-from std.json import JsonValue
-
-def main() -> None:
-    match JsonValue.parse('{"status":200,"data":{"name":"Ada"}}'):
-        case Ok(value):
-            match value.to_json():
-                case Ok(text):
-                    println(text)
-                case Err(err):
-                    println(err.message())
-        case Err(err):
-            println(err.message())
-```
+## Top-Level Functions
 
 | API | Returns |
 | --- | --- |
-| `JsonValue.parse(source: str)` | `Result[JsonValue, JsonError]` |
-| `JsonValue.loads(source: str)` | `Result[JsonValue, JsonError]` |
-| `value.to_json()` | `Result[str, JsonError]` |
-| `value.to_pretty_json()` | `Result[str, JsonError]` |
-| `value.dumps()` | `Result[str, JsonError]` |
+| `parse(source: str)` | `Result[JsonValue, JsonError]` |
+| `loads(source: str)` | `Result[JsonValue, JsonError]` |
 | `dumps(value: JsonValue)` | `Result[str, JsonError]` |
 | `dumps_pretty(value: JsonValue)` | `Result[str, JsonError]` |
+
+`loads` is an alias for `parse`. `dumps` and `dumps_pretty` delegate to the corresponding `JsonValue` serialization methods.
 
 ## Constructors
 
@@ -44,7 +34,7 @@ def main() -> None:
 | `JsonValue.null()` | null |
 | `JsonValue.bool(value: bool)` | boolean |
 | `JsonValue.int(value: int)` | number mapped to Incan `int` |
-| `JsonValue.float(value: float)` | `Result[JsonValue, JsonError]` for finite JSON numbers mapped to Incan `float` |
+| `JsonValue.float(value: float)` | `Result[JsonValue, JsonError]` for finite numbers mapped to Incan `float` |
 | `JsonValue.str(value: str)` | string |
 | `JsonValue.string(value: str)` | string |
 | `JsonValue.array(values: list[JsonValue])` | array |
@@ -52,65 +42,54 @@ def main() -> None:
 
 `JsonValue.float(...)` returns an error for NaN and infinities because JSON has no spelling for those values.
 
-## Shape Inspection
-
-`value.kind()` returns `JsonKind`. Use `value.kind().as_str()` when string matching is enough.
-
-| Predicate | Meaning |
-| --- | --- |
-| `value.is_null()` | JSON null |
-| `value.is_bool()` | JSON boolean |
-| `value.is_int()` | JSON number mapped to Incan `int` |
-| `value.is_float()` | JSON number mapped to Incan `float` |
-| `value.is_number()` | any JSON number |
-| `value.is_str()` | JSON string |
-| `value.is_array()` | JSON array |
-| `value.is_object()` | JSON object |
-
-## Extraction
-
-Extraction helpers return `Option[...]` when the requested shape may be absent and `Result[..., JsonError]` when the caller wants a required shape.
-
-| Optional API | Required API |
-| --- | --- |
-| `value.as_bool()` | `value.expect_bool()` |
-| `value.as_int()` | `value.expect_int()` |
-| `value.as_float()` | `value.expect_float()` |
-| `value.as_str()` | `value.expect_str()` |
-| `value.as_array()` | `value.expect_array()` |
-| `value.as_object()` | `value.expect_object()` |
-
-## Checked Indexing
-
-Direct indexing is checked and optional:
-
-```incan
-from std.json import JsonError, JsonValue
-
-def first_item_name(source: str) -> Result[str, JsonError]:
-    data = JsonValue.parse(source)?
-    name = data.require_pointer("/items/0/name")?
-    return name.expect_str()
-
-def main() -> None:
-    match first_item_name('{"items":[{"name":"Ada"}]}'):
-        case Ok(text):
-            println(text)
-        case Err(err):
-            println(err.message())
-```
-
-`value["key"]` returns `Option[JsonValue]` for object lookup. It returns `Some(value)` when the key exists, including when that value is JSON null. It returns `None` when the receiver is not an object or the key is missing.
-
-`value[index]` returns `Option[JsonValue]` for array lookup. It returns `Some(value)` for an in-bounds non-negative index and `None` for non-arrays, negative indices, and out-of-range indices.
-
-Use `get(key)` and `at(index)` for named optional helpers. Use `require(key)`, `require_key(key)`, and `require_index(index)` for JSON-specific errors.
-For nested required paths, prefer `require_pointer(path)?` over stacking optional lookups by hand.
-
-## Object Helpers
+## Serialization
 
 | API | Returns |
 | --- | --- |
+| `JsonValue.parse(source: str)` | `Result[JsonValue, JsonError]` |
+| `JsonValue.loads(source: str)` | `Result[JsonValue, JsonError]` |
+| `value.to_json()` | `Result[str, JsonError]` |
+| `value.to_pretty_json()` | `Result[str, JsonError]` |
+| `value.dumps()` | `Result[str, JsonError]` |
+| `value.debug()` | `Result[str, JsonError]` |
+
+`JsonValue.loads` is an alias for `JsonValue.parse`. `value.dumps()` and `value.debug()` delegate to compact JSON serialization.
+
+## Kind And Predicates
+
+| API | Returns |
+| --- | --- |
+| `value.kind()` | `JsonKind` |
+| `value.kind_name()` | `str` |
+| `value.is_null()` | `bool` |
+| `value.is_bool()` | `bool` |
+| `value.is_int()` | `bool` |
+| `value.is_float()` | `bool` |
+| `value.is_number()` | `bool` |
+| `value.is_str()` | `bool` |
+| `value.is_array()` | `bool` |
+| `value.is_object()` | `bool` |
+
+`JsonKind.as_str()` returns the stable string spelling for a kind.
+
+## Extraction
+
+| Optional API | Required API |
+| --- | --- |
+| `value.as_bool() -> Option[bool]` | `value.expect_bool() -> Result[bool, JsonError]` |
+| `value.as_int() -> Option[int]` | `value.expect_int() -> Result[int, JsonError]` |
+| `value.as_float() -> Option[float]` | `value.expect_float() -> Result[float, JsonError]` |
+| `value.as_str() -> Option[str]` | `value.expect_str() -> Result[str, JsonError]` |
+| `value.as_array() -> Option[list[JsonValue]]` | `value.expect_array() -> Result[list[JsonValue], JsonError]` |
+| `value.as_object() -> Option[Dict[str, JsonValue]]` | `value.expect_object() -> Result[Dict[str, JsonValue], JsonError]` |
+
+Optional extractors return `None` for kind mismatches. Required extractors return `JsonErrorKind.Type`.
+
+## Object Access
+
+| API | Returns |
+| --- | --- |
+| `value["key"]` | `Option[JsonValue]` |
 | `value.get(key: str)` | `Option[JsonValue]` |
 | `value.require(key: str)` | `Result[JsonValue, JsonError]` |
 | `value.require_key(key: str)` | `Result[JsonValue, JsonError]` |
@@ -118,51 +97,94 @@ For nested required paths, prefer `require_pointer(path)?` over stacking optiona
 | `value.keys()` | `list[str]` |
 | `value.values()` | `list[JsonValue]` |
 | `value.items()` | `list[tuple[str, JsonValue]]` |
+
+Object lookup returns `Some(value)` when a key exists, including when the value is JSON null. It returns `None` when the receiver is not an object or the key is missing. Required lookup returns `JsonErrorKind.Type` for non-objects and `JsonErrorKind.Key` for missing keys.
+
+## Object Mutation
+
+| API | Returns |
+| --- | --- |
 | `value.set(key: str, value: JsonValue)` | `Result[None, JsonError]` |
 | `value.put(key: str, value: JsonValue)` | `Result[None, JsonError]` |
 | `value.remove(key: str)` | `Result[Option[JsonValue], JsonError]` |
 | `value.merge(other: JsonValue)` | `Result[None, JsonError]` |
 
-## Array and Traversal Helpers
+Object mutation APIs return `JsonErrorKind.Type` when the receiver is not an object. `merge` also requires the argument to be an object.
+
+## Array Access
 
 | API | Returns |
 | --- | --- |
+| `value[index]` | `Option[JsonValue]` |
 | `value.at(index: int)` | `Option[JsonValue]` |
 | `value.require_index(index: int)` | `Result[JsonValue, JsonError]` |
 | `value.len()` | `int` |
 | `value.is_empty()` | `bool` |
+
+Array lookup returns `Some(value)` for in-bounds non-negative indices. It returns `None` for non-arrays, negative indices, and out-of-range indices. Required lookup returns `JsonErrorKind.Type` for non-arrays and `JsonErrorKind.Index` for invalid indices.
+
+## Array Mutation
+
+| API | Returns |
+| --- | --- |
 | `value.push(value: JsonValue)` | `Result[None, JsonError]` |
 | `value.append(value: JsonValue)` | `Result[None, JsonError]` |
 | `value.extend(values: list[JsonValue])` | `Result[None, JsonError]` |
 | `value.insert(index: int, value: JsonValue)` | `Result[None, JsonError]` |
 | `value.remove_at(index: int)` | `Result[Option[JsonValue], JsonError]` |
+
+Array mutation APIs return `JsonErrorKind.Type` when the receiver is not an array. `insert` rejects indices outside `0..len`.
+
+## Traversal
+
+| API | Returns |
+| --- | --- |
 | `value.pointer(path: str)` | `Result[Option[JsonValue], JsonError]` |
 | `value.require_pointer(path: str)` | `Result[JsonValue, JsonError]` |
 | `value.children()` | `list[JsonValue]` |
 | `value.descendants()` | `list[JsonValue]` |
 
-`pointer(...)` uses JSON Pointer syntax such as `""`, `/items/0`, and `/items/0/name`. It is not JSONPath.
+`pointer(...)` uses JSON Pointer syntax, not JSONPath. The empty path `""` addresses the receiver. Object and array paths use slash-separated segments such as `/items/0/name`. Pointer escaping follows RFC 6901: `~0` decodes to `~`, and `~1` decodes to `/`.
 
-## Numeric Classification
+Array pointer segments are non-negative decimal indices. Empty segments, `-`, leading-zero multi-digit indices, non-digits, out-of-range indices, and indices larger than Incan's signed 64-bit `int` range do not resolve.
 
-JSON numeric values map to Incan `int` or `float` under the same JSON-compatible lexical contract exposed by `std.math.is_int_like` and `std.math.is_float_like`. Integer-like JSON numbers become `int`; JSON numbers with a fractional or exponent part become `float`. Unsupported or out-of-range numeric payloads produce `JsonError`.
+`pointer(...)` returns `Ok(None)` for unresolved paths and `Err(JsonError)` for malformed pointer syntax. `require_pointer(...)` returns `JsonErrorKind.Key` when the path does not resolve.
+
+## Equality And Cloning
+
+| API | Returns |
+| --- | --- |
+| `value.clone()` | `JsonValue` |
+| `value.equals(other: JsonValue)` | `bool` |
+
+## Numeric Mapping
+
+JSON numbers are mapped by their lexical form:
+
+| JSON spelling | Incan kind |
+| --- | --- |
+| integer-like JSON number | `JsonKind.Int` |
+| fraction or exponent JSON number | `JsonKind.Float` |
+
+The lexical contract matches `std.math.is_int_like` and `std.math.is_float_like`. Unsupported or out-of-range numeric payloads produce `JsonErrorKind.Number`.
 
 ## Model Interop
 
-`JsonValue` can be used as a dynamic field inside `@derive(json)` models:
-
-```incan
-from std.serde import json
-from std.json import JsonValue
-
-@derive(json)
-model Envelope:
-    status: int
-    data: JsonValue
-```
-
-The dynamic field serializes and deserializes as ordinary JSON rather than as a wrapper object.
+`JsonValue` is supported as a dynamic field inside `@derive(json)` models. It serializes and deserializes as ordinary JSON, not as a wrapper object.
 
 ## Errors
 
-`JsonError` exposes `kind()`, `kind_name()`, `detail()`, and `message()`. Error kinds include parse, type, key, index, and number errors.
+| API | Returns |
+| --- | --- |
+| `error.kind()` | `JsonErrorKind` |
+| `error.kind_name()` | `str` |
+| `error.detail()` | `str` |
+| `error.message()` | `str` |
+
+| Error kind | Used for |
+| --- | --- |
+| `JsonErrorKind.Parse` | JSON parse failures. |
+| `JsonErrorKind.Type` | Runtime kind mismatches. |
+| `JsonErrorKind.Key` | Missing object keys and pointer failures. |
+| `JsonErrorKind.Index` | Invalid array indices. |
+| `JsonErrorKind.Number` | Non-finite, unsupported, or out-of-range numbers. |

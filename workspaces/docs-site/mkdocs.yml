@@ -130,6 +130,7 @@ nav:
           - File I/O: language/how-to/file_io.md
           - Binary-text encoding: language/how-to/binary_text_encoding.md
           - Compression: language/how-to/compression.md
+          - Dynamic JSON: language/how-to/dynamic_json.md
           - Generators: language/how-to/generators.md
           - Imports and modules: language/how-to/imports_and_modules.md
           - Module state: language/how-to/module_state.md
