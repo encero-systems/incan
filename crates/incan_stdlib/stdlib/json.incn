@@ -663,9 +663,11 @@ def _parse_json_pointer_index(segment: str) -> Option[int]:
         if ch < "0" or ch > "9":
             return None
         digit = int(ch)
-        if out > _MAX_INCAN_INT_DECIMAL_PREFIX:
-            return None
-        if out == _MAX_INCAN_INT_DECIMAL_PREFIX and digit > _MAX_INCAN_INT_LAST_DIGIT:
+        at_max_prefix = out == _MAX_INCAN_INT_DECIMAL_PREFIX
+        too_many_prefix_digits = out > _MAX_INCAN_INT_DECIMAL_PREFIX
+        too_large_final_digit = at_max_prefix and digit > _MAX_INCAN_INT_LAST_DIGIT
+        # Guard before multiplying; overflow must return `None`, not raise.
+        if too_many_prefix_digits or too_large_final_digit:
             return None
         out = out * 10 + digit
     return Some(out)
