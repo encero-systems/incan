@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-use std::collections::HashSet;
 fn test_operators() {
     let _add: i64 = 1 + 2;
     let _sub: i64 = 5 - 3;
@@ -38,7 +37,7 @@ fn test_operators() {
     };
     let vowels = ["a".to_string(), "e".to_string(), "i".to_string()]
         .into_iter()
-        .collect::<HashSet<_>>();
+        .collect::<std::collections::HashSet<_>>();
     let _has_a: bool = {
         let __incan_probe = "a";
         let __incan_probe = <_ as AsRef<str>>::as_ref(&__incan_probe);

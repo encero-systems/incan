@@ -12285,6 +12285,75 @@ def encode(payload: Payload) -> str:
 }
 
 #[test]
+fn test_std_json_value_indexing_typechecks_as_optional_json_value() {
+    let source = r#"
+from std.json import JsonValue
+
+def read_object(data: JsonValue) -> Option[JsonValue]:
+  return data["name"]
+
+def read_array(data: JsonValue) -> Option[JsonValue]:
+  return data[0]
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_std_json_value_indexing_records_trait_dispatch() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+from std.json import JsonValue
+
+def read_object(data: JsonValue) -> Option[JsonValue]:
+  return data["name"]
+"#;
+    let tokens = lexer::lex(source)?;
+    let ast = parser::parse(&tokens)?;
+    let mut checker = TypeChecker::new();
+    checker.check_program(&ast)?;
+
+    assert!(
+        checker
+            .type_info()
+            .calls
+            .resolved_method_calls
+            .values()
+            .any(|call| match &call.dispatch {
+                ResolvedMethodDispatch::Trait { trait_path, .. } =>
+                    trait_path == "crate::__incan_std::traits::indexing::Index",
+            }),
+        "expected JsonValue indexing to preserve std.traits.indexing.Index dispatch, got {:?}",
+        checker.type_info().calls.resolved_method_calls
+    );
+    assert!(
+        checker
+            .type_info()
+            .calls
+            .call_site_callable_params
+            .values()
+            .any(|params| params.len() == 1 && params[0].ty == ResolvedType::Str),
+        "expected JsonValue indexing to preserve the selected string parameter, got {:?}",
+        checker.type_info().calls.call_site_callable_params
+    );
+    Ok(())
+}
+
+#[test]
+fn test_std_json_value_indexing_rejects_unsupported_key_type() {
+    let source = r#"
+from std.json import JsonValue
+
+def read_bad(data: JsonValue) -> Option[JsonValue]:
+  return data[True]
+"#;
+    let errs = check_str_err(source, "JsonValue indexing should reject bool keys");
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("JsonValue indices must be int or str")),
+        "Expected JsonValue index-key diagnostic; got: {errs:?}"
+    );
+}
+
+#[test]
 fn test_bare_serde_derive_without_import_is_rejected() {
     let source = r#"
 @derive(Serialize)

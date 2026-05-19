@@ -708,6 +708,7 @@ pub struct MethodInfo {
 pub struct TypeBoundInfo {
     pub name: String,
     pub type_args: Vec<ResolvedType>,
+    pub module_path: Option<Vec<String>>,
 }
 
 /// Resolved type (after type checking)

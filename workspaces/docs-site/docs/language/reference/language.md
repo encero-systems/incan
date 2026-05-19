@@ -104,6 +104,7 @@ Soft keywords are only reserved when their activating `std.*` namespace is impor
 | `std.telemetry` | - | `std.telemetry.core` | - |
 | `std.async` | `async` | `std.async.time`, `std.async.task`, `std.async.channel`, `std.async.race`, `std.async.sync`, `std.async.prelude` | `async`, `await` |
 | `std.serde` | `json` | `std.serde.json` | - |
+| `std.json` | `json` | - | - |
 | `std.reflection` | - | - | - |
 | `std.result` | - | - | - |
 | `std.derives` | - | `std.derives.string`, `std.derives.comparison`, `std.derives.copying`, `std.derives.collection` | - |

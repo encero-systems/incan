@@ -570,6 +570,13 @@ impl TypeCheckInfo {
         }
     }
 
+    /// Record callable metadata required by an explicit lowered dispatch path.
+    pub(crate) fn record_call_site_callable_params_for_dispatch(&mut self, span: Span, params: &[CallableParam]) {
+        self.calls
+            .call_site_callable_params
+            .insert((span.start, span.end), params.to_vec());
+    }
+
     /// Return a typechecker-resolved user-defined operator call for `span`, if any.
     pub fn resolved_operator_call(&self, span: Span) -> Option<&ResolvedOperatorCall> {
         self.calls.resolved_operator_calls.get(&(span.start, span.end))

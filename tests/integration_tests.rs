@@ -6429,7 +6429,7 @@ def main() -> None:
             "expected List[str] smoke value to lower to an owned Rust string vec; got:\n{rust_code}"
         );
         assert!(
-            rust_code.contains("collect::<HashMap<_, _>>()"),
+            rust_code.contains("collect::<std::collections::HashMap<_, _>>()"),
             "expected Dict[str, float] smoke value to lower to a Rust HashMap collect; got:\n{rust_code}"
         );
     }
@@ -6725,6 +6725,43 @@ def main() -> None:
         assert!((hypot - 5.0).abs() < 1e-12, "unexpected hypot value: {hypot}");
         assert_eq!(gcd, 6, "unexpected gcd value: {gcd}");
         assert_eq!(lcm, 24, "unexpected lcm value: {lcm}");
+    }
+
+    #[test]
+    fn test_std_math_numeric_like_helpers_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+import std.math
+
+def main() -> None:
+    assert math.is_int_like("0")
+    assert math.is_int_like("-123")
+    assert not math.is_int_like("1e3")
+    assert not math.is_int_like("01")
+
+    assert math.is_float_like("0.0")
+    assert math.is_float_like("-0.5")
+    assert math.is_float_like("1e3")
+    assert math.is_float_like("1.25E+10")
+    assert not math.is_float_like("1")
+    assert not math.is_float_like("+1")
+    assert not math.is_float_like("1e+")
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "std.math numeric-like helper run failed: status={:?}\nstdout={}\nstderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
     }
 
     #[test]
@@ -10450,6 +10487,131 @@ def main() -> None:
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         assert_eq!(stdout.lines().next(), Some("7"));
+        Ok(())
+    }
+
+    #[test]
+    fn std_json_value_model_field_roundtrips_and_indexes() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"json_value_model_field_roundtrip\"\nversion = \"0.3.0-dev.1\"\n",
+            r#"from std.serde import json
+from std.json import JsonValue
+
+@derive(json)
+model Envelope:
+  status: int
+  data: JsonValue
+
+@derive(json)
+model Probe:
+  name: Option[JsonValue]
+  first: Option[JsonValue]
+  missing: Option[JsonValue]
+
+def main() -> None:
+  match Envelope.from_json('{"status":200,"data":{"name":"Ada","items":[1,2]}}'):
+    case Ok(envelope):
+      match envelope.data["items"]:
+        case Some(items):
+          let probe = Probe(name=envelope.data["name"], first=items[0], missing=items[9])
+          println(probe.to_json())
+        case None:
+          println("missing items")
+    case Err(err):
+      println(err)
+"#,
+        )?;
+
+        let output = Command::new(incan_bin_path())
+            .arg("run")
+            .arg(&main_path)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "expected JsonValue model-field round trip to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert_eq!(
+            stdout.lines().next(),
+            Some("{\"name\":\"Ada\",\"first\":1,\"missing\":null}"),
+            "expected checked JsonValue indexing to produce optional fields, got:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn std_json_value_broad_surface_runs() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"from std.json import JsonValue
+
+def main() -> None:
+  match JsonValue.parse('{"items":[1,2],"name":"Ada","n":null}'):
+    case Ok(data):
+      assert data.kind().as_str() == "object"
+      assert JsonValue.str("Ada").as_str() == Some("Ada")
+      match data.get("n"):
+        case Some(value):
+          assert value.is_null()
+        case None:
+          assert false
+      match data.get("missing"):
+        case Some(_):
+          assert false
+        case None:
+          pass
+      match data["items"]:
+        case Some(items):
+          match items[0]:
+            case Some(first):
+              match first.expect_int():
+                case Ok(n):
+                  assert n == 1
+                case Err(_):
+                  assert false
+            case None:
+              assert false
+          match items[-1]:
+            case Some(_):
+              assert false
+            case None:
+              pass
+        case None:
+          assert false
+      mut target = JsonValue.object({"a": JsonValue.int(1)})
+      match target.merge(JsonValue.object({"a": JsonValue.int(2), "b": JsonValue.str("bee")})):
+        case Ok(_):
+          assert target.contains_key("b")
+          match target.require("a"):
+            case Ok(value):
+              assert value.as_int() == Some(2)
+            case Err(_):
+              assert false
+        case Err(_):
+          assert false
+    case Err(err):
+      println(err.message())
+      assert false
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+
+        assert!(
+            output.status.success(),
+            "expected std.json broad surface smoke program to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
         Ok(())
     }
 

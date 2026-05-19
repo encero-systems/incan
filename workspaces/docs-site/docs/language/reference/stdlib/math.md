@@ -48,10 +48,14 @@ Access values through the `math` namespace, for example `math.PI` or `math.sqrt(
 | `math.cosh(x: float)`            | `float` |
 | `math.tanh(x: float)`            | `float` |
 | `math.hypot(x: float, y: float)` | `float` |
+| `math.is_int_like(value: str)`   | `bool`  |
+| `math.is_float_like(value: str)` | `bool`  |
 
 ## Notes
 
 - `math.gcd` returns the greatest common divisor of two integers.
 - `math.lcm` returns the lowest common multiple of two integers.
 - `math.gcd` and `math.lcm` raise `ValueError` if the mathematical result does not fit Incan's signed 64-bit `int`.
+- `math.is_int_like` accepts JSON-compatible integer spellings such as `0`, `42`, and `-42`, and rejects leading `+`, whitespace, underscores, leading-zero multi-digit integers, fractional parts, and exponent parts.
+- `math.is_float_like` accepts JSON-compatible float spellings with a fractional part, exponent part, or both, such as `0.0`, `-0.5`, `1e3`, and `1.25E+10`.
 - The floating-point helpers remain thin wrappers over Rust math facilities.

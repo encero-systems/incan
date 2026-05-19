@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-use std::collections::{HashMap, HashSet};
 fn test_lowercase_types() {
     let _numbers: Vec<i64> = vec![1, 2, 3];
     let _data: std::collections::HashMap<String, i64> = [
@@ -15,10 +14,10 @@ fn test_lowercase_types() {
         ("b".to_string(), 2),
     ]
         .into_iter()
-        .collect::<HashMap<_, _>>();
+        .collect::<std::collections::HashMap<_, _>>();
     let _unique: std::collections::HashSet<i64> = [1, 2, 3]
         .into_iter()
-        .collect::<HashSet<_>>();
+        .collect::<std::collections::HashSet<_>>();
     let _pair: (i64, String) = (42, "hello".to_string());
     let _maybe: Option<i64> = None::<i64>;
     println!("{}", "All lowercase types work!");

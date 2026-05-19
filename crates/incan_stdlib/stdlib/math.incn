@@ -1,9 +1,10 @@
 """
 Math module - standard mathematical helpers.
 
-This module dogfoods direct `rust::` interop:
+This module dogfoods direct `rust::` interop where it is the runtime boundary:
 - constants come from Rust std modules
-- functions are thin Incan wrappers over direct Rust crate imports
+- transcendental functions use the Rust libm boundary
+- lexical helpers are ordinary Incan code
 
 Constants
 =========
@@ -20,9 +21,12 @@ Functions
 Integer:
   math.gcd(a, b)  - Greatest common divisor
   math.lcm(a, b)  - Lowest common multiple
+  math.is_int_like(value) - Whether a string is a JSON-compatible integer spelling
+  math.is_float_like(value) - Whether a string is a JSON-compatible float spelling
 
 Integer notes:
   gcd/lcm raise ValueError if the mathematical result exceeds Incan's signed 64-bit int range
+  is_int_like/is_float_like reject empty strings, leading '+', leading-zero multi-digit integers, and malformed exponents
 
 Basic:
   math.sqrt(x)    - Square root
@@ -57,7 +61,10 @@ Geometry:
 
 from rust::std::f64::consts import PI as RUST_PI, E as RUST_E, TAU as RUST_TAU
 from rust::std::f64 import INFINITY as RUST_INFINITY, NAN as RUST_NAN
-from rust::incan_stdlib::num import gcd_i64 as rust_gcd, lcm_i64 as rust_lcm
+from rust::incan_stdlib::num import (
+    gcd_i64 as rust_gcd,
+    lcm_i64 as rust_lcm,
+)
 from rust::libm import (
     sqrt as rust_sqrt,
     fabs as rust_abs,
@@ -98,6 +105,95 @@ pub def gcd(a: int, b: int) -> int:
 
 pub def lcm(a: int, b: int) -> int:
     return rust_lcm(a, b)
+
+
+pub def is_int_like(value: str) -> bool:
+    """
+    Return whether `value` is a JSON-compatible integer spelling.
+
+    Args:
+        value: String to classify.
+
+    Returns:
+        `true` for integer forms such as `"0"` and `"-12"`; `false` for fractional, exponent, empty, or malformed forms.
+    """
+    match _consume_json_integer_prefix(value):
+        Some(index) => return index == len(value)
+        None => return false
+
+
+pub def is_float_like(value: str) -> bool:
+    """
+    Return whether `value` is a JSON-compatible float spelling.
+
+    Args:
+        value: String to classify.
+
+    Returns:
+        `true` for JSON number forms with a fraction or exponent, such as `"0.5"` and `"1e3"`; `false` for integer-only or malformed forms.
+    """
+    match _consume_json_integer_prefix(value):
+        Some(index) => return _is_float_like_after_integer(value, index)
+        None => return false
+
+
+def _is_float_like_after_integer(value: str, start: int) -> bool:
+    """Return whether `value[start:]` is a JSON float suffix."""
+    mut index = start
+    mut saw_float_marker = false
+
+    if index < len(value) and value[index] == str("."):
+        saw_float_marker = true
+        index = index + 1
+        digits_start = index
+        while index < len(value) and _is_json_digit(value[index]):
+            index = index + 1
+        if index == digits_start:
+            return false
+
+    if index < len(value) and (value[index] == str("e") or value[index] == str("E")):
+        saw_float_marker = true
+        index = index + 1
+        if index < len(value) and (value[index] == str("+") or value[index] == str("-")):
+            index = index + 1
+        digits_start = index
+        while index < len(value) and _is_json_digit(value[index]):
+            index = index + 1
+        if index == digits_start:
+            return false
+
+    return saw_float_marker and index == len(value)
+
+
+def _consume_json_integer_prefix(value: str) -> Option[int]:
+    """Return the index after a JSON integer body, or `None` when malformed."""
+    if len(value) == 0:
+        return None
+
+    mut index = 0
+    if value[index] == str("-"):
+        index = index + 1
+        if index == len(value):
+            return None
+
+    if value[index] == str("0"):
+        index = index + 1
+        if index < len(value) and _is_json_digit(value[index]):
+            return None
+        return Some(index)
+
+    if value[index] >= str("1") and value[index] <= str("9"):
+        index = index + 1
+        while index < len(value) and _is_json_digit(value[index]):
+            index = index + 1
+        return Some(index)
+
+    return None
+
+
+def _is_json_digit(ch: str) -> bool:
+    """Return whether `ch` is one ASCII digit accepted by JSON number syntax."""
+    return ch >= str("0") and ch <= str("9")
 
 
 # ============================================================================

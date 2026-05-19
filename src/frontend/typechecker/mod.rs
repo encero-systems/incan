@@ -1250,6 +1250,7 @@ impl TypeChecker {
                 out.push(TypeBoundInfo {
                     name: d.clone(),
                     type_args: Vec::new(),
+                    module_path: None,
                 });
             }
         }

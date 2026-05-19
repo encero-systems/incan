@@ -552,6 +552,7 @@ impl TypeChecker {
                     .iter()
                     .map(|arg| self.resolve_type_checked(arg))
                     .collect(),
+                module_path: None,
             })
             .collect()
     }
@@ -587,6 +588,7 @@ impl TypeChecker {
                         out.push(TypeBoundInfo {
                             name: canonical,
                             type_args: Vec::new(),
+                            module_path: None,
                         });
                     }
                 }
@@ -608,12 +610,14 @@ impl TypeChecker {
                         out.push(TypeBoundInfo {
                             name: derive_name.clone(),
                             type_args: Vec::new(),
+                            module_path: None,
                         });
                     }
                 } else if self.lookup_trait_info(derive_name).is_some() {
                     out.push(TypeBoundInfo {
                         name: derive_name.clone(),
                         type_args: Vec::new(),
+                        module_path: None,
                     });
                 }
             }
@@ -1163,6 +1167,7 @@ impl TypeChecker {
                                 .iter()
                                 .map(|type_arg| self.resolve_type_checked(type_arg))
                                 .collect(),
+                            module_path: None,
                         })
                         .collect(),
                 )

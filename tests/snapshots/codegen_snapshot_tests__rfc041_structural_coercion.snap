@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-use std::collections::HashMap;
 fn accept_option(value: Option<i64>) -> Option<i64> {
     return value;
 }
@@ -37,7 +36,7 @@ fn main() {
         ("latency".to_string(), 1.5f64),
     ]
         .into_iter()
-        .collect::<HashMap<_, _>>();
+        .collect::<std::collections::HashMap<_, _>>();
     accept_option(maybe_count);
     accept_names(names);
     accept_scores(scores);

@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-use std::collections::HashMap;
 fn greet(name: String) -> String {
     "Simple function for testing calls";
     return {
@@ -52,7 +51,7 @@ fn test_function_calls() {
         ("b".to_string(), 2),
     ]
         .into_iter()
-        .collect::<HashMap<_, _>>();
+        .collect::<std::collections::HashMap<_, _>>();
 }
 fn main() {
     std::panic::set_hook(

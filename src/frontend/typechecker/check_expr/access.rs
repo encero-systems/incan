@@ -14,7 +14,6 @@ use crate::frontend::typechecker::helpers::{
 };
 use crate::frontend::typechecker::type_info::{RustMethodTraitImportUse, RustTraitImportInfo};
 use incan_core::interop::{RustCollectionFamily, RustItemKind};
-use incan_core::lang::conventions;
 use incan_core::lang::magic_methods;
 use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::types as surface_types;
@@ -26,6 +25,7 @@ use incan_core::lang::surface::{
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics::NumericFamily;
+use incan_core::lang::{conventions, stdlib};
 use incan_core::lang::{enum_helpers, surface::option_methods};
 
 use super::TypeChecker;
@@ -759,27 +759,38 @@ impl TypeChecker {
         }
     }
 
+    /// Return backend dispatch metadata for stdlib trait calls that must lower to explicit UFCS paths.
     fn explicit_trait_dispatch_for_backend(
         &self,
         trait_name: &str,
         type_args: Vec<ResolvedType>,
+        origin_module_path: Option<&[String]>,
     ) -> Option<crate::frontend::typechecker::ResolvedMethodDispatch> {
-        let module_path = self.stdlib_cache.loaded_trait_module_path(trait_name)?;
+        let module_path = origin_module_path
+            .map(<[String]>::to_vec)
+            .or_else(|| self.stdlib_cache.loaded_trait_module_path(trait_name))?;
         let is_std_io_binary_trait = module_path.len() == 2
             && module_path[0] == "std"
             && module_path[1] == "io"
             && matches!(trait_name, "BinaryRead" | "BinaryWrite");
-        is_std_io_binary_trait.then(|| self.resolved_trait_dispatch(trait_name, type_args))
+        let is_std_traits_indexing_trait = module_path.len() == 3
+            && module_path[0] == "std"
+            && module_path[1] == "traits"
+            && module_path[2] == "indexing"
+            && trait_name == "Index";
+        (is_std_io_binary_trait || is_std_traits_indexing_trait)
+            .then(|| self.resolved_trait_dispatch(trait_name, type_args, Some(&module_path)))
     }
 
+    /// Build a backend trait-dispatch record using the originating stdlib module when it is known.
     fn resolved_trait_dispatch(
         &self,
         trait_name: &str,
         type_args: Vec<ResolvedType>,
+        origin_module_path: Option<&[String]>,
     ) -> crate::frontend::typechecker::ResolvedMethodDispatch {
         let trait_path = self
-            .stdlib_cache
-            .loaded_trait_module_path(trait_name)
+            .stdlib_trait_module_path_for_backend(trait_name, origin_module_path)
             .filter(|segments| segments.first().is_some_and(|segment| segment == "std"))
             .map(|segments| {
                 let module_path = segments.into_iter().skip(1).collect::<Vec<_>>().join("::");
@@ -787,6 +798,17 @@ impl TypeChecker {
             })
             .unwrap_or_else(|| trait_name.to_string());
         crate::frontend::typechecker::ResolvedMethodDispatch::Trait { trait_path, type_args }
+    }
+
+    /// Return the stdlib module path that should qualify an emitted trait path.
+    fn stdlib_trait_module_path_for_backend(
+        &self,
+        trait_name: &str,
+        origin_module_path: Option<&[String]>,
+    ) -> Option<Vec<String>> {
+        origin_module_path
+            .map(<[String]>::to_vec)
+            .or_else(|| self.stdlib_cache.loaded_trait_module_path(trait_name))
     }
 
     /// Return whether an expression names an enum type rather than an enum value.
@@ -1646,6 +1668,7 @@ impl TypeChecker {
                             self.explicit_trait_dispatch_for_backend(
                                 &entry.origin_trait,
                                 entry.origin_type_args.clone(),
+                                entry.origin_module_path.as_deref(),
                             )
                         });
                     MethodCandidate { info, dispatch }
@@ -1677,8 +1700,11 @@ impl TypeChecker {
             let mut candidates = Vec::new();
             for adoption in trait_adoptions {
                 if let Some(entry) = self.trait_method_entry_resolved_for_adoption(adoption, method, call_site_span) {
-                    let dispatch =
-                        self.explicit_trait_dispatch_for_backend(&entry.origin_trait, entry.origin_type_args.clone());
+                    let dispatch = self.explicit_trait_dispatch_for_backend(
+                        &entry.origin_trait,
+                        entry.origin_type_args.clone(),
+                        entry.origin_module_path.as_deref(),
+                    );
                     candidates.push(MethodCandidate {
                         info: entry.info,
                         dispatch,
@@ -1737,6 +1763,9 @@ impl TypeChecker {
                 if let Some(dispatch) = candidate.dispatch.clone() {
                     self.type_info
                         .record_resolved_method_call(call_site_span, method, dispatch);
+                    let (params, _) = self.method_types_substituting_call_site_self(&candidate.info, receiver_ty);
+                    self.type_info
+                        .record_call_site_callable_params_for_dispatch(call_site_span, &params);
                 }
                 self.check_generic_method_call(
                     method,
@@ -1762,6 +1791,9 @@ impl TypeChecker {
             if let Some(dispatch) = candidate.dispatch.clone() {
                 self.type_info
                     .record_resolved_method_call(call_site_span, method, dispatch);
+                let (params, _) = self.method_types_substituting_call_site_self(&candidate.info, receiver_ty);
+                self.type_info
+                    .record_call_site_callable_params_for_dispatch(call_site_span, &params);
             }
             return Some(self.check_generic_method_call(
                 method,
@@ -2001,8 +2033,11 @@ impl TypeChecker {
         let mut candidates = Vec::new();
         for bound in &active_bounds {
             if let Some(entry) = self.trait_method_entry_resolved_for_adoption(bound, method, call_site_span) {
-                let dispatch =
-                    self.explicit_trait_dispatch_for_backend(&entry.origin_trait, entry.origin_type_args.clone());
+                let dispatch = self.explicit_trait_dispatch_for_backend(
+                    &entry.origin_trait,
+                    entry.origin_type_args.clone(),
+                    entry.origin_module_path.as_deref(),
+                );
                 candidates.push(MethodCandidate {
                     info: entry.info,
                     dispatch,
@@ -2086,6 +2121,30 @@ impl TypeChecker {
         Some(ResolvedType::Unknown)
     }
 
+    /// Return whether `ty` is the compiler-owned `std.json.JsonValue` wrapper over the raw runtime carrier.
+    fn is_std_json_value_type(&self, ty: &ResolvedType) -> bool {
+        let type_name = match ty {
+            ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
+            _ => return false,
+        };
+        if !stdlib::is_json_value_type_name(type_name) {
+            return false;
+        }
+        matches!(
+            self.lookup_semantic_type_info(type_name),
+            Some(TypeInfo::Newtype(info))
+                if matches!(
+                    &info.underlying,
+                    ResolvedType::RustPath(path) if path == stdlib::JSON_VALUE_RUST_PATH
+                ) || matches!(&info.underlying, ResolvedType::Named(name) if name == "RustJsonValue")
+        )
+    }
+
+    /// Return whether an index type can select one of `JsonValue`'s source-authored `__getitem__` overloads.
+    fn is_std_json_value_index_type(index_ty: &ResolvedType) -> bool {
+        matches!(index_ty, ResolvedType::Int | ResolvedType::Str | ResolvedType::Unknown) || is_frozen_str(index_ty)
+    }
+
     /// Type-check an indexing expression (`base[index]`) and return the element type.
     pub(in crate::frontend::typechecker::check_expr) fn check_index(
         &mut self,
@@ -2098,6 +2157,13 @@ impl TypeChecker {
             return ty;
         }
         let index_ty = self.check_expr(index);
+        if self.is_std_json_value_type(&base_ty) && !Self::is_std_json_value_index_type(&index_ty) {
+            self.errors.push(errors::json_value_index_type_mismatch(
+                &index_ty.to_string(),
+                index.span,
+            ));
+            return option_ty(ResolvedType::Named(stdlib::JSON_VALUE_TYPE_NAME.to_string()));
+        }
 
         match base_ty {
             ResolvedType::Generic(name, args) => match collection_type_id(name.as_str()) {

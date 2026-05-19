@@ -205,11 +205,7 @@ impl<'a> IrEmitter<'a> {
         value_target_ty: Option<&IrType>,
     ) -> Result<TokenStream, EmitError> {
         if pairs.is_empty() {
-            return if *self.qualify_internal_canonical_paths.borrow() {
-                Ok(quote! { std::collections::HashMap::new() })
-            } else {
-                Ok(quote! { HashMap::new() })
-            };
+            return Ok(quote! { std::collections::HashMap::new() });
         }
 
         if pairs.iter().all(|entry| matches!(entry, IrDictEntry::Pair(_, _))) {
@@ -236,11 +232,7 @@ impl<'a> IrEmitter<'a> {
                     )),
                 })
                 .collect::<Result<_, EmitError>>()?;
-            return if *self.qualify_internal_canonical_paths.borrow() {
-                Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<std::collections::HashMap<_, _>>() })
-            } else {
-                Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<HashMap<_, _>>() })
-            };
+            return Ok(quote! { [#(#pair_tokens),*].into_iter().collect::<std::collections::HashMap<_, _>>() });
         }
 
         let steps: Vec<TokenStream> = pairs
@@ -379,7 +371,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Set(items) => {
                 if items.is_empty() {
-                    return Ok(quote! { HashSet::new() });
+                    return Ok(quote! { std::collections::HashSet::new() });
                 }
                 let site_item_ty = match Self::use_site_target_ty(site) {
                     Some(IrType::Set(elem)) => Some(elem.as_ref()),
@@ -401,7 +393,7 @@ impl<'a> IrEmitter<'a> {
                         )
                     })
                     .collect::<Result<_, _>>()?;
-                return Ok(quote! { [#(#item_tokens),*].into_iter().collect::<HashSet<_>>() });
+                return Ok(quote! { [#(#item_tokens),*].into_iter().collect::<std::collections::HashSet<_>>() });
             }
             IrExprKind::Tuple(items) => {
                 let site_tuple_items = match Self::use_site_target_ty(site) {
@@ -790,7 +782,7 @@ impl<'a> IrEmitter<'a> {
 
             IrExprKind::Set(items) => {
                 if items.is_empty() {
-                    Ok(quote! { HashSet::new() })
+                    Ok(quote! { std::collections::HashSet::new() })
                 } else {
                     let item_target_ty = match &expr.ty {
                         IrType::Set(elem) => Some(elem.as_ref()),
@@ -807,7 +799,7 @@ impl<'a> IrEmitter<'a> {
                             )
                         })
                         .collect::<Result<_, _>>()?;
-                    Ok(quote! { [#(#item_tokens),*].into_iter().collect::<HashSet<_>>() })
+                    Ok(quote! { [#(#item_tokens),*].into_iter().collect::<std::collections::HashSet<_>>() })
                 }
             }
 

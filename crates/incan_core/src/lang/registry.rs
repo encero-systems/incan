@@ -142,6 +142,9 @@ pub const RFC_049: RfcId = "RFC 049";
 /// RFC 050 — enum methods and trait adoption.
 pub const RFC_050: RfcId = "RFC 050";
 
+/// RFC 051 — dynamic JSON value surface.
+pub const RFC_051: RfcId = "RFC 051";
+
 /// RFC 052 — module static storage.
 pub const RFC_052: RfcId = "RFC 052";
 
@@ -275,6 +278,8 @@ impl RFC {
     pub const _049: RfcId = RFC_049;
     /// RFC 050 — enum methods and trait adoption.
     pub const _050: RfcId = RFC_050;
+    /// RFC 051 — dynamic JSON value surface.
+    pub const _051: RfcId = RFC_051;
     /// RFC 052 — module static storage.
     pub const _052: RfcId = RFC_052;
     /// RFC 053 — formatter vertical spacing buckets.

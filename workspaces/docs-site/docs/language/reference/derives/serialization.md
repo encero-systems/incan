@@ -177,6 +177,24 @@ Newtypes serialize to/from their underlying type's JSON representation.
 
 ---
 
+## Dynamic JSON fields
+
+Use `std.json.JsonValue` when one model field should remain dynamic while the rest of the model is typed:
+
+```incan
+from std.serde import json
+from std.json import JsonValue
+
+@derive(json)
+model ApiResponse:
+    status: int
+    data: JsonValue
+```
+
+`JsonValue` fields serialize and deserialize as their contained JSON value. They do not add a wrapper object around the field.
+
+---
+
 ## Type mappings (Incan → JSON)
 
 | Incan             | JSON             |
@@ -188,6 +206,7 @@ Newtypes serialize to/from their underlying type's JSON representation.
 | `List[T]`         | array            |
 | `Dict[str, T]`    | object           |
 | `Option[T]`       | value or `null`  |
+| `JsonValue`       | dynamic JSON value |
 | `model` / `class` | object           |
 | ordinary `enum`   | variant encoding |
 | value `enum`      | backing `str` / `int` |

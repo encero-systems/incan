@@ -857,14 +857,18 @@ impl<'a> IrEmitter<'a> {
                 quote! { #trait_tokens :: < #(#trait_type_args),* > }
             };
             let m = Self::rust_ident(method);
-            let arg_tokens = self.emit_method_call_args(
-                method,
-                receiver,
-                args,
-                callable_signature,
-                ValueUseSite::MethodArg,
-                result_target_ty,
-            )?;
+            let in_return = *self.in_return_context.borrow();
+            let use_site = if callable_signature.is_some() || self.is_incan_owned_nominal_receiver(&receiver.ty) {
+                ValueUseSite::IncanCallArg {
+                    target_ty: None,
+                    callee_param: None,
+                    in_return,
+                }
+            } else {
+                ValueUseSite::MethodArg
+            };
+            let arg_tokens =
+                self.emit_method_call_args(method, receiver, args, callable_signature, use_site, result_target_ty)?;
             return Ok(quote! { #trait_tokens::#m(&#r, #(#arg_tokens),*) });
         }
 

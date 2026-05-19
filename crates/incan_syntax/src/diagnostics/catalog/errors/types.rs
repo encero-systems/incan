@@ -1707,6 +1707,12 @@ pub fn index_type_mismatch(expected: &str, found: &str, span: Span) -> CompileEr
     .with_hint(format!("Use '{}' as the index type", expected))
 }
 
+/// Build the diagnostic emitted when `JsonValue` is indexed with an unsupported key type.
+pub fn json_value_index_type_mismatch(found: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("JsonValue indices must be int or str, found '{found}'"), span)
+        .with_hint("Use a string key for JSON objects or an integer index for JSON arrays")
+}
+
 pub fn index_value_type_mismatch(expected: &str, found: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Cannot assign '{}' to collection element of type '{}'", found, expected),

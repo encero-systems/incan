@@ -31,6 +31,18 @@ pub const STDLIB_GRAPH: &str = "graph";
 pub const STDLIB_RUST: &str = "rust";
 /// `std.builtins` module name for explicit builtin-function escape calls (RFC 045).
 pub const STDLIB_BUILTINS: &str = "builtins";
+/// `std.json` module name.
+pub const STDLIB_JSON: &str = "json";
+/// Dynamic JSON value type exported by `std.json`.
+pub const JSON_VALUE_TYPE_NAME: &str = "JsonValue";
+/// Runtime Rust path carried by `std.json.JsonValue`.
+pub const JSON_VALUE_RUST_PATH: &str = "incan_stdlib::json::JsonValue";
+
+/// Return whether `name` is the canonical dynamic JSON value type.
+#[must_use]
+pub fn is_json_value_type_name(name: &str) -> bool {
+    name == JSON_VALUE_TYPE_NAME
+}
 
 const STDLIB_GRAPH_CONSTRUCTOR_TYPES: &[&str] = &["DiGraph", "Dag", "MultiDiGraph"];
 
@@ -238,6 +250,13 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         feature: Some("json"),
         extra_crate_deps: &[],
         submodules: &["json"],
+        typechecker_only: false,
+    },
+    StdlibNamespace {
+        name: STDLIB_JSON,
+        feature: Some("json"),
+        extra_crate_deps: &[],
+        submodules: &[],
         typechecker_only: false,
     },
     StdlibNamespace {
@@ -568,6 +587,7 @@ mod tests {
         assert!(is_known_stdlib_module(&segs(&["std", "async"])));
         assert!(is_known_stdlib_module(&segs(&["std", "async", "prelude"])));
         assert!(is_known_stdlib_module(&segs(&["std", "async", "time"])));
+        assert!(is_known_stdlib_module(&segs(&["std", "json"])));
         assert!(is_known_stdlib_module(&segs(&["std", "serde", "json"])));
         assert!(is_known_stdlib_module(&segs(&["std", "reflection"])));
         assert!(is_known_stdlib_module(&segs(&["std", "result"])));

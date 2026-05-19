@@ -1264,6 +1264,7 @@ impl TypeChecker {
                 .map(|name| TypeBoundInfo {
                     name: name.clone(),
                     type_args: Vec::new(),
+                    module_path: None,
                 })
                 .collect();
         }
@@ -1277,6 +1278,7 @@ impl TypeChecker {
                     .iter()
                     .map(resolved_type_from_manifest_type_ref)
                     .collect(),
+                module_path: None,
             })
             .collect()
     }
@@ -1371,6 +1373,7 @@ impl TypeChecker {
                                 .iter()
                                 .map(resolved_type_from_manifest_type_ref)
                                 .collect(),
+                            module_path: None,
                         })
                         .collect(),
                 )
@@ -1450,6 +1453,7 @@ impl TypeChecker {
                                     .iter()
                                     .map(resolved_type_from_manifest_type_ref)
                                     .collect(),
+                                module_path: None,
                             })
                             .collect(),
                     )

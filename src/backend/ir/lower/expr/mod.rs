@@ -919,6 +919,16 @@ impl AstLowering {
                     .and_then(|info| info.resolved_operator_call(expr_span).cloned())
                     && resolved_operator.kind == ResolvedOperatorKind::Index
                 {
+                    let dispatch = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.resolved_method_call(expr_span).cloned())
+                        .map(|resolved| match resolved.dispatch {
+                            ResolvedMethodDispatch::Trait { trait_path, type_args } => IrMethodDispatch::Trait {
+                                trait_path,
+                                type_args: type_args.iter().map(|ty| self.lower_resolved_type(ty)).collect(),
+                            },
+                        });
                     let result_ty = self
                         .type_info
                         .as_ref()
@@ -929,7 +939,7 @@ impl AstLowering {
                         IrExprKind::MethodCall {
                             receiver: Box::new(obj),
                             method: resolved_operator.method,
-                            dispatch: None,
+                            dispatch,
                             type_args: Vec::new(),
                             args: vec![IrCallArg {
                                 name: None,

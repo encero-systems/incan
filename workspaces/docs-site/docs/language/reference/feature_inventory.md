@@ -52,6 +52,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | `std.graph` directed graph types | Stdlib | 0.3 | Import from `std.graph`. | `from std.graph import DiGraph, Dag`<br>`graph = DiGraph[Task]()` | Graph types provide stable node/edge ids, DAG invariants, adjacency queries, traversal, and topological ordering. | Hand-rolled adjacency maps for ordinary dependency, plan, or workflow graphs. | [std.graph](stdlib/graph.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.fs` filesystem APIs | Stdlib | 0.3 | Import from `std.fs` or submodules such as `std.fs.path`. | `from std.fs import Path`<br>`Path("data").join("orders.csv")` | Path-centric filesystem APIs cover paths, files, metadata, traversal, globbing, copy/move/delete, and durability syncs. | One-off Rust filesystem wrappers for ordinary path and file work. | [std.fs](stdlib/fs.md), [File IO](../how-to/file_io.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.io` in-memory binary streams | Stdlib | 0.3 | Import from `std.io`. | `from std.io import BytesIO, Endian`<br>`stream.write(value, Endian.Little)` | Binary stream APIs cover `BytesIO`, endian-aware reads/writes, cursor helpers, delimiter operations, and buffer extraction. | Byte-twiddling helpers with unclear endian or cursor semantics. | [std.io](stdlib/io.md), [Release 0.3](../../release_notes/0_3.md) |
+| `std.json` dynamic JSON values | Stdlib | 0.3 | Import from `std.json`. | `from std.json import JsonValue`<br>`JsonValue.parse(source)`<br>`value["key"]`<br>`value[0]` | `JsonValue` provides dynamic parse-inspect-transform JSON workflows with checked optional indexing, explicit shape inspection, mutation helpers, traversal, and typed-model interop. | Ad hoc dictionaries or over-modeled schemas for payloads whose shape is intentionally open. | [std.json](stdlib/json.md), [Derives: Serialization](derives/serialization.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.tempfile` temporary resources | Stdlib | 0.3 | Import from `std.tempfile`. | `NamedTemporaryFile.try_new()`<br>`TemporaryDirectory.try_new()`<br>`tmp.persist()` | Temporary files and directories are explicit resources with cleanup and persist semantics. | Manual random path generation or unchecked cleanup around temporary files. | [std.tempfile](stdlib/tempfile.md), [Release 0.3](../../release_notes/0_3.md) |
 | `std.datetime` temporal values | Stdlib | 0.3 | Import from `std.datetime` modules or prelude. | `Date.utc_today()`<br>`DateTime.utc_now()`<br>`TimeDelta(days=1)` | Temporal APIs cover runtime timing, civil dates/times, fixed offsets, parsing/formatting, intervals, and calendar arithmetic. | Raw strings or integer timestamps inside code that has date/time semantics. | [std.datetime](stdlib/datetime.md), [Dates and times](../tutorials/dates_and_times.md), [Dates and times how-to](../how-to/dates_and_times.md) |
 | `std.telemetry.core` data model | Stdlib | 0.3 | Import from `std.telemetry.core` or the `std.telemetry` prelude. | `from std.telemetry.core import TelemetryValue, Attributes`<br>`TelemetryValue.string("ready")`<br>`Attributes.from_string_fields(fields)` | Telemetry core provides structured values, attributes, resources, scopes, and trace context identifiers without configuring providers or exporters. | Stringifying structured observability fields before they reach logging or telemetry boundaries. | [std.logging](stdlib/logging.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -676,6 +677,26 @@ Canonical forms:
 
 - `from std.io import BytesIO, Endian`
 - `stream.write(value, Endian.Little)`
+
+### `std.json` dynamic JSON values
+
+- **Id:** `StdJson`
+- **Category:** `Stdlib`
+- **Since:** `0.3`
+- **RFC:** `RFC 051`
+- **Stability:** `Stable`
+- **Activation:** Import from `std.json`.
+- **Use instead of:** Ad hoc dictionaries or over-modeled schemas for payloads whose shape is intentionally open.
+- **References:** [std.json](stdlib/json.md), [Derives: Serialization](derives/serialization.md), [Release 0.3](../../release_notes/0_3.md)
+
+`JsonValue` provides dynamic parse-inspect-transform JSON workflows with checked optional indexing, explicit shape inspection, mutation helpers, traversal, and typed-model interop.
+
+Canonical forms:
+
+- `from std.json import JsonValue`
+- `JsonValue.parse(source)`
+- `value["key"]`
+- `value[0]`
 
 ### `std.tempfile` temporary resources
 

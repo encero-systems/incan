@@ -150,6 +150,7 @@ fn method_info_from_decl(
                                 )
                             })
                             .collect(),
+                        module_path: None,
                     })
                     .collect(),
             )
@@ -183,6 +184,7 @@ fn method_info_from_decl(
                 resolve_owner_self_reference(checker.resolve_type_checked(type_arg), owner_name, owner_self_ty)
             })
             .collect(),
+        module_path: None,
     });
     MethodInfo {
         type_params,

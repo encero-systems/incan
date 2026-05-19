@@ -7,7 +7,6 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
-use std::collections::HashMap;
 fn collect(
     _: String,
     items: Vec<i64>,
@@ -91,15 +90,15 @@ fn main() {
     let xs_direct = vec![2, 3];
     let kw_direct = [("name".to_string(), "demo".to_string())]
         .into_iter()
-        .collect::<HashMap<_, _>>();
+        .collect::<std::collections::HashMap<_, _>>();
     let xs_callable = vec![4, 5];
     let kw_callable = [("name".to_string(), "callable".to_string())]
         .into_iter()
-        .collect::<HashMap<_, _>>();
+        .collect::<std::collections::HashMap<_, _>>();
     let xs_method = vec![6, 7];
     let kw_method = [("name".to_string(), "method".to_string())]
         .into_iter()
-        .collect::<HashMap<_, _>>();
+        .collect::<std::collections::HashMap<_, _>>();
     return collect(
         "x".to_string(),
         {

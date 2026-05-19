@@ -3057,6 +3057,31 @@ def main() -> None:
 }
 
 #[test]
+fn test_std_json_value_indexing_emits_checked_helpers() {
+    let source = r#"
+from std.json import JsonValue
+
+pub def by_name(data: JsonValue) -> Option[JsonValue]:
+  return data["name"]
+
+pub def by_index(data: JsonValue) -> Option[JsonValue]:
+  return data[0]
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains(
+            "crate::__incan_std::traits::indexing::Index::<String,Option<JsonValue>,>::__getitem__(&data,\"name\".to_string())"
+        ),
+        "expected object-style JsonValue indexing to use source-authored Index.__getitem__; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("crate::__incan_std::traits::indexing::Index::<i64,Option<JsonValue>,>::__getitem__(&data,0)"),
+        "expected array-style JsonValue indexing to use source-authored Index.__getitem__; generated:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_enum_multi_instantiation_trait_methods_codegen_trait_impls_only() {
     let source = r#"
 trait Convert[T]:

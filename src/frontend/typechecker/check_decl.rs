@@ -72,6 +72,7 @@ struct ResolvedTraitAdoption {
     name: String,
     info: TraitInfo,
     args: Vec<ResolvedType>,
+    module_path: Option<Vec<String>>,
     span: Span,
 }
 
@@ -80,8 +81,11 @@ pub(in crate::frontend::typechecker) struct TraitMethodEntry {
     pub method_name: String,
     pub origin_trait: String,
     pub origin_type_args: Vec<ResolvedType>,
+    pub origin_module_path: Option<Vec<String>>,
     pub info: MethodInfo,
 }
+
+type TraitMethodMatch = (String, Option<Vec<String>>, Vec<ResolvedType>, MethodInfo);
 
 enum AsyncFixtureYieldShape {
     Valid { has_teardown: bool },
@@ -956,6 +960,7 @@ impl TypeChecker {
             name: adoption.name.clone(),
             info,
             args: adoption.type_args.clone(),
+            module_path: adoption.module_path.clone(),
             span: adoption_span,
         })
     }
@@ -1059,6 +1064,7 @@ impl TypeChecker {
         trait_name: &str,
         trait_info: &TraitInfo,
         trait_args: &[ResolvedType],
+        origin_module_path: Option<&[String]>,
         seen: &mut HashSet<String>,
         out: &mut Vec<TraitMethodEntry>,
     ) {
@@ -1079,6 +1085,7 @@ impl TypeChecker {
                 method_name: method_name.clone(),
                 origin_trait: trait_name.to_string(),
                 origin_type_args: trait_args.to_vec(),
+                origin_module_path: origin_module_path.map(<[String]>::to_vec),
                 info: method_info.clone(),
             });
         }
@@ -1088,7 +1095,14 @@ impl TypeChecker {
                 continue;
             };
             let instantiated = self.instantiate_trait_info(supertrait_info, supertrait_args);
-            self.collect_instantiated_trait_method_entries(supertrait_name, &instantiated, supertrait_args, seen, out);
+            self.collect_instantiated_trait_method_entries(
+                supertrait_name,
+                &instantiated,
+                supertrait_args,
+                None,
+                seen,
+                out,
+            );
         }
     }
 
@@ -1140,6 +1154,7 @@ impl TypeChecker {
             &adoption.name,
             &adoption.info,
             &adoption.args,
+            adoption.module_path.as_deref(),
             &mut seen,
             &mut entries,
         );
@@ -1269,50 +1284,76 @@ impl TypeChecker {
         method: &str,
         ambiguity_span: Span,
     ) -> Option<TraitMethodEntry> {
-        if adoption.type_args.is_empty() {
+        if adoption.module_path.is_none() && adoption.type_args.is_empty() {
             return self
                 .trait_method_info_resolved(&adoption.name, method, ambiguity_span)
                 .map(|info| TraitMethodEntry {
                     method_name: method.to_string(),
                     origin_trait: adoption.name.clone(),
                     origin_type_args: Vec::new(),
+                    origin_module_path: None,
                     info,
                 });
         }
-        let root = self.lookup_semantic_trait_info(&adoption.name)?.clone();
-        let instantiated = self.instantiate_trait_info(&root, &adoption.type_args);
+        let root = self
+            .lookup_semantic_trait_info(&adoption.name)
+            .cloned()
+            .or_else(|| {
+                adoption
+                    .module_path
+                    .as_ref()
+                    .and_then(|module_path| self.stdlib_cache.lookup_trait(module_path, &adoption.name))
+            })
+            .or_else(|| {
+                stdlib::trait_method_module_segments(&adoption.name)
+                    .and_then(|module_path| self.stdlib_cache.lookup_trait(&module_path, &adoption.name))
+            })?;
+        let instantiated = if adoption.type_args.is_empty() {
+            root
+        } else {
+            self.instantiate_trait_info(&root, &adoption.type_args)
+        };
         let resolved = ResolvedTraitAdoption {
             name: adoption.name.clone(),
             info: instantiated,
             args: adoption.type_args.clone(),
+            module_path: adoption.module_path.clone(),
             span: ambiguity_span,
         };
         let entries = self.trait_method_entries_for_adoption(&resolved);
-        let matching: Vec<(String, Vec<ResolvedType>, MethodInfo)> = entries
+        let matching: Vec<TraitMethodMatch> = entries
             .into_iter()
             .filter(|entry| entry.method_name == method)
-            .map(|entry| (entry.origin_trait, entry.origin_type_args, entry.info))
+            .map(|entry| {
+                (
+                    entry.origin_trait,
+                    entry.origin_module_path,
+                    entry.origin_type_args,
+                    entry.info,
+                )
+            })
             .collect();
         let filtered = self.filter_supertrait_dominated_entries(
             matching
                 .iter()
-                .map(|(origin, _, info)| (origin.clone(), info.clone()))
+                .map(|(origin, _, _, info)| (origin.clone(), info.clone()))
                 .collect(),
         );
         match filtered.as_slice() {
             [] => None,
             [(origin_trait, info)] => {
-                let origin_type_args = matching
+                let (origin_type_args, origin_module_path) = matching
                     .iter()
-                    .find(|(origin, _, candidate)| {
+                    .find(|(origin, _, _, candidate)| {
                         origin == origin_trait && self.method_sigs_compatible(candidate, info)
                     })
-                    .map(|(_, args, _)| args.clone())
+                    .map(|(_, module_path, args, _)| (args.clone(), module_path.clone()))
                     .unwrap_or_default();
                 Some(TraitMethodEntry {
                     method_name: method.to_string(),
                     origin_trait: origin_trait.clone(),
                     origin_type_args,
+                    origin_module_path,
                     info: info.clone(),
                 })
             }
@@ -1343,11 +1384,17 @@ impl TypeChecker {
                     origin_trait: rest[0].0.clone(),
                     origin_type_args: matching
                         .iter()
-                        .find(|(origin, _, candidate)| {
+                        .find(|(origin, _, _, candidate)| {
                             origin == &rest[0].0 && self.method_sigs_compatible(candidate, exp0)
                         })
-                        .map(|(_, args, _)| args.clone())
+                        .map(|(_, _, args, _)| args.clone())
                         .unwrap_or_default(),
+                    origin_module_path: matching
+                        .iter()
+                        .find(|(origin, _, _, candidate)| {
+                            origin == &rest[0].0 && self.method_sigs_compatible(candidate, exp0)
+                        })
+                        .and_then(|(_, module_path, _, _)| module_path.clone()),
                     info: exp0.clone(),
                 })
             }
@@ -1721,6 +1768,7 @@ impl TypeChecker {
             name: trait_name.to_string(),
             info: trait_info.clone(),
             args: trait_args.map(|args| args.to_vec()).unwrap_or_default(),
+            module_path: None,
             span: adoption_span,
         };
         for entry in self.trait_method_entries_for_adoption(&adoption) {
@@ -2334,6 +2382,7 @@ impl TypeChecker {
                     name: trait_name.to_string(),
                     info: trait_info.clone(),
                     args: trait_args.clone(),
+                    module_path: None,
                     span: trait_ref.span,
                 });
                 self.check_trait_conformance_model(
@@ -2602,6 +2651,7 @@ impl TypeChecker {
                     name: trait_name.to_string(),
                     info: trait_info.clone(),
                     args: trait_args.clone(),
+                    module_path: None,
                     span: trait_ref.span,
                 });
                 self.check_trait_conformance(
@@ -3087,6 +3137,7 @@ impl TypeChecker {
                     name: trait_name.to_string(),
                     info: trait_info.clone(),
                     args: trait_args.clone(),
+                    module_path: None,
                     span: trait_ref.span,
                 });
                 self.check_trait_conformance_newtype(
@@ -3354,6 +3405,7 @@ impl TypeChecker {
                     name: trait_name.to_string(),
                     info: trait_info.clone(),
                     args: trait_args.clone(),
+                    module_path: None,
                     span: trait_ref.span,
                 });
                 self.check_trait_conformance_enum(
@@ -3988,6 +4040,7 @@ impl TypeChecker {
                                 .iter()
                                 .map(|type_arg| self.resolve_type_checked(type_arg))
                                 .collect(),
+                            module_path: None,
                         })
                         .collect(),
                 )

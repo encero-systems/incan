@@ -1,0 +1,684 @@
+"""
+Dynamic JSON values for payloads whose full shape is not known at compile time.
+
+`JsonValue` preserves the difference between JSON null and Incan `None`: object and array lookup helpers return
+`Option[JsonValue]` so missing data is `None`, while present JSON null is `Some(JsonValue.null())`. Direct indexing uses
+the same checked optional contract for string object keys and integer array indices.
+
+Typed models with stable schemas should continue to use `std.serde.json`; this module is for exploratory, partially
+known, or mixed-shape JSON.
+"""
+
+from rust::serde import Deserialize as RustDeserialize, Serialize as RustSerialize
+from rust::incan_stdlib::json import JsonError as RustJsonError
+from rust::incan_stdlib::json import JsonValue as RustJsonValue
+from std.traits.indexing import Index
+
+
+pub enum JsonKind(str):
+    """Runtime shape of a `JsonValue`."""
+
+    Null = "null"
+    Bool = "bool"
+    Int = "int"
+    Float = "float"
+    String = "string"
+    Array = "array"
+    Object = "object"
+
+    def null() -> Self:
+        """Return the JSON null kind."""
+        return JsonKind.Null
+
+    def bool() -> Self:
+        """Return the JSON bool kind."""
+        return JsonKind.Bool
+
+    def int() -> Self:
+        """Return the JSON int kind."""
+        return JsonKind.Int
+
+    def float() -> Self:
+        """Return the JSON float kind."""
+        return JsonKind.Float
+
+    def string() -> Self:
+        """Return the JSON string kind."""
+        return JsonKind.String
+
+    def array() -> Self:
+        """Return the JSON array kind."""
+        return JsonKind.Array
+
+    def object() -> Self:
+        """Return the JSON object kind."""
+        return JsonKind.Object
+
+    def as_str(self) -> str:
+        """Return the stable kind spelling."""
+        return self.value()
+
+
+pub enum JsonErrorKind(str):
+    """Stable categories for JSON-specific failures."""
+
+    Parse = "parse"
+    Type = "type"
+    Key = "key"
+    Index = "index"
+    Number = "number"
+
+    def parse() -> Self:
+        """Return the parse-error kind."""
+        return JsonErrorKind.Parse
+
+    def type_() -> Self:
+        """Return the runtime-shape error kind."""
+        return JsonErrorKind.Type
+
+    def key() -> Self:
+        """Return the object-key error kind."""
+        return JsonErrorKind.Key
+
+    def index() -> Self:
+        """Return the array-index error kind."""
+        return JsonErrorKind.Index
+
+    def number() -> Self:
+        """Return the numeric-representation error kind."""
+        return JsonErrorKind.Number
+
+    def as_str(self) -> str:
+        """Return the stable error-kind spelling."""
+        return self.value()
+
+
+@derive(Clone)
+pub model JsonError:
+    """Error returned by `std.json` parsing, strict extraction, indexing, and mutation helpers."""
+
+    kind_value: JsonErrorKind
+    detail_value: str
+
+    def kind(self) -> JsonErrorKind:
+        """Return the stable error category."""
+        return self.kind_value
+
+    def kind_name(self) -> str:
+        """Return the stable error category spelling."""
+        return self.kind_value.as_str()
+
+    def detail(self) -> str:
+        """Return the human-readable detail without the diagnostic prefix."""
+        return self.detail_value
+
+    def message(self) -> str:
+        """Return the canonical runtime diagnostic text."""
+        match self.kind_value:
+            JsonErrorKind.Parse => return f"JSONDecodeError: {self.detail_value}"
+            JsonErrorKind.Type => return f"TypeError: {self.detail_value}"
+            JsonErrorKind.Key => return f"KeyError: {self.detail_value}"
+            JsonErrorKind.Index => return f"IndexError: {self.detail_value}"
+            JsonErrorKind.Number => return f"ValueError: {self.detail_value}"
+
+
+@rust.derive(RustSerialize)
+@rust.derive(RustDeserialize)
+@derive(Clone)
+pub type JsonValue = newtype RustJsonValue with Index[str, Option[JsonValue]], Index[int, Option[JsonValue]]:
+    """
+    Dynamic JSON value.
+
+    The public API is source-authored Incan. The implementation-defined runtime carrier exists only for the
+    compiler/runtime representation boundary: parsing, stringifying, and `@derive(json)` field interop serialize this
+    value as ordinary JSON while the source API keeps runtime shape checks explicit.
+    """
+
+    def clone(self) -> Self:
+        """Return a copy of this dynamic JSON value."""
+        return JsonValue(self.0.clone())
+
+    @staticmethod
+    def null() -> Self:
+        """Construct JSON null."""
+        return JsonValue(RustJsonValue.null())
+
+    @staticmethod
+    def bool(value: bool) -> Self:
+        """Construct a JSON boolean."""
+        return JsonValue(RustJsonValue.bool(value))
+
+    @staticmethod
+    def int(value: int) -> Self:
+        """Construct a JSON integer."""
+        return JsonValue(RustJsonValue.int(value))
+
+    @staticmethod
+    def float(value: float) -> Result[Self, JsonError]:
+        """Construct a JSON finite floating-point number."""
+        return _wrap_raw_result(RustJsonValue.float(value))
+
+    @staticmethod
+    def string(value: str) -> Self:
+        """Construct a JSON string."""
+        return JsonValue(RustJsonValue.string(value))
+
+    @staticmethod
+    def str(value: str) -> Self:
+        """Construct a JSON string using the RFC 051 shorthand spelling."""
+        return JsonValue.string(value)
+
+    @staticmethod
+    def array(values: list[JsonValue]) -> Self:
+        """Construct a JSON array."""
+        return JsonValue(RustJsonValue.array(_unwrap_list(values)))
+
+    @staticmethod
+    def object(entries: Dict[str, JsonValue]) -> Self:
+        """Construct a JSON object."""
+        return JsonValue(RustJsonValue.object(_unwrap_object(entries)))
+
+    @staticmethod
+    def parse(source: str) -> Result[Self, JsonError]:
+        """Parse JSON text."""
+        return _wrap_raw_result(RustJsonValue.parse(source))
+
+    @staticmethod
+    def loads(source: str) -> Result[Self, JsonError]:
+        """Parse JSON text using the Python-compatible `loads` spelling."""
+        return JsonValue.parse(source)
+
+    def to_json(self) -> Result[str, JsonError]:
+        """Serialize this value to compact JSON."""
+        return _map_string_result(self.0.to_json())
+
+    def to_pretty_json(self) -> Result[str, JsonError]:
+        """Serialize this value to pretty-printed JSON."""
+        return _map_string_result(self.0.to_pretty_json())
+
+    def dumps(self) -> Result[str, JsonError]:
+        """Serialize this value using the Python-compatible `dumps` spelling."""
+        return self.to_json()
+
+    def debug(self) -> Result[str, JsonError]:
+        """Return deterministic debug-display text."""
+        return self.to_json()
+
+    def kind(self) -> JsonKind:
+        """Return this value's runtime JSON shape."""
+        return _json_kind_from_name(self.0.kind_name())
+
+    def kind_name(self) -> str:
+        """Return this value's runtime JSON shape spelling."""
+        return self.kind().as_str()
+
+    def is_null(self) -> bool:
+        """Return whether this value is JSON null."""
+        return self.kind() == JsonKind.Null
+
+    def is_bool(self) -> bool:
+        """Return whether this value is a JSON boolean."""
+        return self.kind() == JsonKind.Bool
+
+    def is_int(self) -> bool:
+        """Return whether this value is a JSON number mapped to Incan `int`."""
+        return self.kind() == JsonKind.Int
+
+    def is_float(self) -> bool:
+        """Return whether this value is a JSON number mapped to Incan `float`."""
+        return self.kind() == JsonKind.Float
+
+    def is_number(self) -> bool:
+        """Return whether this value is any JSON number."""
+        return self.is_int() or self.is_float()
+
+    def is_str(self) -> bool:
+        """Return whether this value is a JSON string."""
+        return self.kind() == JsonKind.String
+
+    def is_array(self) -> bool:
+        """Return whether this value is a JSON array."""
+        return self.kind() == JsonKind.Array
+
+    def is_object(self) -> bool:
+        """Return whether this value is a JSON object."""
+        return self.kind() == JsonKind.Object
+
+    def as_bool(self) -> Option[bool]:
+        """Return the boolean payload when this value is a JSON boolean."""
+        return self.0.as_bool()
+
+    def as_int(self) -> Option[int]:
+        """Return the integer payload when this value is a JSON integer."""
+        return self.0.as_int()
+
+    def as_float(self) -> Option[float]:
+        """Return this value as a float when it is numeric."""
+        return self.0.as_float()
+
+    def as_str(self) -> Option[str]:
+        """Return the text payload when this value is a JSON string."""
+        return self.0.as_str()
+
+    def as_array(self) -> Option[list[JsonValue]]:
+        """Return a cloned list when this value is a JSON array."""
+        match self.0.as_array():
+            Some(values) => return Some(_wrap_raw_list(values))
+            None => return None
+
+    def as_object(self) -> Option[Dict[str, JsonValue]]:
+        """Return a cloned map when this value is a JSON object."""
+        match self.0.as_object():
+            Some(entries) => return Some(_wrap_raw_object(entries))
+            None => return None
+
+    def expect_bool(self) -> Result[bool, JsonError]:
+        """Require this value to be a JSON boolean."""
+        match self.as_bool():
+            Some(value) => return Ok(value)
+            None => return Err(_type_error("expected JSON bool"))
+
+    def expect_int(self) -> Result[int, JsonError]:
+        """Require this value to be a JSON integer."""
+        match self.as_int():
+            Some(value) => return Ok(value)
+            None => return Err(_type_error("expected JSON int"))
+
+    def expect_float(self) -> Result[float, JsonError]:
+        """Require this value to be numeric and return it as a float."""
+        match self.as_float():
+            Some(value) => return Ok(value)
+            None => return Err(_type_error("expected JSON number"))
+
+    def expect_str(self) -> Result[str, JsonError]:
+        """Require this value to be a JSON string."""
+        match self.as_str():
+            Some(value) => return Ok(value)
+            None => return Err(_type_error("expected JSON string"))
+
+    def expect_array(self) -> Result[list[JsonValue], JsonError]:
+        """Require this value to be a JSON array."""
+        match self.as_array():
+            Some(values) => return Ok(values)
+            None => return Err(_type_error("expected JSON array"))
+
+    def expect_object(self) -> Result[Dict[str, JsonValue], JsonError]:
+        """Require this value to be a JSON object."""
+        match self.as_object():
+            Some(values) => return Ok(values)
+            None => return Err(_type_error("expected JSON object"))
+
+    def get(self, key: str) -> Option[JsonValue]:
+        """Look up an object key without raising."""
+        return _wrap_raw_option(self.0.get(key))
+
+    def __getitem__(self, key: str) for Index[str, Option[JsonValue]] -> Option[JsonValue]:
+        """Return the checked optional JSON object lookup for direct string indexing."""
+        return self.get(key)
+
+    def require(self, key: str) -> Result[JsonValue, JsonError]:
+        """Require an object key."""
+        if not self.is_object():
+            return Err(_type_error("expected JSON object"))
+        match self.get(key):
+            Some(value) => return Ok(value)
+            None => return Err(_key_error(f"missing JSON object key `{key}`"))
+
+    def require_key(self, key: str) -> Result[JsonValue, JsonError]:
+        """Require an object key."""
+        return self.require(key)
+
+    def contains_key(self, key: str) -> bool:
+        """Return whether this object contains `key`."""
+        if not self.is_object():
+            return false
+        match self.get(key):
+            Some(_) => return true
+            None => return false
+
+    def keys(self) -> list[str]:
+        """Return object keys in deterministic order."""
+        return self.0.keys()
+
+    def values(self) -> list[JsonValue]:
+        """Return object values in deterministic key order."""
+        return _wrap_raw_list(self.0.values())
+
+    def items(self) -> list[tuple[str, JsonValue]]:
+        """Return object key/value pairs in deterministic key order."""
+        mut out: list[tuple[str, JsonValue]] = []
+        for item in self.0.items():
+            key, value = item
+            out.append((key, JsonValue(value)))
+        return out
+
+    def set(mut self, key: str, value: JsonValue) -> Result[None, JsonError]:
+        """Insert or replace an object key."""
+        if not self.is_object():
+            return Err(_type_error("expected JSON object"))
+        return _map_unit_result(self.0.set(key, value.0))
+
+    def put(mut self, key: str, value: JsonValue) -> Result[None, JsonError]:
+        """Alias-style object mutation helper for `set(...)`."""
+        return self.set(key, value)
+
+    def remove(mut self, key: str) -> Result[Option[JsonValue], JsonError]:
+        """Remove an object key and return the previous value when present."""
+        if not self.is_object():
+            return Err(_type_error("expected JSON object"))
+        return _map_optional_raw_result(self.0.remove(key))
+
+    def merge(mut self, other: JsonValue) -> Result[None, JsonError]:
+        """Insert or replace all keys from another JSON object."""
+        if not self.is_object() or not other.is_object():
+            return Err(_type_error("expected JSON object"))
+        match other.as_object():
+            Some(entries) =>
+                for key in entries.keys():
+                    self.set(key, entries[key])?
+                return Ok(None)
+            None => return Err(_type_error("expected JSON object"))
+
+    def at(self, index: int) -> Option[JsonValue]:
+        """Look up an array element without raising."""
+        return _wrap_raw_option(self.0.at(index))
+
+    def __getitem__(self, index: int) for Index[int, Option[JsonValue]] -> Option[JsonValue]:
+        """Return the checked optional JSON array lookup for direct integer indexing."""
+        return self.at(index)
+
+    def require_index(self, index: int) -> Result[JsonValue, JsonError]:
+        """Require an array element by index."""
+        if not self.is_array():
+            return Err(_type_error("expected JSON array"))
+        match self.at(index):
+            Some(value) => return Ok(value)
+            None => return Err(_index_error(f"JSON array index out of range: {index}"))
+
+    def len(self) -> int:
+        """Return array length, or zero for non-array values."""
+        match self.as_array():
+            Some(values) => return len(values)
+            None => return 0
+
+    def is_empty(self) -> bool:
+        """Return whether this value is an empty JSON array."""
+        return self.is_array() and self.len() == 0
+
+    def push(mut self, value: JsonValue) -> Result[None, JsonError]:
+        """Append a value to this JSON array."""
+        if not self.is_array():
+            return Err(_type_error("expected JSON array"))
+        return _map_unit_result(self.0.push(value.0))
+
+    def append(mut self, value: JsonValue) -> Result[None, JsonError]:
+        """Append a value using Python list spelling."""
+        return self.push(value)
+
+    def extend(mut self, values: list[JsonValue]) -> Result[None, JsonError]:
+        """Append all values to this JSON array in order."""
+        if not self.is_array():
+            return Err(_type_error("expected JSON array"))
+        for value in values:
+            self.push(value)?
+        return Ok(None)
+
+    def insert(mut self, index: int, value: JsonValue) -> Result[None, JsonError]:
+        """Insert a value into this JSON array before `index`."""
+        if not self.is_array():
+            return Err(_type_error("expected JSON array"))
+        if index < 0 or index > self.len():
+            return Err(_index_error(f"JSON array insert index out of range: {index}"))
+        return _map_unit_result(self.0.insert(index, value.0))
+
+    def remove_at(mut self, index: int) -> Result[Option[JsonValue], JsonError]:
+        """Remove an array item and return the previous value when present."""
+        if not self.is_array():
+            return Err(_type_error("expected JSON array"))
+        return _map_optional_raw_result(self.0.remove_at(index))
+
+    def pointer(self, path: str) -> Result[Option[JsonValue], JsonError]:
+        """Traverse a JSON Pointer path."""
+        if path == "":
+            return Ok(Some(self.clone()))
+        if path[0:1] != "/":
+            return Err(_key_error("JSON pointer must be empty or start with `/`"))
+
+        mut current = self.clone()
+        for raw_segment in _json_pointer_segments(path):
+            segment = _decode_json_pointer_segment(raw_segment)?
+            if current.is_object():
+                match current.get(segment):
+                    Some(next) => current = next
+                    None => return Ok(None)
+            elif current.is_array():
+                match _parse_json_pointer_index(segment):
+                    Some(index) =>
+                        match current.at(index):
+                            Some(next) => current = next
+                            None => return Ok(None)
+                    None => return Ok(None)
+            else:
+                return Ok(None)
+        return Ok(Some(current))
+
+    def require_pointer(self, path: str) -> Result[JsonValue, JsonError]:
+        """Require a JSON Pointer path to exist."""
+        match self.pointer(path)?:
+            Some(value) => return Ok(value)
+            None => return Err(_key_error(f"JSON pointer not found: `{path}`"))
+
+    def children(self) -> list[JsonValue]:
+        """Return direct children of this value."""
+        if self.is_array():
+            match self.as_array():
+                Some(values) => return values
+                None => return []
+        if self.is_object():
+            return self.values()
+        return []
+
+    def descendants(self) -> list[JsonValue]:
+        """Return all nested child values in deterministic depth-first order."""
+        mut out: list[JsonValue] = []
+        for child in self.children():
+            out.append(child)
+            for nested in child.descendants():
+                out.append(nested)
+        return out
+
+    def equals(self, other: JsonValue) -> bool:
+        """Return deterministic structural equality."""
+        return self.0.equals(other.0)
+
+
+@rust.allow("dead_code")
+pub def parse(source: str) -> Result[JsonValue, JsonError]:
+    """Parse JSON text."""
+    return JsonValue.parse(source)
+
+
+@rust.allow("dead_code")
+pub def loads(source: str) -> Result[JsonValue, JsonError]:
+    """Parse JSON text using the Python-compatible `loads` spelling."""
+    return JsonValue.loads(source)
+
+
+@rust.allow("dead_code")
+pub def dumps(value: JsonValue) -> Result[str, JsonError]:
+    """Serialize a dynamic JSON value to compact JSON."""
+    return value.to_json()
+
+
+@rust.allow("dead_code")
+pub def dumps_pretty(value: JsonValue) -> Result[str, JsonError]:
+    """Serialize a dynamic JSON value to pretty-printed JSON."""
+    return value.to_pretty_json()
+
+
+def _wrap_raw_result(result: Result[RustJsonValue, RustJsonError]) -> Result[JsonValue, JsonError]:
+    """Convert a raw runtime `JsonValue` result into the source-level wrapper result."""
+    match result:
+        Ok(value) => return Ok(JsonValue(value))
+        Err(error) => return Err(_json_error_from_raw(error))
+
+
+def _map_string_result(result: Result[str, RustJsonError]) -> Result[str, JsonError]:
+    """Convert a raw runtime string result into the source-level JSON error model."""
+    match result:
+        Ok(value) => return Ok(value)
+        Err(error) => return Err(_json_error_from_raw(error))
+
+
+def _map_unit_result(result: Result[None, RustJsonError]) -> Result[None, JsonError]:
+    """Convert a raw runtime unit result into the source-level JSON error model."""
+    match result:
+        Ok(_) => return Ok(None)
+        Err(error) => return Err(_json_error_from_raw(error))
+
+
+def _map_optional_raw_result(result: Result[Option[RustJsonValue], RustJsonError]) -> Result[Option[JsonValue], JsonError]:
+    """Convert a raw runtime optional JSON result into the source-level wrapper result."""
+    match result:
+        Ok(value) => return Ok(_wrap_raw_option(value))
+        Err(error) => return Err(_json_error_from_raw(error))
+
+
+def _wrap_raw_option(value: Option[RustJsonValue]) -> Option[JsonValue]:
+    """Wrap an optional raw runtime value in the source-level `JsonValue` type."""
+    match value:
+        Some(raw) => return Some(JsonValue(raw))
+        None => return None
+
+
+def _wrap_raw_list(values: list[RustJsonValue]) -> list[JsonValue]:
+    """Wrap raw runtime values in source-level `JsonValue` objects."""
+    return [JsonValue(value) for value in values]
+
+
+def _wrap_raw_object(entries: Dict[str, RustJsonValue]) -> Dict[str, JsonValue]:
+    """Wrap raw runtime object entries in source-level `JsonValue` objects."""
+    return {key: JsonValue(entries[key]) for key in entries.keys()}
+
+
+def _unwrap_list(values: list[JsonValue]) -> list[RustJsonValue]:
+    """Return the raw runtime values carried by a source-level JSON list."""
+    return [value.0 for value in values]
+
+
+def _unwrap_object(entries: Dict[str, JsonValue]) -> Dict[str, RustJsonValue]:
+    """Return the raw runtime values carried by a source-level JSON object."""
+    return {key: entries[key].0 for key in entries.keys()}
+
+
+def _json_kind_from_name(name: str) -> JsonKind:
+    """Convert the runtime JSON-kind spelling into the source-level enum."""
+    match JsonKind.from_value(name):
+        Some(kind) => return kind
+        None => return JsonKind.Null
+
+
+def _json_error_kind_from_name(name: str) -> JsonErrorKind:
+    """Convert the runtime error-kind spelling into the source-level enum."""
+    match JsonErrorKind.from_value(name):
+        Some(kind) => return kind
+        None => return JsonErrorKind.Type
+
+
+def _json_error_from_raw(error: RustJsonError) -> JsonError:
+    """Convert a runtime JSON error into the source-level error model."""
+    return JsonError(kind_value=_json_error_kind_from_name(error.kind_name()), detail_value=error.detail())
+
+
+def _type_error(detail: str) -> JsonError:
+    """Build a source-level runtime-shape error."""
+    return JsonError(kind_value=JsonErrorKind.Type, detail_value=detail)
+
+
+def _key_error(detail: str) -> JsonError:
+    """Build a source-level object-key or pointer-path error."""
+    return JsonError(kind_value=JsonErrorKind.Key, detail_value=detail)
+
+
+def _index_error(detail: str) -> JsonError:
+    """Build a source-level array-index error."""
+    return JsonError(kind_value=JsonErrorKind.Index, detail_value=detail)
+
+
+def _json_pointer_segments(path: str) -> list[str]:
+    """Split a JSON Pointer path into encoded segments without decoding escapes."""
+    mut segments: list[str] = []
+    mut segment = ""
+    for ch in path[1:]:
+        if ch == "/":
+            segments.append(segment)
+            segment = str("")
+        else:
+            segment += ch
+    segments.append(segment)
+    return segments
+
+
+def _decode_json_pointer_segment(segment: str) -> Result[str, JsonError]:
+    """Decode one JSON Pointer segment according to RFC 6901 escaping."""
+    mut out = ""
+    mut escaped = false
+    for ch in segment:
+        if escaped:
+            if ch == "0":
+                out += "~"
+            elif ch == "1":
+                out += "/"
+            else:
+                return Err(_key_error(f"invalid JSON pointer escape `~{ch}`"))
+            escaped = false
+        elif ch == "~":
+            escaped = true
+        else:
+            out += ch
+    if escaped:
+        return Err(_key_error("invalid trailing `~` in JSON pointer"))
+    return Ok(out)
+
+
+def _parse_json_pointer_index(segment: str) -> Option[int]:
+    """Parse a JSON Pointer array segment as a non-negative Incan index."""
+    if segment == "" or segment == "-":
+        return None
+    if len(segment) > 1 and segment[0:1] == "0":
+        return None
+
+    mut out = 0
+    for ch in segment:
+        digit = _json_digit_value(ch)
+        if digit < 0:
+            return None
+        if out > 922337203685477580 or (out == 922337203685477580 and digit > 7):
+            return None
+        out = out * 10 + digit
+    return Some(out)
+
+
+def _json_digit_value(ch: str) -> int:
+    """Return the ASCII digit value for `ch`, or `-1` when it is not a digit."""
+    if ch == "0":
+        return 0
+    if ch == "1":
+        return 1
+    if ch == "2":
+        return 2
+    if ch == "3":
+        return 3
+    if ch == "4":
+        return 4
+    if ch == "5":
+        return 5
+    if ch == "6":
+        return 6
+    if ch == "7":
+        return 7
+    if ch == "8":
+        return 8
+    if ch == "9":
+        return 9
+    return -1
