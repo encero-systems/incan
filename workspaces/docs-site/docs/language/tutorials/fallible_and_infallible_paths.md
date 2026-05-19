@@ -38,7 +38,7 @@ enum NameError:
     Empty
 
 def read_username(path: Path) -> Result[str, NameError]:
-    text = path.read_text().map_err(NameError.Io)?
+    text = path.read_text("utf-8", "strict").map_err(NameError.Io)?
     name = text.strip()
     if len(name) == 0:
         return Err(NameError.Empty)
@@ -130,10 +130,10 @@ def explain_signup(id: int, raw_name: str, users: list[User]) -> str:
 Use `?` when the current function cannot make the right recovery decision. The containing function must also return a compatible `Result`.
 
 ```incan
-from std.fs import Path
+from std.fs import IoError, Path
 
 enum ImportError:
-    Io(str)
+    Io(IoError)
     Signup(SignupError)
 
 def import_user(path: Path, users: list[User]) -> Result[User, ImportError]:
@@ -173,10 +173,10 @@ def double_if_present(result: Result[int, str]) -> Result[int, str]:
 `map` and `map_err` are good at API boundaries because they keep the success path and error path separated:
 
 ```incan
-from std.fs import Path
+from std.fs import IoError, Path
 
 enum LoadError:
-    Io(str)
+    Io(IoError)
     Parse(str)
 
 def parse_profile(data: bytes) -> Result[Profile, str]:
@@ -222,14 +222,14 @@ Low-level functions should usually return low-level errors. Boundary functions s
 That keeps public APIs stable and caller-oriented. A CLI should not leak parser, filesystem, or backend implementation types when the useful caller-facing question is whether config can be read or validated.
 
 ```incan
-from std.fs import Path
+from std.fs import IoError, Path
 
 enum CliError:
     CouldNotReadConfig(str)
     InvalidConfig(str)
 
-def config_read_error(err: str) -> CliError:
-    return CliError.CouldNotReadConfig(err)
+def config_read_error(err: IoError) -> CliError:
+    return CliError.CouldNotReadConfig(err.message())
 
 def config_signup_message(err: SignupError) -> str:
     match err:
