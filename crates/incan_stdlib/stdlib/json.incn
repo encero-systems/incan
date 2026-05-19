@@ -650,35 +650,10 @@ def _parse_json_pointer_index(segment: str) -> Option[int]:
 
     mut out = 0
     for ch in segment:
-        digit = _json_digit_value(ch)
-        if digit < 0:
+        if ch < "0" or ch > "9":
             return None
+        digit = int(ch)
         if out > 922337203685477580 or (out == 922337203685477580 and digit > 7):
             return None
         out = out * 10 + digit
     return Some(out)
-
-
-def _json_digit_value(ch: str) -> int:
-    """Return the ASCII digit value for `ch`, or `-1` when it is not a digit."""
-    if ch == "0":
-        return 0
-    if ch == "1":
-        return 1
-    if ch == "2":
-        return 2
-    if ch == "3":
-        return 3
-    if ch == "4":
-        return 4
-    if ch == "5":
-        return 5
-    if ch == "6":
-        return 6
-    if ch == "7":
-        return 7
-    if ch == "8":
-        return 8
-    if ch == "9":
-        return 9
-    return -1
