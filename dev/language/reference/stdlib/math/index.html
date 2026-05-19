@@ -1163,6 +1163,8 @@
       
         
       
+        
+      
     
     
       
@@ -1352,6 +1354,27 @@
   
   <span class="md-ellipsis">
     Compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/dynamic_json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dynamic JSON
   </span>
   
 
@@ -2110,6 +2133,8 @@
       
         
       
+        
+      
     
     
       
@@ -2351,6 +2376,27 @@
   
   <span class="md-ellipsis">
     std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.json
   </span>
   
 
@@ -5568,6 +5614,14 @@ Use this module for standard mathematical constants and functions.</p>
 <td><code>math.hypot(x: float, y: float)</code></td>
 <td><code>float</code></td>
 </tr>
+<tr>
+<td><code>math.is_int_like(value: str)</code></td>
+<td><code>bool</code></td>
+</tr>
+<tr>
+<td><code>math.is_float_like(value: str)</code></td>
+<td><code>bool</code></td>
+</tr>
 </tbody>
 </table>
 <h2 id="notes">Notes<a class="headerlink" href="#notes" title="Permanent link">&para;</a></h2>
@@ -5575,6 +5629,8 @@ Use this module for standard mathematical constants and functions.</p>
 <li><code>math.gcd</code> returns the greatest common divisor of two integers.</li>
 <li><code>math.lcm</code> returns the lowest common multiple of two integers.</li>
 <li><code>math.gcd</code> and <code>math.lcm</code> raise <code>ValueError</code> if the mathematical result does not fit Incan's signed 64-bit <code>int</code>.</li>
+<li><code>math.is_int_like</code> accepts JSON-compatible integer spellings such as <code>0</code>, <code>42</code>, and <code>-42</code>, and rejects leading <code>+</code>, whitespace, underscores, leading-zero multi-digit integers, fractional parts, and exponent parts.</li>
+<li><code>math.is_float_like</code> accepts JSON-compatible float spellings with a fractional part, exponent part, or both, such as <code>0.0</code>, <code>-0.5</code>, <code>1e3</code>, and <code>1.25E+10</code>.</li>
 <li>The floating-point helpers remain thin wrappers over Rust math facilities.</li>
 </ul>
 

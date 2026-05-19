@@ -1161,6 +1161,8 @@
       
         
       
+        
+      
     
     
       
@@ -1350,6 +1352,27 @@
   
   <span class="md-ellipsis">
     Compression
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/dynamic_json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Dynamic JSON
   </span>
   
 
@@ -2104,6 +2127,8 @@
       
         
       
+        
+      
     
     
       
@@ -2345,6 +2370,27 @@
   
   <span class="md-ellipsis">
     std.io
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.json
   </span>
   
 
@@ -5258,6 +5304,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#rfc-051-stdjsonjsonvalue" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 051 std.json.JsonValue
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfc-072-stdlogging" class="md-nav__link">
     <span class="md-ellipsis">
       RFC 072 std.logging
@@ -5736,6 +5791,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#rfc-051-stdjsonjsonvalue" class="md-nav__link">
+    <span class="md-ellipsis">
+      RFC 051 std.json.JsonValue
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#rfc-072-stdlogging" class="md-nav__link">
     <span class="md-ellipsis">
       RFC 072 std.logging
@@ -6081,7 +6145,7 @@
 
 <h1 id="release-03">Release 0.3<a class="headerlink" href="#release-03" title="Permanent link">&para;</a></h1>
 <p>Incan 0.3 is the current development release. It picks up after the <code>0.2</code> line, which made the language surface more explicit around stdlib imports, Rust interop, library manifests, module state, and call-site generics.</p>
-<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, Rust trait adoption from Incan-owned wrappers, graph, collections, datetime, logging, encoding, hashing, compression, and regex stdlib surfaces, iterator adapter chains, Result combinators, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 030 adds <code>std.collections</code> for specialized collection semantics; RFC 047 adds <code>std.graph</code> for explicit in-memory dependency and plan graphs; RFC 064 adds <code>std.encoding</code> for strict-by-default binary-text transforms; RFC 065 adds <code>std.hash</code> for stable byte, file, reader, cryptographic, compatibility, and non-cryptographic hashing workflows; RFC 061 adds <code>std.compression</code> for byte, stream, and explicit autodetected compression workflows; RFC 050 lets enums declare methods and adopt traits; RFC 043 starts Rust trait implementation authoring from Incan source with <code>with Trait</code>, method-level <code>for Trait</code>, and associated type declarations on newtypes and rusttypes; RFC 088 standardizes lazy iterator adapters and terminal consumers; RFC 070 adds Rust-shaped <code>Result[T, E]</code> composition with <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>; RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points; RFC 058 adds Rust-backed runtime timing plus source-defined civil temporal values, fixed UTC offsets, Python-shaped parsing/formatting, and interval arithmetic; RFC 059 adds safe-default regular expressions with explicit match/capture/replacement contracts; and RFC 072 adds source-defined structured logging.</p>
+<p><code>0.3</code> now includes a larger numeric surface, a new control-flow surface, richer enum behavior, Rust trait adoption from Incan-owned wrappers, graph, collections, datetime, logging, encoding, hashing, compression, regex, and dynamic JSON stdlib surfaces, iterator adapter chains, Result combinators, and tighter tooling contracts. RFC 009 makes numeric annotations precise enough for Rust interop, wire formats, data schemas, and fixed-scale decimal values; RFC 016 adds <code>loop:</code> and <code>break &lt;value&gt;</code> so loops can produce values directly; RFC 030 adds <code>std.collections</code> for specialized collection semantics; RFC 047 adds <code>std.graph</code> for explicit in-memory dependency and plan graphs; RFC 064 adds <code>std.encoding</code> for strict-by-default binary-text transforms; RFC 065 adds <code>std.hash</code> for stable byte, file, reader, cryptographic, compatibility, and non-cryptographic hashing workflows; RFC 061 adds <code>std.compression</code> for byte, stream, and explicit autodetected compression workflows; RFC 059 adds safe-default regular expressions with explicit match/capture/replacement contracts; RFC 051 adds <code>std.json.JsonValue</code> for dynamic parse-inspect-transform workflows and <code>std.math</code> numeric-like string classification helpers; RFC 050 lets enums declare methods and adopt traits; RFC 043 starts Rust trait implementation authoring from Incan source with <code>with Trait</code>, method-level <code>for Trait</code>, and associated type declarations on newtypes and rusttypes; RFC 088 standardizes lazy iterator adapters and terminal consumers; RFC 070 adds Rust-shaped <code>Result[T, E]</code> composition with <code>map</code>, <code>map_err</code>, <code>and_then</code>, <code>or_else</code>, <code>inspect</code>, and <code>inspect_err</code>; RFC 053 tightens the formatter contract so output is less dependent on local heuristics and more predictable across CLI, editor, and library entry points; RFC 058 adds Rust-backed runtime timing plus source-defined civil temporal values, fixed UTC offsets, Python-shaped parsing/formatting, and interval arithmetic; and RFC 072 adds source-defined structured logging.</p>
 <p>This page will grow as more <code>0.3</code> work lands. If you are looking for the shipped <code>0.2</code> story, start with <a href="../0_2/">Release 0.2</a>.</p>
 <p>For numeric guidance, start with <a href="../../language/how-to/choosing_numeric_types/">Choosing numeric types</a> and <a href="../../language/reference/numeric_semantics/">Numeric semantics</a>. For the current control-flow guidance, start with <a href="../../language/explanation/control_flow/">Control Flow</a>. For the current source-layout contract, start with the <a href="../../language/reference/code_style/">Incan Code Style Guide</a>. Use <a href="../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a> for the tool behavior. <a href="/dev/RFCs/closed/implemented/009_sized_integers">RFC 009</a>, <a href="/dev/RFCs/closed/implemented/016_loop_and_break_value">RFC 016</a>, and <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a> record the design snapshots behind those behaviors.</p>
 <h2 id="what-03-is-about">What 0.3 is about<a class="headerlink" href="#what-03-is-about" title="Permanent link">&para;</a></h2>
@@ -6110,6 +6174,7 @@
 <li>standard-library filesystem workflows should distinguish ordinary path/file operations from temporary resource acquisition and cleanup</li>
 <li>regular-expression workflows should use one safe stdlib vocabulary for compiled patterns, captures, splitting, and replacement instead of pushing ordinary text processing through Rust interop</li>
 <li>application and library logging should use one structured stdlib vocabulary instead of pushing ordinary Incan code through Rust logging interop</li>
+<li>dynamic JSON payloads should have one explicit stdlib value type instead of ad hoc dictionaries or schema-shaped models for data whose shape is intentionally open</li>
 </ul>
 <h2 id="migrating-from-02">Migrating from 0.2<a class="headerlink" href="#migrating-from-02" title="Permanent link">&para;</a></h2>
 <p>There are no required source migrations for ordinary <code>int</code> and <code>float</code> code. Those spellings remain valid and keep their <code>i64</code> / <code>f64</code> representations.</p>
@@ -6118,6 +6183,19 @@
 <p>Projects that gate on <code>incan fmt --check</code> should expect one-time vertical-spacing diffs when adopting a formatter that implements RFC 053. Those diffs are intentional: top-level <code>def</code> / <code>model</code> / <code>type</code>-like declarations get exactly two blank lines around them, following body-bearing members inside type bodies get exactly one blank line, and other same-scope transitions stay in the zero-or-one bucket.</p>
 <p><code>if let</code> and <code>while let</code> are additive. Existing <code>match</code> code keeps working unchanged; the new forms are available when a single successful pattern matters and the non-match path should do nothing.</p>
 <h2 id="major-additions">Major additions<a class="headerlink" href="#major-additions" title="Permanent link">&para;</a></h2>
+<h3 id="rfc-051-stdjsonjsonvalue">RFC 051 <code>std.json.JsonValue</code><a class="headerlink" href="#rfc-051-stdjsonjsonvalue" title="Permanent link">&para;</a></h3>
+<p>Incan now has <code>std.json.JsonValue</code> for dynamic JSON payloads whose complete shape is not known at compile time. <code>JsonValue</code> complements typed <code>@derive(json)</code> models: keep stable fields typed and use <code>JsonValue</code> for open, exploratory, or mixed-shape fields.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
+
+<span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
+<span class="k">model</span> <span class="nc">Envelope</span><span class="p">:</span>
+    <span class="n">status</span><span class="p">:</span> <span class="nb">int</span>
+    <span class="n">data</span><span class="p">:</span> <span class="nc">JsonValue</span>
+</code></pre></div>
+<p>The surface includes parsing, compact and pretty serialization, constructors for every JSON kind, <code>JsonKind</code> inspection, typed extraction helpers, object and array mutation helpers, JSON Pointer traversal, deterministic display/debug behavior, and JSON-specific errors. Direct indexing is checked and optional: <code>value["key"]</code> and <code>value[0]</code> return <code>Option[JsonValue]</code>, preserving the distinction between a missing key and a present JSON null.</p>
+<p>JSON number parsing follows the same JSON-compatible lexical contract exposed by shared <code>std.math.is_int_like(value: str)</code> and <code>std.math.is_float_like(value: str)</code> helpers. Integer-like JSON numbers map to Incan <code>int</code>; fractional or exponent forms map to Incan <code>float</code>.</p>
+<p>See also: <a href="../../language/reference/stdlib/json/"><code>std.json</code></a>, <a href="../../language/reference/stdlib/math/"><code>std.math</code></a>, <a href="../../language/reference/derives/serialization/">Derives: Serialization</a>, <a href="/dev/RFCs/closed/implemented/051_json_value">RFC 051</a>.</p>
 <h3 id="rfc-072-stdlogging">RFC 072 <code>std.logging</code><a class="headerlink" href="#rfc-072-stdlogging" title="Permanent link">&para;</a></h3>
 <p>Incan now has a <code>std.logging</code> module for ordinary structured logging. Code can emit through the ambient <code>log</code> surface
 for the current module's default logger, acquire explicit named loggers with <code>get_logger(...)</code>, and attach structured
@@ -6517,6 +6595,7 @@ one-shot, BytesIO stream, file stream, autodetection, option error, and chunk-si
 <li>Lightweight directed graph types: <a href="/dev/RFCs/closed/implemented/047_lightweight_directed_graph_stdlib">RFC 047</a></li>
 <li><code>if let</code> and <code>while let</code> pattern control flow: <a href="/dev/RFCs/closed/implemented/049_single_arm_conditional_match">RFC 049</a></li>
 <li>Enum methods and enum trait adoption: <a href="/dev/RFCs/closed/implemented/050_enum_methods_and_trait_adoption">RFC 050</a></li>
+<li>Dynamic JSON values: <a href="/dev/RFCs/closed/implemented/051_json_value">RFC 051</a></li>
 <li>Formatter vertical spacing buckets: <a href="/dev/RFCs/closed/implemented/053_formatter_vertical_spacing_buckets">RFC 053</a></li>
 <li>Path-centric filesystem APIs: <a href="/dev/RFCs/closed/implemented/055_std_fs">RFC 055</a></li>
 <li><code>std.datetime</code> temporal values and intervals: <a href="/dev/RFCs/closed/implemented/058_std_datetime">RFC 058</a></li>

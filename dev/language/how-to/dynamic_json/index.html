@@ -11,21 +11,25 @@
       
       
       
+        <link rel="prev" href="../compression/">
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+        <link rel="next" href="../generators/">
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFC 051: JsonValue for std.json - Incan Documentation</title>
+        <title>Dynamic JSON - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,11 +48,11 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
       <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-051-jsonvalue-for-stdjson" class="md-skip">
+        <a href="#work-with-dynamic-json" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +98,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 051: JsonValue for std.json
+              Dynamic JSON
             
           </span>
         </div>
@@ -212,7 +216,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -241,7 +245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -292,7 +296,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../start_here/" class="md-nav__link ">
+            <a href="../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -325,7 +329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -346,7 +350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -367,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -388,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -445,7 +449,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../comparisons/" class="md-nav__link ">
+            <a href="../../../comparisons/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -478,7 +482,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/python/" class="md-nav__link">
+      <a href="../../../comparisons/python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -499,7 +503,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/rust/" class="md-nav__link">
+      <a href="../../../comparisons/rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -520,7 +524,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/python_compatibility_tools/" class="md-nav__link">
+      <a href="../../../comparisons/python_compatibility_tools/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -545,6 +549,8 @@
       
   
   
+    
+  
   
   
     
@@ -570,16 +576,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -596,7 +602,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             Language
@@ -707,7 +713,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -740,7 +746,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -761,7 +767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -782,7 +788,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -803,7 +809,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -824,7 +830,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -845,7 +851,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -866,7 +872,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -887,7 +893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -908,7 +914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -929,7 +935,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -950,7 +956,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -971,7 +977,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -992,7 +998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1021,7 +1027,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/dates_and_times/" class="md-nav__link">
+      <a href="../../tutorials/dates_and_times/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1042,7 +1048,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1063,7 +1069,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../../tutorials/fallible_and_infallible_paths/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1084,7 +1090,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1110,8 +1116,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -1157,16 +1165,18 @@
       
         
       
+        
+      
     
     
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_3" checked>
         
           
           <label class="md-nav__link" for="__nav_4_3" id="__nav_4_3_label" tabindex="0">
@@ -1180,7 +1190,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_3_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4_3">
             <span class="md-nav__icon md-icon"></span>
             How-to
@@ -1194,7 +1204,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1215,7 +1225,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1236,7 +1246,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/dates_and_times/" class="md-nav__link">
+      <a href="../dates_and_times/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1257,7 +1267,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1278,7 +1288,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1299,7 +1309,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1320,7 +1330,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/binary_text_encoding/" class="md-nav__link">
+      <a href="../binary_text_encoding/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1341,7 +1351,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/compression/" class="md-nav__link">
+      <a href="../compression/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1359,10 +1369,116 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    Dynamic JSON
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    Dynamic JSON
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#extract-a-required-nested-value" class="md-nav__link">
+    <span class="md-ellipsis">
+      Extract A Required Nested Value
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#read-optional-fields" class="md-nav__link">
+    <span class="md-ellipsis">
+      Read Optional Fields
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#update-a-dynamic-object" class="md-nav__link">
+    <span class="md-ellipsis">
+      Update A Dynamic Object
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#keep-stable-fields-typed" class="md-nav__link">
+    <span class="md-ellipsis">
+      Keep Stable Fields Typed
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      See Also
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/generators/" class="md-nav__link">
+      <a href="../generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1383,7 +1499,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1404,7 +1520,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1425,7 +1541,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_collections/" class="md-nav__link">
+      <a href="../choosing_collections/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1446,7 +1562,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+      <a href="../choosing_numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1467,7 +1583,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1488,7 +1604,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+      <a href="../project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1509,7 +1625,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1530,7 +1646,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1551,7 +1667,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/working_with_uuids/" class="md-nav__link">
+      <a href="../working_with_uuids/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1572,7 +1688,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/performance/" class="md-nav__link">
+      <a href="../performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1593,7 +1709,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1614,7 +1730,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1720,7 +1836,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/language/" class="md-nav__link">
+      <a href="../../reference/language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1741,7 +1857,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/feature_inventory/" class="md-nav__link">
+      <a href="../../reference/feature_inventory/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1762,7 +1878,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../reference/code_style/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1783,7 +1899,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/functions/" class="md-nav__link">
+      <a href="../../reference/functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1804,7 +1920,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/generators/" class="md-nav__link">
+      <a href="../../reference/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1825,7 +1941,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+      <a href="../../reference/symbol_aliases/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1846,7 +1962,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/callable_presets/" class="md-nav__link">
+      <a href="../../reference/callable_presets/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1867,7 +1983,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../reference/glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1888,7 +2004,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../reference/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1909,7 +2025,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../reference/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1930,7 +2046,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../reference/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1951,7 +2067,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../reference/numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1972,7 +2088,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+      <a href="../../reference/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1993,7 +2109,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/strings/" class="md-nav__link">
+      <a href="../../reference/strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2014,7 +2130,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../reference/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2035,7 +2151,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../reference/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2100,6 +2216,8 @@
       
         
       
+        
+      
     
     
       
@@ -2114,7 +2232,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../../reference/stdlib/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2147,7 +2265,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../../reference/stdlib/async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2168,7 +2286,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/collections/" class="md-nav__link">
+      <a href="../../reference/stdlib/collections/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2189,7 +2307,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/compression/" class="md-nav__link">
+      <a href="../../reference/stdlib/compression/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2210,7 +2328,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../../reference/stdlib/derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2231,7 +2349,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/datetime/" class="md-nav__link">
+      <a href="../../reference/stdlib/datetime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2252,7 +2370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/encoding/" class="md-nav__link">
+      <a href="../../reference/stdlib/encoding/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2273,7 +2391,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
+      <a href="../../reference/stdlib/fs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2294,7 +2412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/graph/" class="md-nav__link">
+      <a href="../../reference/stdlib/graph/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2315,7 +2433,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/hash/" class="md-nav__link">
+      <a href="../../reference/stdlib/hash/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2336,7 +2454,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/io/" class="md-nav__link">
+      <a href="../../reference/stdlib/io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2357,7 +2475,28 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/logging/" class="md-nav__link">
+      <a href="../../reference/stdlib/json/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.json
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/logging/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2378,7 +2517,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/regex/" class="md-nav__link">
+      <a href="../../reference/stdlib/regex/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2399,7 +2538,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/uuid/" class="md-nav__link">
+      <a href="../../reference/stdlib/uuid/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2420,7 +2559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/tempfile/" class="md-nav__link">
+      <a href="../../reference/stdlib/tempfile/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2441,7 +2580,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../../reference/stdlib/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2462,7 +2601,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/result/" class="md-nav__link">
+      <a href="../../reference/stdlib/result/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2483,7 +2622,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../../reference/stdlib/traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2504,7 +2643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../../reference/stdlib/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2525,7 +2664,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../../reference/stdlib/math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2588,7 +2727,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../reference/stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2621,7 +2760,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2642,7 +2781,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2663,7 +2802,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2684,7 +2823,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/awaitable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2705,7 +2844,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2726,7 +2865,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2747,7 +2886,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2827,7 +2966,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../reference/derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2848,7 +2987,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../reference/derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2869,7 +3008,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../reference/derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2890,7 +3029,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../reference/derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2911,7 +3050,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../reference/derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2932,7 +3071,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../reference/derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3052,7 +3191,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../../explanation/why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3073,7 +3212,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../../explanation/why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3094,7 +3233,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../../explanation/how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3115,7 +3254,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+      <a href="../../explanation/compile_time_and_runtime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3136,7 +3275,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+      <a href="../../explanation/rust_shaped_confidence/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3157,7 +3296,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../../explanation/control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3178,7 +3317,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/callable_presets/" class="md-nav__link">
+      <a href="../../explanation/callable_presets/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3199,7 +3338,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/closures/" class="md-nav__link">
+      <a href="../../explanation/closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3220,7 +3359,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/consts/" class="md-nav__link">
+      <a href="../../explanation/consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3241,7 +3380,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/generators/" class="md-nav__link">
+      <a href="../../explanation/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3262,7 +3401,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../../explanation/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3283,7 +3422,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+      <a href="../../explanation/numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3304,7 +3443,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/datetime_model/" class="md-nav__link">
+      <a href="../../explanation/datetime_model/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3325,7 +3464,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3346,7 +3485,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../../explanation/call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3367,7 +3506,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../../explanation/how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3388,7 +3527,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/enums/" class="md-nav__link">
+      <a href="../../explanation/enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3409,7 +3548,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../../explanation/error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3430,7 +3569,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../../explanation/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3475,7 +3614,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../../explanation/models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3508,7 +3647,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../../explanation/models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3529,7 +3668,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../../explanation/models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3558,7 +3697,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../../explanation/traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3579,7 +3718,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../../explanation/scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3646,7 +3785,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tooling/" class="md-nav__link ">
+            <a href="../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3724,7 +3863,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3745,7 +3884,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3766,7 +3905,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3850,7 +3989,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3871,7 +4010,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3892,7 +4031,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3913,7 +4052,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3934,7 +4073,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3955,7 +4094,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3976,7 +4115,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3997,7 +4136,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4069,7 +4208,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4090,7 +4229,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4168,7 +4307,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4189,7 +4328,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+      <a href="../../../tooling/reference/contract_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4210,7 +4349,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+      <a href="../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4231,7 +4370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4252,7 +4391,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4313,7 +4452,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../whitepapers/" class="md-nav__link ">
+            <a href="../../../whitepapers/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4346,7 +4485,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+      <a href="../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4414,7 +4553,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/" class="md-nav__link ">
+            <a href="../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4524,7 +4663,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4557,7 +4696,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4578,7 +4717,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4599,7 +4738,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4620,7 +4759,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4641,7 +4780,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4662,7 +4801,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4683,7 +4822,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4704,7 +4843,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4790,7 +4929,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4811,7 +4950,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4832,7 +4971,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4853,7 +4992,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4874,7 +5013,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4954,7 +5093,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4975,7 +5114,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+      <a href="../../../contributing/explanation/duckborrowing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4996,7 +5135,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5017,7 +5156,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+      <a href="../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5038,7 +5177,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5059,7 +5198,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5088,7 +5227,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../../RFCs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5145,7 +5284,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../release_notes/" class="md-nav__link ">
+            <a href="../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -5178,7 +5317,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_3/" class="md-nav__link">
+      <a href="../../../release_notes/0_3/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5199,7 +5338,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5220,7 +5359,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5248,7 +5387,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../roadmap/" class="md-nav__link">
+      <a href="../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5268,7 +5407,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stability/" class="md-nav__link">
+      <a href="../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5308,216 +5447,45 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#extract-a-required-nested-value" class="md-nav__link">
     <span class="md-ellipsis">
-      Summary
+      Extract A Required Nested Value
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#core-model" class="md-nav__link">
+  <a href="#read-optional-fields" class="md-nav__link">
     <span class="md-ellipsis">
-      Core model
+      Read Optional Fields
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#motivation" class="md-nav__link">
+  <a href="#update-a-dynamic-object" class="md-nav__link">
     <span class="md-ellipsis">
-      Motivation
+      Update A Dynamic Object
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
+  <a href="#keep-stable-fields-typed" class="md-nav__link">
     <span class="md-ellipsis">
-      Goals
+      Keep Stable Fields Typed
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
+  <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
-      Non-Goals
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#guide-level-explanation-how-users-think-about-it" class="md-nav__link">
-    <span class="md-ellipsis">
-      Guide-level explanation (how users think about it)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Guide-level explanation (how users think about it)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#parse-unknown-json" class="md-nav__link">
-    <span class="md-ellipsis">
-      Parse unknown JSON
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#inspect-the-runtime-shape" class="md-nav__link">
-    <span class="md-ellipsis">
-      Inspect the runtime shape
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#mix-typed-and-dynamic" class="md-nav__link">
-    <span class="md-ellipsis">
-      Mix typed and dynamic
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#reference-level-explanation-precise-rules" class="md-nav__link">
-    <span class="md-ellipsis">
-      Reference-level explanation (precise rules)
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Reference-level explanation (precise rules)">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#surface-requirements" class="md-nav__link">
-    <span class="md-ellipsis">
-      Surface requirements
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#dynamic-inspection" class="md-nav__link">
-    <span class="md-ellipsis">
-      Dynamic inspection
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interoperability" class="md-nav__link">
-    <span class="md-ellipsis">
-      Interoperability
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-details" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design details
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Design details">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#candidate-representation-enum-backed" class="md-nav__link">
-    <span class="md-ellipsis">
-      Candidate representation: enum-backed
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#candidate-representation-opaque-wrapper" class="md-nav__link">
-    <span class="md-ellipsis">
-      Candidate representation: opaque wrapper
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#interaction-with-existing-features" class="md-nav__link">
-    <span class="md-ellipsis">
-      Interaction with existing features
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#compatibility-migration" class="md-nav__link">
-    <span class="md-ellipsis">
-      Compatibility / migration
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      Alternatives considered
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#drawbacks" class="md-nav__link">
-    <span class="md-ellipsis">
-      Drawbacks
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layers-affected" class="md-nav__link">
-    <span class="md-ellipsis">
-      Layers affected
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Unresolved questions
+      See Also
     </span>
   </a>
   
@@ -5541,69 +5509,52 @@
   
 
 
-<h1 id="rfc-051-jsonvalue-for-stdjson">RFC 051: <code>JsonValue</code> for <code>std.json</code><a class="headerlink" href="#rfc-051-jsonvalue-for-stdjson" title="Permanent link">&para;</a></h1>
-<ul>
-<li><strong>Status:</strong> Draft</li>
-<li><strong>Created:</strong> 2026-04-06</li>
-<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong><ul>
-<li>RFC 024 (extensible derive protocol)</li>
-<li>RFC 025 (multi-instantiation trait dispatch)</li>
-<li>RFC 050 (enum methods and enum trait adoption)</li>
-</ul>
-</li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/335</li>
-<li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.2</li>
-<li><strong>Shipped in:</strong> —</li>
-</ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes <code>std.json.JsonValue</code> as Incan's dynamic JSON value surface for unknown or partially known JSON structures. It is intended to complement, not replace, model-based JSON handling by giving users a standard type for parse-inspect-transform workflows where the schema is not fully static.</p>
-<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
-<ol>
-<li><code>JsonValue</code> represents the standard JSON value space: null, bool, number, string, array, and object.</li>
-<li><code>JsonValue</code> supports parsing from JSON text and serializing back to JSON text.</li>
-<li><code>JsonValue</code> provides typed inspection and extraction helpers so dynamic JSON code remains explicit about runtime shape checks.</li>
-<li>The exact representation strategy and direct indexing contract remain open design questions in this Draft.</li>
-</ol>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Model-driven JSON handling is good when the schema is known. It is not enough for several real cases:</p>
-<ul>
-<li>dynamic APIs that return different shapes depending on context;</li>
-<li>exploration and prototyping before a schema is stable;</li>
-<li>partial parsing where only a few fields matter;</li>
-<li>mixed static/dynamic payloads where some fields are well-typed and others are intentionally open.</li>
-</ul>
-<p>Without a dedicated dynamic JSON type, users either over-model fluid payloads or fall back to ad hoc dictionaries and unclear conventions.</p>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Provide a dedicated <code>JsonValue</code> type under <code>std.json</code>.</li>
-<li>Support parse/serialize and explicit runtime inspection of dynamic JSON values.</li>
-<li>Coexist cleanly with typed model-based JSON workflows rather than displacing them.</li>
-<li>Leave enough room to choose the right underlying representation without overcommitting too early.</li>
-</ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Replacing typed JSON derive flows for stable schemas.</li>
-<li>Turning Incan into a generally dynamically typed language.</li>
-<li>Finalizing streaming or incremental JSON parsing in this RFC.</li>
-<li>Settling every possible convenience surface in the first Draft.</li>
-</ul>
-<h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
-<h3 id="parse-unknown-json">Parse unknown JSON<a class="headerlink" href="#parse-unknown-json" title="Permanent link">&para;</a></h3>
+<h1 id="work-with-dynamic-json">Work With Dynamic JSON<a class="headerlink" href="#work-with-dynamic-json" title="Permanent link">&para;</a></h1>
+<p>Use <code>std.json.JsonValue</code> when a payload is only partly known, mixed-shape, or intentionally open. Use typed <code>@derive(json)</code> models when the schema is stable.</p>
+<h2 id="extract-a-required-nested-value">Extract A Required Nested Value<a class="headerlink" href="#extract-a-required-nested-value" title="Permanent link">&para;</a></h2>
+<p>For required nested fields, prefer JSON Pointer plus <code>?</code> over hand-written lookup ladders:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonError</span><span class="p">,</span> <span class="nc">JsonValue</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">first_item_name</span><span class="p">(</span><span class="n">source</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonError</span><span class="p">]:</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">source</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">name</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">require_pointer</span><span class="p">(</span><span class="s2">&quot;/items/0/name&quot;</span><span class="p">)</span><span class="o">?</span>
+    <span class="k">return</span> <span class="n">name</span><span class="o">.</span><span class="n">expect_str</span><span class="p">()</span>
+</code></pre></div>
+<p><code>require_pointer(...)</code> returns a <code>JsonError</code> when the path does not resolve. <code>expect_str()</code> keeps the final type check explicit.</p>
+<h2 id="read-optional-fields">Read Optional Fields<a class="headerlink" href="#read-optional-fields" title="Permanent link">&para;</a></h2>
+<p>Use direct indexing, <code>get(...)</code>, or <code>at(...)</code> when missing data is expected:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
 
-<span class="n">data</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">response_body</span><span class="p">)</span><span class="o">?</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">enabled_or_false</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nc">JsonValue</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+    <span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">value</span><span class="p">)</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="s2">&quot;enabled&quot;</span><span class="p">]:</span>
+        <span class="k">if</span> <span class="k">let</span> <span class="nb">Some</span><span class="p">(</span><span class="n">enabled</span><span class="p">)</span> <span class="o">=</span> <span class="n">value</span><span class="o">.</span><span class="n">as_bool</span><span class="p">():</span>
+            <span class="k">return</span> <span class="n">enabled</span>
+    <span class="k">return</span> <span class="k">false</span>
 </code></pre></div>
-<h3 id="inspect-the-runtime-shape">Inspect the runtime shape<a class="headerlink" href="#inspect-the-runtime-shape" title="Permanent link">&para;</a></h3>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="n">data</span><span class="o">.</span><span class="n">kind</span><span class="p">():</span>
-    <span class="nc">JsonKind</span><span class="o">.</span><span class="nc">Object</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;got an object&quot;</span><span class="p">)</span>
-    <span class="nc">JsonKind</span><span class="o">.</span><span class="nc">Array</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;got an array&quot;</span><span class="p">)</span>
-    <span class="n">_</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;got some other JSON value&quot;</span><span class="p">)</span>
+<p>Optional lookup preserves the difference between a missing key and a present JSON null. A missing key returns <code>None</code>; a present null returns <code>Some(JsonValue.null())</code>.</p>
+<h2 id="update-a-dynamic-object">Update A Dynamic Object<a class="headerlink" href="#update-a-dynamic-object" title="Permanent link">&para;</a></h2>
+<p>Use mutation helpers when building or transforming dynamic payloads:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonError</span><span class="p">,</span> <span class="nc">JsonValue</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">mark_seen</span><span class="p">(</span><span class="n">source</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">JsonError</span><span class="p">]:</span>
+    <span class="k">mut</span> <span class="n">data</span> <span class="o">=</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="n">parse</span><span class="p">(</span><span class="n">source</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">data</span><span class="o">.</span><span class="kt">set</span><span class="p">(</span><span class="s2">&quot;seen&quot;</span><span class="p">,</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="kt">bool</span><span class="p">(</span><span class="k">true</span><span class="p">))</span><span class="o">?</span>
+
+    <span class="k">mut</span> <span class="n">events</span> <span class="o">=</span> <span class="n">data</span><span class="o">.</span><span class="n">require</span><span class="p">(</span><span class="s2">&quot;events&quot;</span><span class="p">)</span><span class="o">?</span>
+    <span class="n">events</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="nc">JsonValue</span><span class="o">.</span><span class="n">object</span><span class="p">({</span><span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="nc">JsonValue</span><span class="o">.</span><span class="kt">str</span><span class="p">(</span><span class="s2">&quot;view&quot;</span><span class="p">)}))</span><span class="o">?</span>
+    <span class="n">data</span><span class="o">.</span><span class="kt">set</span><span class="p">(</span><span class="s2">&quot;events&quot;</span><span class="p">,</span> <span class="n">events</span><span class="p">)</span><span class="o">?</span>
+
+    <span class="k">return</span> <span class="n">data</span><span class="o">.</span><span class="n">to_pretty_json</span><span class="p">()</span>
 </code></pre></div>
-<h3 id="mix-typed-and-dynamic">Mix typed and dynamic<a class="headerlink" href="#mix-typed-and-dynamic" title="Permanent link">&para;</a></h3>
+<p><code>set(...)</code> and <code>append(...)</code> return <code>JsonError</code> when the receiver is the wrong JSON kind.</p>
+<h2 id="keep-stable-fields-typed">Keep Stable Fields Typed<a class="headerlink" href="#keep-stable-fields-typed" title="Permanent link">&para;</a></h2>
+<p>Use <code>JsonValue</code> only for the dynamic part of a typed model:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">JsonValue</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
+
 
 <span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">ApiResponse</span><span class="p">:</span>
@@ -5611,80 +5562,13 @@
     <span class="n">message</span><span class="p">:</span> <span class="nb">str</span>
     <span class="n">data</span><span class="p">:</span> <span class="nc">JsonValue</span>
 </code></pre></div>
-<p>This is the niche <code>JsonValue</code> is meant to fill: keep the stable parts typed while allowing one part of the payload to remain dynamic.</p>
-<h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
-<h3 id="surface-requirements">Surface requirements<a class="headerlink" href="#surface-requirements" title="Permanent link">&para;</a></h3>
-<p><code>JsonValue</code> must support:</p>
+<p>The <code>data</code> field serializes and deserializes as ordinary JSON, not as a wrapper object.</p>
+<h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li>parsing from JSON text;</li>
-<li>serialization back to JSON text;</li>
-<li>representation of null, bool, string, number, array, and object JSON values;</li>
-<li>type predicates or equivalent runtime-shape inspection;</li>
-<li>typed extraction helpers for the supported value kinds.</li>
+<li><a href="../../reference/stdlib/json/"><code>std.json</code> reference</a></li>
+<li><a href="../../reference/derives/serialization/">Serialization derives reference</a></li>
+<li><a href="../../reference/stdlib/math/"><code>std.math</code> reference</a></li>
 </ul>
-<h3 id="dynamic-inspection">Dynamic inspection<a class="headerlink" href="#dynamic-inspection" title="Permanent link">&para;</a></h3>
-<ul>
-<li>Runtime shape inspection must be explicit; users must be able to tell when they are handling a string versus an array versus an object.</li>
-<li>Extraction helpers must not silently coerce unrelated kinds.</li>
-<li>If the surface offers direct indexing for objects or arrays, the missing-key and out-of-bounds contract must be specified precisely rather than left to backend behavior.</li>
-</ul>
-<h3 id="interoperability">Interoperability<a class="headerlink" href="#interoperability" title="Permanent link">&para;</a></h3>
-<ul>
-<li><code>JsonValue</code> should be usable as a field type in model-based JSON workflows.</li>
-<li>If direct indexing is part of the final design, RFC 025 is the natural path for supporting multiple key types cleanly.</li>
-<li>If the final representation uses enum-backed methods, RFC 050 provides the needed language support.</li>
-</ul>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="candidate-representation-enum-backed">Candidate representation: enum-backed<a class="headerlink" href="#candidate-representation-enum-backed" title="Permanent link">&para;</a></h3>
-<p>One strong design direction is to make <code>JsonValue</code> an enum with variants for each JSON kind. That would fit naturally with pattern matching and would compose well with RFC 050.</p>
-<h3 id="candidate-representation-opaque-wrapper">Candidate representation: opaque wrapper<a class="headerlink" href="#candidate-representation-opaque-wrapper" title="Permanent link">&para;</a></h3>
-<p>Another direction is a model-like wrapper over an implementation-defined runtime JSON representation. That would reduce the amount of language coupling, but it gives up some of the pattern-matching story and makes the public API more method-centric.</p>
-<h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
-<ul>
-<li>RFC 024 remains the story for typed derive-based JSON handling.</li>
-<li>RFC 025 becomes relevant if <code>JsonValue</code> adopts multiple indexing traits.</li>
-<li>RFC 050 becomes relevant if the chosen public representation is enum-backed and method-rich.</li>
-</ul>
-<h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>This feature is additive. Existing typed JSON code keeps its meaning.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<ol>
-<li><strong>Only typed models</strong></li>
-<li>
-<p>Too rigid for exploratory or mixed-schema JSON work.</p>
-</li>
-<li>
-<p><strong>Ad hoc <code>Dict[str, Any]</code>-style handling</strong></p>
-</li>
-<li>
-<p>Too loose. It loses the benefit of having one explicit dynamic JSON contract.</p>
-</li>
-<li>
-<p><strong>No stdlib dynamic JSON surface</strong></p>
-</li>
-<li>Forces each library or codebase to invent its own conventions for the same problem.</li>
-</ol>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
-<ul>
-<li>A dynamic JSON type introduces runtime shape inspection into a language that otherwise prefers static structure.</li>
-<li>If the final API is too ergonomic in the wrong ways, users may reach for <code>JsonValue</code> where a typed model would be clearer.</li>
-<li>The representation choice materially affects ergonomics, so the Draft still carries real design risk.</li>
-</ul>
-<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
-<ul>
-<li><strong>Stdlib / runtime</strong>: must provide the <code>std.json.JsonValue</code> surface and its documented behavior.</li>
-<li><strong>Typechecker / docs</strong>: must surface the runtime-shape API clearly and keep dynamic access explicit.</li>
-<li><strong>Lowering / emission</strong>: must preserve the chosen parse/serialize and access semantics without leaking backend quirks.</li>
-<li><strong>Interop with derive flows</strong>: should allow <code>JsonValue</code> to participate in otherwise typed JSON workflows.</li>
-</ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
-<ol>
-<li>Should <code>JsonValue</code> be an enum-backed public type, an opaque wrapper type, or something hybrid?</li>
-<li>Should direct <code>[]</code> access be part of the public surface, and if so, what is the contract for missing keys and out-of-bounds indices?</li>
-<li>If numeric JSON values split into integer and float cases, what exact parsing and extraction rules should apply?</li>
-<li>How much convenience API should <code>JsonValue</code> carry directly versus leaving to helper functions or follow-on RFCs?</li>
-</ol>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
@@ -5733,18 +5617,18 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>
