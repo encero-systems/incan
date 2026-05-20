@@ -50,21 +50,6 @@ fn enumerate_elem_can_copy(ty: &IrType) -> bool {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn enumerate_copy_policy_keeps_generic_tuple_items_owned() {
-        assert!(enumerate_elem_can_copy(&IrType::Int));
-        assert!(!enumerate_elem_can_copy(&IrType::Tuple(vec![
-            IrType::Generic("T".to_string()),
-            IrType::Int,
-        ])));
-        assert!(!enumerate_elem_can_copy(&IrType::Option(Box::new(IrType::Int))));
-    }
-}
-
 /// Check if a type is a named generic.
 fn is_named_generic(ty: &IrType, name: &str) -> bool {
     match ty {
@@ -661,5 +646,20 @@ impl<'a> IrEmitter<'a> {
             }
             _ => Ok(None),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn enumerate_copy_policy_keeps_generic_tuple_items_owned() {
+        assert!(enumerate_elem_can_copy(&IrType::Int));
+        assert!(!enumerate_elem_can_copy(&IrType::Tuple(vec![
+            IrType::Generic("T".to_string()),
+            IrType::Int,
+        ])));
+        assert!(!enumerate_elem_can_copy(&IrType::Option(Box::new(IrType::Int))));
     }
 }
