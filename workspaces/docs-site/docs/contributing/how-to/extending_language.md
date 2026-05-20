@@ -7,8 +7,7 @@ Incan is implemented as a **multi-stage compiler**:
 - Frontend: Lexer → Parser → AST → Typechecker (`typechecker/`)
 - Backend: Lowering (AST → IR) → Emitter (IR → Rust)
 
-That separation is intentional (clarity, correctness, debuggability), but it means that adding *new syntax* typically
-touches multiple stages.
+That separation is intentional (clarity, correctness, debuggability), but it means that adding *new syntax* typically touches multiple stages.
 
 !!! warning "Required reading (contributors)"
     Before making language changes, read these end-to-end:
@@ -196,14 +195,9 @@ Use this only when the feature is genuinely syntactic/control-flow.
 
 [Surface Semantics Engine]:../explanation/architecture.md#surface-semantics-engine
 
-Use this when the feature is an **import-activated keyword** whose behavior desugars to stdlib calls — not a
-permanently reserved hard keyword. Current examples: `assert` (activated by `import std.testing`), `async`/`await`
-(activated by `import std.async`).
+Use this when the feature is an **import-activated keyword** whose behavior desugars to stdlib calls — not a permanently reserved hard keyword. Current examples: `assert` (activated by `import std.testing`), `async`/`await` (activated by `import std.async`).
 
-This path avoids creating new IR variants. Instead, the parser emits a generic `Surface` AST node keyed by
-`SurfaceFeatureKey`, and downstream stages (typechecker, lowering, scanning) consult the semantics registry for
-**action descriptors** that tell them what to do. See the [Surface Semantics Engine] section of the architecture
-docs for the full design.
+This path avoids creating new IR variants. Instead, the parser emits a generic `Surface` AST node keyed by `SurfaceFeatureKey`, and downstream stages (typechecker, lowering, scanning) consult the semantics registry for **action descriptors** that tell them what to do. See the [Surface Semantics Engine] section of the architecture docs for the full design.
 
 ### How the registry drives every compiler stage
 
@@ -221,10 +215,7 @@ The `SurfaceSemanticsPack` trait covers the full compiler:
 
 <!-- markdownlint-enable MD013 -->
 
-Action descriptors are small enums (e.g., `SurfaceStmtLoweringAction::AssertCall`,
-`SurfaceExprTypeCheck::AwaitCheck`) that describe *what* the compiler should do, not *which keyword*
-triggered it. Multiple keywords can share the same action pattern. If your keyword fits an existing
-action pattern, the compiler already knows how to execute it — **no main-crate changes needed**.
+Action descriptors are small enums (e.g., `SurfaceStmtLoweringAction::AssertCall`, `SurfaceExprTypeCheck::AwaitCheck`) that describe *what* the compiler should do, not *which keyword* triggered it. Multiple keywords can share the same action pattern. If your keyword fits an existing action pattern, the compiler already knows how to execute it — **no main-crate changes needed**.
 
 ### End-to-end checklist
 
@@ -232,38 +223,32 @@ action pattern, the compiler already knows how to execute it — **no main-crate
 
 - Add a `KeywordId` variant.
 - Register it with `info_soft()`, specifying the activating stdlib namespace and the `KeywordSurfaceKind`
-  (`StatementKeywordArgs`, `PrefixExpression`, or `DeclarationModifier`).
+(`StatementKeywordArgs`, `PrefixExpression`, or `DeclarationModifier`).
 
 **2. Semantics pack** (`crates/incan_semantics_stdlib/src/lib.rs`):
 
 - Implement the **parser routing** method (`statement_payload_for_soft_keyword`,
-  `expression_payload_for_soft_keyword`, or `modifier_payload_for_soft_keyword`).
+`expression_payload_for_soft_keyword`, or `modifier_payload_for_soft_keyword`).
 - Implement the **typechecker action** method (`typecheck_surface_stmt_action` or
-  `typecheck_surface_expr_action`), returning an existing action descriptor if one fits.
+`typecheck_surface_expr_action`), returning an existing action descriptor if one fits.
 - Implement the **lowering action** method (`lower_surface_stmt_action` or `lower_surface_expr_action`),
-  returning an existing action descriptor if one fits.
+returning an existing action descriptor if one fits.
 - If the keyword implies a runtime requirement (e.g., async runtime), implement
-  `modifier_runtime_requirement` and/or `import_runtime_requirement`.
+`modifier_runtime_requirement` and/or `import_runtime_requirement`.
 - If the keyword desugars to a stdlib call, implement `assert_call_target()` (or the equivalent for your
-  feature) returning a `SurfaceCallTarget` with the canonical callee path.
+feature) returning a `SurfaceCallTarget` with the canonical callee path.
 - Gate the handler behind the appropriate Cargo feature (`std_testing`, `std_async`, etc.).
 
-**3. Parser**: No per-keyword code needed. The generic helpers — `current_surface_keyword()` and
-`match_surface_keyword()` in `crates/incan_syntax/src/parser/helpers.rs`, and
-`try_surface_keyword_statement()` in `crates/incan_syntax/src/parser/stmts.rs` — automatically
-pick up any soft keyword whose descriptor has a matching `KeywordSurfaceKind`.
+**3. Parser**: No per-keyword code needed. The generic helpers — `current_surface_keyword()` and `match_surface_keyword()` in `crates/incan_syntax/src/parser/helpers.rs`, and `try_surface_keyword_statement()` in `crates/incan_syntax/src/parser/stmts.rs` — automatically pick up any soft keyword whose descriptor has a matching `KeywordSurfaceKind`.
 
-**4. Typechecker**: No per-keyword code needed if you returned an existing action descriptor in step 2.
-`check_surface_stmt()` and `check_surface_expr()` query the registry and dispatch on the action.
+**4. Typechecker**: No per-keyword code needed if you returned an existing action descriptor in step 2. `check_surface_stmt()` and `check_surface_expr()` query the registry and dispatch on the action.
 
-**5. Lowering**: No per-keyword code needed if you returned an existing action descriptor in step 2.
-`lower_surface_statement()` and the `Expr::Surface` arm of `lower_expr()` query the registry and dispatch
-on the action.
+**5. Lowering**: No per-keyword code needed if you returned an existing action descriptor in step 2. `lower_surface_statement()` and the `Expr::Surface` arm of `lower_expr()` query the registry and dispatch on the action.
 
 **6. Formatter** (`src/format/formatter/`):
 
 - Handle the new `Statement::Surface` or `Expr::Surface` variant (usually a one-liner using
-  `keywords::as_str()`).
+`keywords::as_str()`).
 
 **7. Tests**:
 
@@ -291,7 +276,7 @@ on the action.
 ## Practical guidance
 
 - If you find yourself adding a keyword to achieve *“a function with a special implementation”*, pause and consider making
-  it a **builtin function** (or a decorator) instead.
+it a **builtin function** (or a decorator) instead.
 - If you add a new AST/IR enum variant, rely on Rust’s exhaustiveness errors as your checklist: the compiler will tell you
-  which match arms you need to update.
+which match arms you need to update.
 - Keywords may only be introduced as the result of a language change (RFC).

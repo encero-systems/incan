@@ -50,8 +50,7 @@ The same rule applies to path segments after `rust::` (for example `rust::substr
 
 ## Dependency Management
 
-When you use `import rust::crate_name`, Incan automatically adds the dependency to your generated `Cargo.toml`.
-Dependencies are resolved using a three-tier precedence system:
+When you use `import rust::crate_name`, Incan automatically adds the dependency to your generated `Cargo.toml`. Dependencies are resolved using a three-tier precedence system:
 
 1. **`incan.toml`** (highest priority): If the crate is configured in your project manifest, that spec is used.
 2. **Inline annotations**: If you write `import rust::foo @ "1.0"`, that version is used.
@@ -92,8 +91,7 @@ Version strings use [Cargo SemVer syntax](https://doc.rust-lang.org/cargo/refere
 
 ### Project-level dependencies (`incan.toml`)
 
-For projects with multiple dependencies, use an `incan.toml` manifest instead of inline annotations.
-This is the recommended approach for anything beyond single-file scripts:
+For projects with multiple dependencies, use an `incan.toml` manifest instead of inline annotations. This is the recommended approach for anything beyond single-file scripts:
 
 ```toml
 [project]
@@ -106,17 +104,13 @@ serde = { version = "1.0", features = ["derive"] }
 my_crate = "2.0"  # assuming this is a rust crate you are referencing
 ```
 
-When a crate is configured in `incan.toml`, inline version annotations for that crate are **not allowed** —
-the manifest is the single source of truth. Bare imports (without `@`) are fine.
+When a crate is configured in `incan.toml`, inline version annotations for that crate are **not allowed** — the manifest is the single source of truth. Bare imports (without `@`) are fine.
 
-For the full manifest format, see:
-[Project configuration reference](../../tooling/reference/project_configuration.md).
-For a practical guide, see: [Managing dependencies](../../tooling/how-to/dependencies.md).
+For the full manifest format, see: [Project configuration reference](../../tooling/reference/project_configuration.md). For a practical guide, see: [Managing dependencies](../../tooling/how-to/dependencies.md).
 
 ### Known-good defaults
 
-The following crates have pre-configured versions with appropriate features. These defaults apply automatically when you
-import a crate without a version annotation and without an `incan.toml` entry:
+The following crates have pre-configured versions with appropriate features. These defaults apply automatically when you import a crate without a version annotation and without an `incan.toml` entry:
 
 | Crate      | Version | Features                            |
 | ---------- | ------- | ----------------------------------- |
@@ -216,13 +210,9 @@ type UserId = rusttype i64 with Add[int]:
 
 Rust coherence rules still apply to generated implementations. Incan can implement a foreign Rust trait for an Incan-owned wrapper, but it cannot make arbitrary foreign-trait-for-foreign-type combinations legal.
 
-Body-less `rusttype` adoption is only accepted when Rust metadata proves that the backing type already implements the
-adopted Rust trait. In that case Incan treats the alias as already satisfying the contract and does not emit an invalid
-`impl ForeignTrait for Alias` block.
+Body-less `rusttype` adoption is only accepted when Rust metadata proves that the backing type already implements the adopted Rust trait. In that case Incan treats the alias as already satisfying the contract and does not emit an invalid `impl ForeignTrait for Alias` block.
 
-`rusttype ... with Awaitable[T]` is currently rejected with a focused diagnostic. The compiler keeps `Awaitable[T]` as
-the Incan-facing async contract, but Rust `Future` bridge emission still needs safe pin-projection and output-mapping
-metadata before it can replace handwritten Rust adapters.
+`rusttype ... with Awaitable[T]` is currently rejected with a focused diagnostic. The compiler keeps `Awaitable[T]` as the Incan-facing async contract, but Rust `Future` bridge emission still needs safe pin-projection and output-mapping metadata before it can replace handwritten Rust adapters.
 
 ## Published libraries and shipped ABI metadata
 

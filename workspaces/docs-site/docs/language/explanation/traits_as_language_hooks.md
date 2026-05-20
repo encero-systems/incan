@@ -2,8 +2,7 @@
 
 Traits let you describe **behavior contracts**: “a type supports X”.
 
-Some common language features are easiest to understand as **desugaring** into trait methods. This is similar in spirit
-to Rust using traits like `IntoIterator`, `Index`, and `Add` to power `for`, indexing, and operators.
+Some common language features are easiest to understand as **desugaring** into trait methods. This is similar in spirit to Rust using traits like `IntoIterator`, `Index`, and `Add` to power `for`, indexing, and operators.
 
 This page explains the idea with one concrete example. For the authoritative reference pages, see:
 
@@ -50,8 +49,7 @@ Think:
 value = xs.__getitem__(i)
 ```
 
-So if you want a custom type to support `[]`, you implement the indexing hook method (and the corresponding trait
-requirements as defined in the stdlib trait docs):
+So if you want a custom type to support `[]`, you implement the indexing hook method (and the corresponding trait requirements as defined in the stdlib trait docs):
 
 ```incan
 model Grid:
@@ -111,8 +109,7 @@ In Incan, most extensibility is intended to flow through traits and explicit, ch
 
 You can think of hook traits as giving user-defined types the same “surface ergonomics” that built-in types have.
 
-For example, if a type can be indexed, you should be able to write `x[i]` without caring whether `x` is a built-in list
-or a custom collection type.
+For example, if a type can be indexed, you should be able to write `x[i]` without caring whether `x` is a built-in list or a custom collection type.
 
 That’s why the stdlib defines traits for:
 

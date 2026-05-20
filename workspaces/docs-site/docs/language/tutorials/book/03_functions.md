@@ -113,8 +113,7 @@ def main() -> None:
 
 ### Unpacking existing values
 
-If you already have a list, use `*extra` to feed it into a positional rest parameter. If you already have a dictionary,
-use `**labels` to feed it into a keyword rest parameter.
+If you already have a list, use `*extra` to feed it into a positional rest parameter. If you already have a dictionary, use `**labels` to feed it into a keyword rest parameter.
 
 - For rest calls, `*extra` requires a callee with a `*` rest parameter and `extra` must be compatible with `List[T]`.
 - For rest calls, `**labels` requires a callee with a `**` rest parameter and `labels` must be compatible with `Dict[str, T]`.
@@ -134,8 +133,7 @@ def main() -> None:
     println(f"count={count}")
 ```
 
-Unpacking is intentionally static. It can also bind ordinary fixed parameters when the compiler can prove the unpacked
-shape:
+Unpacking is intentionally static. It can also bind ordinary fixed parameters when the compiler can prove the unpacked shape:
 
 ```incan
 def point(x: int, y: int) -> int:
@@ -149,8 +147,7 @@ def main() -> None:
     println(route(**{"path": "/status", "method": "GET"}))
 ```
 
-A plain `List[int]` variable does not prove a fixed length, and a plain `Dict[str, str]` variable does not prove that
-specific fixed keys exist. Use those values with rest parameters, or keep the fixed call explicit.
+A plain `List[int]` variable does not prove a fixed length, and a plain `Dict[str, str]` variable does not prove that specific fixed keys exist. Use those values with rest parameters, or keep the fixed call explicit.
 
 The same spelling works when building new collections. Use `*` in a list literal and `**` in a dictionary literal:
 
@@ -165,8 +162,7 @@ def main() -> None:
     println(f"values={len(values)} headers={len(headers)}")
 ```
 
-`[**labels]` is not valid because `**` is for mapping or keyword unpacking, not list expansion. `{*items}` is not valid
-as dictionary spread; dictionary spread uses `**items`.
+`[**labels]` is not valid because `**` is for mapping or keyword unpacking, not list expansion. `{*items}` is not valid as dictionary spread; dictionary spread uses `**items`.
 
 ### When not to use variadic arguments
 

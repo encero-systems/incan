@@ -25,8 +25,8 @@ const MEMORY_EXPORT: &str = incan_vocab::WASM_DESUGAR_MEMORY_EXPORT;
 const SUCCESS_STATUS: i32 = incan_vocab::WASM_DESUGAR_SUCCESS_STATUS;
 /// Default fuel budget for one desugarer invocation.
 ///
-/// The clean #455 nested companion repro traps at 250 000 units while the guest drops or serializes nested public AST
-/// output. 5 000 000 admits that production-shaped path while still bounding accidental long-running desugarers.
+/// The clean #455 nested companion repro traps at `250_000` units while the guest drops or serializes nested public AST
+/// output. `5_000_000` admits that production-shaped path while still bounding accidental long-running desugarers.
 /// If another legitimate companion desugarer hits this limit, raise it with a comment explaining the measured repro.
 const DEFAULT_WASM_FUEL: u64 = 5_000_000;
 

@@ -10,8 +10,7 @@ For the derive catalog and exact user-facing rules, see:
 
 ## The intent
 
-Incan’s derive system exists to give you **out-of-the-box behavior** (Debug, Display, Eq, Ord, Hash, Clone, Default,
-serde derives, etc.) without boilerplate.
+Incan’s derive system exists to give you **out-of-the-box behavior** (Debug, Display, Eq, Ord, Hash, Clone, Default, serde derives, etc.) without boilerplate.
 
 At a high level:
 
@@ -29,8 +28,7 @@ You may see `@rust.extern` in stdlib sources:
 - it marks functions whose body is provided by Rust (via `rust.module()`)
 - it marks “compiler-provided implementation” stubs in the stdlib
 
-The compiler is responsible for providing the implementation; the stdlib is the stable vocabulary and signature
-registry.
+The compiler is responsible for providing the implementation; the stdlib is the stable vocabulary and signature registry.
 
 ---
 
@@ -41,8 +39,7 @@ Incan separates two cases:
 - **Derives**: default, structural behavior (field-based)
 - **Dunder hooks**: custom behavior (`__str__`, `__eq__`, `__lt__`, `__hash__`)
 
-If you try to do *both* for the same capability, that’s a **conflict** and should be treated as an error: the compiler
-must not have to guess which implementation “wins”.
+If you try to do *both* for the same capability, that’s a **conflict** and should be treated as an error: the compiler must not have to guess which implementation “wins”.
 
 Example conflicts:
 
@@ -66,7 +63,7 @@ The authoritative rule set (including the full conflict list) lives in:
 Some Python/Rust features are intentionally not part of Incan’s trait/derive surface area:
 
 - **Context managers** (`__enter__` / `__exit__`): prefer scope-based cleanup RAII (Resource Acquisition Is  Initialization)
-  style
+style
 - **Destructors** (`__del__` / `Drop` as a user feature): cleanup is automatic; exposing destruction hooks adds complexity
 - **`__format__`**: `Display` (`__str__`) + f-strings cover most needs
 

@@ -323,11 +323,7 @@ This feature is additive. Existing Rust interop or third-party compression code 
 
 ## Progress Checklist
 
-Implementation note: the dogfooded `.incn` implementation avoids new `@rust.extern` surfaces and builds as a generated
-Rust project for one-shot compression, stream compression/decompression, explicit byte autodetection, and explicit
-stream autodetection. Issue [#548](https://github.com/dannys-code-corner/incan/issues/548) was resolved in this
-implementation loop by preserving public stdlib dependency APIs in generated projects and fixing the Rust boundary cases
-surfaced by the RFC 061 fixture.
+Implementation note: the dogfooded `.incn` implementation avoids new `@rust.extern` surfaces and builds as a generated Rust project for one-shot compression, stream compression/decompression, explicit byte autodetection, and explicit stream autodetection. Issue [#548](https://github.com/dannys-code-corner/incan/issues/548) was resolved in this implementation loop by preserving public stdlib dependency APIs in generated projects and fixing the Rust boundary cases surfaced by the RFC 061 fixture.
 
 ### Spec / lifecycle
 

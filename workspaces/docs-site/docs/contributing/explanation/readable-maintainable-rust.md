@@ -1,9 +1,7 @@
 
 # Readable & Maintainable Rust: A Practical Guide
 
-This document contains a pragmatic set of principles, patterns, and guardrails for writing Rust that's easy to understand
-and safe to evolve. It draws from [The Rust Book](https://doc.rust-lang.org/book/) and the
-[Rust API Guidelines](https://rust-lang.github.io/api-guidelines/about.html).
+This document contains a pragmatic set of principles, patterns, and guardrails for writing Rust that's easy to understand and safe to evolve. It draws from [The Rust Book](https://doc.rust-lang.org/book/) and the [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/about.html).
 
 Incan contributors are expected to follow these principles and patterns when writing Rust code.
 
@@ -29,8 +27,7 @@ Incan contributors are expected to follow these principles and patterns when wri
 
 ## What "Readable" Means in Rust
 
-Readable Rust is code that a competent Rustacean can **scan and understand quickly**, without excessive file-hopping or
-ownership gymnastics.
+Readable Rust is code that a competent Rustacean can **scan and understand quickly**, without excessive file-hopping or ownership gymnastics.
 
 1. **Idiomatic ownership & borrowing**
    - Prefer borrowing (`&T`, `&mut T`) over cloning; clone only at clear boundaries.
@@ -61,8 +58,7 @@ ownership gymnastics.
 
 ## What "Maintainable" Means in Rust
 
-Maintainable Rust withstands change with **minimal risk and effort**—thanks to stable seams, guardrails, and predictable
-behavior.
+Maintainable Rust withstands change with **minimal risk and effort**—thanks to stable seams, guardrails, and predictable behavior.
 
 1. **Stable, minimal public API**
    - Public types/traits are small and composable; prefer **capability-oriented traits** over "god traits."
@@ -104,7 +100,7 @@ behavior.
 **If these are true, your Rust is both readable and maintainable:**
 
 - ✅ **Formatting & lints**: `cargo +nightly fmt --all -- --check` and `cargo clippy --deny warnings` pass; lint level tuned
-  to project.
+to project.
 - ✅ **Boundaries**: Modules align with responsibilities; public surface area small and documented.
 - ✅ **Errors**: Clear `Result<T, E>` with actionable messages; categorized `E`.
 - ✅ **Ownership**: Minimal clones; predictable lifetimes; borrowing favored.
@@ -287,8 +283,7 @@ let file = File::open(path)
 
 #### Cloning — question every `.clone()`
 
-A `.clone()` is sometimes the right answer (crossing an API boundary, shared ownership), but treat every occurrence
-as a review signal. Ask: *can I borrow instead? Can I restructure to remove the simultaneous borrow?*
+A `.clone()` is sometimes the right answer (crossing an API boundary, shared ownership), but treat every occurrence as a review signal. Ask: *can I borrow instead? Can I restructure to remove the simultaneous borrow?*
 
 #### Stringly-typed APIs
 
@@ -317,8 +312,7 @@ fn filter(items: &[Item]) { /* ... */ }
 
 #### Type casting — prefer safe conversions
 
-`as` silently truncates or wraps. Prefer `TryFrom`/`TryInto` for fallible conversions and `From`/`Into` for
-infallible ones:
+`as` silently truncates or wraps. Prefer `TryFrom`/`TryInto` for fallible conversions and `From`/`Into` for infallible ones:
 
 ```rust
 // Bad — silently wraps on overflow
@@ -343,8 +337,7 @@ for item in items.iter().filter(|x| x.is_valid()) {
 
 #### Visibility — start private, widen deliberately
 
-Default to private. Use `pub(crate)` for crate-internal sharing. Only use `pub` for your actual public API. This
-keeps refactoring safe and communicates intent to future readers.
+Default to private. Use `pub(crate)` for crate-internal sharing. Only use `pub` for your actual public API. This keeps refactoring safe and communicates intent to future readers.
 
 #### Match arms — factor out shared logic
 
@@ -366,8 +359,7 @@ cleanup();
 
 #### `#[must_use]` on important return values
 
-If a function returns a value that callers should never silently discard (validation results, builders, etc.), mark
-it `#[must_use]`. Rust already enforces this for `Result`, but custom types often miss it.
+If a function returns a value that callers should never silently discard (validation results, builders, etc.), mark it `#[must_use]`. Rust already enforces this for `Result`, but custom types often miss it.
 
 ### Architecture-level pitfalls
 

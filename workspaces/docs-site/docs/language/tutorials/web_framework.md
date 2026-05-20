@@ -1,7 +1,6 @@
 # Web Framework
 
-Incan includes a web framework that compiles to [Axum](https://docs.rs/axum/latest/axum/),
-giving you Flask/FastAPI-like syntax with native Rust performance.
+Incan includes a web framework that compiles to [Axum](https://docs.rs/axum/latest/axum/), giving you Flask/FastAPI-like syntax with native Rust performance.
 
 ## Quick Start
 
@@ -79,10 +78,7 @@ async def get_posts(year: int, month: int) -> Json[list[Post]]:
 
 ### HTTP Methods
 
-Specify allowed methods with the `methods` parameter.
-Handlers can be registered for multiple HTTP methods by passing multiple entries.
-Import the method constants from the web prelude (e.g. `GET`, `POST`).
-Supported methods are `GET`, `POST`, `PUT`, `DELETE`, and `PATCH`.
+Specify allowed methods with the `methods` parameter. Handlers can be registered for multiple HTTP methods by passing multiple entries. Import the method constants from the web prelude (e.g. `GET`, `POST`). Supported methods are `GET`, `POST`, `PUT`, `DELETE`, and `PATCH`.
 
 ```incan
 from std.web import route, Json, Response, GET, POST, PUT, DELETE

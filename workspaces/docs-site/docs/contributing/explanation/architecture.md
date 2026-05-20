@@ -98,10 +98,10 @@ incan build file.incn
 Notes:
 
 - **Debugging individual stages**: Use CLI stage flags (`--lex`, `--parse`, `--check`, `--emit-rust`) to inspect
-  intermediate outputs (see [Getting Started](../../tooling/tutorials/getting_started.md)).
+intermediate outputs (see [Getting Started](../../tooling/tutorials/getting_started.md)).
 - **Multi-file projects**: Import resolution rules and module layout are described in [Imports & Modules](../../language/explanation/imports_and_modules.md).
 - **Rust interop dependencies**: `rust::` imports trigger Cargo dependency injection with a strict policy
-  (see [Rust Interop](../../language/how-to/rust_interop.md) and [RFC 013]).
+(see [Rust Interop](../../language/how-to/rust_interop.md) and [RFC 013]).
 - **Runtime boundary**: Generated programs depend on `incan_stdlib` and `incan_derive`, but the compiler does not (see `crates/`).
 
 ## Module Layout
@@ -181,30 +181,26 @@ When moving code, preserve these rules:
 
 ## Semantic Core
 
-Incan has a **semantic core** crate (`incan_core`) that holds pure, deterministic helpers shared by the compiler and
-runtime, without creating dependency cycles.
+Incan has a **semantic core** crate (`incan_core`) that holds pure, deterministic helpers shared by the compiler and runtime, without creating dependency cycles.
 
 - **Location**: `crates/incan_core`
 - **Purpose**: centralize semantic policy and pure helpers so compile-time behavior and runtime behavior cannot drift.
 - **Used by**: compiler (typechecker, const-eval, lowering/codegen decisions) and stdlib/runtime helpers.
 - **Constraints**: pure/deterministic (no IO, no global state) and no dependencies on compiler crates.
 - **Stdlib registry**: `incan_core::lang::stdlib::STDLIB_NAMESPACES` drives stdlib import validation, stub path resolution,
-  unknown-module hints, and import-activated language features (soft keywords like `async`/`await`).
+unknown-module hints, and import-activated language features (soft keywords like `async`/`await`).
 
 `incan_core` should own language-wide policy, not runtime implementations. Existing stdlib-facing surface type metadata is a compatibility boundary; new work should either justify why the metadata is truly language-core policy or push ownership toward library-defined declarations/semantics packs.
 
-See crate-level documentation in `crates/incan_core` for the contract, extension checklist,
-and drift-prevention expectations; tests in `tests/semantic_core_*` serve as the source of truth
-for covered domains.
+See crate-level documentation in `crates/incan_core` for the contract, extension checklist, and drift-prevention expectations; tests in `tests/semantic_core_*` serve as the source of truth for covered domains.
 
 ## Syntax Frontend
 
-Incan has a shared **syntax frontend** crate (`incan_syntax`) that centralizes lexer/parser/AST/diagnostics in a
-dependency-light crate suitable for reuse across compiler and tooling.
+Incan has a shared **syntax frontend** crate (`incan_syntax`) that centralizes lexer/parser/AST/diagnostics in a dependency-light crate suitable for reuse across compiler and tooling.
 
 - **Location**: `crates/incan_syntax`
 - **Purpose**: provide a single, shared syntax layer (lexing, parsing, AST, diagnostics) to prevent drift between
-  compiler, formatter, LSP, and future interactive tooling.
+compiler, formatter, LSP, and future interactive tooling.
 - **Used by**: compiler frontend and tooling (formatter/LSP); depends on `incan_core::lang` registries for vocabulary ids.
 - **Constraints**: syntax-only (no name resolution/type checking/IR); no dependencies on compiler crates.
 
@@ -235,10 +231,7 @@ dependency-light crate suitable for reuse across compiler and tooling.
 
 ## Surface Semantics Engine
 
-Surface syntax features (soft keywords, decorator semantics) are fully driven by a **semantics registry**. Every
-compiler stage — parser, typechecker, lowering, and scanning — consults the registry instead of hardcoding keyword
-identities. The design separates *feature knowledge* (which keyword does what) from *execution knowledge* (how the
-compiler performs each action):
+Surface syntax features (soft keywords, decorator semantics) are fully driven by a **semantics registry**. Every compiler stage — parser, typechecker, lowering, and scanning — consults the registry instead of hardcoding keyword identities. The design separates *feature knowledge* (which keyword does what) from *execution knowledge* (how the compiler performs each action):
 
 ```mermaid
 flowchart LR
@@ -256,8 +249,7 @@ flowchart LR
 
 ### Action descriptors
 
-Packs don't execute compiler logic directly (that would create circular dependencies). Instead, they return small
-**action descriptor** enums that tell the compiler *what to do*:
+Packs don't execute compiler logic directly (that would create circular dependencies). Instead, they return small **action descriptor** enums that tell the compiler *what to do*:
 
 | Enum                        | Variants (current)     | Used by     | Purpose                                         |
 | --------------------------- | ---------------------- | ----------- | ----------------------------------------------- |
@@ -267,9 +259,7 @@ Packs don't execute compiler logic directly (that would create circular dependen
 | `SurfaceExprTypeCheck`      | `AwaitCheck`           | Typechecker | Describes how to typecheck a surface expression |
 | `RuntimeRequirement`        | `None`, `AsyncRuntime` | Scanning    | Runtime implied by a modifier or import         |
 
-Multiple keywords can share the same action descriptor (e.g., a hypothetical `ensure` keyword could reuse
-`AssertCall`). Adding a keyword that fits an existing action pattern is a **pack-only change** — zero touches to the
-main compiler crate.
+Multiple keywords can share the same action descriptor (e.g., a hypothetical `ensure` keyword could reuse `AssertCall`). Adding a keyword that fits an existing action pattern is a **pack-only change** — zero touches to the main compiler crate.
 
 ### Core pieces
 
@@ -312,17 +302,15 @@ If the new keyword fits an existing action pattern, only steps 1–3 require cod
 
 1. Add activation metadata in `incan_core::lang` registry tables (`KeywordId` + `info_soft()`).
 2. Implement the relevant `SurfaceSemanticsPack` methods in `incan_semantics_stdlib` (or another pack crate):
-   parser routing, typecheck action, lowering action, runtime requirements, and call targets as needed.
+parser routing, typecheck action, lowering action, runtime requirements, and call targets as needed.
 3. Ensure parser emits generic surface payload with `SurfaceFeatureKey` handoff (usually automatic via existing
-   parser helpers).
+parser helpers).
 4. **Typechecker / Lowering / Scanning**: no changes needed — the registry returns the action descriptor and the
-   existing dispatch handles it.
+existing dispatch handles it.
 5. Handle the new surface node in the **formatter** (usually a one-liner).
 6. Add parser/typechecker/codegen tests and update snapshots.
 
-If the keyword needs a *new* compiler behavior pattern, add a variant to the relevant action descriptor enum in
-`incan_semantics_core` and a handler arm in the corresponding compiler module. This is deliberately rare — action
-descriptors represent compiler behavior patterns, not individual keywords.
+If the keyword needs a *new* compiler behavior pattern, add a variant to the relevant action descriptor enum in `incan_semantics_core` and a handler arm in the corresponding compiler module. This is deliberately rare — action descriptors represent compiler behavior patterns, not individual keywords.
 
 ### Backend (`src/backend/`)
 
@@ -369,10 +357,7 @@ The expression emitter is split into focused submodules for maintainability:
 | `format.rs`         | f-strings and range expressions                  |
 | `lvalue.rs`         | Assignment targets                               |
 
-**Enum-based dispatch**: Built-in functions and known methods use enum types (`BuiltinFn`, `MethodKind`)
-instead of string matching.
-This provides compile-time exhaustiveness checking and makes it easier to add new builtins/methods
-(see [Extending Incan](../how-to/extending_language.md)).
+**Enum-based dispatch**: Built-in functions and known methods use enum types (`BuiltinFn`, `MethodKind`) instead of string matching. This provides compile-time exhaustiveness checking and makes it easier to add new builtins/methods (see [Extending Incan](../how-to/extending_language.md)).
 
 ### CLI (`src/cli/`)
 
@@ -418,8 +403,7 @@ ast::Type          ──►  IrType               ──►  (syn Type)
 
 ## Extending the Language
 
-Incan’s compiler is intentionally staged (Lexer → Parser/AST → Typechecker → IR → Rust). This makes the system easier
-to reason about, but it also means “language changes” can touch multiple layers.
+Incan’s compiler is intentionally staged (Lexer → Parser/AST → Typechecker → IR → Rust). This makes the system easier to reason about, but it also means “language changes” can touch multiple layers.
 
 For contributor guidance on **when to add a builtin vs when to add new syntax**, plus end-to-end checklists, see:
 

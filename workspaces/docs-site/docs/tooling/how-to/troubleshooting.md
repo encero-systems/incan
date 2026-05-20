@@ -74,8 +74,7 @@ The first `make release` (or first `incan build`) will compile Rust dependencies
 
 ## Cargo needs internet access for dependencies
 
-Some builds may download Rust crates via Cargo on first run. Ensure your environment can reach crates.io (or your configured
-proxy/mirror).
+Some builds may download Rust crates via Cargo on first run. Ensure your environment can reach crates.io (or your configured proxy/mirror).
 
 For restricted or offline environments, run the supported preflight before the build:
 

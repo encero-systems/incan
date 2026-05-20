@@ -2,8 +2,7 @@
 
 This page is the reference for module `static` declarations and `pub static` imports.
 
-For motivation and mental model, see: [Module static storage](../explanation/static_storage.md).  
-For a practical walkthrough, see: [Module state (how-to)](../how-to/module_state.md).
+For motivation and mental model, see: [Module static storage](../explanation/static_storage.md). For a practical walkthrough, see: [Module state (how-to)](../how-to/module_state.md).
 
 ## Syntax
 

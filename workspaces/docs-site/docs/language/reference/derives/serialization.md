@@ -25,9 +25,7 @@ def encode[T with json.Serialize](value: T) -> str:
     return value.to_json()
 ```
 
-`@derive(json)` adopts `json.Serialize` and `json.Deserialize`, forwards the required Rust serde derives, and makes the
-adopted traits available to method lookup and generic bounds. Import from `std.serde.json` directly when you want only
-one side of the protocol.
+`@derive(json)` adopts `json.Serialize` and `json.Deserialize`, forwards the required Rust serde derives, and makes the adopted traits available to method lookup and generic bounds. Import from `std.serde.json` directly when you want only one side of the protocol.
 
 ---
 
@@ -85,8 +83,7 @@ def main() -> None:
 
 ## Schema-safe field names (models only)
 
-If your JSON schema uses keys that are not valid Incan identifiers (or are keywords like `type`), represent them using a
-`model` field alias and choose a schema-safe canonical field name (e.g. `type_`).
+If your JSON schema uses keys that are not valid Incan identifiers (or are keywords like `type`), represent them using a `model` field alias and choose a schema-safe canonical field name (e.g. `type_`).
 
 ```incan
 from std.serde import json
@@ -96,8 +93,7 @@ model Account:
     type_ as "type": str
 ```
 
-When `json` is derived, the alias is used as the JSON key (`"type"`). The canonical identifier
-(`type_`) remains the stable field name in code. See [Models: Using aliases in code](../../explanation/models_and_classes/models.md#using-aliases-in-code).
+When `json` is derived, the alias is used as the JSON key (`"type"`). The canonical identifier (`type_`) remains the stable field name in code. See [Models: Using aliases in code](../../explanation/models_and_classes/models.md#using-aliases-in-code).
 
 `class` does not support field metadata/aliases, so class JSON keys always match the canonical field names.
 
@@ -136,11 +132,9 @@ enum HttpStatus(int):
     NotFound = 404
 ```
 
-`Environment.Production` serializes as `"production"` and deserializes only from known raw values. `HttpStatus.NotFound`
-serializes as `404`.
+`Environment.Production` serializes as `"production"` and deserializes only from known raw values. `HttpStatus.NotFound` serializes as `404`.
 
-When a model references an enum in its fields, the compiler automatically propagates JSON serde derives
-to the enum:
+When a model references an enum in its fields, the compiler automatically propagates JSON serde derives to the enum:
 
 ```incan
 from std.serde import json

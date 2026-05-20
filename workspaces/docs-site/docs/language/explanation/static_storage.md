@@ -20,8 +20,7 @@ It is closer to:
 - initialized once in declaration order when the module is initialized
 - read and written through compiler-managed access rules
 
-Every read observes the current contents of that storage cell.
-If another function mutates the static, later reads see the updated value.
+Every read observes the current contents of that storage cell. If another function mutates the static, later reads see the updated value.
 
 ```incan
 static counter: int = 0
@@ -81,8 +80,7 @@ const API_VERSION: str = "v1"
 static request_count: int = 0
 ```
 
-`API_VERSION` is fixed baked data.
-`request_count` changes as the program runs.
+`API_VERSION` is fixed baked data. `request_count` changes as the program runs.
 
 See also: [Const bindings](consts.md)
 
@@ -125,8 +123,7 @@ For the exact syntax, initialization, and error rules, see: [Static storage (ref
 
 Incan prefers explicit state ownership.
 
-`static` exists for the cases where the owner really is the module itself.
-That makes module-level caches, counters, and registries possible without pretending they are compile-time constants.
+`static` exists for the cases where the owner really is the module itself. That makes module-level caches, counters, and registries possible without pretending they are compile-time constants.
 
 ## See also
 

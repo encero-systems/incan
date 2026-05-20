@@ -8,8 +8,7 @@ This chapter builds a mental model for how Incan turns `.incn` into an executabl
 --8<-- "_snippets/diagrams/compiler_pipeline.mmd"
 ```
 
-Keep this picture in your head while reading the code. Most contributing work is “add a feature” **and** ensure each stage
-continues to compose.
+Keep this picture in your head while reading the code. Most contributing work is “add a feature” **and** ensure each stage continues to compose.
 
 ## The big pieces
 

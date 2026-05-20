@@ -151,11 +151,7 @@ def authorize(req: Request) -> Result[Auth, Error]:
     return gateway.authorize(req)
 ```
 
-Telemetry APIs should therefore stay partial-friendly: prefer named parameters, expose semantic-convention helpers as
-plain functions that return `Attributes`, and allow configured decorator callables to be named and reused. Partials are
-not a separate telemetry abstraction; they are the language-level way to preset ordinary callable surfaces. Top-level
-partials still follow RFC 084's declaration-safe preset rules, so dynamic values and function references belong in local
-partials, wrapper functions, or decorator application arguments rather than top-level partial presets.
+Telemetry APIs should therefore stay partial-friendly: prefer named parameters, expose semantic-convention helpers as plain functions that return `Attributes`, and allow configured decorator callables to be named and reused. Partials are not a separate telemetry abstraction; they are the language-level way to preset ordinary callable surfaces. Top-level partials still follow RFC 084's declaration-safe preset rules, so dynamic values and function references belong in local partials, wrapper functions, or decorator application arguments rather than top-level partial presets.
 
 ### Block-level spans use vocabulary syntax
 

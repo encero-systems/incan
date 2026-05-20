@@ -39,6 +39,4 @@ When explicit adoption uses multiple `Index` instantiations, the key expression 
 
 - **Syntax**: `obj[start:end:step]`
 
-Incan’s long-term direction is slice-aware `__getitem__` (Python-style).
-The current stdlib vocabulary includes `Sliceable[T]` and `__getslice__`, which will be aligned with `__getitem__`
-as the feature is finalized.
+Incan’s long-term direction is slice-aware `__getitem__` (Python-style). The current stdlib vocabulary includes `Sliceable[T]` and `__getslice__`, which will be aligned with `__getitem__` as the feature is finalized.

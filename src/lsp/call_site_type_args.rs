@@ -369,12 +369,10 @@ fn call_site_type_in_assert_stmt(
     })
 }
 
-/// Search a control-flow condition for explicit call-site type arguments at the
-/// requested offset.
+/// Search a control-flow condition for explicit call-site type arguments at the requested offset.
 ///
-/// Let-pattern conditions only expose type arguments from the scrutinee
-/// expression; pattern nodes themselves do not currently carry call-site type
-/// argument syntax.
+/// Let-pattern conditions only expose type arguments from the scrutinee expression; pattern nodes themselves do not
+/// currently carry call-site type argument syntax.
 fn call_site_type_in_condition(condition: &Condition, offset: usize) -> Option<&Spanned<Type>> {
     match condition {
         Condition::Expr(expr) => call_site_type_in_expr(expr, offset),

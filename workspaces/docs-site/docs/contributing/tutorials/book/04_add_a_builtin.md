@@ -1,7 +1,6 @@
 # 4. Your first change: add a builtin
 
-This chapter is a guided walkthrough for adding a **builtin**: a function that looks like a normal call in Incan, but
-lowers/emits to a specific Rust pattern.
+This chapter is a guided walkthrough for adding a **builtin**: a function that looks like a normal call in Incan, but lowers/emits to a specific Rust pattern.
 
 If you haven’t read it yet, start with: [Extending the language](../../how-to/extending_language.md)
 
@@ -55,8 +54,7 @@ After implementing the builtin, validate it through the toolchain:
 - `make smoke-test` still passes (end-to-end sanity check)
 - the LSP still parses/diagnoses edited files (no syntax drift)
 
-Optionally, consider adding a tiny example showing the new builtin in use, to lock in the intended behavior. Note that examples
-are intended for user-visible behavior, not for internal implementation details.
+Optionally, consider adding a tiny example showing the new builtin in use, to lock in the intended behavior. Note that examples are intended for user-visible behavior, not for internal implementation details.
 
 ## Next
 

@@ -14,8 +14,7 @@ New here? Start with: [Start here].
 
 ## Comparisons
 
-If you are evaluating whether Incan belongs in a project, start with the direct comparisons. They explain where Incan is
-trying to win, where it loses today, and when Python, Rust, or Python compatibility tools are the better choice.
+If you are evaluating whether Incan belongs in a project, start with the direct comparisons. They explain where Incan is trying to win, where it loses today, and when Python, Rust, or Python compatibility tools are the better choice.
 
 [Incan vs Python]:comparisons/python.md
 [Incan vs Rust]:comparisons/rust.md

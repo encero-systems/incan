@@ -1,7 +1,6 @@
 # std.derives.* (reference)
 
-This page documents the derive-related trait families available under `std.derives.*`.
-Import these traits when you want to adopt them explicitly or refer to them in annotations and bounds.
+This page documents the derive-related trait families available under `std.derives.*`. Import these traits when you want to adopt them explicitly or refer to them in annotations and bounds.
 
 !!! info "Related pages"
     - If you want the language-facing explanation of derives, trait authoring, and conflict rules, see:
@@ -75,5 +74,4 @@ Provides collection-protocol traits for custom types, including:
 - `Iterable[T]`
 - `Iterator[T]`
 
-Use these when you want a custom type to participate in collection-style APIs through explicit trait adoption.
-`Bool` is available, but prefer explicit checks for `Option`, `Result`, emptiness, and named boolean state when that is the behavior you mean.
+Use these when you want a custom type to participate in collection-style APIs through explicit trait adoption. `Bool` is available, but prefer explicit checks for `Option`, `Result`, emptiness, and named boolean state when that is the behavior you mean.

@@ -16,8 +16,7 @@ The compiler recognizes these await realization paths:
 - `JoinHandle[T]`, which awaits to `Result[T, TaskJoinError]`
 - model or class wrappers that explicitly adopt `Awaitable[T]` and contain a compatible awaitable field
 
-Wrapper adoption is checked. A type cannot claim `Awaitable[T]` unless the compiler can lower `await wrapper` to one
-known awaitable member:
+Wrapper adoption is checked. A type cannot claim `Awaitable[T]` unless the compiler can lower `await wrapper` to one known awaitable member:
 
 ```incan
 import std.async
@@ -30,5 +29,4 @@ async def wait_for(box: TaskBox[int]) -> Result[int, TaskJoinError]:
     return await box
 ```
 
-This is intentionally not a pure nominal marker. The adoption must preserve actual await behavior so generic bounds and
-ordinary `await` expressions agree.
+This is intentionally not a pure nominal marker. The adoption must preserve actual await behavior so generic bounds and ordinary `await` expressions agree.

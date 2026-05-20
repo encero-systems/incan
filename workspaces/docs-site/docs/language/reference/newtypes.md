@@ -58,11 +58,9 @@ type Attempts = newtype int:
         return Ok(Attempts(n))
 ```
 
-The hook must be a static method with exactly one ordinary parameter whose type is the newtype's underlying type. Its
-return type must be `Result[T, ValidationError]` or `Result[Self, ValidationError]`.
+The hook must be a static method with exactly one ordinary parameter whose type is the newtype's underlying type. Its return type must be `Result[T, ValidationError]` or `Result[Self, ValidationError]`.
 
-`ValidationError("message")` creates the canonical validation error. Use `ValidationError(message="...", code="...")`
-when a stable error code is useful.
+`ValidationError("message")` creates the canonical validation error. Use `ValidationError(message="...", code="...")` when a stable error code is useful.
 
 ## Implicit Sites
 
@@ -74,8 +72,7 @@ The compiler inserts validated coercion only where the destination type is alrea
 - Model and class constructor fields.
 - Explicit `T(value)` construction.
 
-Implicit coercion does not parse unrelated primitive types. A `str` does not become an `int` on the way into an
-`int`-backed newtype.
+Implicit coercion does not parse unrelated primitive types. A `str` does not become an `int` on the way into an `int`-backed newtype.
 
 Reassignment is not an implicit coercion site:
 
@@ -96,8 +93,7 @@ type PositiveInt = newtype int[gt=0]
 type Percentage = newtype int[ge=0, le=100]
 ```
 
-Supported constraint keys are `gt`, `ge`, `lt`, and `le`. Generated constraint checks use the same validated
-construction sites as `from_underlying`.
+Supported constraint keys are `gt`, `ge`, `lt`, and `le`. Generated constraint checks use the same validated construction sites as `from_underlying`.
 
 ## Aggregate Validation
 
@@ -114,8 +110,7 @@ def main() -> None:
     bounds = Bounds(low=1, high=2)
 ```
 
-If more than one validated field fails, the raised validation error includes the constructor target and each failed
-field.
+If more than one validated field fails, the raised validation error includes the constructor target and each failed field.
 
 ## Opting Out
 

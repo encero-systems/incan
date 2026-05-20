@@ -167,8 +167,7 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 
 This RFC now defines project-aware `incan run` behavior for the default `main` script. Bare `incan run` may resolve `[project.scripts].main` when no file path is provided.
 
-Note: `[project.scripts]` maps script names to `.incn` entrypoint paths. This is distinct from
-`[tool.incan.envs.<name>.scripts]` (defined below), which maps script names to shell command argv lists for env execution.
+Note: `[project.scripts]` maps script names to `.incn` entrypoint paths. This is distinct from `[tool.incan.envs.<name>.scripts]` (defined below), which maps script names to shell command argv lists for env execution.
 
 ---
 
@@ -322,8 +321,7 @@ Flags:
 
 ### `incan env`
 
-`incan env` provides a small “task/env runner” layer for repeatable commands, without changing the semantics of core
-commands like `incan test`.
+`incan env` provides a small “task/env runner” layer for repeatable commands, without changing the semantics of core commands like `incan test`.
 
 Core command stability (normative):
 
@@ -379,7 +377,7 @@ invoking `incan test` inside an env script must run the test runner directly and
 way that would re-resolve the same env). If recursion is detected, the command must fail with a clear diagnostic.
 - `--` separates `incan env run` arguments from additional user arguments passed through to the underlying command.
 - There are no implicit lifecycle hooks (e.g. no automatic `pre*`/`post*` script execution). Only the explicitly-invoked
-  `<script>` is run.
+`<script>` is run.
 - `--dry-run` must print the resolved command (`cwd`, `env-vars`, argv) and exit successfully without executing it.
 
 Example (`--dry-run` output):
@@ -419,7 +417,7 @@ incan env run unit test -- -k "addition"
 Environment inheritance (normative; Hatch-like):
 
 - There is a special env named `default`. If it exists, it is included automatically for every other env **unless**
-  `detached = true` is set for that env.
+`detached = true` is set for that env.
 - An env may additionally declare `extends = ["env_a", "env_b", ...]`. These envs are included (in order) before the env
 itself.
 - Duplicate inclusion is an error: if an env would appear more than once in the resolved overlay chain, `incan env show/run`
@@ -447,8 +445,7 @@ the env scope.
 
 These exist today in Makefiles across many repos, and this RFC leans toward **CLI-native** equivalents so projects do not need Make as a dependency.
 
-However, they are intentionally deferred: these commands should be specified in follow-up RFCs once the core semantics of
-`incan test` (RFC 019) and policy propagation (RFC 020) are settled.
+However, they are intentionally deferred: these commands should be specified in follow-up RFCs once the core semantics of `incan test` (RFC 019) and policy propagation (RFC 020) are settled.
 
 - `incan fmt` / `incan fmt --check`
 - `incan lint` (clippy-like checks for compiler + emitted code)

@@ -1,12 +1,8 @@
 # `std.regex`
 
-`std.regex` provides compiled regular expressions, match spans, capture results, splitting, and replacement for ordinary
-Incan text-processing code.
+`std.regex` provides compiled regular expressions, match spans, capture results, splitting, and replacement for ordinary Incan text-processing code.
 
-The stdlib regex engine is intentionally the safe default: it follows the predictable Rust-regex/RE2-style model rather
-than a fully backtracking Python/PCRE-style model. Use it for validation, extraction, cleanup, log processing, and other
-large-text workflows where regex should not introduce catastrophic backtracking risk. Lookaround, backreferences inside
-patterns, and other features that require backtracking semantics are not part of `std.regex`.
+The stdlib regex engine is intentionally the safe default: it follows the predictable Rust-regex/RE2-style model rather than a fully backtracking Python/PCRE-style model. Use it for validation, extraction, cleanup, log processing, and other large-text workflows where regex should not introduce catastrophic backtracking risk. Lookaround, backreferences inside patterns, and other features that require backtracking semantics are not part of `std.regex`.
 
 ## Imports
 
@@ -16,8 +12,7 @@ from std.regex import Captures, Match, Regex, RegexError
 
 ## Engine Boundary
 
-The core pattern surface supports literals, character classes, quantifiers, alternation, grouping, anchors, indexed
-captures, named captures, inline flags, and Unicode-aware matching by default.
+The core pattern surface supports literals, character classes, quantifiers, alternation, grouping, anchors, indexed captures, named captures, inline flags, and Unicode-aware matching by default.
 
 The safe-default boundary is part of the Incan contract, not an accidental backend detail:
 
@@ -27,8 +22,7 @@ The safe-default boundary is part of the Incan contract, not an accidental backe
 - Not supported: backreferences inside the pattern such as `\1` as a matching constraint.
 - Not promised: engine-specific features beyond the documented safe surface.
 
-Use literal string helpers such as `split`, `replace`, and `contains` for fixed text. Use `std.regex` when the pattern
-itself is the program contract.
+Use literal string helpers such as `split`, `replace`, and `contains` for fixed text. Use `std.regex` when the pattern itself is the program contract.
 
 ## Types
 
@@ -92,13 +86,11 @@ Methods:
 | `match.end()` | `int` | End offset. |
 | `match.span()` | `tuple[int, int]` | Start and end offsets. |
 
-Offsets are byte positions in the input text, matching the safe engine's span model. Use them with APIs that document the
-same offset model; do not assume they can be reused unchanged against a separate encoded representation.
+Offsets are byte positions in the input text, matching the safe engine's span model. Use them with APIs that document the same offset model; do not assume they can be reused unchanged against a separate encoded representation.
 
 ### `Captures`
 
-`Captures` represents one successful match plus its capture groups. Group `0` is always the full match. Numbered groups
-start at `1`, and named groups are looked up by name.
+`Captures` represents one successful match plus its capture groups. Group `0` is always the full match. Numbered groups start at `1`, and named groups are looked up by name.
 
 | Method | Returns | Description |
 | --- | --- | --- |
@@ -108,8 +100,7 @@ start at `1`, and named groups are looked up by name.
 | `captures.groups()` | `list[Option[str]]` | Indexed capture values, excluding group `0`. |
 | `captures.groupdict()` | `dict[str, Option[str]]` | Named capture values by group name. |
 
-Unmatched optional groups are explicit `None` values. They are not coerced to empty strings in `group(...)`,
-`groups()`, `groupdict()`, or replacement callbacks.
+Unmatched optional groups are explicit `None` values. They are not coerced to empty strings in `group(...)`, `groups()`, `groupdict()`, or replacement callbacks.
 
 ```incan
 from std.regex import Regex, RegexError
@@ -132,8 +123,7 @@ def main() -> Result[None, RegexError]:
 
 ## Searching And Scanning
 
-Use `is_match(...)` when only the boolean matters, `find(...)` / `find_iter(...)` when spans matter, and
-`captures(...)` / `captures_iter(...)` when capture groups matter.
+Use `is_match(...)` when only the boolean matters, `find(...)` / `find_iter(...)` when spans matter, and `captures(...)` / `captures_iter(...)` when capture groups matter.
 
 ```incan
 from std.regex import Regex, RegexError
@@ -193,8 +183,7 @@ def main() -> Result[None, RegexError]:
     return Ok(None)
 ```
 
-Use a callable replacement when the replacement depends on code instead of interpolation text. The callable receives
-`Captures` for the current match and returns the replacement string.
+Use a callable replacement when the replacement depends on code instead of interpolation text. The callable receives `Captures` for the current match and returns the replacement string.
 
 ```incan
 from std.regex import Captures, Regex, RegexError
@@ -214,8 +203,7 @@ def main() -> Result[None, RegexError]:
     return Ok(None)
 ```
 
-Use the `replace_literal(...)`, `replace_all_literal(...)`, and `replacen_literal(...)` methods when a replacement string
-must be inserted exactly as written instead of interpreting `$1` or `${name}` as capture references.
+Use the `replace_literal(...)`, `replace_all_literal(...)`, and `replacen_literal(...)` methods when a replacement string must be inserted exactly as written instead of interpreting `$1` or `${name}` as capture references.
 
 ## Errors
 
@@ -226,8 +214,7 @@ must be inserted exactly as written instead of interpreting `$1` or `${name}` as
 | `error.kind()` | `str` | Stable category such as `"compile_error"`. |
 | `error.message()` | `str` | Human-readable engine diagnostic. |
 
-Rejected pattern syntax returns a `RegexError`. Error text is diagnostic text; program logic should branch on
-`kind()` values when it needs a stable category.
+Rejected pattern syntax returns a `RegexError`. Error text is diagnostic text; program logic should branch on `kind()` values when it needs a stable category.
 
 ## See Also
 

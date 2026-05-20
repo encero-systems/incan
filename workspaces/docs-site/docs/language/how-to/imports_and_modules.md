@@ -72,8 +72,7 @@ Run:
 incan run examples/advanced/nested_project/src/main.incn
 ```
 
-If you prefer browsing first, see the examples directory on GitHub:
-`https://github.com/dannys-code-corner/incan/tree/main/examples`.
+If you prefer browsing first, see the examples directory on GitHub: `https://github.com/dannys-code-corner/incan/tree/main/examples`.
 
 ## Share module-owned state across files
 

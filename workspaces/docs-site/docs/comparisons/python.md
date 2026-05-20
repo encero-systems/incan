@@ -1,7 +1,6 @@
 # Incan vs Python
 
-Python is the default choice when ecosystem reach, hiring familiarity, notebooks, and package availability matter most.
-Incan should not be chosen just because a program could be written in a Python-like syntax.
+Python is the default choice when ecosystem reach, hiring familiarity, notebooks, and package availability matter most. Incan should not be chosen just because a program could be written in a Python-like syntax.
 
 Choose Incan when you want Python-shaped application code but do not want Python's runtime and deployment tradeoffs.
 
@@ -23,11 +22,9 @@ Choose Incan when you want Python-shaped application code but do not want Python
 
 ## The honest tradeoff
 
-Python has the ecosystem. Incan has to earn every library, tool, and example. That means Incan is a bad fit if the first
-question is, "Can I use all my Python packages?"
+Python has the ecosystem. Incan has to earn every library, tool, and example. That means Incan is a bad fit if the first question is, "Can I use all my Python packages?"
 
-The better question is, "Would this new tool or service be safer and easier to ship if it were typed, native, and still
-readable to a Python-minded developer?"
+The better question is, "Would this new tool or service be safer and easier to ship if it were typed, native, and still readable to a Python-minded developer?"
 
 ## Decision guide
 
@@ -41,8 +38,7 @@ readable to a Python-minded developer?"
 ## Source notes
 
 - Stack Overflow's 2025 Developer Survey says Python adoption "accelerated significantly" and ties it to AI, data
-  science, and backend work: [Technology | 2025 Stack Overflow Developer Survey](https://survey.stackoverflow.co/2025/technology/).
+science, and backend work: [Technology | 2025 Stack Overflow Developer Survey](https://survey.stackoverflow.co/2025/technology/).
 - Meta's typed Python survey reports that 88% of respondents often or always use types in Python code, while also
-  naming usability, latency, and library typing gaps as pain points:
-  [Typed Python in 2024](https://engineering.fb.com/2024/12/09/developer-tools/typed-python-2024-survey-meta/).
+naming usability, latency, and library typing gaps as pain points: [Typed Python in 2024](https://engineering.fb.com/2024/12/09/developer-tools/typed-python-2024-survey-meta/).
 

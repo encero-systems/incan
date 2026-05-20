@@ -166,10 +166,9 @@ type Pool = newtype rust::sqlx::PgPool
 **Parameters**:
 
 - **`trait`** - The Rust trait to delegate (must be an imported symbol, not a string). The compiler generates
-  `impl sqlx::Executor for Pool` that forwards the specified methods to the wrapped `PgPool`.
+`impl sqlx::Executor for Pool` that forwards the specified methods to the wrapped `PgPool`.
 - **`methods`** - List of method names to delegate. If omitted, delegates **all** trait methods
-  (see [Design Decisions: Default Delegation Strategy](#2-default-delegation-strategy)).
-  Use explicit lists when you only need a subset of the trait's methods.
+(see [Design Decisions: Default Delegation Strategy](#2-default-delegation-strategy)). Use explicit lists when you only need a subset of the trait's methods.
 
 #### Multiple Traits
 
@@ -210,7 +209,7 @@ type DbConnection = newtype PgConnection
 **Parameter**:
 
 - **`methods` (dict form)** - Maps Incan method names (keys) to Rust method names (values).
-  The compiler generates methods with the Incan names that delegate to the Rust names.
+The compiler generates methods with the Incan names that delegate to the Rust names.
 
 **When to use**: The Rust trait uses naming conventions that conflict with Incan style or when avoiding reserved keywords.
 
@@ -332,8 +331,7 @@ type MyIter = newtype CustomIter
 
 **Why symbols instead of strings:**
 
-Like `trait=` parameters, type values are **symbolic references** (they must exist in the namespace).
-Built-in types like `int`, `str`, `bool` work without imports. The LSP autocompletes available types as you type.
+Like `trait=` parameters, type values are **symbolic references** (they must exist in the namespace). Built-in types like `int`, `str`, `bool` work without imports. The LSP autocompletes available types as you type.
 
 For example:
 
@@ -452,8 +450,7 @@ pub type Response = newtype AxumRawResponse:
     """HTTP response wrapper (see std.web.response in the stdlib)."""
 ```
 
-**Pros:** Integrates with Rust's derive model for the curated trait set; minimal syntax at use sites.  
-**Cons:** Each new trait requires stdlib metadata and a proc macro (or shared generator); user crates cannot add arbitrary traits through this path alone.
+**Pros:** Integrates with Rust's derive model for the curated trait set; minimal syntax at use sites. **Cons:** Each new trait requires stdlib metadata and a proc macro (or shared generator); user crates cannot add arbitrary traits through this path alone.
 
 ### User-defined (this RFC)
 
@@ -466,8 +463,7 @@ pub type Response = newtype AxumRawResponse:
 type Pool = newtype PgPool
 ```
 
-**Pros:** User-extensible, explicit, grep-able; same surface for stdlib migration targets.  
-**Cons:** More surface area and compiler responsibility than a fixed derive allowlist.
+**Pros:** User-extensible, explicit, grep-able; same surface for stdlib migration targets. **Cons:** More surface area and compiler responsibility than a fixed derive allowlist.
 
 ## LSP Support
 
@@ -789,8 +785,7 @@ type Pool = newtype PgPool
 
 **Auto traits (`Send`, `Sync`, `Unpin`, `UnwindSafe`, `RefUnwindSafe`) are not supported by `@rust.delegate`.**
 
-These traits are automatically inferred by Rust's compiler based on type composition and cannot be implemented manually.
-The newtype automatically inherits these traits if the wrapped type has them—no delegation needed.
+These traits are automatically inferred by Rust's compiler based on type composition and cannot be implemented manually. The newtype automatically inherits these traits if the wrapped type has them—no delegation needed.
 
 **What happens automatically:**
 
@@ -904,8 +899,7 @@ This ensures Incan works in all environments while preferring rich metadata when
 
 **Introspection capabilities comparison:**
 
-We considered using `syn` for this parsing model, but unfortunately it lacks the features to make that a viable option.
-This table shows `syn` compared to the `rust-analyzer` approach:
+We considered using `syn` for this parsing model, but unfortunately it lacks the features to make that a viable option. This table shows `syn` compared to the `rust-analyzer` approach:
 
 | Edge Case                  | rust-analyzer | syn-only   |
 | -------------------------- | ------------- | ---------- |

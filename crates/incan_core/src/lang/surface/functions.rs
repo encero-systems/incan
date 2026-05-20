@@ -32,7 +32,7 @@ pub type SurfaceFnInfo = LangItemInfo<SurfaceFnId>;
 pub const SURFACE_FUNCTIONS: &[SurfaceFnInfo] = &[
     info(
         SurfaceFnId::SleepMs,
-        // TODO: consider mergeing sleep and sleep_ms or at least moving them together...
+        // TODO: consider merging sleep and sleep_ms or at least moving them together...
         "sleep_ms",
         &[],
         "Sleep for N milliseconds.",

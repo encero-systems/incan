@@ -22,5 +22,4 @@ This page lists which LSP methods are currently implemented.
 
 `textDocument/rename` remains planned. The current server does not advertise rename support, so partial rename behavior is not exposed through LSP yet.
 
-To learn more about LSP, see the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/)
-specification. See also: [LSP architecture](../explanation/lsp_architecture.md).
+To learn more about LSP, see the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) specification. See also: [LSP architecture](../explanation/lsp_architecture.md).

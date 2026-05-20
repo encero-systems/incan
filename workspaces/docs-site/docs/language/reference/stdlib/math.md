@@ -1,7 +1,6 @@
 # std.math reference
 
-This page documents the numeric helpers available under `std.math`.
-Use this module for standard mathematical constants and functions.
+This page documents the numeric helpers available under `std.math`. Use this module for standard mathematical constants and functions.
 
 Import with:
 

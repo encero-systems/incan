@@ -78,6 +78,4 @@ Compound assignment first resolves an explicit in-place operator hook when prese
 
 Comparison fallback behavior is deliberately explicit: fallback must be defined by traits or user dunders. The compiler does not synthesize hidden comparison hooks merely because a related hook exists.
 
-The comparison traits are declared with the derive-facing comparison family, not in `std.traits.ops`.
-Use `std.derives.comparison.Eq` for `==` / `!=` and `std.derives.comparison.Ord` for `<`, `<=`, `>`, and `>=`.
-Their default methods define the fallback behavior directly.
+The comparison traits are declared with the derive-facing comparison family, not in `std.traits.ops`. Use `std.derives.comparison.Eq` for `==` / `!=` and `std.derives.comparison.Ord` for `<`, `<=`, `>`, and `>=`. Their default methods define the fallback behavior directly.

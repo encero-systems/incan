@@ -4,7 +4,7 @@ This page documents the canonical way to build/install/run Incan from this repos
 
 ## Prerequisites
 
-- Rust (1.85+): install via [rustup](https://rustup.rs/)
+- Rust (1.92+): install via [rustup](https://rustup.rs/)
 - `git`: to clone the repository
 - `make`: for the canonical make-first workflow
 

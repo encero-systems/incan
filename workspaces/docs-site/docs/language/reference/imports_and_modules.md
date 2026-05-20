@@ -162,8 +162,7 @@ Many types have a canonical (generated-reference) name and a lowercase alias use
 
 When passing a direct `list[T]` to an external Rust function or method that expects `Vec<U>`, Incan emits element-level `.into()` conversions and leaves Rust to validate the required `From<T>` implementation.
 
-The generated language reference shows the canonical name and aliases in one place:
-[Language reference (generated)](language.md).
+The generated language reference shows the canonical name and aliases in one place: [Language reference (generated)](language.md).
 
 ### Built-in functions (always available)
 
@@ -193,16 +192,14 @@ set()               # Empty Set
 set(iterable)       # Convert to Set
 ```
 
-Every core builtin function is also reachable through `std.builtins.<name>`. This is an explicit escape path for code
-that needs the core builtin when an inner scope or an imported DSL gives the unqualified name a different meaning:
+Every core builtin function is also reachable through `std.builtins.<name>`. This is an explicit escape path for code that needs the core builtin when an inner scope or an imported DSL gives the unqualified name a different meaning:
 
 ```incan
 def total(values: list[int]) -> int:
   return std.builtins.sum(values)
 ```
 
-`std.builtins` is typechecker-only. It has no source stub or emitted runtime module, and builtin types such as `int`,
-`List[T]`, and `Result[T, E]` remain root prelude types.
+`std.builtins` is typechecker-only. It has no source stub or emitted runtime module, and builtin types such as `int`, `List[T]`, and `Result[T, E]` remain root prelude types.
 
 ## Special import: `import this`
 
@@ -218,9 +215,7 @@ incan run -c "import this"
 
 <!-- TODO: move this to its own section -->
 
-Incan's standard library lives under the `std` namespace. Import modules and items from it just like any other module.
-The compiler activates features (e.g. async runtime, web framework) automatically based on which `std.*` modules you
-import — no manual feature flags needed.
+Incan's standard library lives under the `std` namespace. Import modules and items from it just like any other module. The compiler activates features (e.g. async runtime, web framework) automatically based on which `std.*` modules you import — no manual feature flags needed.
 
 ### Available modules
 
@@ -243,7 +238,7 @@ Some language keywords are **import-activated** (soft keywords). They behave lik
 Currently:
 
 - `async` and `await` are activated by importing `std.async` (for example `import std.async` or
-  `from std.async.time import sleep`).
+`from std.async.time import sleep`).
 
 If you forget the import, you’ll get a targeted diagnostic telling you what to add.
 
@@ -380,8 +375,7 @@ import rust::std::time
     Bare `import std::fs` refers to **Incan’s** standard library, not Rust’s.
     Always use the `rust::std::` prefix when you need Rust’s stdlib.
 
-Note: using these requires understanding the underlying Rust types. Prefer Incan built-ins (`read_file`, `write_file`,
-etc.) where available.
+Note: using these requires understanding the underlying Rust types. Prefer Incan built-ins (`read_file`, `write_file`, etc.) where available.
 
 ## Rust crates vs Incan modules (important)
 

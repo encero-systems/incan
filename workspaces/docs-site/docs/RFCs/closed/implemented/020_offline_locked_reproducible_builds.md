@@ -26,8 +26,7 @@ This RFC intentionally avoids overlap with:
 - **RFC 013** (dependency specification + `incan.lock`): this RFC does *not* define `incan.lock` or `incan lock/update`.
 - **RFC 015** (project metadata + lifecycle): this RFC does *not* define `incan.toml` schema or project layout/init/new.
 - **RFC 019** (test runner + CLI): this RFC does *not* define
-test discovery/selection/reporting flags; it only adds Cargo policy flags that constrain the underlying Cargo subprocess invocations used by
-  `incan test`.
+test discovery/selection/reporting flags; it only adds Cargo policy flags that constrain the underlying Cargo subprocess invocations used by `incan test`.
 
 ## Motivation
 
@@ -248,8 +247,7 @@ Future compatibility note (RFC 013):
 
 - RFC 013 introduces a project-root `incan.lock` as the source-of-truth lockfile, embedding a Cargo lock payload.
 - If and when RFC 013 is implemented, `Cargo.lock` files inside generated
-project directories become **derived artifacts** materialized from
-  `incan.lock` and may be overwritten deterministically.
+project directories become **derived artifacts** materialized from `incan.lock` and may be overwritten deterministically.
 - In that world, the “preserved `Cargo.lock`” rule is superseded by RFC 013’s lock materialization contract.
 
 #### Lockfile requirements for policy modes

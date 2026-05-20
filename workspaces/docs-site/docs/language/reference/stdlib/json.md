@@ -4,8 +4,7 @@
 
 Use typed models with `std.serde.json` when the schema is stable. Use `JsonValue` when part or all of the payload is exploratory, mixed-shape, or intentionally open.
 
-Common imports: `from std.json import JsonValue, JsonError`.
-For task-based examples, see [Work with dynamic JSON](../../how-to/dynamic_json.md).
+Common imports: `from std.json import JsonValue, JsonError`. For task-based examples, see [Work with dynamic JSON](../../how-to/dynamic_json.md).
 
 ## Types
 

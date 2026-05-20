@@ -226,8 +226,7 @@ def test_known_issue() -> None:
     assert_eq(buggy_function(), "fixed")
 ```
 
-If test fails: `XFAIL` (expected)
-If test passes: `XPASS` (unexpected - reported as failure)
+If test fails: `XFAIL` (expected) If test passes: `XPASS` (unexpected - reported as failure)
 
 ### @slow - Mark slow tests
 
@@ -311,8 +310,7 @@ incan test --jobs 4 tests/
 
 When a generated Rust test harness is new or stale, `incan test` preheats it with `cargo test --no-run` before executing the tests. This keeps subsequent runs on the already-built path instead of surprising the next hot test command with a full Cargo compile. If two Incan processes reach the same stale harness at once, one process performs the preheat and the other waits for the fingerprint to be written.
 
-`-m` matches marker names from decorators such as `@slow` and `@mark("smoke")`, plus default marks from `TEST_MARKS`.
-Use `TEST_MARKERS` with `--strict-markers` to make unknown marker names a collection error.
+`-m` matches marker names from decorators such as `@slow` and `@mark("smoke")`, plus default marks from `TEST_MARKS`. Use `TEST_MARKERS` with `--strict-markers` to make unknown marker names a collection error.
 
 `--timeout` and `@timeout` apply to generated test batches. They do not configure individual fixtures. The runner awaits async fixture teardown after ordinary assertion failures and panics while the worker remains alive. If timeout enforcement or external interruption terminates the worker process, remaining fixture teardown is best-effort and may not run.
 

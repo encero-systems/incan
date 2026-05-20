@@ -1,7 +1,6 @@
 # Async Programming in Incan
 
-Incan provides full async/await support powered by the Tokio runtime.
-This guide covers all async features available in Incan.
+Incan provides full async/await support powered by the Tokio runtime. This guide covers all async features available in Incan.
 
 !!! important "Async is import-activated"
     `async` and `await` are **soft keywords**: they become reserved keywords only after importing `std.async`
@@ -82,8 +81,7 @@ async def wait_for[T, F with Awaitable[T]](task: F) -> T:
     return await task
 ```
 
-The compiler recognizes direct async calls, Rust-backed futures, `JoinHandle[T]`, and checked wrapper types. Awaiting a
-`JoinHandle[T]` produces `Result[T, TaskJoinError]`, not `T`, because the spawned task can fail to join.
+The compiler recognizes direct async calls, Rust-backed futures, `JoinHandle[T]`, and checked wrapper types. Awaiting a `JoinHandle[T]` produces `Result[T, TaskJoinError]`, not `T`, because the spawned task can fail to join.
 
 Wrapper types can adopt `Awaitable[T]` only when they contain a compatible awaitable field:
 
@@ -170,8 +168,7 @@ async def main() -> None:
     println(result)
 ```
 
-`arm(awaitable, on_win)` packages one branch and its callback. `race(*arms)` polls all arms concurrently, returns the
-winning callback result, and drops losing arms. If multiple arms are ready in the same poll, source order breaks the tie.
+`arm(awaitable, on_win)` packages one branch and its callback. `race(*arms)` polls all arms concurrently, returns the winning callback result, and drops losing arms. If multiple arms are ready in the same poll, source order breaks the tie.
 
 ## Task Spawning
 
@@ -235,8 +232,7 @@ async def cooperative_loop() -> None:
 
 ## Channels
 
-Channels enable safe message passing between concurrent tasks.
-They're the primary way to communicate between async tasks without shared mutable state.
+Channels enable safe message passing between concurrent tasks. They're the primary way to communicate between async tasks without shared mutable state.
 
 ### MPSC Channel (Multi-Producer, Single-Consumer)
 
@@ -367,9 +363,7 @@ match await rx.recv():
 
 ### One-Shot Channel
 
-A **oneshot channel** sends exactly one value.
-After sending, the sender is consumed and can't be used again.
-This is perfect for "request-response" patterns where you spawn a task and wait for its result.
+A **oneshot channel** sends exactly one value. After sending, the sender is consumed and can't be used again. This is perfect for "request-response" patterns where you spawn a task and wait for its result.
 
 **When to use oneshot vs regular channel:**
 
@@ -435,8 +429,7 @@ async def compute_in_background(input: Data) -> Result[Output, ComputeError]:
 
 ## Synchronization Primitives
 
-Incan provides low-level synchronization primitives inspired by Rust's tokio runtime.
-These give you fine-grained control over shared state and task coordination.
+Incan provides low-level synchronization primitives inspired by Rust's tokio runtime. These give you fine-grained control over shared state and task coordination.
 
 !!! note "Coming from Python?"
     Python's `asyncio` has some equivalents, but Incan's primitives work differently.
@@ -448,8 +441,7 @@ These give you fine-grained control over shared state and task coordination.
 | `Semaphore` | `asyncio.Semaphore`       | Similar behavior                                     |
 | `Barrier`   | `asyncio.Barrier` (3.11+) | Similar behavior                                     |
 
-The key difference: Incan's `Mutex[T]` and `RwLock[T]` **wrap a value** (like Rust),
-while Python's Lock is just a lock you use alongside your data.
+The key difference: Incan's `Mutex[T]` and `RwLock[T]` **wrap a value** (like Rust), while Python's Lock is just a lock you use alongside your data.
 
 ### Mutex
 
@@ -505,8 +497,7 @@ async def increment() -> None:
 
 ### RwLock
 
-Reader-writer lock — allows **multiple readers** OR a **single writer**, but not both simultaneously.
-More efficient than Mutex when reads are frequent.
+Reader-writer lock — allows **multiple readers** OR a **single writer**, but not both simultaneously. More efficient than Mutex when reads are frequent.
 
 **When to use:** Many tasks read, few tasks write (e.g., configuration, caches).
 
@@ -601,8 +592,7 @@ async def worker(id: int) -> None:
 
 ### Complete Example
 
-See [examples/advanced/async_sync.incn](https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_sync.incn)
-for a runnable demo of all four primitives.
+See [examples/advanced/async_sync.incn](https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_sync.incn) for a runnable demo of all four primitives.
 
 ## Race and Timeout Helpers
 
@@ -642,11 +632,11 @@ def main() -> None:
 
 ### Generated Dependencies
 
-The compiler automatically adds tokio to your Cargo.toml:
+Generated projects enable Tokio through the `incan_stdlib` async feature rather than adding a direct Tokio dependency for ordinary async stdlib use:
 
 ```toml
 [dependencies]
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+incan_stdlib = { path = "...", features = ["async"] }
 ```
 
 ## Best Practices
@@ -745,8 +735,7 @@ async def sender(tx: Sender[Message]) -> None:
             save_for_later(e.value)
 ```
 
-This pattern is important for reliability.
-If a channel closes unexpectedly, you can recover and handle the data that failed to send.
+This pattern is important for reliability. If a channel closes unexpectedly, you can recover and handle the data that failed to send.
 
 ## See Also
 

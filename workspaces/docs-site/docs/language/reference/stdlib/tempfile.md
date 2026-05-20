@@ -77,9 +77,7 @@ def collect_payload(chunks: list[bytes]) -> Result[Path, IoError]:
     return spool.persist()
 ```
 
-Before rollover, data lives in `std.io.BytesIO` and `path()` returns `Err(IoError)` because there is no filesystem path.
-After rollover, the stream uses a `std.fs.File` handle and the `NamedTemporaryFile` cleanup contract. Dropping an
-unpersisted rolled spool deletes the temporary file; `persist()` keeps it and returns the ordinary `Path`.
+Before rollover, data lives in `std.io.BytesIO` and `path()` returns `Err(IoError)` because there is no filesystem path. After rollover, the stream uses a `std.fs.File` handle and the `NamedTemporaryFile` cleanup contract. Dropping an unpersisted rolled spool deletes the temporary file; `persist()` keeps it and returns the ordinary `Path`.
 
 ## Parent Directory
 

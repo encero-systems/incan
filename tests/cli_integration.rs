@@ -733,6 +733,82 @@ impl FileDescriptorSet {
 }
 
 #[test]
+fn run_accepts_trait_provided_by_value_generic_decode_rust_param_issue612() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_trait_by_value_generic_decode_project",
+        r#"
+
+[rust-dependencies]
+decode_trait_helper = { path = "rust/decode_trait_helper" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::decode_trait_helper import FileDescriptorSet, Message
+
+
+def main() -> None:
+  encoded = b"abc"
+  match FileDescriptorSet.decode(encoded.as_slice()):
+    Ok(_) => println("ok")
+    Err(_) => println("err")
+"#,
+    )?;
+    let helper_src = tmp.path().join("rust").join("decode_trait_helper").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("helper src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "decode_trait_helper"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"pub trait DecodeBuf {}
+
+impl DecodeBuf for &[u8] {}
+
+pub struct DecodeError;
+
+pub struct FileDescriptorSet;
+
+pub trait Message: Sized {
+    fn decode<T: DecodeBuf>(_buf: T) -> Result<Self, DecodeError>;
+}
+
+impl Message for FileDescriptorSet {
+    fn decode<T: DecodeBuf>(_buf: T) -> Result<Self, DecodeError> {
+        Ok(Self)
+    }
+}
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+
+    assert_success(
+        &output,
+        "incan run with trait-provided by-value generic decode Rust param",
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("ok"),
+        "expected trait-provided by-value generic decode helper output, got:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_locked_rejects_stale_lockfile() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_locked_project", "")?;

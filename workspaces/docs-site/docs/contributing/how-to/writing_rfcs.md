@@ -26,7 +26,7 @@ Write an RFC when the *user-facing meaning* of the language changes, for example
 ## Workflow
 
 1. **(Optional) Start with an issue**
-   File an “RFC proposal” issue to align on the problem and scope.
+File an “RFC proposal” issue to align on the problem and scope.
 
 2. **Create the RFC file**
     - Copy the template: [RFC template](../../RFCs/TEMPLATE.md)
@@ -48,7 +48,7 @@ Write an RFC when the *user-facing meaning* of the language changes, for example
     - Expect iteration: RFCs usually evolve over review.
 
 5. **Discuss**
-   Use the PR discussion (and/or the linked issue) to gather feedback and converge.
+Use the PR discussion (and/or the linked issue) to gather feedback and converge.
 
 ## After acceptance
 
@@ -64,8 +64,7 @@ RFCs are organized so contributors can see “what’s still open” at a glance
 - `workspaces/docs-site/docs/RFCs/closed/superseded/` — superseded RFCs (replaced by a newer RFC)
 - `workspaces/docs-site/docs/RFCs/closed/rejected/` — rejected / withdrawn RFCs (“won’t do”)
 
-When an RFC is superseded or rejected, move it into the appropriate `closed/` folder and update its status accordingly
-(for example: `Superseded by RFC 018`).
+When an RFC is superseded or rejected, move it into the appropriate `closed/` folder and update its status accordingly (for example: `Superseded by RFC 018`).
 
 ## Tips for a good RFC
 

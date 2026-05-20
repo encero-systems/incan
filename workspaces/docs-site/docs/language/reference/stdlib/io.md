@@ -43,8 +43,7 @@ def read_header(data: bytes) -> Result[int, IoError]:
 
 ## Binary Numeric I/O
 
-`BytesIO` uses trait-backed overloads for exact-width numeric reads and writes. Callers use
-`read(endian)` and `write(value, endian)` directly on the stream.
+`BytesIO` uses trait-backed overloads for exact-width numeric reads and writes. Callers use `read(endian)` and `write(value, endian)` directly on the stream.
 
 Reads are selected by the expected result type, so provide static type context. Writes are selected by the value type.
 
@@ -55,8 +54,7 @@ Reads are selected by the expected result type, so provide static type context. 
 | `BinaryRead[T]` | `read(endian: Endian) -> Result[T, IoError]` |
 | `BinaryWrite[T]` | `write(value: T, endian: Endian) -> Result[None, IoError]` |
 
-Supported `T` values are `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `f32`, and `f64`.
-Endianness is ignored for one-byte values.
+Supported `T` values are `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `f32`, and `f64`. Endianness is ignored for one-byte values.
 
 ```incan
 from std.io import BytesIO, Endian, IoError

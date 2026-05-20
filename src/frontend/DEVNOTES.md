@@ -43,8 +43,7 @@ The Incan compiler frontend consists of several components that transform source
 
 ### Indentation-Based Syntax
 
-Like Python, Incan uses indentation for blocks. The lexer tracks indent levels and emits `INDENT` and `DEDENT` tokens.
-Incan uses 2-space or 4-space indentation by default (tabs are treated as 4 spaces).
+Like Python, Incan uses indentation for blocks. The lexer tracks indent levels and emits `INDENT` and `DEDENT` tokens. Incan uses 2-space or 4-space indentation by default (tabs are treated as 4 spaces).
 
 ### Rust-Style Imports
 

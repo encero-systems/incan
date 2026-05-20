@@ -106,8 +106,7 @@ json_str = config.to_json()
 yaml_str = config.to_yaml()
 ```
 
-Both format modules define their own `Serialize` trait, each carrying `@rust.derive("serde::Serialize")`. The compiler deduplicates to a single Rust-level derive, while each module injects its own distinct methods (`.to_json()` vs
-`.to_yaml()`).
+Both format modules define their own `Serialize` trait, each carrying `@rust.derive("serde::Serialize")`. The compiler deduplicates to a single Rust-level derive, while each module injects its own distinct methods (`.to_json()` vs `.to_yaml()`).
 
 ### Partial derives (serialize-only, deserialize-only)
 
@@ -125,8 +124,7 @@ model LogEntry:
 
 ### Schema generation (pure Incan, no Rust needed)
 
-Not all derives involve serialization. Schema generators produce text artifacts from a model's field metadata using
-`__fields__()` reflection — no `rust::` imports required:
+Not all derives involve serialization. Schema generators produce text artifacts from a model's field metadata using `__fields__()` reflection — no `rust::` imports required:
 
 ```incan
 from std.schema import sql
@@ -223,8 +221,7 @@ A module that defines a `__derives__` attribute at module level is a **derivable
 __derives__ = [Serialize, Deserialize]
 ```
 
-Here, `Serialize` and `Deserialize` refer to traits defined in the same module. When a type writes
-`@derive(module_name)`, the compiler:
+Here, `Serialize` and `Deserialize` refer to traits defined in the same module. When a type writes `@derive(module_name)`, the compiler:
 
 1. Resolves `module_name` to the imported module
 2. Reads `module_name.__derives__` to get the list of derivable traits
@@ -238,8 +235,7 @@ The traits listed in `__derives__` are adopted by any type that derives the modu
 
 ### Rust derive binding via `@rust.derive`
 
-A trait in a derivable module may need the compiler to emit a Rust `#[derive(...)]` attribute on any struct that adopts it. This is distinct from `@rust.extern` (which delegates a *method call* to Rust) — `@rust.derive` declares that the
-*type itself* requires a Rust-level derive for the trait's methods to work.
+A trait in a derivable module may need the compiler to emit a Rust `#[derive(...)]` attribute on any struct that adopts it. This is distinct from `@rust.extern` (which delegates a *method call* to Rust) — `@rust.derive` declares that the *type itself* requires a Rust-level derive for the trait's methods to work.
 
 The `@rust.derive("path::to::Derive")` decorator on a trait declaration carries this binding:
 
@@ -373,8 +369,7 @@ These generate schema artifacts from the model's type definition. They operate o
 | `std.schema.sql`      | `[SqlSchema]`        | `.sql_ddl()`        | `CREATE TABLE`        |
 | `std.schema.arrow`    | `[ArrowSchema]`      | `.arrow_schema()`   | `arrow::Schema`       |
 
-Schema generators with only one trait can still use `__derives__` to make the module derivable. Since the trait has no
-`@rust.derive` decorator, no Rust-level derive is emitted — the trait methods are pure Incan reflection:
+Schema generators with only one trait can still use `__derives__` to make the module derivable. Since the trait has no `@rust.derive` decorator, no Rust-level derive is emitted — the trait methods are pure Incan reflection:
 
 ```incan
 # stdlib/schema/sql.incn
@@ -458,9 +453,7 @@ The `json` module sees `alias`, `description`, etc. The `protobuf` module reads 
 
 ### Compatibility / migration
 
-This RFC is **additive** for the protocol itself — `__derives__`, `@rust.derive`, and module-based `@derive()` are new capabilities. However, it includes one **deprecation**: bare `@derive(Serialize, Deserialize)` will be removed from the
-`DeriveId` registry once the `std.serde.json` module is available (see design decision #4). Users migrate to the
-explicit module form:
+This RFC is **additive** for the protocol itself — `__derives__`, `@rust.derive`, and module-based `@derive()` are new capabilities. However, it includes one **deprecation**: bare `@derive(Serialize, Deserialize)` will be removed from the `DeriveId` registry once the `std.serde.json` module is available (see design decision #4). Users migrate to the explicit module form:
 
 ```incan
 # Before (deprecated — will be removed)

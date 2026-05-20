@@ -1,8 +1,6 @@
 # RFC 002: Parametrized Tests
 
-**Status:** Draft
-**Created:** 2024-12-08
-**Issue:** [#54](https://github.com/dannys-code-corner/incan/pull/54)
+**Status:** Draft **Created:** 2024-12-08 **Issue:** [#54](https://github.com/dannys-code-corner/incan/pull/54)
 
 ## Summary
 

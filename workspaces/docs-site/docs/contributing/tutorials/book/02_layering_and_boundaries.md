@@ -1,7 +1,6 @@
 # 2. Layering and boundaries
 
-Incan is easiest to evolve when dependencies are clean. This chapter explains how to avoid “clever” shortcuts that create
-cycles, leaky abstractions, or drift between tooling and the compiler.
+Incan is easiest to evolve when dependencies are clean. This chapter explains how to avoid “clever” shortcuts that create cycles, leaky abstractions, or drift between tooling and the compiler.
 
 ## The principle
 

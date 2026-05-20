@@ -1,7 +1,6 @@
 # Error handling recipes
 
-This page is a practical companion to [Error handling](../explanation/error_handling.md). It focuses on common patterns
-and “what to do when…”.
+This page is a practical companion to [Error handling](../explanation/error_handling.md). It focuses on common patterns and “what to do when…”.
 
 !!! tip "Coming from Python?"
     In Python, many failures surface as **exceptions** (`try`/`except`) and “propagation” is implicit.
@@ -112,8 +111,7 @@ match await tx.send(msg):
 
 ## “Don’t do this”: `unwrap()` on user input
 
-`unwrap()` and `panic()` are for “should never happen” paths (tests, invariants, internal compiler bugs), not expected
-failures.
+`unwrap()` and `panic()` are for “should never happen” paths (tests, invariants, internal compiler bugs), not expected failures.
 
 Prefer `Result` and handle the error where you can recover.
 

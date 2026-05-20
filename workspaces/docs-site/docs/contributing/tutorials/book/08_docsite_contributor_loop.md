@@ -1,7 +1,6 @@
 # 8. Docsite contributor loop
 
-Incan’s docs are a product surface. Contributors should be able to run the docsite locally and validate changes before
-committing.
+Incan’s docs are a product surface. Contributors should be able to run the docsite locally and validate changes before committing.
 
 ## Run the site locally
 
@@ -35,8 +34,7 @@ We reuse common content via snippets in `workspaces/docs-site/docs/_snippets/`:
 
 ### Mermaid diagrams
 
-Mermaid diagrams are stored as DSL-only `.mmd` files and included via snippets. Keep diagrams as DSL-only content, and
-wrap them in a Mermaid fence where included.
+Mermaid diagrams are stored as DSL-only `.mmd` files and included via snippets. Keep diagrams as DSL-only content, and wrap them in a Mermaid fence where included.
 
 ## Contributor checklist for doc changes
 

@@ -1,7 +1,6 @@
 # Understanding Rust types (coming from Python)
 
-When you use Rust interop (`rust::...` imports), you’ll sometimes see Rust types in signatures and docs.
-This page explains the common ones and how they map to Incan.
+When you use Rust interop (`rust::...` imports), you’ll sometimes see Rust types in signatures and docs. This page explains the common ones and how they map to Incan.
 
 ## Quick mapping
 
@@ -45,8 +44,7 @@ counts: HashMap[str, int] = HashMap.new()
 
 Rust APIs often return `Option`/`Result` instead of raising exceptions.
 
-`unwrap()` is a “this must exist” assertion (it panics if missing), so prefer `unwrap_or(...)` or `match` when the value
-can be absent.
+`unwrap()` is a “this must exist” assertion (it panics if missing), so prefer `unwrap_or(...)` or `match` when the value can be absent.
 
 ```incan
 value = my_dict.get("key").unwrap_or(0)

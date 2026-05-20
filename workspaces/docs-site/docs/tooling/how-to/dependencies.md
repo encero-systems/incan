@@ -2,8 +2,7 @@
 
 This guide covers how to add, configure, and lock Rust crate dependencies in Incan projects.
 
-For the full manifest format, see: [Project configuration reference](../reference/project_configuration.md).  
-For inline import syntax, see: [Rust interop](../../language/how-to/rust_interop.md).
+For the full manifest format, see: [Project configuration reference](../reference/project_configuration.md). For inline import syntax, see: [Rust interop](../../language/how-to/rust_interop.md).
 
 ## Adding a Rust crate (quick start)
 
@@ -13,8 +12,7 @@ The simplest way to use a Rust crate is with an inline version annotation:
 import rust::my_crate @ "1.0"
 ```
 
-This works in any `.incn` file, no configuration files needed. The compiler adds the dependency to the generated
-`Cargo.toml` automatically.
+This works in any `.incn` file, no configuration files needed. The compiler adds the dependency to the generated `Cargo.toml` automatically.
 
 For common crates (serde, tokio, reqwest, etc.), you don't even need a version — the compiler has tested defaults:
 
@@ -43,8 +41,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ```
 
-Once a crate is in `incan.toml`, the manifest is the single source of truth. Inline `@ "version"`
-annotations for that crate are not allowed — use bare imports instead:
+Once a crate is in `incan.toml`, the manifest is the single source of truth. Inline `@ "version"` annotations for that crate are not allowed — use bare imports instead:
 
 ```incan
 # Good: bare import, version comes from incan.toml
@@ -90,8 +87,7 @@ criterion = "0.5"
 test_helpers = { path = "../test-helpers" }
 ```
 
-Dev dependencies are only available in test contexts (files under `tests/`). Importing a dev-only crate from production
-code produces a compile-time error.
+Dev dependencies are only available in test contexts (files under `tests/`). Importing a dev-only crate from production code produces a compile-time error.
 
 ## Locking dependencies
 
@@ -109,13 +105,11 @@ Or, if your `incan.toml` has `[project.scripts].main` set:
 incan lock
 ```
 
-`incan.lock` embeds the resolved `Cargo.lock` and a fingerprint of your dependency inputs. **Commit it to version control**
-for reproducible builds.
+`incan.lock` embeds the resolved `Cargo.lock` and a fingerprint of your dependency inputs. **Commit it to version control** for reproducible builds.
 
 ### Default build/test behavior
 
-If `incan.lock` doesn't exist and you run `incan build` or `incan test` without strict flags, the lock file is created
-automatically on first build.
+If `incan.lock` doesn't exist and you run `incan build` or `incan test` without strict flags, the lock file is created automatically on first build.
 
 If `incan.lock` already exists but is stale, default `incan build` and `incan test` warn and reuse the existing embedded `Cargo.lock` payload without rewriting `incan.lock`. Run `incan lock` when you intentionally want to refresh the committed lock file.
 
@@ -157,8 +151,7 @@ INCAN_LOCKED=1 incan build src/main.incn
 INCAN_FROZEN=1 incan test tests/
 ```
 
-`INCAN_FROZEN=1` implies both offline and locked policy.
-Use `--no-offline`, `--no-locked`, or `--no-frozen` to disable matching environment defaults for a single command.
+`INCAN_FROZEN=1` implies both offline and locked policy. Use `--no-offline`, `--no-locked`, or `--no-frozen` to disable matching environment defaults for a single command.
 
 ## Resolution rules
 

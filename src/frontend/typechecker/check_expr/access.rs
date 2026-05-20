@@ -1346,9 +1346,21 @@ impl TypeChecker {
         match &metadata.kind {
             RustItemKind::Type(_) => {
                 let Some(sig) = self.rust_method_signature(rust_path, method) else {
-                    self.record_rust_extension_trait_import_for_call(&metadata, method, span);
-                    // Metadata only covers inherent methods plus direct trait impl summaries. Stay permissive rather
-                    // than false-positiving on valid calls when no unambiguous imported trait can be selected.
+                    if let Some(import_use) = self.record_rust_extension_trait_import_for_call(&metadata, method, span)
+                        && let Some(sig) = import_use.signature.as_ref()
+                    {
+                        let callable_display = format!("rust::{rust_path}.{method}");
+                        let ret = self.validate_rust_method_call(
+                            callable_display.as_str(),
+                            sig,
+                            args,
+                            arg_types,
+                            preserves_lookup_arg_shape,
+                            span,
+                        );
+                        return Some(Self::substitute_rust_self_type(ret, rust_path));
+                    }
+                    // Stay permissive when no unambiguous imported trait or trait method signature can be selected.
                     return Some(ResolvedType::Unknown);
                 };
                 if Self::rust_signature_has_receiver(&sig)
@@ -1394,9 +1406,9 @@ impl TypeChecker {
         receiver_metadata: &incan_core::interop::RustItemMetadata,
         method: &str,
         span: Span,
-    ) {
+    ) -> Option<RustMethodTraitImportUse> {
         let RustItemKind::Type(type_info) = &receiver_metadata.kind else {
-            return;
+            return None;
         };
         let matches = self
             .type_info
@@ -1415,10 +1427,11 @@ impl TypeChecker {
             })
             .collect::<Vec<_>>();
         let [import_use] = matches.as_slice() else {
-            return;
+            return None;
         };
         self.type_info
             .record_rust_method_trait_import_use(span, import_use.clone());
+        Some(import_use.clone())
     }
 
     /// Return the trait method signature when `import` is implemented by `type_info` and declares `method`.

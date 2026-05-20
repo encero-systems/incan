@@ -1,7 +1,6 @@
 # Contributing to Incan
 
-Thank you for your interest in contributing to the Incan programming language! This document provides
-guidelines for contributing to the project.
+Thank you for your interest in contributing to the Incan programming language! This document provides guidelines for contributing to the project.
 
 ## Start Here (Docs)
 
@@ -33,8 +32,7 @@ guidelines for contributing to the project.
 
 ## Project Structure
 
-The compiler is organized into a **frontend** (lex/parse/typecheck), a **backend** (lowering + Rust
-emission), plus CLI and tooling.
+The compiler is organized into a **frontend** (lex/parse/typecheck), a **backend** (lowering + Rust emission), plus CLI and tooling.
 
 For an up-to-date module map, see:
 
@@ -57,9 +55,9 @@ The workspace uses **Cargo workspace package metadata**, so you only bump versio
 Notes:
 
 - The compiler exposes the version as `incan::version::INCAN_VERSION`, backed by
-  `env!("CARGO_PKG_VERSION")`, so it updates automatically with the Cargo version.
+`env!("CARGO_PKG_VERSION")`, so it updates automatically with the Cargo version.
 - Codegen snapshots are version-agnostic (they normalize the codegen header to
-  `v<INCAN_VERSION>`), so version bumps should not churn snapshot files.
+`v<INCAN_VERSION>`), so version bumps should not churn snapshot files.
 
 ### Code Generation Overview
 
@@ -88,9 +86,7 @@ Key files:
 
 ### Type Conversions System
 
-The `conversions` module (`src/backend/ir/conversions.rs`) provides centralized handling of type
-conversions and borrow checking during Rust codegen. This is where we handle the mismatch between
-Incan's simple `str` type and Rust's `&str` vs `String` split for example.
+The `conversions` module (`src/backend/ir/conversions.rs`) provides centralized handling of type conversions and borrow checking during Rust codegen. This is where we handle the mismatch between Incan's simple `str` type and Rust's `&str` vs `String` split for example.
 
 **When to use conversions:**
 
@@ -136,8 +132,7 @@ Example:
 
 ### Adding a New Expression Type
 
-See [Extending the Language](docs/contributing/extending_language.md) for the up-to-date end-to-end
-checklist (lexer → parser/AST → typechecker → lowering → IR → emission).
+See [Extending the Language](docs/contributing/extending_language.md) for the up-to-date end-to-end checklist (lexer → parser/AST → typechecker → lowering → IR → emission).
 
 ### Running Snapshot Tests
 
@@ -183,16 +178,11 @@ From `src/lib.rs`:
 
 ### CLI Design
 
-The CLI uses clap with derive macros. Commands return `CliResult<ExitCode>`
-instead of calling `process::exit` directly. This makes commands testable.
+The CLI uses clap with derive macros. Commands return `CliResult<ExitCode>` instead of calling `process::exit` directly. This makes commands testable.
 
 ### Prelude Status
 
-The stdlib surface now compiles through the normal pipeline under `crates/incan_stdlib/stdlib/`.
-Source declarations are the primary contract for `std.*` modules, including the prelude-facing
-trait definitions. Some behavior is still realized by backend lowering or runtime bridges
-(for example derive-backed Rust traits and host-backed stdlib leaves), but the compiler no longer
-treats the stdlib as documentation-only stubs.
+The stdlib surface now compiles through the normal pipeline under `crates/incan_stdlib/stdlib/`. Source declarations are the primary contract for `std.*` modules, including the prelude-facing trait definitions. Some behavior is still realized by backend lowering or runtime bridges (for example derive-backed Rust traits and host-backed stdlib leaves), but the compiler no longer treats the stdlib as documentation-only stubs.
 
 ### Property-Based Testing
 

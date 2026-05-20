@@ -858,7 +858,7 @@ pub fn read_source(file_path: &str) -> CliResult<String> {
 }
 
 /// Return whether a parsed module uses RFC 088 iterator surface methods that require stdlib adapter modules.
-fn uses_iterator_adapter_surface(program: &Program) -> bool {
+pub(crate) fn uses_iterator_adapter_surface(program: &Program) -> bool {
     ast_walk::any_expr_in_program(program, |expr| match expr {
         crate::frontend::ast::Expr::MethodCall(_, method, _, _) => matches!(
             method.as_str(),
@@ -889,7 +889,7 @@ fn uses_iterator_adapter_surface(program: &Program) -> bool {
 }
 
 /// Return whether a parsed module uses RFC 070 Result combinators backed by std.result helpers.
-fn uses_result_combinator_surface(program: &Program) -> bool {
+pub(crate) fn uses_result_combinator_surface(program: &Program) -> bool {
     ast_walk::any_expr_in_program(program, |expr| match expr {
         crate::frontend::ast::Expr::MethodCall(_, method, _, _) => result_methods::from_str(method).is_some(),
         _ => false,
@@ -900,12 +900,9 @@ fn uses_result_combinator_surface(program: &Program) -> bool {
 ///
 /// # Note on Prelude
 ///
-/// The stdlib prelude (`stdlib/prelude.incn`) exists but is not currently wired into the compilation pipeline.
-/// Prelude traits like `Debug`, `Display`, `Clone` are recognized by codegen heuristics rather than actual trait
-/// definitions.
-///
-/// Future work: integrate prelude ASTs into typechecking so trait bounds are validated and derives work through actual
-/// trait implementations.
+/// The stdlib root prelude (`stdlib/prelude.incn`) exists, but it is not auto-imported into every compilation unit.
+/// Source-backed stdlib trait modules and builtin fallback traits are still discovered explicitly when the parsed AST
+/// needs them.
 pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
     let path = if Path::new(entry_path).is_absolute() {
         PathBuf::from(entry_path)

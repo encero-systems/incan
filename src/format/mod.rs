@@ -1091,7 +1091,7 @@ async def run() -> int:
         Ok(())
     }
 
-    /// Regression #235: qualified constructor patterns use `::` in the AST; the formatter must print Incansurface `.`.
+    /// Regression #235: qualified constructor patterns use `::` in the AST; the formatter must print Incan surface `.`.
     #[test]
     fn test_format_source_qualified_match_pattern_round_trip() -> Result<(), FormatError> {
         let source = r#"def f(x: int) -> int:

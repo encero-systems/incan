@@ -73,8 +73,7 @@ greeter/
 └── incan.toml             # Manifest with project metadata and [project.scripts] main set
 ```
 
-The generated `incan.toml` can also carry `requires-incan` to document the minimum supported Incan toolchain version.
-Commit `incan.lock` once the project generates it so builds stay reproducible.
+The generated `incan.toml` can also carry `requires-incan` to document the minimum supported Incan toolchain version. Commit `incan.lock` once the project generates it so builds stay reproducible.
 
 Try it immediately:
 
@@ -86,8 +85,7 @@ incan run
 Hello from greeter!
 ```
 
-The generated `incan.toml` records the project metadata and already has `[project.scripts] main` pointing at
-`src/main.incn`, so commands like `incan lock` will work without a file argument later on:
+The generated `incan.toml` records the project metadata and already has `[project.scripts] main` pointing at `src/main.incn`, so commands like `incan lock` will work without a file argument later on:
 
 ```toml title="incan.toml"
 [project]
@@ -115,8 +113,7 @@ pub def greet(name: str) -> str:
     return f"Hello, {name}!"
 ```
 
-Note the `pub` keyword — without it, `greet` would be private to its module and you couldn't
-import it.
+Note the `pub` keyword — without it, `greet` would be private to its module and you couldn't import it.
 
 Now update `src/main.incn` to use the `greet` function from the `greet.incn` module:
 
@@ -176,8 +173,7 @@ Goodbye, World!
 
 ## Step 3: Write tests
 
-`incan new` already created a placeholder test. Let's replace it with real tests for our
-greeting module. Update `tests/test_main.incn`:
+`incan new` already created a placeholder test. Let's replace it with real tests for our greeting module. Update `tests/test_main.incn`:
 
 ```incan
 from greet import greet, farewell
@@ -194,9 +190,7 @@ def test_farewell() -> None:
     assert_eq(farewell("Alice"), "Goodbye, Alice!")
 ```
 
-Notice the import: `from greet import greet, farewell` — the exact same syntax as in
-`src/main.incn`. The test runner resolves imports against your project's source root
-(`src/`), so tests and source code share the same import paths.
+Notice the import: `from greet import greet, farewell` — the exact same syntax as in `src/main.incn`. The test runner resolves imports against your project's source root (`src/`), so tests and source code share the same import paths.
 
 Run the tests:
 

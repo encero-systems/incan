@@ -1,7 +1,6 @@
 # Error handling
 
-Incan treats errors as **values**: functions that can fail return a `Result[T, E]`, and callers handle success/error
-**explicitly**. This makes failure modes visible in APIs, encourages structured error types, and keeps control flow clear.
+Incan treats errors as **values**: functions that can fail return a `Result[T, E]`, and callers handle success/error **explicitly**. This makes failure modes visible in APIs, encourages structured error types, and keeps control flow clear.
 
 ## Quick start
 
@@ -145,8 +144,7 @@ def main() -> None:
 
 ## The `?` operator (propagation)
 
-The `?` operator provides concise error propagation: if the left-hand side is `Err(e)`, return early with that error;
-otherwise unwrap the `Ok(...)` value.
+The `?` operator provides concise error propagation: if the left-hand side is `Err(e)`, return early with that error; otherwise unwrap the `Ok(...)` value.
 
 ```incan
 def process() -> Result[Data, Error]:
@@ -218,8 +216,7 @@ def require_user(id: int) -> Result[User, str]:
 
 `unwrap()` extracts a value from `Option`/`Result`, and **panics** if it is `None`/`Err(...)`.
 
-Panics are appropriate for programmer errors and “should never happen” states, but not for expected failures (like user
-input or network calls).
+Panics are appropriate for programmer errors and “should never happen” states, but not for expected failures (like user input or network calls).
 
 Prefer:
 

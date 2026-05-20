@@ -44,8 +44,7 @@ incan run path/to/main.incn
 
 ## Reproducible builds with locked dependencies
 
-If your project uses `incan.toml` and has an `incan.lock` committed to version control, use `--locked` or `--frozen` in
-CI to ensure builds use exactly the locked dependency versions:
+If your project uses `incan.toml` and has an `incan.lock` committed to version control, use `--locked` or `--frozen` in CI to ensure builds use exactly the locked dependency versions:
 
 ```bash
 # Require incan.lock to exist and be up to date

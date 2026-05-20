@@ -8,7 +8,7 @@
 //! are still settling. Public items here should be treated as generated-code support unless the Incan stdlib stubs and
 //! language docs explicitly expose them.
 
-// FIXME: this module need to be rewritten in incan once the appropriate RFCs are implemented
+// FIXME: this module needs to be rewritten in Incan once the appropriate RFCs are implemented.
 
 use std::net::SocketAddr;
 

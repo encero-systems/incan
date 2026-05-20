@@ -1,10 +1,8 @@
 # Formatting With `incan fmt`
 
-`incan fmt` is the formatter for Incan source files.
-It is the reference implementation of the canonical [Incan Code Style Guide](../../language/reference/code_style.md).
+`incan fmt` is the formatter for Incan source files. It is the reference implementation of the canonical [Incan Code Style Guide](../../language/reference/code_style.md).
 
-If you want the actual style rules, start with the style guide.
-This page is about the tool: how to run it, what it guarantees, and where its current limits are.
+If you want the actual style rules, start with the style guide. This page is about the tool: how to run it, what it guarantees, and where its current limits are.
 
 ## Quick Start
 
@@ -37,8 +35,7 @@ The style guide is the canonical source for what Incan code should look like:
 
 - [Incan Code Style Guide](../../language/reference/code_style.md)
 
-`incan fmt` should make valid source conform to that guide.
-In particular, the current formatter contract includes:
+`incan fmt` should make valid source conform to that guide. In particular, the current formatter contract includes:
 
 - `4`-space indentation
 - a `120`-character line-length target
@@ -78,8 +75,7 @@ Add to your CI pipeline to enforce consistent formatting:
 
 ## Configuration
 
-Currently, formatting options use sensible defaults.
-Configuration file support (for example `incan.toml`) is planned for a future release.
+Currently, formatting options use sensible defaults. Configuration file support (for example `incan.toml`) is planned for a future release.
 
 Default settings:
 
@@ -88,8 +84,7 @@ Default settings:
 - Quote style: Double quotes
 - Trailing commas: Yes (in multi-line)
 
-The same formatting behavior applies through both `incan fmt` and the library formatter API.
-`FormatConfig` controls ordinary options such as indentation, line length, quote style, and trailing commas, but it does not currently expose blank-line or comment-placement overrides.
+The same formatting behavior applies through both `incan fmt` and the library formatter API. `FormatConfig` controls ordinary options such as indentation, line length, quote style, and trailing commas, but it does not currently expose blank-line or comment-placement overrides.
 
 ## Logical Expression Chains
 
@@ -109,8 +104,7 @@ Short parenthesized logical expressions remain inline.
 
 ### Parse-required
 
-**The formatter requires valid syntax.**
-Unlike some formatters that can tolerate partial or broken code, `incan fmt` works on parsed syntax and cannot format files with syntax errors.
+**The formatter requires valid syntax.** Unlike some formatters that can tolerate partial or broken code, `incan fmt` works on parsed syntax and cannot format files with syntax errors.
 
 If a file has errors, you'll see:
 
@@ -122,9 +116,7 @@ Fix syntax errors before formatting.
 
 ### Line length is best-effort
 
-The `120`-character line length is a target, not a strict hard limit.
-The formatter does not yet rewrite every possible overflowing construct.
-Very long strings, fluent call chains, and some nested expressions may still require manual judgment.
+The `120`-character line length is a target, not a strict hard limit. The formatter does not yet rewrite every possible overflowing construct. Very long strings, fluent call chains, and some nested expressions may still require manual judgment.
 
 ## Next Steps
 

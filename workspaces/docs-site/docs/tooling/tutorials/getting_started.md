@@ -2,7 +2,7 @@
 
 ## Prerequisites
 
-- Rust (1.85+): install via [rustup](https://rustup.rs/)
+- Rust (1.92+): install via [rustup](https://rustup.rs/)
 - `git`: to clone the repository
 - `make`: for the canonical make-first workflow
 
@@ -68,8 +68,7 @@ incan test
 
 When you run `incan new` in an interactive terminal without `--yes`, it prompts for the project name, version, description, author, and license. Use `incan init` instead when you are already inside an existing directory and want to add Incan project files there.
 
-For the full walkthrough — adding modules and tests — see:
-[Your first project](your_first_project.md).
+For the full walkthrough — adding modules and tests — see: [Your first project](your_first_project.md).
 
 ## Next Steps
 

@@ -1,7 +1,6 @@
 # Const bindings
 
-`const` declares a **compile-time constant**: a name whose value is validated during compilation and can be baked into the
-output program.
+`const` declares a **compile-time constant**: a name whose value is validated during compilation and can be baked into the output program.
 
 ## Why is `const` a thing?
 
@@ -90,8 +89,7 @@ If the initializer is not const-evaluable, the compiler emits an error at the bi
 
 ## Why are there “Rust-native” vs “Frozen” consts?
 
-Incan supports two const “families” because Rust’s `const` rules are strict *and* because Incan wants **deep immutability**
-for baked data:
+Incan supports two const “families” because Rust’s `const` rules are strict *and* because Incan wants **deep immutability** for baked data:
 
 - **Rust-native consts**:
     - map directly to a Rust `const`
@@ -103,8 +101,7 @@ for baked data:
       `FrozenSet[T]`
     - the compiler emits baked `'static` backing data and constructs frozen wrappers from it
 
-Important detail: in `const` context, Incan treats `str`/`bytes` and common containers as **frozen** to preserve deep
-immutability. In other words, `const` is not “just a `let` that runs earlier”.
+Important detail: in `const` context, Incan treats `str`/`bytes` and common containers as **frozen** to preserve deep immutability. In other words, `const` is not “just a `let` that runs earlier”.
 
 !!! info "Coming from Rust?"
     This is similar to Rust’s split between “things that can be `const`” and “things that need `'static` backing data and

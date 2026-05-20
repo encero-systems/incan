@@ -1,8 +1,6 @@
 # Incan vs Rust
 
-Rust is the right answer when low-level control, performance predictability, and ecosystem maturity matter more than
-authoring speed. Incan does not replace Rust. It compiles to Rust so that high-level application code can land on the
-Rust toolchain and ecosystem.
+Rust is the right answer when low-level control, performance predictability, and ecosystem maturity matter more than authoring speed. Incan does not replace Rust. It compiles to Rust so that high-level application code can land on the Rust toolchain and ecosystem.
 
 Choose Incan when the code is mostly application logic and the Rust version would be more ceremony than signal.
 
@@ -24,11 +22,9 @@ Choose Incan when the code is mostly application logic and the Rust version woul
 
 ## The honest tradeoff
 
-Rust is more mature, more explicit, and more powerful. Incan deliberately gives up some low-level control to make
-high-level code smaller and easier to scan.
+Rust is more mature, more explicit, and more powerful. Incan deliberately gives up some low-level control to make high-level code smaller and easier to scan.
 
-That tradeoff is only worth it when the output is application-shaped. If the code is a runtime, database engine,
-kernel, allocator, compiler backend, or heavily optimized crate, write Rust.
+That tradeoff is only worth it when the output is application-shaped. If the code is a runtime, database engine, kernel, allocator, compiler backend, or heavily optimized crate, write Rust.
 
 ## Decision guide
 
@@ -42,5 +38,5 @@ kernel, allocator, compiler backend, or heavily optimized crate, write Rust.
 ## Source notes
 
 - Stack Overflow's 2025 Developer Survey calls Rust the "most admired programming language (72%)":
-  [Technology | 2025 Stack Overflow Developer Survey](https://survey.stackoverflow.co/2025/technology/).
+[Technology | 2025 Stack Overflow Developer Survey](https://survey.stackoverflow.co/2025/technology/).
 

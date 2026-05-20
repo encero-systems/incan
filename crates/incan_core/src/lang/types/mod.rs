@@ -1,6 +1,6 @@
 //! Builtin type vocabularies.
 //!
-//! This module defines registries for builtin/blesed type names (and their aliases) that are
+//! This module defines registries for builtin/blessed type names (and their aliases) that are
 //! recognized by the compiler.
 //!
 //! ## Notes

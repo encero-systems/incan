@@ -1,7 +1,6 @@
 # Stdlib traits (Reference)
 
-This section documents **standard library traits**: the stable contracts that describe protocol-like behavior
-(iteration, indexing, operators, conversions, etc.).
+This section documents **standard library traits**: the stable contracts that describe protocol-like behavior (iteration, indexing, operators, conversions, etc.).
 
 For the curated stdlib-family view, see [Standard library reference: `std.traits.*`](../stdlib/traits.md).
 

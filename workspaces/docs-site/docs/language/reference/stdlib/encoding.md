@@ -153,8 +153,7 @@ Base58 is not a checksum format by itself. Protocols that add checksums should e
 | `bech32.bech32m_encode(hrp: str, data: list[int])` | `Result[str, EncodingError]` | Encode five-bit data words using Bech32m checksum rules. |
 | `bech32.bech32m_decode(text: str)` | `Result[tuple[str, list[int]], EncodingError]` | Strict Bech32m decode with checksum validation. |
 
-Bech32 and Bech32m are distinct variants. Use the helper that matches the external protocol. Use `convertbits` when
-converting byte-oriented payloads into five-bit data words.
+Bech32 and Bech32m are distinct variants. Use the helper that matches the external protocol. Use `convertbits` when converting byte-oriented payloads into five-bit data words.
 
 ## Source/Sink I/O
 

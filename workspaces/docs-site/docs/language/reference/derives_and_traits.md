@@ -42,10 +42,10 @@ This page is a **Reference** for Incan derives, dunder overrides, and trait auth
 Rules that resolve “derive vs dunder” (these are intentional and strict):
 
 - **Dunder overrides are explicit behavior**: if you write a dunder (`__str__`, `__eq__`, `__lt__`, `__hash__`), that is
-  the behavior for that capability.
+the behavior for that capability.
 - **Conflicts are errors**: you must not combine a dunder with the corresponding `@derive(...)`.
 - **Auto-added traits are the exception**: some traits are automatically added to `model` / `class` / `enum` / `newtype`
-  (see [Automatic derives][auto-derives]). You don’t need to spell them out.
+(see [Automatic derives][auto-derives]). You don’t need to spell them out.
 
 ---
 
@@ -560,8 +560,7 @@ Add method-level targets when both declarations are trait implementations, or us
 
 ### `@requires(...)` (adopter contract)
 
-`@requires(...)` is a decorator you can put on a `trait` to declare **which adopter fields must exist** (and what types
-they must have).
+`@requires(...)` is a decorator you can put on a `trait` to declare **which adopter fields must exist** (and what types they must have).
 
 Syntax:
 
@@ -830,7 +829,7 @@ def main() -> None:
 Rule:
 
 - If a `model` derives `Validate`, you must construct it via `TypeName.new(...)`.
-  Raw construction via `TypeName(...)` is a compile-time error.
+Raw construction via `TypeName(...)` is a compile-time error.
 
 ```incan
 @derive(Validate)
@@ -891,7 +890,7 @@ Models and classes provide:
 Note:
 
 - Field metadata like `[alias="..."]` and `[description="..."]` is **model-only**. For `class`, `FieldInfo.alias`
-  and `FieldInfo.description` are always `None` and `FieldInfo.wire_name == FieldInfo.name`.
+and `FieldInfo.description` are always `None` and `FieldInfo.wire_name == FieldInfo.name`.
 - `u.__fields__()` is typed as `FrozenList[FieldInfo]` directly by the compiler. Import `FieldInfo` only when you need to spell that type in an annotation.
 
 See [Reflection (Reference)](reflection.md) for `FieldInfo` structure details.

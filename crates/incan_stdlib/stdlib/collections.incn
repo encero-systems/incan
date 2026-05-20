@@ -874,8 +874,7 @@ pub model Counter[T with (Clone, Eq)]:
             count: New non-negative count. A zero count removes the value.
         """
         if count < 0:
-            _runtime_error("Counter counts must be non-negative")
-            return
+            return raise_value_error("Counter counts must be non-negative")
         index = self.index_of(key)
         if count == 0:
             if index >= 0:
@@ -895,8 +894,7 @@ pub model Counter[T with (Clone, Eq)]:
             amount: Non-negative amount to add.
         """
         if amount < 0:
-            _runtime_error("Counter.increment requires a non-negative amount")
-            return
+            return raise_value_error("Counter.increment requires a non-negative amount")
         self.set(key, self.get(key) + amount)
 
     def decrement(mut self, key: T, amount: int = 1) -> None:
@@ -908,8 +906,7 @@ pub model Counter[T with (Clone, Eq)]:
             amount: Non-negative amount to subtract.
         """
         if amount < 0:
-            _runtime_error("Counter.decrement requires a non-negative amount")
-            return
+            return raise_value_error("Counter.decrement requires a non-negative amount")
         current = self.get(key)
         if amount >= current:
             self.set(key, 0)
@@ -1221,7 +1218,7 @@ pub model DefaultDict[K with (Clone, Eq), V with Clone]:
             None => pass
         match self.default_value:
             Some(value) => return value
-            None => return _missing_value[V]()
+            None => return raise_key_error("DefaultDict key is not present")
 
     def index_of(self, key: K) -> int:
         return _entry_index(self.entries, key)
@@ -1306,7 +1303,7 @@ pub model OrderedDict[K with (Clone, Eq), V with Clone]:
         """
         index = self.index_of(key)
         if index < 0:
-            return _missing_value[V]()
+            return raise_key_error("OrderedDict key is not present")
         return self.entries[index].value
 
     def __setitem__(mut self, key: K, value: V) -> None:
@@ -1360,7 +1357,7 @@ pub model OrderedDict[K with (Clone, Eq), V with Clone]:
         """
         index = self.index_of(key)
         if index < 0:
-            return _missing_value[V]()
+            return raise_key_error("OrderedDict key is not present")
         value = self.entries[index].value
         self.entries.remove(index)
         return value
@@ -1588,7 +1585,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
         """
         index = self.index_of(key)
         if index < 0:
-            return _missing_value[V]()
+            return raise_key_error("SortedDict key is not present")
         return self.entries[index].value
 
     def __setitem__(mut self, key: K, value: V) -> None:
@@ -1643,7 +1640,7 @@ pub model SortedDict[K with (Clone, Ord), V with Clone]:
         """
         index = self.index_of(key)
         if index < 0:
-            return _missing_value[V]()
+            return raise_key_error("SortedDict key is not present")
         value = self.entries[index].value
         self.entries.remove(index)
         return value
@@ -1940,7 +1937,7 @@ pub model ChainMap[K with (Clone, Eq), V with Clone]:
             match layer.get(key):
                 Some(value) => return value
                 None => pass
-        return _missing_value[V]()
+        return raise_key_error("ChainMap key is not present")
 
     def __setitem__(mut self, key: K, value: V) -> None:
         """
@@ -2375,7 +2372,6 @@ def _merge_ordinal_records[K with (Clone, OrdinalKey)](
         right_index += 1
     return out
 
-
 def _ordinal_map_magic() -> bytes:
     """
     Return the fixed `OrdinalMap` container magic prefix.
@@ -2785,14 +2781,3 @@ def _chain_items[K with (Clone, Eq), V with Clone](layers: list[OrderedDict[K, V
                     break
                 None => pass
     return out
-
-
-def _missing_value[T with Clone]() -> T:
-    missing: list[T] = []
-    return missing[0]
-
-
-def _runtime_error(message: str) -> None:
-    _ = message
-    missing: list[int] = []
-    missing[0]

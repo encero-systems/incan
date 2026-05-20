@@ -137,7 +137,7 @@ Async fixtures still use `@fixture`; there is no async-only decorator. The runne
 That's the end of the Incan Book (Basics)! You now know the core language. Here are some directions to explore next:
 
 - [Your first project](../../../tooling/tutorials/your_first_project.md) — Set up a real project with
-  `incan init`, Rust crate dependencies, and reproducible builds
+`incan init`, Rust crate dependencies, and reproducible builds
 - [Rust interop](../../how-to/rust_interop.md) — Use Rust crates from Incan code
 - [Async programming](../../how-to/async_programming.md) — Write concurrent programs
 - [Standard library reference: `std.testing`](../../reference/stdlib/testing.md) — Full testing API: fixtures, parametrize, skip, xfail

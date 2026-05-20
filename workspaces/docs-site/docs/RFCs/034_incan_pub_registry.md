@@ -293,8 +293,7 @@ If verification fails, `incan build` refuses to use the package and emits a clea
 
 **Sigstore is optional in Phase 1** — the `signatures` field in the index is nullable. Unsigned packages are accepted but display a warning during `incan build`. The goal is to make signing the default from early on, then make it mandatory once the tooling is proven.
 
-**Implementation note:** the service can rely on existing Sigstore client
-libraries rather than inventing its own signing stack. The registry still verifies signatures on publish so invalid artifacts are rejected early.
+**Implementation note:** the service can rely on existing Sigstore client libraries rather than inventing its own signing stack. The registry still verifies signatures on publish so invalid artifacts are rejected early.
 
 ### Security properties
 

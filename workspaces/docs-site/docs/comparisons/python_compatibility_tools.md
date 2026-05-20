@@ -2,8 +2,7 @@
 
 RustPython, Codon, Nuitka, and Cython are valuable projects. They are also the wrong category for Incan.
 
-Those tools preserve, accelerate, compile, or extend Python. Incan is for new typed application code with Python-like
-ergonomics and Rust-native output. If the goal is to keep existing Python code and packages, use the Python tool.
+Those tools preserve, accelerate, compile, or extend Python. Incan is for new typed application code with Python-like ergonomics and Rust-native output. If the goal is to keep existing Python code and packages, use the Python tool.
 
 ## The comparison
 
@@ -27,8 +26,7 @@ Incan optimizes for a different future:
 - the deployment target is Rust-native output;
 - AI-generated code has a smaller, more auditable surface.
 
-That makes Incan higher-risk than compatibility tools. It also makes the upside different. The point is not to run old
-Python faster. The point is to make new application code easier to trust and ship.
+That makes Incan higher-risk than compatibility tools. It also makes the upside different. The point is not to run old Python faster. The point is to make new application code easier to trust and ship.
 
 ## When these tools are better
 
@@ -51,13 +49,13 @@ Use Incan when:
 ## Source notes
 
 - RustPython describes itself as a Python interpreter written in Rust:
-  [RustPython](https://rustpython.github.io/).
+[RustPython](https://rustpython.github.io/).
 - Codon describes itself as a Python implementation that "compiles to native machine code":
-  [Codon documentation](https://codon.dev/).
+[Codon documentation](https://codon.dev/).
 - Nuitka describes itself as a Python compiler that is "fully compatible" with Python 2 and Python 3:
-  [Nuitka overview](https://nuitka.net/pages/overview.html).
+[Nuitka overview](https://nuitka.net/pages/overview.html).
 - Cython describes itself as an "optimising static compiler" for Python and the extended Cython language:
-  [Cython](https://cython.org/).
+[Cython](https://cython.org/).
 - Nim is not a Python compatibility tool, but it is mature prior art for Python-influenced compiled language design:
-  [Nim](https://nim-lang.org/).
+[Nim](https://nim-lang.org/).
 

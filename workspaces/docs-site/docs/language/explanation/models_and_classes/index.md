@@ -1,7 +1,6 @@
 # Models and Classes in Incan
 
-Incan provides two ways to define types with fields: `model` and `class`.
-Understanding when to use each is key to writing idiomatic Incan code.
+Incan provides two ways to define types with fields: `model` and `class`. Understanding when to use each is key to writing idiomatic Incan code.
 
 - `model`: data-first (DTOs, configs, payloads, wire formats)
 - `class`: behavior-first (services, stateful objects, inheritance/overrides)
@@ -55,7 +54,7 @@ Next: [Models](models.md) and [Classes](classes.md).
 A `model` and a `class` are not interchangeable. They compile to Rust structs, but they represent **different language concepts**:
 
 - **Models define data shapes**. They are the canonical representation for schema-like data and are the target for
-  schema-focused features like field metadata and aliases.
+schema-focused features like field metadata and aliases.
 - **Classes define behavior**. They can inherit, override methods, and model stateful objects and services.
 - **Feature surface is intentionally different**: field aliases/metadata are **model-only**, while inheritance is **class-only**.
 

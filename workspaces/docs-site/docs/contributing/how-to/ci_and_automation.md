@@ -1,12 +1,10 @@
 # CI & automation (repository / contributors)
 
-This page collects the canonical commands for CI-friendly, deterministic automation **for this repository** 
-(compiler/tooling contributors).
+This page collects the canonical commands for CI-friendly, deterministic automation **for this repository** (compiler/tooling contributors).
 
 [CI and Automation]:../../tooling/how-to/ci_and_automation.md
 
-If you’re trying to set up CI for an **Incan project** (using the `incan` CLI), see: [CI and Automation] as part of the
-Tooling How-To.
+If you’re trying to set up CI for an **Incan project** (using the `incan` CLI), see: [CI and Automation] as part of the Tooling How-To.
 
 ## Recommended commands
 

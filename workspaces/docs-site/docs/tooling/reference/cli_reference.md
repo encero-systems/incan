@@ -61,7 +61,7 @@ incan --strict --emit-rust path/to/file.incn
 Usage:
 
 ```text
-incan build [OPTIONS] <FILE> [OUTPUT_DIR]
+incan build [OPTIONS] [FILE] [OUTPUT_DIR] [-- <CARGO_PASSTHROUGH>...]
 incan build --lib [OPTIONS] [OUTPUT_DIR]
 ```
 
@@ -71,7 +71,7 @@ Behavior:
 - `--lib` builds the current project as a library. In this mode, `src/lib.incn` is required and `FILE` is optional.
 - Prints the generated Rust project path (example): `target/incan/<name>/`
 - Builds the generated Rust project and prints the binary path (example):
-  `target/incan/.cargo-target/release/<name>`
+`target/incan/.cargo-target/release/<name>`
 - In `--lib` mode, also emits a library artifact under `target/lib/` (including `<name>.incnlib`).
 
 Dependency flags:
@@ -111,7 +111,7 @@ incan build --lib
 Usage:
 
 ```text
-incan run [OPTIONS] [FILE]
+incan run [OPTIONS] [FILE] [-- <CARGO_PASSTHROUGH>...]
 ```
 
 Run a file:
@@ -137,6 +137,7 @@ If `FILE` is omitted, `incan run` uses `[project.scripts].main` from the nearest
 Dependency flags (same as `build`):
 
 - `--offline`, `--locked`, `--frozen`, `--no-offline`, `--no-locked`, `--no-frozen`, `--cargo-args`, `--cargo-features`, `--cargo-no-default-features`, `--cargo-all-features`
+- `--release`: Build and run with Cargo's release profile.
 
 ### `incan fmt`
 
@@ -404,8 +405,7 @@ incan lock                          # uses [project.scripts].main
 incan lock --cargo-features metrics # include optional deps in lock
 ```
 
-The generated `incan.lock` contains an embedded `Cargo.lock` payload and a fingerprint of your dependency
-inputs. Commit it to version control for reproducible builds.
+The generated `incan.lock` contains an embedded `Cargo.lock` payload and a fingerprint of your dependency inputs. Commit it to version control for reproducible builds.
 
 See: [Managing dependencies](../how-to/dependencies.md) for practical guidance.
 

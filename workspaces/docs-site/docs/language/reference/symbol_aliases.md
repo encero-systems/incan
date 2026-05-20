@@ -145,8 +145,7 @@ enum Level(str):
     CRITICAL = alias FATAL
 ```
 
-Variant aliases are useful when an enum has a compact canonical wire spelling but also wants a longer source spelling.
-For value enums, the alias reuses the target variant's raw value and does not bypass duplicate raw-value validation.
+Variant aliases are useful when an enum has a compact canonical wire spelling but also wants a longer source spelling. For value enums, the alias reuses the target variant's raw value and does not bypass duplicate raw-value validation.
 
 ## Overloads and signatures
 

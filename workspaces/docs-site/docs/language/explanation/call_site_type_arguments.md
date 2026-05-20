@@ -34,8 +34,7 @@ class Session:
 rows = session.read_csv[Order]("orders.csv")
 ```
 
-`read_csv[T]` defines a generic contract: “for any `T`, return `List[T]`”.
-`read_csv[Order](...)` specializes that contract at the call site, so `rows` is typed as `List[Order]`.
+`read_csv[T]` defines a generic contract: “for any `T`, return `List[T]`”. `read_csv[Order](...)` specializes that contract at the call site, so `rows` is typed as `List[Order]`.
 
 This keeps normal signature typing intact while letting callers pin ambiguous generic slots at API boundaries.
 
@@ -57,8 +56,7 @@ a = validate_rows[Order, _](rows)         # pin T, infer E
 b = validate_rows(_, RuntimeError)(rows)  # pin E, infer T
 ```
 
-Here `T` is fixed to `Order`, while `E` is left as `_` and inferred.
-This avoids forcing callers to spell every type argument when only one slot needs pinning.
+Here `T` is fixed to `Order`, while `E` is left as `_` and inferred. This avoids forcing callers to spell every type argument when only one slot needs pinning.
 
 `_` keeps partial explicitness concise while preserving arity checks.
 

@@ -224,8 +224,8 @@ impl std::error::Error for ToolchainConstraintError {}
 /// Return whether a requirement matches the active toolchain.
 ///
 /// Incan dev builds are published as SemVer prereleases such as `0.3.0-dev.48`. For lifecycle compatibility, a dev
-/// build is allowed to satisfy a range that admits its release-core version (`0.3.0`) so projects can write the normal
-/// line constraint `>=0.3,<0.4` while the line is still in development.
+/// build is allowed to satisfy a range that admits its release-core version (`0.3.0`) so projects can write a normal
+/// release-line constraint such as `>=0.3,<0.4` while the line is still in development.
 fn requirement_matches_active_toolchain(requirement: &VersionReq, active: &Version) -> bool {
     if requirement.matches(active) {
         return true;

@@ -82,8 +82,7 @@ That ordering matters. Last-use moves should win over defensive cloning. Borrowe
 
 ### Owned Incan sinks
 
-Incan function arguments, struct fields, collection elements, assignments, returns, and match scrutinees are owned value sinks unless the specific sink says otherwise.
-At these boundaries:
+Incan function arguments, struct fields, collection elements, assignments, returns, and match scrutinees are owned value sinks unless the specific sink says otherwise. At these boundaries:
 
 - String literals and static strings materialize to owned `String` when the target is `str`, generic, or otherwise inferred as owned Incan storage.
 - Non-`Copy` variables move when lowering marks them as `VarAccess::Move`.
@@ -125,8 +124,7 @@ Generated Rust `match` consumes the scrutinee shape. The planner treats match sc
 
 ### Generic clone bounds
 
-Backend-inserted `.clone()` calls are invisible to source-level trait-bound inference unless the backend mirrors them.
-When ownership planning can clone a generic value, `src/backend/ir/trait_bound_inference.rs` must add the corresponding `Clone` bound. Otherwise the generated Rust may fail only after codegen.
+Backend-inserted `.clone()` calls are invisible to source-level trait-bound inference unless the backend mirrors them. When ownership planning can clone a generic value, `src/backend/ir/trait_bound_inference.rs` must add the corresponding `Clone` bound. Otherwise the generated Rust may fail only after codegen.
 
 ## Contributor rules
 

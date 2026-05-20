@@ -1,13 +1,10 @@
 # RFC 007: Inline Tests
 
-**Status:** Planned  
-**Created:** 2024-12-10
-**Issue:** [#54](https://github.com/dannys-code-corner/incan/pull/54)
+**Status:** Planned **Created:** 2024-12-10 **Issue:** [#54](https://github.com/dannys-code-corner/incan/pull/54)
 
 ## Summary
 
-Allow `@test` functions to live alongside production code in the same file, combining Python's familiar decorator syntax
-with Rust's proximity benefits. Test functions are automatically stripped from production builds.
+Allow `@test` functions to live alongside production code in the same file, combining Python's familiar decorator syntax with Rust's proximity benefits. Test functions are automatically stripped from production builds.
 
 ## Motivation
 

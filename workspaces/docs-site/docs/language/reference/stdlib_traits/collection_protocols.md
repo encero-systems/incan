@@ -29,8 +29,7 @@ Dunder hooks are the implementation methods. Explicit trait adoption names the c
 
 Iterator values also expose the standard lazy adapter surface:
 
-The stdlib provides default Incan implementations for these protocol methods. The compiler may recognize the canonical
-methods and lower them through backend-native iterator chains when the generated behavior is equivalent.
+The stdlib provides default Incan implementations for these protocol methods. The compiler may recognize the canonical methods and lower them through backend-native iterator chains when the generated behavior is equivalent.
 
 | Method | Result | Notes |
 | ------ | ------ | ----- |

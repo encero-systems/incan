@@ -37,8 +37,7 @@ A keyword is a reserved word with special meaning in the language syntax (for ex
 
 ## Soft keyword
 
-A soft keyword is a keyword that is only reserved in specific contexts (for example after importing a particular stdlib
-namespace).
+A soft keyword is a keyword that is only reserved in specific contexts (for example after importing a particular stdlib namespace).
 
 In Incan, `async` and `await` are soft keywords activated by importing `std.async`.
 
@@ -81,11 +80,8 @@ See:
 
 ## make
 
-`make` runs Makefile targets.
-This repository provides canonical commands like `make install`, `make release`, and `make smoke-test`.
+`make` runs Makefile targets. This repository provides canonical commands like `make install`, `make release`, and `make smoke-test`.
 
 ## crate
 
-In these docs, “crate” is used in the Rust sense (“a compiled unit/package”)
-and sometimes as shorthand for “the project/module root”.
-See: [Imports and modules](imports_and_modules.md).
+In these docs, “crate” is used in the Rust sense (“a compiled unit/package”) and sometimes as shorthand for “the project/module root”. See: [Imports and modules](imports_and_modules.md).

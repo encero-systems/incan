@@ -2,8 +2,7 @@
 
 This is a linear, Rust-first track for contributors working on the Incan compiler, tooling, and docsite.
 
-This book is intentionally opinionated and may duplicate some material from the standalone contributing pages so it can
-be read **end-to-end** like a book.
+This book is intentionally opinionated and may duplicate some material from the standalone contributing pages so it can be read **end-to-end** like a book.
 
 ## Before you start (required)
 

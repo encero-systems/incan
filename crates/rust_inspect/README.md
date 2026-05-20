@@ -90,8 +90,7 @@ The stable architectural rule is the phase boundary: extraction happens before h
 
 Structured logging for durable diagnostics uses `tracing` (for example disk-cache parse failures and failed persists).
 
-The on-disk cache filename is `.incan_rust_inspect_cache.json`. The cache loader still reads the older
-`.incan_rust_metadata_cache.json` filename for backward compatibility.
+The on-disk cache filename is `.incan_rust_inspect_cache.json`. The cache loader still reads the older `.incan_rust_metadata_cache.json` filename for backward compatibility.
 
 ## Limitations
 

@@ -1,10 +1,8 @@
 # Incan Code Style Guide
 
-This page is the canonical style guide for human-written `.incn` source files.
-It describes how Incan code is laid out, what spacing is expected, and which readability gaps are allowed.
+This page is the canonical style guide for human-written `.incn` source files. It describes how Incan code is laid out, what spacing is expected, and which readability gaps are allowed.
 
-Use `incan fmt` to apply these formatting rules to source files.
-For formatter command usage and limits, see [Formatting with `incan fmt`](../../tooling/how-to/formatting.md).
+Use `incan fmt` to apply these formatting rules to source files. For formatter command usage and limits, see [Formatting with `incan fmt`](../../tooling/how-to/formatting.md).
 
 !!! note "Historical note"
     RFC 053 is the design record behind the current vertical-spacing model.
@@ -106,8 +104,7 @@ enum JobStatus:
 
 ## Vertical Layout
 
-Vertical spacing is the most opinionated part of the current contract.
-The rule is deliberately simple:
+Vertical spacing is the most opinionated part of the current contract. The rule is deliberately simple:
 
 - `2` blank lines are reserved for specific top-level declaration boundaries
 - `1` blank line is allowed for readability inside ordinary code
@@ -137,8 +134,7 @@ def store_user(user: User) -> None:
     ...
 ```
 
-This double-spacing is a root-level rule.
-It is not a general license to scatter double blank lines throughout the file.
+This double-spacing is a root-level rule. It is not a general license to scatter double blank lines throughout the file.
 
 ### Type bodies
 
@@ -163,8 +159,7 @@ Inside function bodies, loops, `if` blocks, `match` arms, and other indented sui
 - `1` authored blank line is allowed and is preserved
 - `2` or more consecutive blank lines are not allowed
 
-This is where "code prose" matters.
-A single readability gap between logic groups is valid Incan style and survives formatting.
+This is where "code prose" matters. A single readability gap between logic groups is valid Incan style and survives formatting.
 
 ```incan
 def register_source(session: Session, source: Source) -> Result[None, SessionError]:
@@ -196,8 +191,7 @@ def main() -> None:
 
 ### Stand-alone comments
 
-Stand-alone comments are attached by scope and structure.
-They do not create extra blank-line entitlement on their own.
+Stand-alone comments are attached by scope and structure. They do not create extra blank-line entitlement on their own.
 
 - a comment with no blank line before the next construct is treated as a leading comment for that construct
 - a comment separated from the next construct by a blank line stays with the previous construct instead
@@ -226,8 +220,7 @@ This docstring may contain one intentional blank line.
 """
 ```
 
-Literal text such as `\n` inside strings is still just text.
-Normalization applies to actual blank lines, not slash characters.
+Literal text such as `\n` inside strings is still just text. Normalization applies to actual blank lines, not slash characters.
 
 ## Horizontal Spacing
 
@@ -289,8 +282,7 @@ Do not insert extra blank lines immediately after `=>` or a suite header unless 
 
 ## What The Formatter Should Preserve
 
-`incan fmt` preserves legitimate authored structure rather than flattening everything into one style-less block.
-Today that specifically includes:
+`incan fmt` preserves legitimate authored structure rather than flattening everything into one style-less block. Today that specifically includes:
 
 - one blank line between logic groups inside indented code
 - one blank line between sibling statements after nested suites

@@ -1,7 +1,6 @@
 # Understanding Incan Error Messages
 
-Incan’s compiler errors are designed to be **actionable**: they show you what went wrong,
-where it happened, and what to do next.
+Incan’s compiler errors are designed to be **actionable**: they show you what went wrong, where it happened, and what to do next.
 
 ## Reading Error Output
 

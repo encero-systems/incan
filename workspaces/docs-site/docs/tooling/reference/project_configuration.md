@@ -1,12 +1,10 @@
 # Project configuration (`incan.toml`)
 
-This is the reference for the `incan.toml` project manifest format. For a practical guide to managing dependencies, see:
-[Managing dependencies](../how-to/dependencies.md).
+This is the reference for the `incan.toml` project manifest format. For a practical guide to managing dependencies, see: [Managing dependencies](../how-to/dependencies.md).
 
 ## Overview
 
-`incan.toml` is an optional project manifest that lives at your project root. It declares project metadata, build configuration, Incan library dependencies, Rust crate dependencies, and optional vocab companion crate settings.
-Project-aware commands discover it by walking upward from the current working directory, and file-oriented commands may also resolve it from the provided source path.
+`incan.toml` is an optional project manifest that lives at your project root. It declares project metadata, build configuration, Incan library dependencies, Rust crate dependencies, and optional vocab companion crate settings. Project-aware commands discover it by walking upward from the current working directory, and file-oriented commands may also resolve it from the provided source path.
 
 ```text
 my_project/
@@ -262,8 +260,7 @@ incan build src/main.incn --cargo-features fancy_logging
 
 ## Legacy alias tables
 
-`[rust.dependencies]` and `[rust.dev-dependencies]` remain supported as backward-compatible aliases for `[rust-dependencies]` and `[rust-dev-dependencies]`.
-Prefer the non-nested table names in new manifests.
+`[rust.dependencies]` and `[rust.dev-dependencies]` remain supported as backward-compatible aliases for `[rust-dependencies]` and `[rust-dev-dependencies]`. Prefer the non-nested table names in new manifests.
 
 ## Dependency sources
 

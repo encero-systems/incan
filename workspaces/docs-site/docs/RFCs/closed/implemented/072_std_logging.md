@@ -87,13 +87,9 @@ def main() -> None:
     log.info("Starting session")
 ```
 
-Ambient `log` is a soft surface: if user code has no local `log` binding, `log.info(...)` behaves like calling
-`get_logger()` for the current module and then invoking the method. A local variable, parameter, import, or explicit
-`log = get_logger("...")` binding shadows the ambient surface.
+Ambient `log` is a soft surface: if user code has no local `log` binding, `log.info(...)` behaves like calling `get_logger()` for the current module and then invoking the method. A local variable, parameter, import, or explicit `log = get_logger("...")` binding shadows the ambient surface.
 
-`get_logger()` without a name returns a logger whose name is inferred from the current module when the compiler can
-provide that metadata. When module-name inference is not available, the fallback name is `"root"`. Package and
-executable identity are telemetry/provider integration concerns rather than ordinary logging defaults.
+`get_logger()` without a name returns a logger whose name is inferred from the current module when the compiler can provide that metadata. When module-name inference is not available, the fallback name is `"root"`. Package and executable identity are telemetry/provider integration concerns rather than ordinary logging defaults.
 
 ### Named loggers
 
@@ -159,8 +155,7 @@ def main() -> None:
     basic_config(level=Level.DEBUG, format=LogFormat.JSON, target="stdout")
 ```
 
-Project defaults, environment overrides, and CLI flags are out of scope until Incan has a source-owned host
-configuration boundary that can feed stdlib state without introducing a Rust logging helper module.
+Project defaults, environment overrides, and CLI flags are out of scope until Incan has a source-owned host configuration boundary that can feed stdlib state without introducing a Rust logging helper module.
 
 ## Reference-level explanation
 
@@ -204,8 +199,7 @@ The standard level set is:
 - `ERROR`
 - `FATAL`
 
-`WARN` and `FATAL` are canonical because they match OpenTelemetry's normalized severity range names. `WARNING` aliases
-`WARN`, and `CRITICAL` aliases `FATAL` for source readability and Python-style familiarity.
+`WARN` and `FATAL` are canonical because they match OpenTelemetry's normalized severity range names. `WARNING` aliases `WARN`, and `CRITICAL` aliases `FATAL` for source readability and Python-style familiarity.
 
 The ordering is `TRACE < DEBUG < INFO < WARN < ERROR < FATAL`. A runtime threshold includes events at that level or above.
 
@@ -238,8 +232,7 @@ def load(path: str) -> None:
     log.info("ready")
 ```
 
-An implementation must not freeze ambient `log` to the implementation module `std.logging`, because that would make the
-shortcut less correct than the explicit `get_logger()` form.
+An implementation must not freeze ambient `log` to the implementation module `std.logging`, because that would make the shortcut less correct than the explicit `get_logger()` form.
 
 ### Logger API
 
@@ -278,10 +271,7 @@ Field keys must be strings. Field keys should be valid identifier-like names for
 
 Reserved runtime keys include `timestamp`, `level`, `message`, `logger`, `target`, `module`, `file`, `line`, and `thread`. User-provided fields with reserved names are allowed only inside the user field map and must not overwrite the top-level runtime metadata fields.
 
-Field keys may use dotted semantic-convention names such as `http.request.method`, `db.system.name`,
-`gen_ai.request.model`, `mcp.method.name`, or provider-specific keys. `std.logging` must preserve those keys as
-ordinary structured fields. It must not normalize, split, or reserve external telemetry namespaces in the base logging
-API.
+Field keys may use dotted semantic-convention names such as `http.request.method`, `db.system.name`, `gen_ai.request.model`, `mcp.method.name`, or provider-specific keys. `std.logging` must preserve those keys as ordinary structured fields. It must not normalize, split, or reserve external telemetry namespaces in the base logging API.
 
 ### Event records
 
@@ -314,9 +304,7 @@ pub model LogRecord:
 - `ERROR` -> `severity_text="ERROR"`, `severity_number=17`
 - `FATAL` -> `severity_text="FATAL"`, `severity_number=21`
 
-`WARNING` and `CRITICAL` are aliases for the canonical `WARN` and `FATAL` variants, so JSON output can use
-`level.value()` directly for `SeverityText`. Human renderers may still display `WARNING` and `CRITICAL` if that is the
-configured Incan presentation policy.
+`WARNING` and `CRITICAL` are aliases for the canonical `WARN` and `FATAL` variants, so JSON output can use `level.value()` directly for `SeverityText`. Human renderers may still display `WARNING` and `CRITICAL` if that is the configured Incan presentation policy.
 
 Human output is a projection of this record. JSON output must preserve the record as structured data. OTel-oriented JSON output should honor the field aliases above so downstream tools see the official OpenTelemetry field spellings, while human-oriented projections may use Incan names or compact labels.
 
@@ -350,16 +338,13 @@ The committed configuration knobs are:
 - `ALWAYS`
 - `NEVER`
 
-`OutputTarget` is a validated newtype over `str`. It accepts at least `"stderr"` and `"stdout"` and owns routing emitted
-lines to the selected standard stream. `basic_config(...)` may continue to accept a string argument at the call boundary,
-but the stored configuration should use the nominal target type instead of carrying an unchecked string.
+`OutputTarget` is a validated newtype over `str`. It accepts at least `"stderr"` and `"stdout"` and owns routing emitted lines to the selected standard stream. `basic_config(...)` may continue to accept a string argument at the call boundary, but the stored configuration should use the nominal target type instead of carrying an unchecked string.
 
 Calling `basic_config(...)` more than once is deterministic. A second call replaces the previous source-level policy.
 
 ### Project and runtime configuration
 
-`incan.toml`, CLI flags, and environment overrides are not part of the implementable baseline in this RFC. They should
-be specified once Incan has a source-owned configuration/import boundary for host-provided settings.
+`incan.toml`, CLI flags, and environment overrides are not part of the implementable baseline in this RFC. They should be specified once Incan has a source-owned configuration/import boundary for host-provided settings.
 
 A project configuration surface may look like:
 
@@ -398,7 +383,7 @@ Normative style expectations:
 - `complete` renders a full datetime timestamp.
 - `verbose` may render additional metadata and fields, but it must keep the first line message-first and readable.
 - When a record carries active span context, human renderers should be able to expose that hierarchy with lightweight
-  span guides rather than long repeated logger prefixes.
+span guides rather than long repeated logger prefixes.
 
 Illustrative shapes:
 
@@ -437,9 +422,7 @@ Illustrative span-correlated `verbose` output:
   logger=query.engine.lowering trace=7f9c span=02 parent=01
 ```
 
-The exact spacing and glyph topology are renderer policy. The level, message, selected metadata, and span relationship
-must be visible without requiring a JSON consumer. Span guides are a human projection of trace/span context supplied by
-the telemetry layer; this RFC does not make `std.logging` responsible for starting or ending spans.
+The exact spacing and glyph topology are renderer policy. The level, message, selected metadata, and span relationship must be visible without requiring a JSON consumer. Span guides are a human projection of trace/span context supplied by the telemetry layer; this RFC does not make `std.logging` responsible for starting or ending spans.
 
 ### JSON rendering
 
@@ -467,9 +450,7 @@ Application entrypoints, command runners, tests, and embedding hosts may call `b
 
 ### Source implementation boundary
 
-The reference implementation is authored in `crates/incan_stdlib/stdlib/logging.incn`. It may import from `rust::std`
-for platform primitives such as `SystemTime`, but it must not use a Rust backing module or `@rust.extern` logging
-helpers.
+The reference implementation is authored in `crates/incan_stdlib/stdlib/logging.incn`. It may import from `rust::std` for platform primitives such as `SystemTime`, but it must not use a Rust backing module or `@rust.extern` logging helpers.
 
 The source implementation must preserve:
 
@@ -479,15 +460,13 @@ The source implementation must preserve:
 - structured field values
 - bound context
 
-Logger-name source metadata uses module identity where the compiler can provide it. File and line metadata are outside
-this RFC and belong with the broader telemetry source-location policy.
+Logger-name source metadata uses module identity where the compiler can provide it. File and line metadata are outside this RFC and belong with the broader telemetry source-location policy.
 
 ### OpenTelemetry compatibility
 
 This RFC does not standardize the full OpenTelemetry model. `std.telemetry` owns provider configuration, tracing decorators, explicit span handles, metric instruments, baggage/context propagation, OpenTelemetry export, semantic-convention helpers, and stdlib instrumentation policy. The event payload defined here must remain usable as the log/event component inside that observability model.
 
-The absence of span, metric, resource, and propagation APIs is intentional. It keeps RFC 072 implementable as a
-standard-library/runtime surface without adding parser support or a new ambient language binding.
+The absence of span, metric, resource, and propagation APIs is intentional. It keeps RFC 072 implementable as a standard-library/runtime surface without adding parser support or a new ambient language binding.
 
 Incan should become OpenTelemetry-compatible as a language and stdlib ecosystem, not merely GenAI-compatible. That means observability RFCs should account for OpenTelemetry's traces, metrics, logs/events, resources, profiles, and context propagation concepts, and should use semantic conventions where Incan stdlib surfaces correspond to common operations. `std.logging` contributes by adopting the OpenTelemetry log record shape now and preserving structured attributes and a stable named-fields/attributes boundary.
 
@@ -520,22 +499,15 @@ span.end()
 
 Scoped span blocks are owned by the telemetry/context-manager RFCs rather than by `std.logging`.
 
-OpenTelemetry's GenAI semantic conventions define GenAI, MCP, and provider-specific telemetry vocabulary outside
-Incan's standard library. They are one convention family under the broader OpenTelemetry compatibility goal, not the
-whole target. RFC 072 should align with that direction by preserving arbitrary structured field names, but it should not
-copy any convention registry into `std.logging`. `std.telemetry` should define opt-in mapping profiles for OpenTelemetry
-logs/events/spans/metrics.
+OpenTelemetry's GenAI semantic conventions define GenAI, MCP, and provider-specific telemetry vocabulary outside Incan's standard library. They are one convention family under the broader OpenTelemetry compatibility goal, not the whole target. RFC 072 should align with that direction by preserving arbitrary structured field names, but it should not copy any convention registry into `std.logging`. `std.telemetry` should define opt-in mapping profiles for OpenTelemetry logs/events/spans/metrics.
 
 ## Design details
 
 ### Why ambient `log` lowers into `std.logging`
 
-Ambient `log` is worth the language commitment because logging is part of the everyday program surface. Requiring every
-module to spell `log = get_logger()` adds ceremony without adding useful information in the common case.
+Ambient `log` is worth the language commitment because logging is part of the everyday program surface. Requiring every module to spell `log = get_logger()` adds ceremony without adding useful information in the common case.
 
-The important constraint is that ambient `log` is soft and shadowable. It should behave like an unresolved identifier
-fallback, not like an unshadowable keyword. This keeps explicit logger values available for libraries, tests, and code
-that wants a deliberate hierarchy:
+The important constraint is that ambient `log` is soft and shadowable. It should behave like an unresolved identifier fallback, not like an unshadowable keyword. This keeps explicit logger values available for libraries, tests, and code that wants a deliberate hierarchy:
 
 ```incan
 def load(path: str) -> None:
@@ -543,8 +515,7 @@ def load(path: str) -> None:
     log.info("ready")
 ```
 
-The ambient form lowers into `std.logging.get_logger(<current module>)` and then uses the same source-defined `Logger`
-implementation as explicit logger values.
+The ambient form lowers into `std.logging.get_logger(<current module>)` and then uses the same source-defined `Logger` implementation as explicit logger values.
 
 ### Why not copy Python logging wholesale
 
@@ -725,13 +696,12 @@ Configuration precedence tests are deferred with the project/CLI/environment con
 - JSON is a `LogFormat`, not a `LogStyle`, and OTel-oriented JSON uses the official `LogRecord` field aliases.
 - Color policy is human-renderer-only and never affects JSON output.
 - Colorized terminal behavior remains tied to a source-owned CLI/terminal capability surface instead of a Rust
-  logging helper.
+logging helper.
 - The filter contract requires a global threshold; per-logger filtering may be added compatibly.
 - The implemented reference surface is source Incan and may only use ordinary `rust::std` imports for host primitives.
 - Rust `tracing` integration is deferred until it can be introduced without replacing the source-owned logging surface.
 - Span, context propagation, and external export APIs are deferred to follow-up RFCs.
 - OpenTelemetry compatibility is an Incan-wide observability goal. RFC 072 adopts the OpenTelemetry log record model,
-  while full provider/exporter behavior, semantic convention helpers, tracing decorators, baggage/context propagation,
-  and metrics are deferred to dedicated observability RFCs.
+while full provider/exporter behavior, semantic convention helpers, tracing decorators, baggage/context propagation, and metrics are deferred to dedicated observability RFCs.
 - RFC 093 owns the full `std.telemetry` provider/exporter direction; RFC 094 and RFC 095 record the context-manager and
-  `span` vocabulary foundations needed for ambient but controlled spans.
+`span` vocabulary foundations needed for ambient but controlled spans.

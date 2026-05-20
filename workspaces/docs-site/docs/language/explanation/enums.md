@@ -1,7 +1,6 @@
 # Enums in Incan
 
-Enums in Incan are **algebraic data types** (ADTs): a type with a **closed set** of variants, where each variant can carry
-different data.
+Enums in Incan are **algebraic data types** (ADTs): a type with a **closed set** of variants, where each variant can carry different data.
 
 You use enums when a value can be **one of a few well-defined shapes** and you want the compiler to enforce that you handle every case.
 

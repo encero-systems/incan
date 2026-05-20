@@ -1,7 +1,6 @@
 # Incan Programming Language
 
-Incan is a statically typed language for writing clear, high-level application code that compiles to native Rust.
-It aims to feel lightweight and expressive while keeping the things that matter in large codebases explicit: types, errors, and mutability.
+Incan is a statically typed language for writing clear, high-level application code that compiles to native Rust. It aims to feel lightweight and expressive while keeping the things that matter in large codebases explicit: types, errors, and mutability.
 
 ## Positioning
 
@@ -96,8 +95,7 @@ make docs-serve
 
 ## Performance
 
-Incan compiles to Rust and then to a native binary. Runtime performance can be close to Rust for many workloads,
-depending on current codegen and library behavior.
+Incan compiles to Rust and then to a native binary. Runtime performance can be close to Rust for many workloads, depending on current codegen and library behavior.
 
 - Benchmarks: `benchmarks/`
 - Results: `benchmarks/results/results.md`

@@ -28,8 +28,7 @@ This page is a routing guide for step/pipeline-style workflows (automation, repr
 - `incan test` with basic filtering (`-k`) and CI-friendly exit codes
 - `incan run` for deterministic single-program runs (exit code follows the program)
 
-If you are contributing to the Incan repository itself, the CI entrypoints are `make check` / `make test` / `make smoke-test`
-(see: [CI & automation (repository)](../contributing/how-to/ci_and_automation.md)).
+If you are contributing to the Incan repository itself, the CI entrypoints are `make check` / `make test` / `make smoke-test` (see: [CI & automation (repository)](../contributing/how-to/ci_and_automation.md)).
 
 ## Not yet / planned (don’t rely on it for automation)
 

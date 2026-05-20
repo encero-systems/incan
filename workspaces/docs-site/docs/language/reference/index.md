@@ -1,7 +1,6 @@
 # Reference
 
-The Reference section is the canonical, stable specification of the Incan Programming Language. It provides precise
-definitions for grammar, types, semantics, standard library APIs, and runtime behavior.
+The Reference section is the canonical, stable specification of the Incan Programming Language. It provides precise definitions for grammar, types, semantics, standard library APIs, and runtime behavior.
 
 Use this section when:
 
@@ -9,8 +8,7 @@ Use this section when:
 - You want behavior clarified without examples
 - You’re verifying compatibility across versions
 
-For step-by-step learning and patterns, see [Tutorials](../tutorials/book/index.md) and the
-[How-to guides](../index.md). For practical examples, see the repo’s `examples/` directory.
+For step-by-step learning and patterns, see [Tutorials](../tutorials/book/index.md) and the [How-to guides](../index.md). For practical examples, see the repo’s `examples/` directory.
 
 ## Table of contents
 

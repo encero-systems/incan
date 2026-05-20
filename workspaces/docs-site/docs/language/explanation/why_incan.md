@@ -2,15 +2,13 @@
 
 Incan is a Python-like language that compiles to Rust.
 
-It exists because many developers love Python’s readability and speed of iteration, but repeatedly run into the same
-problems when projects grow:
+It exists because many developers love Python’s readability and speed of iteration, but repeatedly run into the same problems when projects grow:
 
 - performance becomes a bottleneck in the “hot” parts
 - packaging and deployment often become a separate engineering project
 - the ecosystem increasingly pushes performance-critical code into Rust/C backends anyway
 
-Incan is the “step-in” language that makes that path explicit: write clear, Python-shaped code, keep strong typing and
-tooling, and compile to Rust so you can ship fast, predictable programs.
+Incan is the “step-in” language that makes that path explicit: write clear, Python-shaped code, keep strong typing and tooling, and compile to Rust so you can ship fast, predictable programs.
 
 ## The core idea
 
@@ -20,8 +18,7 @@ Incan is built around a simple promise:
 - **Compile to Rust**
 - **Use Rust crates when you need them**
 
-That means you can keep a high-level surface for most of your code, while still having a real escape hatch into the Rust
-ecosystem for performance, libraries, and integration.
+That means you can keep a high-level surface for most of your code, while still having a real escape hatch into the Rust ecosystem for performance, libraries, and integration.
 
 ## Who it’s for
 

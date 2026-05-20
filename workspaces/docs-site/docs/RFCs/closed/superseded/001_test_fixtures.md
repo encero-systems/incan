@@ -1,8 +1,6 @@
 # RFC 001: Test Fixtures
 
-**Status:** In Progress
-**Created:** 2024-12-07
-**Issue:** [#54](https://github.com/dannys-code-corner/incan/pull/54)
+**Status:** In Progress **Created:** 2024-12-07 **Issue:** [#54](https://github.com/dannys-code-corner/incan/pull/54)
 
 ## Summary
 

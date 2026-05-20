@@ -76,14 +76,11 @@ Enables the current Axum-backed host runtime for generated Incan web programs.
 
 ### Incan stdlib stubs
 
-The Incan-source stdlib stubs live under `crates/incan_stdlib/stdlib/` (for example
-`crates/incan_stdlib/stdlib/testing.incn`).
+The Incan-source stdlib stubs live under `crates/incan_stdlib/stdlib/` (for example `crates/incan_stdlib/stdlib/testing.incn`).
 
 These files define the user-facing `std.*` API surface and are parsed by the compiler for signature/validation metadata.
 
-For `std.testing`, this also includes marker semantics metadata consumed by `incan test` discovery/execution.
-The Rust runtime in `src/testing.rs` only provides irreducible host boundaries declared via `@rust.extern`.
-The language `assert` statement is always available without importing `std.testing`; the stdlib assertion helpers mirror that behavior for call-style assertions and unwrap-style helpers.
+For `std.testing`, this also includes marker semantics metadata consumed by `incan test` discovery/execution. The Rust runtime in `src/testing.rs` only provides irreducible host boundaries declared via `@rust.extern`. The language `assert` statement is always available without importing `std.testing`; the stdlib assertion helpers mirror that behavior for call-style assertions and unwrap-style helpers.
 
 ### Transitional web runtime
 
@@ -97,8 +94,7 @@ The `__private` module re-exports host crates needed by generated Rust. It is to
 
 ### Why a Separate Crate?
 
-Generated Incan programs need access to these traits and utilities, but shouldn't depend on the entire compiler.
-This crate provides a minimal, stable API surface for compiled code.
+Generated Incan programs need access to these traits and utilities, but shouldn't depend on the entire compiler. This crate provides a minimal, stable API surface for compiled code.
 
 ### Relationship with `incan_derive`
 
@@ -124,8 +120,7 @@ pub struct User {
 
 ## Version Compatibility
 
-This crate follows the Incan compiler version. For example, when you compile with `incan v0.1.0`, the generated code
-depends on `incan_stdlib v0.1.0`.
+This crate follows the Incan compiler version. For example, when you compile with `incan v0.1.0`, the generated code depends on `incan_stdlib v0.1.0`.
 
 ## License
 

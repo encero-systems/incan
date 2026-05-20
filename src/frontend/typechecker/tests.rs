@@ -8054,6 +8054,93 @@ def f(w: Widget) -> None:
     Ok(())
 }
 
+#[test]
+fn test_rust_extension_trait_associated_call_records_param_shape() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import Cursor, FileDescriptorSet, Message
+
+def f(cursor: Cursor) -> None:
+  _ = FileDescriptorSet.decode(cursor)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Message".to_string(),
+                definition_path: Some("demo::Message".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Trait(RustTraitInfo {
+                    items: vec![RustTraitAssoc::Function {
+                        name: "decode".to_string(),
+                        signature: RustFunctionSig {
+                            params: vec![RustParam {
+                                name: Some("buf".to_string()),
+                                type_display: "T".to_string(),
+                            }],
+                            return_type: "Self".to_string(),
+                            is_async: false,
+                            is_unsafe: false,
+                        },
+                    }],
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed trait metadata: {err}")))?;
+    for path in ["demo::Cursor", "demo::FileDescriptorSet"] {
+        checker
+            .rust_inspect_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: path.to_string(),
+                    definition_path: Some(path.to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Type(RustTypeInfo {
+                        methods: Vec::new(),
+                        implemented_traits: if path.ends_with("FileDescriptorSet") {
+                            vec![RustImplementedTrait {
+                                path: "demo::Message".to_string(),
+                            }]
+                        } else {
+                            Vec::new()
+                        },
+                        fields: Vec::new(),
+                        variants: Vec::new(),
+                    }),
+                },
+            )
+            .map_err(|err| std::io::Error::other(format!("seed type metadata: {err}")))?;
+    }
+
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+    let uses = &checker.type_info().rust.method_trait_import_uses;
+    assert!(
+        uses.values()
+            .any(|import_use| import_use.binding == "Message" && import_use.method == "decode"),
+        "expected Message import use, got {uses:?}"
+    );
+    assert!(
+        checker
+            .type_info()
+            .calls
+            .call_site_callable_params
+            .values()
+            .any(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("T".to_string())),
+        "expected trait-provided decode parameter shape to be recorded, got {:?}",
+        checker.type_info().calls.call_site_callable_params
+    );
+    Ok(())
+}
+
 #[cfg(feature = "rust_inspect")]
 #[test]
 fn test_rusttype_bodyless_rust_trait_forwarding_uses_metadata_and_skips_impl() -> Result<(), Box<dyn std::error::Error>>

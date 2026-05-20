@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::cli::commands::common::resolve_stdlib_module_source_path;
+use crate::cli::commands::common::{
+    resolve_stdlib_module_source_path, uses_iterator_adapter_surface, uses_result_combinator_surface,
+};
 use crate::cli::prelude::ParsedModule;
 use crate::frontend::ast::Program;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
@@ -68,6 +70,36 @@ fn queue_resolved_source_import(
     Ok(())
 }
 
+/// Queue implicit source stdlib helper modules that generated Rust may reference without a source import.
+fn queue_implicit_stdlib_helpers(
+    program: &Program,
+    incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
+    processed: &HashSet<PathBuf>,
+    to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
+) -> Result<(), String> {
+    if uses_iterator_adapter_surface(program) {
+        queue_incan_stdlib_source_module(
+            &[
+                stdlib::STDLIB_ROOT.to_string(),
+                "derives".to_string(),
+                "collection".to_string(),
+            ],
+            incan_source_stdlib_module_paths,
+            processed,
+            to_process,
+        )?;
+    }
+    if uses_result_combinator_surface(program) {
+        queue_incan_stdlib_source_module(
+            &[stdlib::STDLIB_ROOT.to_string(), "result".to_string()],
+            incan_source_stdlib_module_paths,
+            processed,
+            to_process,
+        )?;
+    }
+    Ok(())
+}
+
 /// Collect source modules referenced by a test file's imports.
 ///
 /// Walks the test AST for `from <module> import ...` statements that reference user modules and materialized stdlib
@@ -86,6 +118,13 @@ pub(crate) fn collect_source_modules_for_test(
     let mut processed = HashSet::new();
     let mut to_process: Vec<(PathBuf, String, Vec<String>)> = Vec::new();
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
+
+    queue_implicit_stdlib_helpers(
+        test_ast,
+        &mut incan_source_stdlib_module_paths,
+        &processed,
+        &mut to_process,
+    )?;
 
     // ---- Walk test AST to find user module imports ----
     for resolved in resolve_program_source_imports(test_ast, source_root, Some(source_root)) {
@@ -144,6 +183,8 @@ pub(crate) fn collect_source_modules_for_test(
             let fp = file_path.to_string_lossy();
             eprint!("{}", diagnostics::format_error(&fp, &source, warn));
         }
+
+        queue_implicit_stdlib_helpers(&ast, &mut incan_source_stdlib_module_paths, &processed, &mut to_process)?;
 
         // Walk this module's imports for transitive dependencies.
         let current_base = file_path.parent().unwrap_or(source_root);
@@ -213,6 +254,47 @@ mod tests {
             vec!["dataset".to_string(), "ops".to_string()]
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_runner_collects_implicit_result_helper_modules() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir)?;
+
+        let test_source = r#"
+def produce_error() -> Result[int, str]:
+    return Err("bad")
+
+
+def convert_error(err: str) -> int:
+    return len(err)
+
+
+def test_map_err_result_helper_is_packaged() -> None:
+    match produce_error().map_err(convert_error):
+        Ok(_) => assert false
+        Err(code) => assert code == 3
+"#;
+        let tokens = lexer::lex(test_source).map_err(|errs| errs[0].message.clone())?;
+        let ast = parser::parse_with_context(&tokens, Some("tests/test_result_map_err.incn"), None)
+            .map_err(|errs| errs[0].message.clone())?;
+
+        let modules = collect_source_modules_for_test(&ast, &src_dir, None, None, None)?;
+
+        assert!(
+            modules.iter().any(|module| module.path_segments
+                == vec![
+                    incan_core::lang::stdlib::INCAN_STD_NAMESPACE.to_string(),
+                    "result".to_string()
+                ]),
+            "expected std.result helper module to be collected, got {:?}",
+            modules
+                .iter()
+                .map(|module| module.path_segments.clone())
+                .collect::<Vec<_>>()
+        );
         Ok(())
     }
 }

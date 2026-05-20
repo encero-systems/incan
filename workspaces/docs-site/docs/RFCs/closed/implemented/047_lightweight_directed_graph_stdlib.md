@@ -79,9 +79,7 @@ roots: list[NodeId] = g.roots()
 
 ### Node payloads as **object references** (e.g. `Step`)
 
-Graphs are not limited to string or primitive payloads. A common pattern is
-`DiGraph[Step]`, or another user type, where each `NodeId` maps to a `Step`
-value the author already holds. Edges still connect `NodeId`s, so one `Step` instance can be the payload of node `a` and another of node `b`, with a directed edge `a -> b` meaning "this step runs before that step," or any other domain-specific relationship.
+Graphs are not limited to string or primitive payloads. A common pattern is `DiGraph[Step]`, or another user type, where each `NodeId` maps to a `Step` value the author already holds. Edges still connect `NodeId`s, so one `Step` instance can be the payload of node `a` and another of node `b`, with a directed edge `a -> b` meaning "this step runs before that step," or any other domain-specific relationship.
 
 ```incan
 from std.graph import DiGraph, NodeId
@@ -109,11 +107,9 @@ def step_name_at(g: DiGraph[Step], nid: NodeId) -> str:
             return ""
 ```
 
-**Semantics:** `add_node(payload=...)` ties a `NodeId` to that payload object.
-If two nodes should represent the same `Step` instance, that is a domain choice: either one node is shared or two nodes hold cloned payloads. The stdlib must document how clone versus shared-reference behavior works for mutable payloads.
+**Semantics:** `add_node(payload=...)` ties a `NodeId` to that payload object. If two nodes should represent the same `Step` instance, that is a domain choice: either one node is shared or two nodes hold cloned payloads. The stdlib must document how clone versus shared-reference behavior works for mutable payloads.
 
-**Bounds:** generic graphs such as `DiGraph[T]` will likely require `T` to
-satisfy whatever the language requires for stored or shared data. Exact bounds are implementation detail, but they must appear in user-facing docs.
+**Bounds:** generic graphs such as `DiGraph[T]` will likely require `T` to satisfy whatever the language requires for stored or shared data. Exact bounds are implementation detail, but they must appear in user-facing docs.
 
 ### Traversal (BFS / DFS) from a start node
 
@@ -388,11 +384,9 @@ multigraph-oriented APIs are less central.
 - **Rust (`petgraph`, illustrative only).** `Graph` can represent multiple
 edges between the same node pair, while `GraphMap` does not. Acyclicity is not enforced by default; DAG guarantees are algorithm or wrapper concerns.
 
-**Loose takeaway for question 1 (DAG shape).** Ecosystems rarely expose a
-third ubiquitous type name `Dag` alongside `DiGraph`; DAG is often policy on a directed container. A separate `Dag` type in Incan is still allowed if it improves ergonomics or static guarantees, but it is less common in the surveyed libraries.
+**Loose takeaway for question 1 (DAG shape).** Ecosystems rarely expose a third ubiquitous type name `Dag` alongside `DiGraph`; DAG is often policy on a directed container. A separate `Dag` type in Incan is still allowed if it improves ergonomics or static guarantees, but it is less common in the surveyed libraries.
 
-**Loose takeaway for question 2 (parallel edges).** Simple directed graphs are
-the default in several major libraries, while parallel edges are opt-in through multigraph types or configuration. That supports keeping `DiGraph[T]` simple while also including `MultiDiGraph[T]` for domains that need a multigraph profile.
+**Loose takeaway for question 2 (parallel edges).** Simple directed graphs are the default in several major libraries, while parallel edges are opt-in through multigraph types or configuration. That supports keeping `DiGraph[T]` simple while also including `MultiDiGraph[T]` for domains that need a multigraph profile.
 
 ## Design Decisions
 

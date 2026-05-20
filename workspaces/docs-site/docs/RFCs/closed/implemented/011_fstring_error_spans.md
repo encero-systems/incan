@@ -9,8 +9,7 @@
 
 ## Summary
 
-Improve error messages for f-string interpolation expressions to point to the specific `{expr}` that caused the error,
-rather than the entire f-string.
+Improve error messages for f-string interpolation expressions to point to the specific `{expr}` that caused the error, rather than the entire f-string.
 
 ## Motivation
 

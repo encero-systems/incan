@@ -50,8 +50,7 @@ cp -r editors/vscode ~/.cursor/extensions/incan-language
 - Markdown code block highlighting for `incan` language
 - **LSP integration** - Diagnostics, hover, go-to-definition (requires incan-lsp)
 
-See [`editors/vscode/README.md`](https://github.com/dannys-code-corner/incan/blob/main/editors/vscode/README.md) for full
-details.
+See [`editors/vscode/README.md`](https://github.com/dannys-code-corner/incan/blob/main/editors/vscode/README.md) for full details.
 
 **Alternative**: Use Python highlighting
 
@@ -88,8 +87,7 @@ The Incan Language Server provides IDE integration:
 - **Go-to-definition** - Jump to symbol definitions
 - **Completions** - Keywords and symbols
 
-See [Language Server](lsp.md) for setup instructions. If you develop the compiler from a clone, prefer `make build` so
-`incan` and `incan-lsp` on your `PATH` both point at `target/debug` (see the LSP guide).
+See [Language Server](lsp.md) for setup instructions. If you develop the compiler from a clone, prefer `make build` so `incan` and `incan-lsp` on your `PATH` both point at `target/debug` (see the LSP guide).
 
 ## Format on Save
 

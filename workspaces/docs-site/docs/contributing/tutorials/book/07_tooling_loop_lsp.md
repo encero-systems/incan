@@ -1,7 +1,6 @@
 # 7. Tooling loop: LSP
 
-The language server is the “always-on” feedback loop for contributors and users. If the compiler changes, the LSP must not
-drift.
+The language server is the “always-on” feedback loop for contributors and users. If the compiler changes, the LSP must not drift.
 
 ## What the LSP should do
 

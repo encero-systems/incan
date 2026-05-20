@@ -31,27 +31,20 @@ Together, these changes push the Incan stdlib toward being written in **mostly p
 
 ### The stdlib is all Rust, and the compiler is the bottleneck
 
-Today, Incan's stdlib is implemented entirely in Rust (`crates/incan_stdlib/src/`), and the `.incn` files in `stdlib/`
-are documentation-only stubs that the compiler ignores. Adding a single function to a stdlib module requires touching
-up to five files across four compiler stages:
+Today, Incan's stdlib is implemented entirely in Rust (`crates/incan_stdlib/src/`), and the `.incn` files in `stdlib/` are documentation-only stubs that the compiler ignores. Adding a single function to a stdlib module requires touching up to five files across four compiler stages:
 
 1. **Rust implementation** (`crates/incan_stdlib/src/testing.rs`) — write the function
 2. **Incan stub** (`stdlib/testing.incn`) — add the signature for docs/IDE
 3. **Typechecker registry** (`src/frontend/typechecker/collect.rs`) — hardcode the function's type signature
 4. **Emission mapping** (`src/backend/ir/emit/decls.rs`) — hardcode the `std.testing` → `incan_stdlib::testing` path
-   rewrite
+rewrite
 5. **Module registry** (`crates/incan_core/src/lang/stdlib.rs`) — register the module metadata
 
-The function signature is duplicated (once in the `.incn` stub, once as handwritten Rust data structures in the
-typechecker), and they can drift. The path-rewriting in emission is a growing `if/else` chain that must be extended for
-every new stdlib module. After this RFC, the `.incn` source file becomes the **single source of truth** — the compiler
-parses it for type signatures and compiles it into the generated output — eliminating both the duplication and the
-manual wiring.
+The function signature is duplicated (once in the `.incn` stub, once as handwritten Rust data structures in the typechecker), and they can drift. The path-rewriting in emission is a growing `if/else` chain that must be extended for every new stdlib module. After this RFC, the `.incn` source file becomes the **single source of truth** — the compiler parses it for type signatures and compiles it into the generated output — eliminating both the duplication and the manual wiring.
 
 ### Most stdlib code doesn't need to be Rust
 
-Many stdlib functions are algorithmically simple and can be written in Incan, provided a small set of Rust-backed
-primitives exists. The stdlib already demonstrates this pattern:
+Many stdlib functions are algorithmically simple and can be written in Incan, provided a small set of Rust-backed primitives exists. The stdlib already demonstrates this pattern:
 
 ```incan title="stdlib/derives/comparison.incn"
 # already today
@@ -69,42 +62,34 @@ trait Ord:
         return other.__lt__(self) or self.__eq__(other)
 ```
 
-Only `__lt__` is `@rust.extern`; the other three are pure Incan built on that primitive. The same pattern applies
-broadly. For example, `std.testing` has 12+ functions but only one (`fail()`) is irreducibly Rust — every `assert_*`
-variant is expressible as pure Incan on top of `fail()`.
+Only `__lt__` is `@rust.extern`; the other three are pure Incan built on that primitive. The same pattern applies broadly. For example, `std.testing` has 12+ functions but only one (`fail()`) is irreducibly Rust — every `assert_*` variant is expressible as pure Incan on top of `fail()`.
 
 ### No ecosystem path for Rust-backed Incan libraries
 
-Users cannot create their own Rust-backed Incan libraries without modifying the compiler. Today, `@std.builtin` is
-reserved for stdlib sources, and there is no mechanism for a third-party package to say "my Incan module is backed by
-this Rust crate." This limits the ecosystem to either pure Incan packages or raw `rust::` imports.
+Users cannot create their own Rust-backed Incan libraries without modifying the compiler. Today, `@std.builtin` is reserved for stdlib sources, and there is no mechanism for a third-party package to say "my Incan module is backed by this Rust crate." This limits the ecosystem to either pure Incan packages or raw `rust::` imports.
 
 ## Goals
 
 - Stdlib `.incn` files become the **single source of truth** for both documentation and compilation — no more duplicated
-  signatures in the typechecker.
+signatures in the typechecker.
 - Adding a new stdlib function requires touching only **two files**: the Rust implementation (if `@rust.extern`) and the
-  `.incn` source. The compiler requires no per-function or per-module special-casing.
+`.incn` source. The compiler requires no per-function or per-module special-casing.
 - Third-party Incan libraries can wrap Rust crates using the same mechanism the stdlib uses, without compiler changes.
 - The set of Rust-backed primitives is **explicitly minimized** and clearly identified.
 
 ## Non-Goals
 
 - Replacing the `rust::` import mechanism (RFC 005). `rust::` remains the way to import Rust crate items directly into
-  Incan code. `rust.module()` + `@rust.extern` provides a higher-level alternative: wrapping Rust crates with
-  Incan-shaped APIs. Both mechanisms coexist.
+Incan code. `rust.module()` + `@rust.extern` provides a higher-level alternative: wrapping Rust crates with Incan-shaped APIs. Both mechanisms coexist.
 - Automatic generation of `.incn` stubs from Rust source. This may be valuable tooling but is out of scope.
 - Advanced trait features (associated types, supertraits, dispatch strategy). This RFC establishes the core trait
-  mechanics — bound syntax, inference, and the Rust mapping — which cover the vast majority of use cases. Remaining
-  capabilities can be addressed in targeted follow-ups as real-world usage demands them.
+mechanics — bound syntax, inference, and the Rust mapping — which cover the vast majority of use cases. Remaining capabilities can be addressed in targeted follow-ups as real-world usage demands them.
 
 ## Guide-level explanation (how users think about it)
 
 ### Stdlib: mostly Incan, with Rust-backed leaves
 
-The Incan standard library is written in Incan. Most functions have real Incan implementations that the compiler compiles
-through the normal pipeline. Only the functions that need runtime/OS/framework access are marked `@rust.extern` and
-backed by Rust.
+The Incan standard library is written in Incan. Most functions have real Incan implementations that the compiler compiles through the normal pipeline. Only the functions that need runtime/OS/framework access are marked `@rust.extern` and backed by Rust.
 
 For example, `std.testing` looks like this:
 
@@ -172,13 +157,11 @@ def assert_is_err[T, E](result: Result[T, E], msg: str = "") -> E:
         Err(e) => return e
 ```
 
-One `@rust.extern` leaf, many pure Incan functions. Users import and use them exactly as before — the change is internal
-to how the compiler processes the stdlib.
+One `@rust.extern` leaf, many pure Incan functions. Users import and use them exactly as before — the change is internal to how the compiler processes the stdlib.
 
 ### `rust.module()`: declaring a Rust-backed module
 
-The `rust.module()` directive appears at the top of a `.incn` file and tells the compiler where `@rust.extern` items
-are backed:
+The `rust.module()` directive appears at the top of a `.incn` file and tells the compiler where `@rust.extern` items are backed:
 
 ```incan
 # stdlib/testing.incn
@@ -190,8 +173,7 @@ def fail(msg: str) -> None: ...
 # ... pure Incan functions ...
 ```
 
-When the compiler encounters `@rust.extern def fail(...)` in a module with `rust.module("incan_stdlib::testing")`, it
-emits a reference to `incan_stdlib::testing::fail` in the generated Rust code.
+When the compiler encounters `@rust.extern def fail(...)` in a module with `rust.module("incan_stdlib::testing")`, it emits a reference to `incan_stdlib::testing::fail` in the generated Rust code.
 
 ### Third-party Rust-backed libraries
 
@@ -243,9 +225,7 @@ def load_config(key: str) -> str:
 
 ### Trait bounds on generics
 
-When generic Incan functions are compiled to Rust, the compiler infers trait bounds from usage. For example,
-`assert_eq[T]` uses `!=` and f-string interpolation on `T`, so the compiler emits
-`fn assert_eq<T: PartialEq + std::fmt::Display>(...)`. Authors can also annotate bounds explicitly using `with`:
+When generic Incan functions are compiled to Rust, the compiler infers trait bounds from usage. For example, `assert_eq[T]` uses `!=` and f-string interpolation on `T`, so the compiler emits `fn assert_eq<T: PartialEq + std::fmt::Display>(...)`. Authors can also annotate bounds explicitly using `with`:
 
 ```incan
 def assert_eq[T with (Eq, Display)](left: T, right: T) -> None:
@@ -258,24 +238,20 @@ See [Section 5](#5-trait-bound-inference-and-annotation-normative) for the full 
 
 ### 1) Compilation rules (normative)
 
-Any `.incn` file — whether it belongs to the standard library, a third-party library, or an application — can mix pure
-Incan code with Rust-backed functions. These rules apply uniformly:
+Any `.incn` file — whether it belongs to the standard library, a third-party library, or an application — can mix pure Incan code with Rust-backed functions. These rules apply uniformly:
 
 - The compiler parses and compiles `.incn` files through the normal pipeline (parser → typechecker → lowering →
-  emission) regardless of where they live.
+emission) regardless of where they live.
 - Function signatures and type definitions in `.incn` files are the **authoritative type information** for the
-  typechecker. The compiler must not maintain separate, hardcoded signature registries.
+typechecker. The compiler must not maintain separate, hardcoded signature registries.
 - Functions with `@rust.extern` have `...` bodies; the compiler emits a call to the corresponding Rust implementation
-  (resolved via `rust.module()`) rather than compiling the body.
+(resolved via `rust.module()`) rather than compiling the body.
 - A function **with** `@rust.extern` that also has a non-trivial body (anything other than `...` or `pass`) is a
-  **compile error**: *"`@rust.extern` function must have a `...` body — the implementation is provided by Rust."*
+**compile error**: *"`@rust.extern` function must have a `...` body — the implementation is provided by Rust."*
 - The Incan signature of a `@rust.extern` function is a **contract**: its parameter types and return type must correspond
-  to the Rust function's signature after Incan-to-Rust type mapping (e.g. `str` → `String`, `int` → `i64`,
-  `List[T]` → `Vec<T>`). The compiler does not validate this — mismatches are caught downstream by `rustc`, and Incan
-  wraps the resulting error with a diagnostic pointing to the `@rust.extern` item and its `rust.module()` directive
-  (see [Diagnostics](#diagnostics)).
+to the Rust function's signature after Incan-to-Rust type mapping (e.g. `str` → `String`, `int` → `i64`, `List[T]` → `Vec<T>`). The compiler does not validate this — mismatches are caught downstream by `rustc`, and Incan wraps the resulting error with a diagnostic pointing to the `@rust.extern` item and its `rust.module()` directive (see [Diagnostics](#diagnostics)).
 - Models, classes, enums, and traits are compiled through the normal pipeline. Only individual functions/methods marked
-  `@rust.extern` receive special treatment.
+`@rust.extern` receive special treatment.
 
 > **RFC 022 supersession**: RFC 022 introduced `@std.builtin` as a stdlib-only decorator. This RFC replaces it with
 > `@rust.extern`, which serves the same purpose (marking a function whose body is provided by Rust) but is not
@@ -291,30 +267,25 @@ Incan code with Rust-backed functions. These rules apply uniformly:
 rust_module_directive = "rust" "." "module" "(" STRING_LITERAL ")" ;
 ```
 
-Where `<rust_path>` is a string literal containing a valid Rust module path using `::` separators
-(e.g., `"incan_stdlib::testing"`, `"my_crate::sub::module"`). The compiler stores it as an opaque string and emits it
-verbatim in generated `use` statements.
+Where `<rust_path>` is a string literal containing a valid Rust module path using `::` separators (e.g., `"incan_stdlib::testing"`, `"my_crate::sub::module"`). The compiler stores it as an opaque string and emits it verbatim in generated `use` statements.
 
-`rust.module()` is a **module-level directive** — a bare statement that appears at the top of a `.incn` file (before
-any declarations). It is not a decorator: decorators in Incan modify the declaration that immediately follows them,
-while `rust.module()` is a standalone statement about the module itself. (The decorator form `@rust.module("...")` is
-reserved for future use when `module` is introduced as a keyword — e.g., `@rust.module("...") module foo:`.)
+`rust.module()` is a **module-level directive** — a bare statement that appears at the top of a `.incn` file (before any declarations). It is not a decorator: decorators in Incan modify the declaration that immediately follows them, while `rust.module()` is a standalone statement about the module itself. (The decorator form `@rust.module("...")` is reserved for future use when `module` is introduced as a keyword — e.g., `@rust.module("...") module foo:`.)
 
 #### Semantics
 
 - `rust.module("path::to::module")` declares that `@rust.extern` items in this Incan module are backed by Rust
-  functions at `path::to::module::<item_name>`.
+functions at `path::to::module::<item_name>`.
 - The Rust module path is treated as opaque — the compiler does not validate it against Rust source. Mismatches are
-  caught downstream by `rustc`, and Incan wraps the error with a diagnostic (see [Diagnostics](#diagnostics)).
+caught downstream by `rustc`, and Incan wraps the error with a diagnostic (see [Diagnostics](#diagnostics)).
 
 #### Placement rules
 
 - **Exactly one per file**: a file with `@rust.extern` items must have exactly one `rust.module()` directive. A file
-  without `@rust.extern` items may omit it. Multiple directives in the same file are a hard error.
+without `@rust.extern` items may omit it. Multiple directives in the same file are a hard error.
 - **No inheritance**: `rust.module("incan_stdlib::web")` in `std.web` does not apply to `std.web.response`. Each
-  module with `@rust.extern` items needs its own directive.
+module with `@rust.extern` items needs its own directive.
 - **One Rust module per Incan module**: if you need `@rust.extern` bindings to *different* Rust modules, split them
-  into separate `.incn` files.
+into separate `.incn` files.
 
 **Example** — *non-propagation across submodules*:
 
@@ -338,26 +309,18 @@ def json_response(data: str) -> Response: ...
 The `rust.module()` path must resolve to one of:
 
 - The **standard library runtime crate** (`incan_stdlib::*`), added to the generated `Cargo.toml` when any `std.*`
-  module is imported.
+module is imported.
 - A **crate declared in the package's manifest** (`incan.toml` `[dependencies]`, per RFC 013).
 
-If the path references an undeclared crate, the compiler emits an error explaining the crate must be declared as a
-dependency. This ensures paths are auditable and Cargo dependency generation is deterministic.
+If the path references an undeclared crate, the compiler emits an error explaining the crate must be declared as a dependency. This ensures paths are auditable and Cargo dependency generation is deterministic.
 
-**Path sanitization (security)**: the `rust.module()` path is emitted verbatim into generated Rust `use` statements. To
-prevent code injection, the compiler must validate that the path is a well-formed Rust module path — only identifier
-segments (`[a-zA-Z_][a-zA-Z0-9_]*`) separated by `::`. Paths containing semicolons, quotes, whitespace, parentheses,
-or any other characters are rejected with a diagnostic. This validation is low-cost and eliminates the possibility of
-crafted path strings breaking out of a `use` statement in the generated Rust output.
+**Path sanitization (security)**: the `rust.module()` path is emitted verbatim into generated Rust `use` statements. To prevent code injection, the compiler must validate that the path is a well-formed Rust module path — only identifier segments (`[a-zA-Z_][a-zA-Z0-9_]*`) separated by `::`. Paths containing semicolons, quotes, whitespace, parentheses, or any other characters are rejected with a diagnostic. This validation is low-cost and eliminates the possibility of crafted path strings breaking out of a `use` statement in the generated Rust output.
 
 #### `@rust.extern` item-kind restriction
 
-`@rust.extern` is allowed on **free functions** and **trait default methods**. It is **not allowed** on instance methods
-(`def method(self, ...)`).
+`@rust.extern` is allowed on **free functions** and **trait default methods**. It is **not allowed** on instance methods (`def method(self, ...)`).
 
-The reason: `rust.module("path")` + `@rust.extern` maps to `path::<item_name>` — unambiguous for free functions, but
-for instance methods it would require a naming convention like `path::TypeName__method_name` that couples Incan type
-names to Rust function names. Instead, types that need Rust-backed behavior should delegate to free-function primitives:
+The reason: `rust.module("path")` + `@rust.extern` maps to `path::<item_name>` — unambiguous for free functions, but for instance methods it would require a naming convention like `path::TypeName__method_name` that couples Incan type names to Rust function names. Instead, types that need Rust-backed behavior should delegate to free-function primitives:
 
 ```incan
 @rust.extern
@@ -370,8 +333,7 @@ class App:
 
 ### 3) Irreducible primitives (normative direction)
 
-`@rust.extern` should be applied to the **smallest possible set of primitives** — functions whose implementations
-fundamentally require Rust runtime, OS, or framework access.
+`@rust.extern` should be applied to the **smallest possible set of primitives** — functions whose implementations fundamentally require Rust runtime, OS, or framework access.
 
 |            Primitive             |          Module          |               Why it needs Rust                |
 | -------------------------------- | ------------------------ | ---------------------------------------------- |
@@ -386,8 +348,7 @@ fundamentally require Rust runtime, OS, or framework access.
 | `run_server(app)`                | `std.web`                | Tokio/Axum server bootstrap                    |
 | `request_header(req, name)` etc. | `std.web`                | Framework extractor access                     |
 
-Everything else — `assert_eq`, `assert_ne`, `assert_true`, `Ord.__le__`, `Eq.__ne__`, conversion traits, response
-builders — should be pure Incan.
+Everything else — `assert_eq`, `assert_ne`, `assert_true`, `Ord.__le__`, `Eq.__ne__`, conversion traits, response builders — should be pure Incan.
 
 ### 4) Stdlib compilation model (normative direction)
 
@@ -396,16 +357,14 @@ When the compiler encounters `from std.testing import assert_eq`:
 1. **Resolution**: resolves `std.testing` to `stdlib/testing.incn`.
 2. **Parsing**: parses the file as normal Incan source (cached after first parse within a compilation unit).
 3. **Type extraction**: finds `def assert_eq[T](left: T, right: T) -> None` with a real body — registers it as a
-   normal function in the typechecker's symbol table (no hardcoded `FunctionInfo` needed).
+normal function in the typechecker's symbol table (no hardcoded `FunctionInfo` needed).
 4. **Compilation**: compiles the function body through the normal pipeline. The call to `fail()` within `assert_eq`
-   resolves to `@rust.extern` → `incan_stdlib::testing::fail`.
+resolves to `@rust.extern` → `incan_stdlib::testing::fail`.
 5. **Emission**: emits a normal Rust function for `assert_eq`. Only `fail()` results in a reference to `incan_stdlib`.
 
 ### 5) Trait bound inference and annotation (normative)
 
-When an Incan generic function is compiled to Rust, the generated Rust function needs appropriate trait bounds on its
-type parameters. Today this is not an issue because generic stdlib functions are routed to pre-written Rust that already
-carries bounds. In the compilable stdlib model, the compiler must generate these bounds itself.
+When an Incan generic function is compiled to Rust, the generated Rust function needs appropriate trait bounds on its type parameters. Today this is not an issue because generic stdlib functions are routed to pre-written Rust that already carries bounds. In the compilable stdlib model, the compiler must generate these bounds itself.
 
 #### Inference from usage (normative; required for v0.x)
 
@@ -435,14 +394,9 @@ Inference rules (minimum required set):
 | `x[i] = v` (write) | `std::ops::IndexMut<I, Output = U>` | Same; plus mutability inference                       |
 | `for elem in iter` | `IntoIterator<Item = Elem>`         | Requires propagating the associated `Item` type       |
 
-When multiple operations are used on the same type parameter, all inferred bounds are combined (unioned) into a single
-`where` clause on the generated Rust function.
+When multiple operations are used on the same type parameter, all inferred bounds are combined (unioned) into a single `where` clause on the generated Rust function.
 
-Bounds are placed on the underlying generic parameter `T` even when the generated Rust passes `&T`. For comparison,
-formatting, and hashing traits this works via Rust's blanket implementations (e.g., `&T: PartialEq` when
-`T: PartialEq`, `&T: Display` when `T: Display`). For arithmetic traits (`Add`, `Sub`, etc.) blanket impls do **not**
-exist on references — the compiler's ownership inference (section 6) must ensure that arithmetic operations receive
-owned or copied values rather than references, so the bound on `T` remains sufficient.
+Bounds are placed on the underlying generic parameter `T` even when the generated Rust passes `&T`. For comparison, formatting, and hashing traits this works via Rust's blanket implementations (e.g., `&T: PartialEq` when `T: PartialEq`, `&T: Display` when `T: Display`). For arithmetic traits (`Add`, `Sub`, etc.) blanket impls do **not** exist on references — the compiler's ownership inference (section 6) must ensure that arithmetic operations receive owned or copied values rather than references, so the bound on `T` remains sufficient.
 
 **Example** — *compiling `assert_eq[T]`*:
 
@@ -464,13 +418,11 @@ fn assert_eq<T: PartialEq + std::fmt::Display>(left: T, right: T) {
 }
 ```
 
-Inference must be **transitive**: if a generic function calls another generic function that requires bounds, the caller
-must infer those bounds as well.
+Inference must be **transitive**: if a generic function calls another generic function that requires bounds, the caller must infer those bounds as well.
 
 #### Explicit annotation syntax (normative)
 
-Incan supports explicit trait bound annotations using the `with` keyword — consistent with existing trait conformance
-syntax on type declarations (`model Money with Add[Money, Money]:`).
+Incan supports explicit trait bound annotations using the `with` keyword — consistent with existing trait conformance syntax on type declarations (`model Money with Add[Money, Money]:`).
 
 ```incan
 # Single bound — bare word
@@ -491,15 +443,14 @@ bounds         = bound | "(" bound { "," bound } ")" ;
 bound          = IDENT [ "[" type_args "]" ] ;
 ```
 
-Commas always separate type parameters; parentheses group multiple bounds within a single parameter's `with` clause.
-The `+` operator (Rust-style) is intentionally avoided because `+` already means addition in Incan.
+Commas always separate type parameters; parentheses group multiple bounds within a single parameter's `with` clause. The `+` operator (Rust-style) is intentionally avoided because `+` already means addition in Incan.
 
 Semantics:
 
 - Explicit bounds are **additive** with inferred bounds. Writing `[T with Eq]` when the body also uses f-string
-  interpolation on `T` results in `T: PartialEq + std::fmt::Display`.
+interpolation on `T` results in `T: PartialEq + std::fmt::Display`.
 - Explicit bounds enable the **Incan typechecker** to validate callers at the Incan level, rather than deferring all
-  trait-bound errors to `rustc`.
+trait-bound errors to `rustc`.
 - Incan trait names map to Rust trait bounds deterministically:
 
   | Incan trait   | Rust trait bound              |
@@ -515,11 +466,9 @@ Semantics:
 
 ### 6) Implicit ownership and borrowing (normative principle)
 
-Incan handles ownership and borrowing **implicitly**. The compiler analyzes code to determine the most efficient
-ownership strategy for the generated Rust. Users do not annotate ownership, borrowing, or lifetimes.
+Incan handles ownership and borrowing **implicitly**. The compiler analyzes code to determine the most efficient ownership strategy for the generated Rust. Users do not annotate ownership, borrowing, or lifetimes.
 
-This principle is already partially implemented (the compiler infers `&self` vs `&mut self` for method receivers and
-auto-borrows strings to `&str`). The compilable stdlib extends it to all compiled Incan code.
+This principle is already partially implemented (the compiler infers `&self` vs `&mut self` for method receivers and auto-borrows strings to `&str`). The compilable stdlib extends it to all compiled Incan code.
 
 Compiler strategy:
 
@@ -534,19 +483,18 @@ Two invariants constrain the inference:
 
 - **No observable semantic change**: emitted decisions must not change user-visible behavior.
 - **Clone implies `Clone` bound**: if the inference clones a value of generic type `T`, the generated Rust needs
-  `T: Clone`. Ownership inference feeds into trait-bound inference — they are not independent systems.
+`T: Clone`. Ownership inference feeds into trait-bound inference — they are not independent systems.
 
-**Borrow safety across awaits**: the inference must never emit borrows held across `await` points (borrows across
-suspension points prevent `Send`, breaking Tokio). When in doubt, clone.
+**Borrow safety across awaits**: the inference must never emit borrows held across `await` points (borrows across suspension points prevent `Send`, breaking Tokio). When in doubt, clone.
 
 Performance-critical code that requires hand-tuned ownership can use `rust::` imports (RFC 005) as an escape hatch.
 
 ### 7) Build output for compiled stdlib (normative direction)
 
 - **Option A (recommended for v0.x): compile from source each time.** The compiler compiles stdlib `.incn` on every
-  build, emitting the generated Rust alongside user code. Simple, always fresh, cacheable via incremental compilation.
+build, emitting the generated Rust alongside user code. Simple, always fresh, cacheable via incremental compilation.
 - **Option B (future optimization): pre-compiled stdlib.** Stdlib is compiled during the Incan toolchain's own build
-  process and baked into `incan_stdlib`. Reduces per-project compile times but requires version-locking.
+process and baked into `incan_stdlib`. Reduces per-project compile times but requires version-locking.
 
 ## Design details
 
@@ -554,26 +502,19 @@ Performance-critical code that requires hand-tuned ownership can use `rust::` im
 
 #### RFC 005 (Rust interop)
 
-`rust::` imports (RFC 005) let **end users** import Rust crate items directly — Rust-shaped API. `rust.module()` lets
-a module declare that its `@rust.extern` items are backed by Rust — Incan-shaped API wrapping Rust. These compose
-cleanly: a library's `.incn` source might use `rust::` imports internally while also declaring `rust.module()`.
+`rust::` imports (RFC 005) let **end users** import Rust crate items directly — Rust-shaped API. `rust.module()` lets a module declare that its `@rust.extern` items are backed by Rust — Incan-shaped API wrapping Rust. These compose cleanly: a library's `.incn` source might use `rust::` imports internally while also declaring `rust.module()`.
 
 #### RFC 022 (stdlib namespacing & compiler→stdlib handoff)
 
-This RFC is a natural sequel to RFC 022. RFC 022's `StdlibModuleInfo` registry becomes a transitional fallback: the
-`stub_path` field is still used for source discovery, but the `feature` field (for Cargo feature gating) can eventually
-be derived from `rust.module()` directives + `incan.toml` configuration.
+This RFC is a natural sequel to RFC 022. RFC 022's `StdlibModuleInfo` registry becomes a transitional fallback: the `stub_path` field is still used for source discovery, but the `feature` field (for Cargo feature gating) can eventually be derived from `rust.module()` directives + `incan.toml` configuration.
 
 #### Traits and derives
 
-Derived trait implementations (`@derive(Eq)`, `@derive(Hash)`, etc.) are compiler-generated and remain `@rust.extern`
-at the individual method level. The trait definitions themselves (including non-`@rust.extern` methods like `__ne__`,
-`__le__`, `__gt__`, `__ge__`) are compiled as pure Incan.
+Derived trait implementations (`@derive(Eq)`, `@derive(Hash)`, etc.) are compiler-generated and remain `@rust.extern` at the individual method level. The trait definitions themselves (including non-`@rust.extern` methods like `__ne__`, `__le__`, `__gt__`, `__ge__`) are compiled as pure Incan.
 
 #### Async
 
-Async functions follow the same rules: `@rust.extern` async functions have their bodies provided by Rust;
-non-`@rust.extern` async functions are compiled normally.
+Async functions follow the same rules: `@rust.extern` async functions have their bodies provided by Rust; non-`@rust.extern` async functions are compiled normally.
 
 ### Layering implications
 
@@ -601,25 +542,22 @@ This RFC preserves and strengthens that layering:
 
 - The **compiler** depends on `incan_core` but must **not** depend on `incan_stdlib`.
 - **Generated user programs** depend on `incan_stdlib` (added to `Cargo.toml` by the compiler when `std.*` modules are
-  used).
+used).
 - Compiled stdlib Rust code is emitted **as part of the generated user project** — not injected back into
-  `incan_stdlib`. After this RFC, `incan_stdlib` narrows to **irreducible runtime primitives** only.
+`incan_stdlib`. After this RFC, `incan_stdlib` narrows to **irreducible runtime primitives** only.
 
 ### Generated Rust module naming for Incan `std.*`
 
-Compiling `std.*` modules would naively produce `mod std { ... }`, which **shadows Rust's own `std` crate**. To avoid
-this, compiled Incan `std.*` modules are emitted under a renamed root module:
+Compiling `std.*` modules would naively produce `mod std { ... }`, which **shadows Rust's own `std` crate**. To avoid this, compiled Incan `std.*` modules are emitted under a renamed root module:
 
 - Incan `std.testing` → Rust `crate::__incan_std::testing`
 - Incan `std.web.app` → Rust `crate::__incan_std::web::app`
 
-The `__incan_std` prefix is an implementation detail — never visible to Incan users. This mapping applies only to the
-generated module tree, not to `rust.module()` paths (which point to Rust crates and are emitted as-is).
+The `__incan_std` prefix is an implementation detail — never visible to Incan users. This mapping applies only to the generated module tree, not to `rust.module()` paths (which point to Rust crates and are emitted as-is).
 
 ### Rust-keyword module names (implementation prerequisite)
 
-Incan module names that are Rust keywords (e.g., `std.async`) produce invalid Rust (`mod async;`). The emitter's
-existing `escape_keyword()` helper must be applied consistently across **all** generated Rust output:
+Incan module names that are Rust keywords (e.g., `std.async`) produce invalid Rust (`mod async;`). The emitter's existing `escape_keyword()` helper must be applied consistently across **all** generated Rust output:
 
 - **Module declarations**: `mod async;` → `mod r#async;`
 - **Use-path segments**: `use crate::async::...` → `use crate::r#async::...`
@@ -628,12 +566,9 @@ existing `escape_keyword()` helper must be applied consistently across **all** g
 
 #### Reserved keyword list (Rust edition 2021)
 
-**Strict keywords**: `as`, `async`, `await`, `break`, `const`, `continue`, `crate`, `dyn`, `else`, `enum`, `extern`,
-`false`, `fn`, `for`, `if`, `impl`, `in`, `let`, `loop`, `match`, `mod`, `move`, `mut`, `pub`, `ref`, `return`,
-`self`, `Self`, `static`, `struct`, `super`, `trait`, `true`, `type`, `unsafe`, `use`, `where`, `while`
+**Strict keywords**: `as`, `async`, `await`, `break`, `const`, `continue`, `crate`, `dyn`, `else`, `enum`, `extern`, `false`, `fn`, `for`, `if`, `impl`, `in`, `let`, `loop`, `match`, `mod`, `move`, `mut`, `pub`, `ref`, `return`, `self`, `Self`, `static`, `struct`, `super`, `trait`, `true`, `type`, `unsafe`, `use`, `where`, `while`
 
-**Reserved for future use**: `abstract`, `become`, `box`, `do`, `final`, `macro`, `override`, `priv`, `try`, `typeof`,
-`unsized`, `virtual`, `yield`
+**Reserved for future use**: `abstract`, `become`, `box`, `do`, `final`, `macro`, `override`, `priv`, `try`, `typeof`, `unsized`, `virtual`, `yield`
 
 This list is tied to Rust edition 2021. If the target edition changes, this list must be updated.
 
@@ -643,9 +578,7 @@ This list is tied to Rust edition 2021. If the target edition changes, this list
 
 #### Mismatch between `.incn` declaration and Rust implementation
 
-When `rustc` reports a type mismatch for a `@rust.extern` function call, the Incan compiler must wrap it with a
-diagnostic that names the `rust.module()` path and the `@rust.extern` function, points to the `.incn` declaration, and
-suggests verifying the Rust signature under the standard type mapping (RFC 005).
+When `rustc` reports a type mismatch for a `@rust.extern` function call, the Incan compiler must wrap it with a diagnostic that names the `rust.module()` path and the `@rust.extern` function, points to the `.incn` declaration, and suggests verifying the Rust signature under the standard type mapping (RFC 005).
 
 #### Missing `rust.module()`
 
@@ -714,8 +647,7 @@ error: `rust.module()` path contains invalid characters.
 
 #### Unresolved Rust path (feature-gated crates)
 
-If the `rust.module()` path references a crate behind a disabled Cargo feature, the build error should be wrapped with
-a diagnostic pointing to the directive and suggesting the feature may not be enabled.
+If the `rust.module()` path references a crate behind a disabled Cargo feature, the build error should be wrapped with a diagnostic pointing to the directive and suggesting the feature may not be enabled.
 
 ### Compatibility / migration
 
@@ -725,7 +657,7 @@ For compiler/stdlib developers, migration is:
 
 1. Add `rust.module()` directives to stdlib `.incn` files.
 2. Convert stub-only functions to real Incan implementations where possible, keeping `@rust.extern` only on irreducible
-   primitives.
+primitives.
 3. Remove hardcoded `FunctionInfo` registries from the typechecker.
 4. Remove hardcoded path-rewriting logic from emission.
 5. Verify behavior via existing tests (codegen snapshots, integration tests).
@@ -736,38 +668,30 @@ This can be done incrementally, one stdlib module at a time.
 
 ### Keep everything in Rust, improve the wiring
 
-Continue writing all stdlib implementations in Rust and invest in making the wiring less manual (e.g., auto-generating
-typechecker registries from `.incn` stubs). This reduces the symptom (manual wiring) but not the cause (stdlib can't be
-written in Incan). It also doesn't enable third-party Rust-backed libraries.
+Continue writing all stdlib implementations in Rust and invest in making the wiring less manual (e.g., auto-generating typechecker registries from `.incn` stubs). This reduces the symptom (manual wiring) but not the cause (stdlib can't be written in Incan). It also doesn't enable third-party Rust-backed libraries.
 
 ### py4j / PyO3-style runtime bridge
 
-Use a runtime bridge to call between Incan and Rust at runtime. Architecturally wrong for Incan: since Incan compiles
-*into* Rust, there's no separate runtime to bridge. A bridge would add serialization overhead, runtime complexity, and
-GC coordination problems for no benefit.
+Use a runtime bridge to call between Incan and Rust at runtime. Architecturally wrong for Incan: since Incan compiles *into* Rust, there's no separate runtime to bridge. A bridge would add serialization overhead, runtime complexity, and GC coordination problems for no benefit.
 
 ### Auto-generate `.incn` stubs from Rust metadata
 
-Use `rustdoc --output-format json` or similar. Potentially valuable as a *tooling* layer (`incan stubgen
-rust::serde_json`) but doesn't address the core issue: the stdlib should be Incan, not generated wrappers. Could potentially
-complement this RFC as a follow-up tool.
+Use `rustdoc --output-format json` or similar. Potentially valuable as a *tooling* layer (`incan stubgen rust::serde_json`) but doesn't address the core issue: the stdlib should be Incan, not generated wrappers. Could potentially complement this RFC as a follow-up tool.
 
 ### `@rust.module` (decorator) instead of `rust.module()` (directive)
 
-Decorators modify the declaration that immediately follows them — a file-level `@rust.module("...")` with no following
-declaration breaks that contract. The bare directive form is reserved for module-level statements; the decorator form is
-reserved for future use when `module` is introduced as a keyword.
+Decorators modify the declaration that immediately follows them — a file-level `@rust.module("...")` with no following declaration breaks that contract. The bare directive form is reserved for module-level statements; the decorator form is reserved for future use when `module` is introduced as a keyword.
 
 ## Drawbacks
 
 - **Stdlib compile time**: compiling stdlib `.incn` on every build adds cost vs. pre-compiled `incan_stdlib`. Should be
-  negligible for the stdlib's size; caching and pre-compilation (Option B) can mitigate.
+negligible for the stdlib's size; caching and pre-compilation (Option B) can mitigate.
 - **Downstream error quality**: `@rust.extern` signature mismatches surface as `rustc` errors. Incan must wrap these
-  with good diagnostics, but underlying messages may leak Rust types. Same challenge and mitigation as `rust::` imports.
+with good diagnostics, but underlying messages may leak Rust types. Same challenge and mitigation as `rust::` imports.
 - **Validation gap**: the compiler trusts `rust.module()` paths and `@rust.extern` signatures — some errors are only
-  caught at the `rustc` stage. Acceptable and consistent with `rust::` imports.
+caught at the `rustc` stage. Acceptable and consistent with `rust::` imports.
 - **Library authoring complexity**: creating a Rust-backed Incan library requires both Incan and Rust knowledge.
-  Inherent to the use case; comparable to writing C extensions for Python.
+Inherent to the use case; comparable to writing C extensions for Python.
 
 ## Acceptance checklist
 

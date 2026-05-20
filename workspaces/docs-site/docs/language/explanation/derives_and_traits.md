@@ -1,7 +1,6 @@
 # Derives and traits (Explanation)
 
-This page explains the mental model behind **derives**, **dunder overrides**, and **traits** in Incan. For the exact
-catalog of supported derives and signatures, see the Reference:
+This page explains the mental model behind **derives**, **dunder overrides**, and **traits** in Incan. For the exact catalog of supported derives and signatures, see the Reference:
 
 - [Derives & traits (Reference)](../reference/derives_and_traits.md)
 
@@ -33,8 +32,7 @@ Use dunder methods when you need **custom semantics** for a built-in capability:
 - `__lt__`: custom ordering
 - `__hash__`: custom hashing
 
-Incan treats “derive + corresponding dunder” as a **conflict**. The idea is to avoid ambiguity and keep the mental model
-simple: “either it’s the default behavior, or it’s my behavior.”
+Incan treats “derive + corresponding dunder” as a **conflict**. The idea is to avoid ambiguity and keep the mental model simple: “either it’s the default behavior, or it’s my behavior.”
 
 Read more about [dunder methods: custom behavior](../how-to/customize_derived_behavior.md).
 
@@ -48,8 +46,7 @@ Use traits for reusable, domain-specific capabilities:
 - Traits are always abstract, so the trait name itself can be used directly in annotations
 - Traits can build capability hierarchies with `trait Sub with Base:`
 
-Traits are not “the derive system.” Derives are a convenience for a small set of **built-in capabilities**; traits are a
-general language feature for authoring reusable behavior.
+Traits are not “the derive system.” Derives are a convenience for a small set of **built-in capabilities**; traits are a general language feature for authoring reusable behavior.
 
 That gives Incan a simple mental model: a trait is both a capability declaration and an abstract accepted type. If a function says it accepts `Collection[Order]`, that means “any concrete adopter of `Collection[Order]`”, not “rewrite this API as a hidden generic bound first”.
 
@@ -116,13 +113,11 @@ Incan intentionally separates two kinds of “stringification”:
 - **Debug** (`{:?}`): developer-facing, structured, and not user-overridable
 - **Display** (`{}`): user-facing output; you can override via `__str__`
 
-This mirrors the common “logs vs user output” split: Debug is stable and structural; Display is designed for
-human-friendly formatting.
+This mirrors the common “logs vs user output” split: Debug is stable and structural; Display is designed for human-friendly formatting.
 
 ## `@rust.extern` (Rust-backed functions)
 
-You may see `@rust.extern` used in stdlib sources and Rust-backed libraries. It marks functions whose body are provided
-by a Rust module (declared via `rust.module()`).
+You may see `@rust.extern` used in stdlib sources and Rust-backed libraries. It marks functions whose body are provided by a Rust module (declared via `rust.module()`).
 
 The intended meaning is:
 
@@ -130,8 +125,7 @@ The intended meaning is:
 - the function's implementation lives in a Rust crate, mapped via `rust.module()`
 - the compiler emits a call to the Rust implementation instead of compiling the `...` body
 
-This lets the stdlib (and third-party libraries) wrap Rust crates with Incan-shaped APIs while keeping most logic in
-pure Incan.
+This lets the stdlib (and third-party libraries) wrap Rust crates with Incan-shaped APIs while keeping most logic in pure Incan.
 
 See also:
 
@@ -144,8 +138,7 @@ Field defaults (`field: T = expr`) are part of Incan’s “pydantic-like” erg
 - If you omit a field and it has a default, the default is used
 - If a field has no default, you must provide it at construction time
 
-Separately, `@derive(Default)` provides `Type.default()` as a baseline constructor. It uses field defaults when present,
-and otherwise falls back to type defaults.
+Separately, `@derive(Default)` provides `Type.default()` as a baseline constructor. It uses field defaults when present, and otherwise falls back to type defaults.
 
 ## See also
 

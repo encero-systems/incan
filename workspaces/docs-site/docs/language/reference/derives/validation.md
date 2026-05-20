@@ -18,7 +18,7 @@ See also:
 Rule:
 
 - If a model derives `Validate`, you must construct it via `TypeName.new(...)` (validated construction).
-  Raw construction via `TypeName(...)` is a compile-time error.
+Raw construction via `TypeName(...)` is a compile-time error.
 
 Semantics:
 
@@ -44,7 +44,6 @@ def make_user(email: str) -> Result[EmailUser, str]:
 
 ### Defaults and parameters
 
-`TypeName.new(...)` is generated from the model’s required fields (fields without defaults).
-Fields with defaults use their declared default values.
+`TypeName.new(...)` is generated from the model’s required fields (fields without defaults). Fields with defaults use their declared default values.
 
 Additional constructors can be expressed as helper functions or associated functions on the model.
