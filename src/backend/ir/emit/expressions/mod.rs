@@ -1228,6 +1228,73 @@ mod tests {
     }
 
     #[test]
+    fn external_decode_with_generic_by_value_signature_does_not_borrow_argument() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let descriptor_set = IrType::Struct("prost_types::FileDescriptorSet".to_string());
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "FileDescriptorSet".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    descriptor_set.clone(),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "cursor".to_string(),
+                            access: VarAccess::Move,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Struct("std::io::Cursor<Vec<u8>>".to_string()),
+                    ),
+                }],
+                callable_signature: Some(FunctionSignature {
+                    params: vec![FunctionParam {
+                        name: "buf".to_string(),
+                        ty: IrType::Generic("Buf".to_string()),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: crate::frontend::ast::ParamKind::Normal,
+                        default: None,
+                    }],
+                    return_type: IrType::Result(
+                        Box::new(descriptor_set.clone()),
+                        Box::new(IrType::Struct("prost::DecodeError".to_string())),
+                    ),
+                }),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Result(
+                Box::new(descriptor_set),
+                Box::new(IrType::Struct("prost::DecodeError".to_string())),
+            ),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("FileDescriptorSet :: decode (cursor)"),
+            "generic by-value Rust method params must pass the value directly, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("FileDescriptorSet :: decode (& cursor)"),
+            "generic by-value Rust method params must not borrow the argument, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn interop_try_adapter_emits_question_mark() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);

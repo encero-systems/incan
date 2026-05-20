@@ -269,6 +269,9 @@ impl TypeChecker {
     /// boundary adapters.
     fn rust_arg_boundary_match(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> RustArgBoundaryMatch {
         let normalized = rust_param_ty.replace(' ', "");
+        if Self::rust_display_type_var_name(normalized.as_str()).is_some() {
+            return RustArgBoundaryMatch::Exact;
+        }
         let borrowed_shared = matches!(Self::rust_display_borrow_kind(normalized.as_str()), Some((false, _)));
         if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
             if Self::is_rust_generic_type_param_display(inner)
@@ -331,7 +334,12 @@ impl TypeChecker {
                 CallableParam::positional(self.resolved_param_type_from_rust_display(param.type_display.as_str()))
             })
             .collect();
-        self.type_info.record_call_site_callable_params(span, &params);
+        // Plain Rust type variables carry by-value shape, but they are not ordinary borrow-boundary snapshots.
+        if params.iter().any(|param| matches!(param.ty, ResolvedType::TypeVar(_))) {
+            self.type_info.record_call_site_callable_params_exact(span, &params);
+        } else {
+            self.type_info.record_call_site_callable_params(span, &params);
+        }
     }
 
     /// Return whether a lookup-style Rust method should preserve the probe argument's emitted shape.
@@ -990,8 +998,52 @@ mod validate_rust_function_call_tests {
     fn borrowed_generic_rust_function_param_accepts_owned_incan_value() {
         let checker = TypeChecker::new();
 
+        assert!(checker.rust_arg_matches_boundary(&ResolvedType::Named("Payload".to_string()), "T",));
         assert!(checker.rust_arg_matches_boundary(&ResolvedType::Named("Payload".to_string()), "&T",));
         assert!(checker.rust_arg_matches_boundary(&ResolvedType::Named("Payload".to_string()), "&TValue",));
+    }
+
+    #[test]
+    fn validate_rust_method_call_records_by_value_generic_param_shape() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(30, 40);
+        let arg_expr = Spanned::new(Expr::Ident("cursor".to_string()), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let arg_types = [ResolvedType::RustPath("std::io::Cursor<Vec<u8>>".to_string())];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("buf".to_string()),
+                type_display: "T".to_string(),
+            }],
+            return_type: "demo::FileDescriptorSet".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_method_call(
+            "rust::demo::FileDescriptorSet.decode",
+            &sig,
+            &args,
+            &arg_types,
+            false,
+            span,
+        );
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected by-value Rust generic param to accept the owned argument, got {:?}",
+            checker.errors
+        );
+        assert!(
+            checker
+                .type_info
+                .calls
+                .call_site_callable_params
+                .get(&(span.start, span.end))
+                .is_some_and(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("T".to_string())),
+            "expected Rust by-value generic method param shape to be recorded, got {:?}",
+            checker.type_info.calls.call_site_callable_params
+        );
     }
 
     #[test]
