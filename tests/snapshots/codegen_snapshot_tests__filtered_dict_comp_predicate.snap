@@ -23,7 +23,7 @@ fn main() {
     let evens = xs
         .iter()
         .filter_map(|x| {
-            let x = (*x).clone();
+            let x = *x;
             if incan_stdlib::num::py_mod_i64(x, 2) == 0 {
                 Some((x, x * x))
             } else {

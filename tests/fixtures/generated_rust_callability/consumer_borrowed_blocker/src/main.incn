@@ -1,0 +1,12 @@
+from pub::callability import Payload, inspect_payload
+
+
+def observe(_payload: Payload) -> None:
+  pass
+
+
+def main() -> None:
+  result: Result[Payload, str] = Ok(Payload(value=7))
+  match inspect_payload(result, observe):
+    Ok(payload) => print(payload.value)
+    Err(error) => print(error)

@@ -1,0 +1,7 @@
+[package]
+name = "native_consumer_host"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+native_consumer_core = { path = "../native_items/target/lib" }

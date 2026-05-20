@@ -1,0 +1,5 @@
+mod widgets;
+---
+pub use crate::widgets::Widget;
+---
+pub use crate::widgets::make_widget;

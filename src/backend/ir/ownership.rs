@@ -15,7 +15,7 @@ use super::conversions::{
     incan_mutable_param_passed_as_rust_mut_ref,
 };
 use super::decl::FunctionParam;
-use super::expr::IrExpr;
+use super::expr::{IrExpr, IrExprKind, VarAccess};
 use super::types::IrType;
 
 /// A typed sink/source boundary that needs an ownership/coercion decision.
@@ -319,34 +319,116 @@ pub enum ComprehensionIterationPlan {
     RangeDirect,
     /// Iterate a range through `.filter(...)`.
     RangeFilter,
+    /// Iterate borrowed input and copy scalar/Copy values.
+    IterCopied,
     /// Iterate non-range input by cloning yielded values.
     IterCloned,
+    /// Filter borrowed input and copy the binding before projection.
+    FilterMapCopyBinding,
     /// Filter borrowed input and clone the binding before projection.
     FilterMapCloneBinding,
 }
 
 /// Plan iteration for a list comprehension.
-pub fn plan_list_comprehension_iteration(is_range: bool, filtered: bool) -> ComprehensionIterationPlan {
-    match (is_range, filtered) {
-        (true, true) => ComprehensionIterationPlan::RangeFilter,
-        (true, false) => ComprehensionIterationPlan::RangeDirect,
-        (false, true) => ComprehensionIterationPlan::FilterMapCloneBinding,
-        (false, false) => ComprehensionIterationPlan::IterCloned,
+pub fn plan_list_comprehension_iteration(
+    iterable_item_ty: Option<&IrType>,
+    is_range: bool,
+    filtered: bool,
+) -> ComprehensionIterationPlan {
+    match (
+        is_range,
+        filtered,
+        iterable_item_ty.is_some_and(comprehension_item_can_copy_from_shared_ref),
+    ) {
+        (true, true, _) => ComprehensionIterationPlan::RangeFilter,
+        (true, false, _) => ComprehensionIterationPlan::RangeDirect,
+        (false, true, true) => ComprehensionIterationPlan::FilterMapCopyBinding,
+        (false, true, false) => ComprehensionIterationPlan::FilterMapCloneBinding,
+        (false, false, true) => ComprehensionIterationPlan::IterCopied,
+        (false, false, false) => ComprehensionIterationPlan::IterCloned,
     }
 }
 
 /// Plan iteration for a dict comprehension.
-pub fn plan_dict_comprehension_iteration(filtered: bool) -> ComprehensionIterationPlan {
-    if filtered {
-        ComprehensionIterationPlan::FilterMapCloneBinding
-    } else {
-        ComprehensionIterationPlan::IterCloned
+pub fn plan_dict_comprehension_iteration(
+    iterable_item_ty: Option<&IrType>,
+    filtered: bool,
+) -> ComprehensionIterationPlan {
+    match (
+        filtered,
+        iterable_item_ty.is_some_and(comprehension_item_can_copy_from_shared_ref),
+    ) {
+        (true, true) => ComprehensionIterationPlan::FilterMapCopyBinding,
+        (true, false) => ComprehensionIterationPlan::FilterMapCloneBinding,
+        (false, true) => ComprehensionIterationPlan::IterCopied,
+        (false, false) => ComprehensionIterationPlan::IterCloned,
+    }
+}
+
+/// Return whether a comprehension item can be copied out of a shared iterator reference.
+fn comprehension_item_can_copy_from_shared_ref(ty: &IrType) -> bool {
+    match ty {
+        IrType::RefMut(_) => false,
+        IrType::Tuple(items) => items.iter().all(comprehension_item_can_copy_from_shared_ref),
+        IrType::Option(inner) => comprehension_item_can_copy_from_shared_ref(inner),
+        IrType::Result(ok, err) => {
+            comprehension_item_can_copy_from_shared_ref(ok) && comprehension_item_can_copy_from_shared_ref(err)
+        }
+        _ => ty.is_copy(),
     }
 }
 
 /// Whether a dict comprehension key must be cloned before reusing it in the value expression.
 pub fn dict_comprehension_key_needs_clone(key_ty: &IrType) -> bool {
     !key_ty.is_copy()
+}
+
+/// How an owned iterator adapter should materialize its collection source.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OwnedIteratorSourcePlan {
+    /// Move the source expression into the adapter.
+    Move,
+    /// Clone the source expression before moving it into the adapter.
+    Clone,
+}
+
+impl OwnedIteratorSourcePlan {
+    /// Apply the source materialization plan to an already-emitted source expression.
+    pub fn apply(&self, tokens: TokenStream) -> TokenStream {
+        match self {
+            Self::Move => quote! { (#tokens) },
+            Self::Clone => quote! { (#tokens).clone() },
+        }
+    }
+}
+
+/// Plan how an adapter that owns its collection source should materialize that source.
+///
+/// This intentionally stops short of borrowed iterator architecture. It only avoids whole-collection clones when the
+/// lowered expression already proves that moving the value is safe: a last-use variable read or a one-shot expression
+/// whose emitted Rust produces an owned value.
+pub fn plan_owned_iterator_source(expr: &IrExpr) -> OwnedIteratorSourcePlan {
+    if matches!(expr.ty, IrType::Ref(_) | IrType::RefMut(_)) {
+        return OwnedIteratorSourcePlan::Clone;
+    }
+
+    if expr_can_move_into_owned_iterator(expr) {
+        OwnedIteratorSourcePlan::Move
+    } else {
+        OwnedIteratorSourcePlan::Clone
+    }
+}
+
+/// Return whether an expression can be moved into an adapter-owned iterator source.
+fn expr_can_move_into_owned_iterator(expr: &IrExpr) -> bool {
+    match &expr.kind {
+        IrExprKind::Var { access, .. } => matches!(access, VarAccess::Move | VarAccess::Copy),
+        IrExprKind::StaticRead { .. } | IrExprKind::StaticBinding { .. } | IrExprKind::AssociatedFunction { .. } => {
+            false
+        }
+        IrExprKind::Field { .. } => false,
+        _ => true,
+    }
 }
 
 #[cfg(test)]
@@ -441,8 +523,28 @@ mod tests {
     #[test]
     fn filtered_list_comprehension_uses_filter_map_clone_plan() {
         assert_eq!(
-            plan_list_comprehension_iteration(false, true),
+            plan_list_comprehension_iteration(Some(&IrType::String), false, true),
             ComprehensionIterationPlan::FilterMapCloneBinding
+        );
+    }
+
+    #[test]
+    fn copy_list_comprehension_uses_copy_iteration_plans() {
+        assert_eq!(
+            plan_list_comprehension_iteration(Some(&IrType::Int), false, false),
+            ComprehensionIterationPlan::IterCopied
+        );
+        assert_eq!(
+            plan_dict_comprehension_iteration(Some(&IrType::Int), true),
+            ComprehensionIterationPlan::FilterMapCopyBinding
+        );
+    }
+
+    #[test]
+    fn mutable_ref_comprehension_item_does_not_use_copied_plan() {
+        assert_eq!(
+            plan_list_comprehension_iteration(Some(&IrType::RefMut(Box::new(IrType::Int))), false, false),
+            ComprehensionIterationPlan::IterCloned
         );
     }
 
@@ -450,6 +552,41 @@ mod tests {
     fn dict_comprehension_marks_noncopy_keys_for_clone() {
         assert!(dict_comprehension_key_needs_clone(&IrType::String));
         assert!(!dict_comprehension_key_needs_clone(&IrType::Int));
+    }
+
+    #[test]
+    fn owned_iterator_source_moves_last_use_list_var() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "items".to_string(),
+                access: VarAccess::Move,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::List(Box::new(IrType::Int)),
+        );
+
+        assert_eq!(plan_owned_iterator_source(&expr), OwnedIteratorSourcePlan::Move);
+    }
+
+    #[test]
+    fn owned_iterator_source_clones_reused_list_var() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "items".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::List(Box::new(IrType::Int)),
+        );
+
+        assert_eq!(plan_owned_iterator_source(&expr), OwnedIteratorSourcePlan::Clone);
+    }
+
+    #[test]
+    fn owned_iterator_source_moves_one_shot_list_expression() {
+        let expr = IrExpr::new(IrExprKind::List(Vec::new()), IrType::List(Box::new(IrType::Int)));
+
+        assert_eq!(plan_owned_iterator_source(&expr), OwnedIteratorSourcePlan::Move);
     }
 
     #[test]

@@ -11,7 +11,7 @@ use quote::quote;
 use super::super::super::expr::{BuiltinFn, IrExprKind, IrGeneratorClause, Pattern, TypedExpr};
 use super::super::super::ownership::{
     ComprehensionIterationPlan, dict_comprehension_key_needs_clone, plan_dict_comprehension_iteration,
-    plan_list_comprehension_iteration,
+    plan_list_comprehension_iteration, plan_owned_iterator_source,
 };
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
@@ -80,7 +80,8 @@ impl<'a> IrEmitter<'a> {
             _ if self.is_range_iterable(iterable) || Self::is_generator_iterable(iterable) => self.emit_expr(iterable),
             _ => {
                 let iter = self.emit_expr(iterable)?;
-                Ok(quote! { (#iter).clone().into_iter() })
+                let source = plan_owned_iterator_source(iterable).apply(iter);
+                Ok(quote! { #source.into_iter() })
             }
         }
     }
@@ -95,7 +96,7 @@ impl<'a> IrEmitter<'a> {
     /// Emit a list comprehension.
     ///
     /// Converts `[expr for var in iter if cond]` to Rust iterator chain:
-    /// - Without filter: `iter.iter().cloned().map(|var| expr).collect::<Vec<_>>()`
+    /// - Without filter: `iter.iter().copied().map(...)` for Copy items, otherwise `iter.iter().cloned().map(...)`
     /// - With filter over ranges: `iter.filter(|&var| cond).map(|var| expr).collect::<Vec<_>>()`
     /// - With filter over non-range iterables: `iter.iter().filter_map(|var| { let var = (*var).clone(); if cond {
     ///   Some(expr) } else { None } })`
@@ -120,7 +121,11 @@ impl<'a> IrEmitter<'a> {
         let is_range = self.is_range_iterable(iterable);
         let iter_wrapped = quote! { (#iter) };
 
-        match plan_list_comprehension_iteration(is_range, filter.is_some()) {
+        match plan_list_comprehension_iteration(
+            Self::comprehension_iterable_item_ty(&iterable.ty),
+            is_range,
+            filter.is_some(),
+        ) {
             ComprehensionIterationPlan::RangeFilter => {
                 let Some(filter) = filter else {
                     return Err(EmitError::Unsupported(
@@ -157,6 +162,31 @@ impl<'a> IrEmitter<'a> {
                         .collect::<Vec<_>>()
                 })
             }
+            ComprehensionIterationPlan::FilterMapCopyBinding => {
+                let Some(filter) = filter else {
+                    return Err(EmitError::Unsupported(
+                        "internal error: filtered comprehension plan requires a filter".to_string(),
+                    ));
+                };
+                let filter_tokens = self.emit_expr(filter)?;
+                let item_binding = Self::filter_map_item_binding(pattern, &pattern_tokens);
+                Ok(quote! {
+                    #iter_wrapped
+                        .iter()
+                        .filter_map(|#item_binding| {
+                            let #pattern_tokens = *#item_binding;
+                            if #filter_tokens {
+                                Some(#elem)
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+            }
+            ComprehensionIterationPlan::IterCopied => Ok(quote! {
+                #iter_wrapped.iter().copied().map(|#pattern_tokens| #elem).collect::<Vec<_>>()
+            }),
             ComprehensionIterationPlan::IterCloned => Ok(quote! {
                 #iter_wrapped.iter().cloned().map(|#pattern_tokens| #elem).collect::<Vec<_>>()
             }),
@@ -166,9 +196,9 @@ impl<'a> IrEmitter<'a> {
     /// Emit a dict comprehension.
     ///
     /// Converts `{key: value for var in iter if cond}` to Rust iterator chain:
-    /// - Without filter: `iter.iter().cloned().map(|var| (key, value)).collect::<HashMap<_, _>>()`
-    /// - With filter over borrowed iterables: `iter.iter().filter_map(|var| { let var = (*var).clone(); if cond {
-    ///   Some((key, value)) } else { None } })`
+    /// - Without filter: `iter.iter().copied().map(...)` for Copy items, otherwise `iter.iter().cloned().map(...)`
+    /// - With filter over borrowed iterables: `iter.iter().filter_map(...)`, copying or cloning the item before
+    ///   predicate evaluation based on its IR type.
     pub(in super::super) fn emit_dict_comp(
         &self,
         key: &TypedExpr,
@@ -198,7 +228,7 @@ impl<'a> IrEmitter<'a> {
         }
 
         let iter = self.emit_expr(iterable)?;
-        match plan_dict_comprehension_iteration(filter.is_some()) {
+        match plan_dict_comprehension_iteration(Self::comprehension_iterable_item_ty(&iterable.ty), filter.is_some()) {
             ComprehensionIterationPlan::FilterMapCloneBinding => {
                 let Some(filter) = filter else {
                     return Err(EmitError::Unsupported(
@@ -221,6 +251,31 @@ impl<'a> IrEmitter<'a> {
                         .collect::<std::collections::HashMap<_, _>>()
                 })
             }
+            ComprehensionIterationPlan::FilterMapCopyBinding => {
+                let Some(filter) = filter else {
+                    return Err(EmitError::Unsupported(
+                        "internal error: filtered dict comprehension plan requires a filter".to_string(),
+                    ));
+                };
+                let filter_tokens = self.emit_expr(filter)?;
+                let item_binding = Self::filter_map_item_binding(pattern, &pattern_tokens);
+                Ok(quote! {
+                    #iter
+                        .iter()
+                        .filter_map(|#item_binding| {
+                            let #pattern_tokens = *#item_binding;
+                            if #filter_tokens {
+                                Some((#cloned_key, #value_tokens))
+                            } else {
+                                None
+                            }
+                        })
+                        .collect::<std::collections::HashMap<_, _>>()
+                })
+            }
+            ComprehensionIterationPlan::IterCopied => Ok(quote! {
+                #iter.iter().copied().map(|#pattern_tokens| (#cloned_key, #value_tokens)).collect::<std::collections::HashMap<_, _>>()
+            }),
             ComprehensionIterationPlan::IterCloned => Ok(quote! {
                 #iter.iter().cloned().map(|#pattern_tokens| (#cloned_key, #value_tokens)).collect::<std::collections::HashMap<_, _>>()
             }),
@@ -241,12 +296,21 @@ impl<'a> IrEmitter<'a> {
                 if matches!(func, super::super::super::expr::BuiltinFn::Range))
     }
 
-    /// Choose the borrowed closure binding used before cloning a filtered non-range comprehension item.
+    /// Choose the borrowed closure binding used before materializing a filtered non-range comprehension item.
     fn filter_map_item_binding(pattern: &Pattern, pattern_tokens: &TokenStream) -> TokenStream {
         if matches!(pattern, Pattern::Var(_)) {
             pattern_tokens.clone()
         } else {
             quote! { __incan_comp_item }
+        }
+    }
+
+    /// Return the item type a borrowed comprehension iterator yields before copy/clone materialization.
+    fn comprehension_iterable_item_ty(iterable_ty: &IrType) -> Option<&IrType> {
+        match iterable_ty {
+            IrType::List(item_ty) | IrType::Set(item_ty) => Some(item_ty.as_ref()),
+            IrType::Ref(inner) | IrType::RefMut(inner) => Self::comprehension_iterable_item_ty(inner),
+            _ => None,
         }
     }
 

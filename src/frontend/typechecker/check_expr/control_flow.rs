@@ -88,6 +88,9 @@ impl TypeChecker {
         if self.known_surface_async_method(base_ty, method) {
             return true;
         }
+        if let ResolvedType::RustPath(path) = base_ty {
+            return self.rust_method_signature(path, method).is_some_and(|sig| sig.is_async);
+        }
         let type_name = match base_ty {
             ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
             _ => return false,
@@ -102,7 +105,17 @@ impl TypeChecker {
             Some(TypeInfo::Enum(info)) => {
                 Self::method_set_has_async_method(&info.methods, &info.method_overloads, method)
             }
-            Some(TypeInfo::Newtype(info)) => info.methods.get(method).is_some_and(|method_info| method_info.is_async),
+            Some(TypeInfo::Newtype(info)) => {
+                if info.methods.get(method).is_some_and(|method_info| method_info.is_async) {
+                    return true;
+                }
+                if info.is_rusttype
+                    && let ResolvedType::RustPath(path) = &info.underlying
+                {
+                    return self.rust_method_signature(path, method).is_some_and(|sig| sig.is_async);
+                }
+                false
+            }
             _ => false,
         }
     }

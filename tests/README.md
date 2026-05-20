@@ -7,12 +7,17 @@ This directory contains the Incan compiler's integration and snapshot test suite
 |                File                 |                                         What it tests                                         |                     How to run                     |
 | ----------------------------------- | --------------------------------------------------------------------------------------------- | -------------------------------------------------- |
 | `codegen_snapshot_tests.rs`         | End-to-end codegen: `.incn` input -> generated Rust output, verified against golden snapshots | `cargo test --test codegen_snapshot_tests`         |
+| `generated_rust_artifact_tests.rs`  | Final generated application, library, and `pub::` consumer package artifacts                  | `cargo test --test generated_rust_artifact_tests`  |
+| `generated_rust_audit_tests.rs`     | Deterministic generated Rust audit helper parsing, reporting, and strict-gate behavior        | `cargo test --test generated_rust_audit_tests`     |
+| `generated_rust_callability_artifact_tests.rs` | Package-facing callable exports and current callable boundary blockers             | `cargo test --test generated_rust_callability_artifact_tests` |
+| `generated_rust_native_consumer_tests.rs` | Native Rust crate consumption of generated Incan library artifacts                     | `cargo test --test generated_rust_native_consumer_tests` |
 | `integration_tests.rs`              | Full pipeline integration (parse + typecheck + lower + emit)                                  | `cargo test --test integration_tests`              |
 | `construction_diagnostics_tests.rs` | Diagnostic messages for constructor errors                                                    | `cargo test --test construction_diagnostics_tests` |
 | `lowering_error_propagation.rs`     | Error propagation through the lowering stage                                                  | `cargo test --test lowering_error_propagation`     |
 | `property_tests.rs`                 | Property-based tests (formatter idempotency, parseability, conversion determinism)            | `cargo test --test property_tests`                 |
 | `semantic_core_parity.rs`           | Parity between compiler and runtime semantic definitions                                      | `cargo test --test semantic_core_parity`           |
 | `semantic_core_parity_strings.rs`   | String-specific semantic parity                                                               | `cargo test --test semantic_core_parity_strings`   |
+| `stdlib_generated_rust_snapshot_tests.rs` | Representative generated Rust snapshots for selected stdlib modules                   | `cargo test --test stdlib_generated_rust_snapshot_tests` |
 | `vocab_guardrails.rs`               | Vocabulary drift detection between crates                                                     | `cargo test --test vocab_guardrails`               |
 | `layering_guard.rs`                 | Enforces crate dependency layering rules                                                      | `cargo test --test layering_guard`                 |
 | `test_example.incn`                 | Example Incan test file (used by the test runner)                                             | `incan test tests/test_example.incn`               |

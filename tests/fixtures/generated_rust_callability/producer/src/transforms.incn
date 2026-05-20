@@ -1,0 +1,21 @@
+pub model Payload:
+  value: int
+
+
+pub def plus_one(value: int) -> int:
+  return value + 1
+
+
+pub def map_owned(items: list[int], f: Callable[int, int]) -> list[int]:
+  mut out: list[int] = []
+  for item in items:
+    out.append(f(item))
+  return out
+
+
+pub def inspect_payload(result: Result[Payload, str], f: Callable[Payload, None]) -> Result[Payload, str]:
+  match result:
+    Ok(value) =>
+      f(value)
+      return Ok(value)
+    Err(error) => return Err(error)

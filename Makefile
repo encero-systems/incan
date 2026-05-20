@@ -246,6 +246,15 @@ test-rust-inspect:
 	@cargo test --lib --features rust_inspect frontend::typechecker::tests::test_rust_inspect_unavailable_stays_permissive_for_method_calls
 	@cargo test --lib --features rust_inspect frontend::typechecker::tests::test_rusttype_return_coercion_recorded_for_generic_newtype_method_call
 
+.PHONY: generated-rust-audit-gate  ## test - Run deterministic generated Rust audit helper checks
+generated-rust-audit-gate:
+	@echo "\033[1mRunning generated Rust audit helper checks...\033[0m"
+	@cargo test --test generated_rust_audit_tests
+	@python3 scripts/generated_rust_audit.py --format json --fail-on-missing \
+		--artifact program-main=tests/fixtures/generated_rust_audit/main.rs \
+		--artifact stdlib-copy=tests/fixtures/generated_rust_audit/nested >/dev/null
+	@echo "\033[32m✓ Generated Rust audit helper checks passed\033[0m"
+
 .PHONY: examples  ## test - Smoke test examples (check all, run entrypoints with timeout)
 examples: release
 	@echo "\033[1mRunning examples...\033[0m"
