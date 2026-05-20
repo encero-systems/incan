@@ -1,0 +1,9 @@
+model User:
+  name: str
+
+def greet(user: User) -> str:
+  return "hello " + user.name
+
+def main() -> None:
+  user = User(name="artifact")
+  println(greet(user))

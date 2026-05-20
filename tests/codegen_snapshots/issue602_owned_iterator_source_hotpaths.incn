@@ -1,0 +1,35 @@
+"""Issue #602: owned iterator sources should avoid whole-list clones on last use."""
+
+def double(x: int) -> int:
+    return x * 2
+
+def collect_last_use(xs: list[int]) -> list[int]:
+    return xs.iter().map(double).collect()
+
+def generator_last_use(xs: list[int]) -> Generator[int]:
+    return (x for x in xs if x > 0)
+
+def generator_one_shot() -> Generator[int]:
+    return (x for x in [1, 2, 3] if x > 0)
+
+def collect_reused(values: list[int]) -> int:
+    total = values.iter().sum()
+    first = values[0]
+    return total + first
+
+def generator_reused(values: list[int]) -> int:
+    generated = (x for x in values if x > 0).collect()
+    first = values[0]
+    return len(generated) + first
+
+def main() -> None:
+    collected = collect_last_use([1, 2, 3])
+    generated = generator_last_use([1, 2, 3]).collect()
+    generated_direct = generator_one_shot().collect()
+    reused_iter = collect_reused([1, 2, 3])
+    reused_gen = generator_reused([1, 2, 3])
+    println(collected[0])
+    println(generated[0])
+    println(generated_direct[0])
+    println(reused_iter)
+    println(reused_gen)

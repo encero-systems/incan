@@ -12,6 +12,7 @@ use quote::{format_ident, quote};
 
 use crate::backend::ir::emit::{EmitError, IrEmitter};
 use crate::backend::ir::expr::{IrExprKind, IteratorMethodKind, TypedExpr};
+use crate::backend::ir::ownership::plan_owned_iterator_source;
 use crate::backend::ir::types::IrType;
 use incan_core::lang::traits::{self as core_traits, TraitId};
 
@@ -157,7 +158,8 @@ pub(super) fn emit_iterator_method(
 fn emit_iter_receiver(receiver: &TypedExpr, r: &TokenStream) -> TokenStream {
     match receiver_type_for_iterator_dispatch(&receiver.ty) {
         IrType::List(_) => {
-            quote! { crate::__incan_std::derives::collection::ListIterator { items: (#r).clone(), index: 0i64 } }
+            let items = plan_owned_iterator_source(receiver).apply(r.clone());
+            quote! { crate::__incan_std::derives::collection::ListIterator { items: #items, index: 0i64 } }
         }
         IrType::NamedGeneric(name, _) | IrType::Struct(name) if is_iterator_protocol_type_name(name) => quote! { (#r) },
         _ => quote! { (#r) },

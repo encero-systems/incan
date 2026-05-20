@@ -57,6 +57,20 @@ impl TypeChecker {
         return_ty
     }
 
+    /// Type exposed for an async Rust call when it is not the direct operand of `await`.
+    ///
+    /// In an `await` operand we keep the existing source-async behavior: the inner call checks to its output type and
+    /// `check_await` returns that type. Outside `await`, expose the pending future as `Awaitable[T]` so consumers
+    /// cannot accidentally match or unwrap `T` before awaiting the Rust future.
+    fn resolved_rust_call_type_from_sig(&self, sig: &RustFunctionSig, span: Span) -> ResolvedType {
+        let return_ty = self.resolved_rust_return_type_from_sig(sig);
+        if sig.is_async && !self.is_in_await_operand(span) {
+            ResolvedType::Generic("Awaitable".to_string(), vec![return_ty])
+        } else {
+            return_ty
+        }
+    }
+
     /// Record an ownership conversion for borrowed Rust scalar-like returns that Incan exposes as owned values.
     pub(in crate::frontend::typechecker) fn record_rust_return_coercion_from_display(
         &mut self,
@@ -363,6 +377,10 @@ impl TypeChecker {
         preserves_lookup_arg_shape: bool,
         span: Span,
     ) -> ResolvedType {
+        if sig.is_async && !self.is_in_await_operand(span) {
+            self.errors
+                .push(errors::async_call_without_await(callable_display, span));
+        }
         let params = if Self::rust_signature_has_receiver(sig) {
             &sig.params[1..]
         } else {
@@ -377,7 +395,7 @@ impl TypeChecker {
                 arg_types.len(),
                 span,
             ));
-            return self.resolved_rust_return_type_from_sig(sig);
+            return self.resolved_rust_call_type_from_sig(sig, span);
         }
 
         for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(params.iter()) {
@@ -409,7 +427,7 @@ impl TypeChecker {
             }
         }
 
-        let ret = self.resolved_rust_return_type_from_sig(sig);
+        let ret = self.resolved_rust_call_type_from_sig(sig, span);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         ret
     }
@@ -422,12 +440,15 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
+        if sig.is_async && !self.is_in_await_operand(span) {
+            self.errors.push(errors::async_call_without_await(path, span));
+        }
         let arg_types = self.check_call_arg_types(args);
         self.record_rust_call_site_params(span, &sig.params);
         if arg_types.len() != sig.params.len() {
             self.errors
                 .push(errors::builtin_arity(path, sig.params.len(), arg_types.len(), span));
-            return self.resolved_rust_return_type_from_sig(sig);
+            return self.resolved_rust_call_type_from_sig(sig, span);
         }
 
         for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(sig.params.iter()) {
@@ -456,7 +477,7 @@ impl TypeChecker {
             }
         }
 
-        let ret = self.resolved_rust_return_type_from_sig(sig);
+        let ret = self.resolved_rust_call_type_from_sig(sig, span);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         ret
     }

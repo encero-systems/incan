@@ -296,6 +296,8 @@ The support crate should remain narrow and versioned. Generated artifacts should
 
 Local development may later add a build-script helper that invokes the Incan compiler from a Rust workspace, but that helper should produce the same caller boundary as a prebuilt or published package.
 
+Current package-facing characterization shows that ordinary `incan build --lib` artifacts can already expose owned scalar callable parameters through generated package exports, but borrowed non-`Copy` callable parameters are not yet consumable across a `pub::` package boundary. A producer export such as `Callable[Payload, None]` currently emits a Rust signature shaped like `fn(&Payload) -> ()`, while a downstream Incan consumer observer still emits `fn(Payload)`, causing Cargo type checking to fail. The caller adapter work must either generate a compatible borrowed wrapper for that boundary or reject/document the unsupported export before producing a broken consumer build.
+
 ## Layers affected
 
 - **Library artifact model**: library builds must be able to include caller metadata and generated caller adapters alongside existing semantic manifests and generated Rust crates.

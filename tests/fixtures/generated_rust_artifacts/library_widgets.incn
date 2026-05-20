@@ -1,0 +1,5 @@
+pub model Widget:
+  pub name: str
+
+pub def make_widget(name: str) -> Widget:
+  return Widget(name=name)

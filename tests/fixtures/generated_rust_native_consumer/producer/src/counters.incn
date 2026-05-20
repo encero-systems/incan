@@ -1,0 +1,15 @@
+pub model Counter:
+  pub label: str
+  pub count: int
+
+
+pub def make_counter(label: str, count: int) -> Counter:
+  return Counter(label=label, count=count)
+
+
+pub def add_count(counter: Counter, amount: int) -> Counter:
+  return Counter(label=counter.label, count=counter.count + amount)
+
+
+pub def rename_counter(counter: Counter, label: str) -> Counter:
+  return Counter(label=label, count=counter.count)

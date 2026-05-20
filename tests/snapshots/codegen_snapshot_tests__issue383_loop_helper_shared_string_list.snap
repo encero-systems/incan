@@ -28,7 +28,7 @@ fn helper_loop(xs: Vec<String>, ys: Vec<i64>) -> Vec<i64> {
     return out.clone();
 }
 fn helper_list(xs: Vec<String>, ys: Vec<i64>) -> Vec<i64> {
-    return (ys).iter().cloned().map(|y| match_index(xs.clone(), y)).collect::<Vec<_>>();
+    return (ys).iter().copied().map(|y| match_index(xs.clone(), y)).collect::<Vec<_>>();
 }
 fn main() {
     std::panic::set_hook(

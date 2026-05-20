@@ -1,0 +1,7 @@
+from pub::callability import map_owned, plus_one
+
+
+def main() -> None:
+  mapped = map_owned([1, 2, 3], plus_one)
+  for item in mapped:
+    print(item)

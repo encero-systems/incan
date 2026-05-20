@@ -1,0 +1,19 @@
+"""Issue #602: copy-typed comprehensions should not emit clone hot paths."""
+
+def squares(xs: list[int]) -> list[int]:
+    return [x * x for x in xs]
+
+def positive_squares(xs: list[int]) -> list[int]:
+    return [x * x for x in xs if x > 0]
+
+def index_by_value(xs: list[int]) -> dict[int, int]:
+    return {x: x * x for x in xs if x > 0}
+
+def main() -> None:
+    values = [1, 2, 3]
+    copied = squares(values)
+    filtered = positive_squares(values)
+    indexed = index_by_value(values)
+    println(copied[0])
+    println(filtered[0])
+    println(indexed[1])

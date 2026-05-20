@@ -3544,6 +3544,179 @@ def render[T](value: Label[T]) -> str:
 }
 
 #[cfg(feature = "rust_inspect")]
+fn seed_async_rust_method_probe(
+    checker: &mut TypeChecker,
+    manifest_dir: &std::path::Path,
+) -> Result<(), Box<dyn std::error::Error>> {
+    checker.rust_inspect_cache.insert_test_item(
+        manifest_dir,
+        RustItemMetadata {
+            canonical_path: "demo::SessionContext".to_string(),
+            definition_path: Some("demo::SessionContext".to_string()),
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(RustTypeInfo {
+                methods: vec![
+                    RustMethodSig {
+                        name: "new".to_string(),
+                        signature: RustFunctionSig {
+                            params: Vec::new(),
+                            return_type: "demo::SessionContext".to_string(),
+                            is_async: false,
+                            is_unsafe: false,
+                        },
+                    },
+                    RustMethodSig {
+                        name: "register_csv".to_string(),
+                        signature: RustFunctionSig {
+                            params: vec![
+                                RustParam {
+                                    name: Some("self".to_string()),
+                                    type_display: "&self".to_string(),
+                                },
+                                RustParam {
+                                    name: Some("name".to_string()),
+                                    type_display: "&str".to_string(),
+                                },
+                                RustParam {
+                                    name: Some("path".to_string()),
+                                    type_display: "&str".to_string(),
+                                },
+                                RustParam {
+                                    name: Some("options".to_string()),
+                                    type_display: "demo::CsvReadOptions".to_string(),
+                                },
+                            ],
+                            return_type: "Result<(), demo::DataFusionError>".to_string(),
+                            is_async: true,
+                            is_unsafe: false,
+                        },
+                    },
+                ],
+                implemented_traits: Vec::new(),
+                fields: vec![],
+                variants: vec![],
+            }),
+        },
+    )?;
+    checker.rust_inspect_cache.insert_test_item(
+        manifest_dir,
+        RustItemMetadata {
+            canonical_path: "demo::CsvReadOptions".to_string(),
+            definition_path: Some("demo::CsvReadOptions".to_string()),
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(RustTypeInfo {
+                methods: vec![RustMethodSig {
+                    name: "new".to_string(),
+                    signature: RustFunctionSig {
+                        params: Vec::new(),
+                        return_type: "demo::CsvReadOptions".to_string(),
+                        is_async: false,
+                        is_unsafe: false,
+                    },
+                }],
+                implemented_traits: Vec::new(),
+                fields: vec![],
+                variants: vec![],
+            }),
+        },
+    )?;
+    checker.rust_inspect_cache.insert_test_item(
+        manifest_dir,
+        RustItemMetadata {
+            canonical_path: "demo::make_context".to_string(),
+            definition_path: Some("demo::make_context".to_string()),
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Function(RustFunctionSig {
+                params: Vec::new(),
+                return_type: "demo::SessionContext".to_string(),
+                is_async: false,
+                is_unsafe: false,
+            }),
+        },
+    )?;
+    checker.rust_inspect_cache.insert_test_item(
+        manifest_dir,
+        RustItemMetadata {
+            canonical_path: "demo::make_options".to_string(),
+            definition_path: Some("demo::make_options".to_string()),
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Function(RustFunctionSig {
+                params: Vec::new(),
+                return_type: "demo::CsvReadOptions".to_string(),
+                is_async: false,
+                is_unsafe: false,
+            }),
+        },
+    )?;
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_async_method_call_can_be_awaited() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+import std.async
+from rust::demo import SessionContext
+from rust::demo import CsvReadOptions
+from rust::demo import make_context
+from rust::demo import make_options
+
+pub async def register_csv_with_await() -> None:
+  ctx = make_context()
+  opts = make_options()
+  match await ctx.register_csv("orders", "orders.csv", opts):
+    Ok(_) => pass
+    Err(_) => pass
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    checker.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
+    seed_async_rust_method_probe(&mut checker, tmp.path())?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected awaited Rust async method call to typecheck: {errs:?}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_async_method_call_without_await_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+import std.async
+from rust::demo import SessionContext
+from rust::demo import CsvReadOptions
+from rust::demo import make_context
+from rust::demo import make_options
+
+pub async def register_csv_without_await() -> None:
+  ctx = make_context()
+  opts = make_options()
+  match ctx.register_csv("orders", "orders.csv", opts):
+    Ok(_) => pass
+    Err(_) => pass
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    checker.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
+    seed_async_rust_method_probe(&mut checker, tmp.path())?;
+    let Err(errs) = checker.check_program(&ast) else {
+        return Err(std::io::Error::other("expected un-awaited Rust async method call to fail").into());
+    };
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Awaitable[Result") && err.message.contains("does not resolve")),
+        "expected un-awaited Rust async method call to expose an Awaitable Result before matching, got {errs:?}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
 #[test]
 fn test_rusttype_alias_resolves_underlying_rust_methods() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"

@@ -1617,14 +1617,69 @@ fn test_filtered_dict_comp_predicate_codegen() {
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains(".iter().filter_map(|x|{letx=(*x).clone();ifincan_stdlib::num::py_mod_i64(x,2)==0{Some((x,x*x))}else{None}})"),
-        "expected filtered dict comprehension to clone inside filter_map before evaluating the predicate; generated:\n{rust_code}"
+        compact.contains(
+            ".iter().filter_map(|x|{letx=*x;ifincan_stdlib::num::py_mod_i64(x,2)==0{Some((x,x*x))}else{None}})"
+        ),
+        "expected filtered dict comprehension over Copy items to copy inside filter_map before evaluating the predicate; generated:\n{rust_code}"
     );
     assert!(
         !compact.contains(".filter(|x|incan_stdlib::num::py_mod_i64(x,2)==0)"),
         "filtered dict comprehension must not leave the predicate closure borrowing `x`; generated:\n{rust_code}"
     );
+    assert!(
+        !compact.contains("letx=(*x).clone()"),
+        "filtered dict comprehension over Copy items should not call clone; generated:\n{rust_code}"
+    );
     insta::assert_snapshot!("filtered_dict_comp_predicate", rust_code);
+}
+
+/// Issue #602: comprehensions over Copy item types should use copied values rather than `.clone()` hot paths.
+#[test]
+fn test_issue602_comprehension_copy_hotpaths_codegen() {
+    let source = load_test_file("issue602_comprehension_copy_hotpaths");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("(xs).iter().copied().map(|x|x*x).collect::<Vec<_>>()"),
+        "expected unfiltered Copy list comprehension to use copied(), generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains(".iter().filter_map(|x|{letx=*x;ifx>0{Some(x*x)}else{None}})"),
+        "expected filtered Copy list comprehension to copy the borrowed item without clone; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains(".iter().filter_map(|x|{letx=*x;ifx>0{Some((x,x*x))}else{None}})"),
+        "expected filtered Copy dict comprehension to copy the borrowed item without clone; generated:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("(*x).clone()") && !compact.contains(".iter().cloned().map(|x|x*x)"),
+        "Copy comprehension hot paths should not emit clone calls; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("issue602_comprehension_copy_hotpaths", rust_code);
+}
+
+#[test]
+fn test_issue602_owned_iterator_source_hotpaths_codegen() {
+    let source = load_test_file("issue602_owned_iterator_source_hotpaths");
+    let rust_code = generate_rust(&source);
+    let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
+    assert!(
+        compact.contains("ListIterator{items:(xs),") && !compact.contains("ListIterator{items:(xs).clone()"),
+        "last-use list iterator sources should move into ListIterator instead of cloning; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("(vec![1,2,3]).into_iter()"),
+        "one-shot generator iterable sources should move into the generator instead of cloning; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("ListIterator{items:(values).clone(),") && compact.contains("(values).clone().into_iter()"),
+        "reused list iterator and generator sources should still clone; generated:\n{rust_code}"
+    );
+    assert!(
+        compact.contains("(xs).clone().into_iter()"),
+        "generator iterable variables remain cloned until lazy generator capture gets broader move analysis; generated:\n{rust_code}"
+    );
+    insta::assert_snapshot!("issue602_owned_iterator_source_hotpaths", rust_code);
 }
 
 // ============================================================================

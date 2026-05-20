@@ -1,0 +1,5 @@
+from pub::widgets import Widget as PublicWidget, make_widget
+
+def main() -> None:
+  w: PublicWidget = make_widget("ok")
+  println(w.name)
