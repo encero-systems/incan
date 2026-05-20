@@ -1,3 +1,13 @@
+//! Emit descriptor-registered method fast paths.
+//!
+//! This module is the generic bridge between source-level Incan methods and generated Rust helper methods that exist
+//! for performance-sensitive stdlib surfaces. It deliberately does not know about `OrdinalMap`, or any other concrete
+//! collection, by name. Fast paths are declared in `incan_core::lang::generated_support`; this emitter only checks that
+//! the lowered receiver and argument shapes match a descriptor and then emits the corresponding helper call.
+//!
+//! Returning `None` is part of the contract: if no descriptor matches, ordinary method-call emission continues. That
+//! keeps these accelerators optional implementation details rather than semantic requirements of the language surface.
+
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
@@ -6,6 +16,11 @@ use crate::backend::ir::expr::{IrCallArg, IrExprKind, TypedExpr};
 use crate::backend::ir::types::IrType;
 use incan_core::lang::generated_support::{self, MethodFastPath, MethodFastPathArgShape};
 
+/// Emit a descriptor-backed helper call for a known fast path, if the call shape matches.
+///
+/// Descriptors match on the concrete receiver family, receiver type argument, method name, and a narrow argument
+/// borrowing policy. The emitted method keeps the original Incan API value-shaped while allowing generated Rust to pass
+/// borrowed views into stdlib-adjacent helper code where that is the efficient representation.
 pub(super) fn emit_registered_method_fast_path(
     emitter: &IrEmitter,
     receiver: &TypedExpr,
