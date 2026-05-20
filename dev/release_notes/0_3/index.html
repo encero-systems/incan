@@ -6739,6 +6739,8 @@ one-shot, BytesIO stream, file stream, autodetection, option error, and chunk-si
 <li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.48</code>.</li>
 <li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.49</code>.</li>
 <li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.50</code>.</li>
+<li><strong>Compiler/Rust interop</strong>: Metadata-backed external Rust calls now preserve inspected generic by-value parameters, so prost-style <code>decode&lt;T: Buf&gt;(buf: T)</code> calls pass owned cursors directly instead of generating an invalid shared borrow (#609).</li>
+<li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.51</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>
