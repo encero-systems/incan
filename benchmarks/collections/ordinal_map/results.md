@@ -1,6 +1,6 @@
 # OrdinalMap Benchmark Results
 
-Generated locally on 2026-05-19 with:
+Generated locally on 2026-05-20 with:
 
 ```bash
 PYTHON=/private/tmp/incan-fastconstmap-venv/bin/python bash benchmarks/collections/ordinal_map/run.sh --keys 1000000 --probes 1000000
@@ -12,16 +12,16 @@ Corpus: 1,000,000 string keys and 1,000,000 deterministic present-key probes.
 
 | implementation | lookup path | build ms | ns/lookup | batch ns/lookup | payload bytes/key | serialized bytes/key |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| Python `dict` | exact | 119.617 | 643.945 | n/a | n/a | n/a |
-| Python `fastconstmap.ConstMap` | unchecked | 239.752 | 310.888 | 62.469 | 9.044 | 9.044 |
-| Python `fastconstmap.VerifiedConstMap` | verified | 238.422 | 372.085 | 74.676 | 18.088 | 18.088 |
-| Incan `OrdinalMap[str]` | `get` exact | 941.892 | 436.191 | n/a | 28.278 | 28.278 |
-| Incan `OrdinalMap[str]` | `require` exact | 941.892 | 476.893 | 442.310 | 28.278 | 28.278 |
-| Incan `OrdinalMap[str]` | unchecked | 941.892 | 219.302 | 160.212 | 28.278 | 28.278 |
+| Python `dict` | exact | 91.750 | 491.024 | n/a | n/a | n/a |
+| Python `fastconstmap.ConstMap` | unchecked | 222.000 | 275.913 | 51.335 | 9.044 | 9.044 |
+| Python `fastconstmap.VerifiedConstMap` | verified | 201.581 | 248.705 | 50.141 | 18.088 | 18.088 |
+| Incan `OrdinalMap[str]` | `get` exact | 822.159 | 115.139 | n/a | 28.278 | 28.278 |
+| Incan `OrdinalMap[str]` | `require` exact | 822.159 | 109.385 | 66.591 | 28.278 | 28.278 |
+| Incan `OrdinalMap[str]` | unchecked | 822.159 | 49.419 | 25.760 | 28.278 | 28.278 |
 
-Incan `payload bytes/key` is `storage_bytes() / keys`: compact payload sections only. It is not total retained heap and does not include ordinary object/header overhead or the runtime list caches used by the current implementation.
+Incan `payload bytes/key` is `storage_bytes() / keys`: compact payload sections only. It is not total retained heap and does not include ordinary object/header overhead or runtime lookup caches.
 
-This is a single local run, not a median over repeated samples. In this run, the current stdlib implementation's exact single-key lookup was slower than `fastconstmap.VerifiedConstMap`, while unchecked single-key lookup was lower than `fastconstmap.ConstMap`. Batch lookup is slower than `fastconstmap` in this implementation because the public Incan call path still preserves list and string values with clones at batch boundaries. Construction remains slower because `OrdinalMap.from_keys` is pure Incan code that validates/canonicalizes records and builds deterministic serialization sections.
+This is a single local run, not a median over repeated samples. In this run, Incan exact single-key lookup was lower than `fastconstmap.VerifiedConstMap`, and unchecked single-key lookup was lower than `fastconstmap.ConstMap`. Exact batch lookup remained slower than `fastconstmap.VerifiedConstMap`; unchecked batch lookup was lower than `fastconstmap.ConstMap`. Construction remains slower because `OrdinalMap.from_keys` validates and canonicalizes records before building deterministic serialization sections.
 
 ## Prior Spike Baseline
 
@@ -36,4 +36,4 @@ The prior spike used a handwritten Rust index-table prototype and a fuller 1,000
 | Python `fastconstmap.ConstMap` | unchecked | 1,000,000 | 120.723 | 39.400 | 9.044 | n/a |
 | Python `fastconstmap.VerifiedConstMap` | verified | 1,000,000 | 123.711 | 109.107 | 18.088 | n/a |
 
-The prior spike artifacts are historical local worktree outputs rather than committed benchmark inputs. Re-run this directory's benchmark script for committed, reproducible RFC 101 measurements.
+The committed benchmark runner above is the reproducible RFC 101 measurement. These spike numbers are retained as design-history context.

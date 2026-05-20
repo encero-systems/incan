@@ -1120,6 +1120,36 @@ impl<'a> IrEmitter<'a> {
         })
     }
 
+    /// Return whether a registered generated-support hook should be spliced into this generated module.
+    fn emits_registered_support_module(
+        program: &IrProgram,
+        support: &incan_core::lang::generated_support::GeneratedModuleSupport,
+    ) -> bool {
+        matches!(
+            program.source_module_name.as_deref(),
+            Some(module_name) if module_name == support.source_module || module_name == support.generated_module
+        )
+    }
+
+    /// Emit a macro invocation from a registered support path.
+    fn emit_support_macro_invocation(macro_path: &str) -> TokenStream {
+        let mut segments = macro_path.split("::").map(Self::rust_ident);
+        let Some(first) = segments.next() else {
+            return quote! {};
+        };
+        let path = segments.fold(quote! { #first }, |acc, segment| quote! { #acc :: #segment });
+        quote! { #path!(); }
+    }
+
+    /// Splice registered generated-code support into generated modules.
+    fn emit_registered_generated_module_supports(program: &IrProgram) -> Vec<TokenStream> {
+        incan_core::lang::generated_support::generated_module_supports()
+            .iter()
+            .filter(|support| Self::emits_registered_support_module(program, support))
+            .map(|support| Self::emit_support_macro_invocation(support.macro_path))
+            .collect()
+    }
+
     /// Emit temporary RFC 101 adapter impls for deterministic builtin `OrdinalKey` families.
     ///
     /// Native helper behavior lives in `incan_stdlib::collections::__private`; this emitter only places impls at the
@@ -2381,6 +2411,7 @@ impl<'a> IrEmitter<'a> {
         if !defines_ordinal_key_trait {
             items.push(self.emit_external_custom_ordinal_key_impls());
         }
+        items.extend(Self::emit_registered_generated_module_supports(program));
 
         Ok(quote! {
             #(#items)*

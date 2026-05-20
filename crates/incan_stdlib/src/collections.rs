@@ -12,6 +12,8 @@ use crate::errors::{raise, raise_value_error};
 use incan_core::errors::{IncanError, key_not_found_in_dict};
 use incan_core::indexing::normalize_slice_bounds;
 
+pub(crate) mod ordinal_map;
+
 #[inline]
 fn normalize_list_index(len: usize, index: i64) -> usize {
     let len_i = len as i64;

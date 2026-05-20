@@ -6065,6 +6065,18 @@ async def main() -> None:
             String::from_utf8_lossy(&output.stderr)
         );
         assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "std.ordinal_map ok");
+
+        let generated_main = fs::read_to_string("target/incan/std_ordinal_map_surface/src/main.rs")?;
+        assert!(
+            generated_main.contains("__incan_ordinal_require_str("),
+            "OrdinalMap[str] literal lookup should lower through the borrowed string fast path:\n{generated_main}"
+        );
+        let generated_collections =
+            fs::read_to_string("target/incan/std_ordinal_map_surface/src/__incan_std/collections.rs")?;
+        assert!(
+            generated_collections.contains("incan_stdlib::__incan_ordinal_map_string_fast_impls!();"),
+            "generated std.collections should splice in the stdlib-owned OrdinalMap string support:\n{generated_collections}"
+        );
         Ok(())
     }
 

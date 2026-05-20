@@ -43,9 +43,9 @@ The benchmark separates safe and unchecked lookup paths:
 - `fastconstmap.ConstMap` and Incan `get_unchecked` are unchecked paths.
 - `fastconstmap.VerifiedConstMap` and Incan `get`/`require` include exact missing-key detection.
 
-`payload bytes/key` is not process heap. For Incan, it is `storage_bytes() / keys`: compact payload sections only. It excludes ordinary object/header overhead and runtime list caches used by the current implementation. For `fastconstmap`, the benchmark reports the package's `nbytes()` value.
+`payload bytes/key` is not process heap. For Incan, it is `storage_bytes() / keys`: compact payload sections only. It excludes ordinary object/header overhead and runtime lookup caches. For `fastconstmap`, the benchmark reports the package's `nbytes()` value.
 
-The latest 1,000,000-key local run in `results.md` is a single directional run, not a median over repeated samples. In that run, `OrdinalMap[str]` exact lookup was slower than Python plus `fastconstmap.VerifiedConstMap`, while unchecked single-key lookup was lower than `fastconstmap.ConstMap`. Batch lookup is slower than `fastconstmap` in the current implementation because generated Incan code still clones list and string values at batch call boundaries. `OrdinalMap` uses more payload bytes per key and has slower construction because the builder validates and canonicalizes records in pure Incan.
+The latest 1,000,000-key local run in `results.md` is a single directional run, not a median over repeated samples. In that run, `OrdinalMap[str]` exact single-key lookup was lower than Python plus `fastconstmap.VerifiedConstMap`, and unchecked single-key lookup was lower than `fastconstmap.ConstMap`. Exact batch lookup remained slower than `fastconstmap.VerifiedConstMap`; unchecked batch lookup was lower than `fastconstmap.ConstMap`. `OrdinalMap` uses more payload bytes per key and has slower construction because the builder validates and canonicalizes records before producing deterministic payload sections.
 
 ## Notes
 

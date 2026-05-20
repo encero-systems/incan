@@ -18,10 +18,12 @@ use incan_core::interop::RustCollectionFamily;
 use incan_core::lang::surface::result_methods::{self, ResultMethodId};
 
 mod collection_methods;
+mod fast_paths;
 mod iterator_methods;
 mod string_methods;
 
 use collection_methods::emit_collection_method;
+use fast_paths::emit_registered_method_fast_path;
 use iterator_methods::emit_iterator_method;
 use string_methods::emit_string_method;
 
@@ -759,6 +761,9 @@ impl<'a> IrEmitter<'a> {
         let r0 = self.emit_expr(receiver)?;
         let info = ReceiverInfo::new(&receiver.ty, r0);
         let r = &info.r;
+        if let Some(call) = emit_registered_method_fast_path(self, receiver, method, args, r)? {
+            return Ok(call);
+        }
         if Self::is_generator_receiver(receiver) && method == "filter" && args.len() == 1 {
             let predicate = self.emit_expr(&args[0].expr)?;
             return Ok(quote! {
