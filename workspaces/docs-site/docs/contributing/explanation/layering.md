@@ -38,10 +38,8 @@ Use this policy when deciding where new code belongs:
 
 We want one “source of truth” for language behavior so the compiler and runtime don’t drift:
 
-- **Semantics must match**: if const-eval validates something, runtime should do the same thing the same way (especially
-for Unicode-sensitive string operations and numeric edge cases).
-- **Diagnostics/panics must stay aligned**: user-facing error messages should not diverge between compile-time and
-runtime.
+- **Semantics must match**: if const-eval validates something, runtime should do the same thing the same way (especially for Unicode-sensitive string operations and numeric edge cases).
+- **Diagnostics/panics must stay aligned**: user-facing error messages should not diverge between compile-time and runtime.
 - **Compiler stays lean**: the compiler shouldn’t accidentally pull in runtime-only APIs or heavy dependencies.
 
 ## What goes where (contracts vs implementations)
@@ -140,7 +138,6 @@ runtime.
 When you notice drift risk (compiler vs runtime):
 
 1. Put the *policy* in `incan_core` (pure function + typed error or canonical message).
-2. Add a thin wrapper in `incan_stdlib` that calls semantics and performs runtime-only behavior (panic, allocation,
-conversions).
+2. Add a thin wrapper in `incan_stdlib` that calls semantics and performs runtime-only behavior (panic, allocation, conversions).
 3. Update compiler const-eval / typechecking to use the semantics helper directly (never stdlib).
 4. Add a parity test in `tests/` that compares compiler/semantics/runtime behavior for the edge case.

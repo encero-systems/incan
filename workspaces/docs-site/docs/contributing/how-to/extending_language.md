@@ -139,8 +139,7 @@ Use this only when the feature is genuinely syntactic/control-flow.
     `not`, `in`, `is`), treat it as a **word-operator**:
 
     - Add it to `crates/incan_core/src/lang/operators.rs` (precedence/fixity source of truth)
-    - Add a corresponding `KeywordId` + `KEYWORDS` entry in `crates/incan_core/src/lang/keywords.rs` (so the lexer will
-      still lex it as a keyword)
+    - Add a corresponding `KeywordId` + `KEYWORDS` entry in `crates/incan_core/src/lang/keywords.rs` (so the lexer will still lex it as a keyword)
     - Update expression parsing in `crates/incan_syntax/src/parser/expr.rs` to place it at the right precedence level
 
 **Parser**: `crates/incan_syntax/src/parser/*`
@@ -222,21 +221,15 @@ Action descriptors are small enums (e.g., `SurfaceStmtLoweringAction::AssertCall
 **1. Keyword descriptor** (`crates/incan_core/src/lang/keywords.rs`):
 
 - Add a `KeywordId` variant.
-- Register it with `info_soft()`, specifying the activating stdlib namespace and the `KeywordSurfaceKind`
-(`StatementKeywordArgs`, `PrefixExpression`, or `DeclarationModifier`).
+- Register it with `info_soft()`, specifying the activating stdlib namespace and the `KeywordSurfaceKind` (`StatementKeywordArgs`, `PrefixExpression`, or `DeclarationModifier`).
 
 **2. Semantics pack** (`crates/incan_semantics_stdlib/src/lib.rs`):
 
-- Implement the **parser routing** method (`statement_payload_for_soft_keyword`,
-`expression_payload_for_soft_keyword`, or `modifier_payload_for_soft_keyword`).
-- Implement the **typechecker action** method (`typecheck_surface_stmt_action` or
-`typecheck_surface_expr_action`), returning an existing action descriptor if one fits.
-- Implement the **lowering action** method (`lower_surface_stmt_action` or `lower_surface_expr_action`),
-returning an existing action descriptor if one fits.
-- If the keyword implies a runtime requirement (e.g., async runtime), implement
-`modifier_runtime_requirement` and/or `import_runtime_requirement`.
-- If the keyword desugars to a stdlib call, implement `assert_call_target()` (or the equivalent for your
-feature) returning a `SurfaceCallTarget` with the canonical callee path.
+- Implement the **parser routing** method (`statement_payload_for_soft_keyword`, `expression_payload_for_soft_keyword`, or `modifier_payload_for_soft_keyword`).
+- Implement the **typechecker action** method (`typecheck_surface_stmt_action` or `typecheck_surface_expr_action`), returning an existing action descriptor if one fits.
+- Implement the **lowering action** method (`lower_surface_stmt_action` or `lower_surface_expr_action`), returning an existing action descriptor if one fits.
+- If the keyword implies a runtime requirement (e.g., async runtime), implement `modifier_runtime_requirement` and/or `import_runtime_requirement`.
+- If the keyword desugars to a stdlib call, implement `assert_call_target()` (or the equivalent for your feature) returning a `SurfaceCallTarget` with the canonical callee path.
 - Gate the handler behind the appropriate Cargo feature (`std_testing`, `std_async`, etc.).
 
 **3. Parser**: No per-keyword code needed. The generic helpers — `current_surface_keyword()` and `match_surface_keyword()` in `crates/incan_syntax/src/parser/helpers.rs`, and `try_surface_keyword_statement()` in `crates/incan_syntax/src/parser/stmts.rs` — automatically pick up any soft keyword whose descriptor has a matching `KeywordSurfaceKind`.
@@ -247,8 +240,7 @@ feature) returning a `SurfaceCallTarget` with the canonical callee path.
 
 **6. Formatter** (`src/format/formatter/`):
 
-- Handle the new `Statement::Surface` or `Expr::Surface` variant (usually a one-liner using
-`keywords::as_str()`).
+- Handle the new `Statement::Surface` or `Expr::Surface` variant (usually a one-liner using `keywords::as_str()`).
 
 **7. Tests**:
 
@@ -258,10 +250,8 @@ feature) returning a `SurfaceCallTarget` with the canonical callee path.
 !!! note "When you need a new action pattern"
     If no existing action descriptor fits your keyword's behavior, you'll need to:
 
-    1. Add a new variant to the relevant action enum in `crates/incan_semantics_core/src/lib.rs`
-       (e.g., `SurfaceStmtLoweringAction::YourPattern`).
-    2. Add a handler arm in the corresponding compiler module (`lower_surface_statement()`,
-       `check_surface_stmt()`, etc.).
+    1. Add a new variant to the relevant action enum in `crates/incan_semantics_core/src/lib.rs` (e.g., `SurfaceStmtLoweringAction::YourPattern`).
+    2. Add a handler arm in the corresponding compiler module (`lower_surface_statement()`, `check_surface_stmt()`, etc.).
 
     This is deliberately rare — action descriptors represent *compiler behavior patterns*, not individual keywords.
     You might add many keywords before needing a new pattern.
@@ -275,8 +265,6 @@ feature) returning a `SurfaceCallTarget` with the canonical callee path.
 
 ## Practical guidance
 
-- If you find yourself adding a keyword to achieve *“a function with a special implementation”*, pause and consider making
-it a **builtin function** (or a decorator) instead.
-- If you add a new AST/IR enum variant, rely on Rust’s exhaustiveness errors as your checklist: the compiler will tell you
-which match arms you need to update.
+- If you find yourself adding a keyword to achieve *“a function with a special implementation”*, pause and consider making it a **builtin function** (or a decorator) instead.
+- If you add a new AST/IR enum variant, rely on Rust’s exhaustiveness errors as your checklist: the compiler will tell you which match arms you need to update.
 - Keywords may only be introduced as the result of a language change (RFC).

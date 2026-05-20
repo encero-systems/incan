@@ -35,18 +35,13 @@ Internally this is implemented by the compiler’s symbol table (`lookup()` sear
     Two differences tend to surprise people:
 
     - In Python, `if`/`for`/`while` blocks **don’t** create a new scope (so names can “leak” out of blocks).
-    - Python resolves names with **LEGB** (Local → Enclosing → Global → Builtins), and has a key rule:
-      **any assignment in a function makes that name local to the entire function**, unless you declare it
-      `global`/`nonlocal`. In Incan, blocks are scopes and `x = ...` is inferred as “new vs reassign” by looking
-      outward for an existing binding.
+    - Python resolves names with **LEGB** (Local → Enclosing → Global → Builtins), and has a key rule: **any assignment in a function makes that name local to the entire function**, unless you declare it `global`/`nonlocal`. In Incan, blocks are scopes and `x = ...` is inferred as “new vs reassign” by looking outward for an existing binding.
 
 !!! note "Coming from Rust?"
     The spirit is similar (lexical scopes, `mut` for reassignment), but the surface syntax differs:
 
-    - Incan’s `let x = ...` is the explicit way to introduce a **new binding** in the current scope (often used for
-      shadowing).
-    - Plain `x = ...` is context-sensitive: it either **reassigns** an existing `mut` binding, or introduces a new
-      immutable binding if `x` doesn’t exist yet.
+    - Incan’s `let x = ...` is the explicit way to introduce a **new binding** in the current scope (often used for shadowing).
+    - Plain `x = ...` is context-sensitive: it either **reassigns** an existing `mut` binding, or introduces a new immutable binding if `x` doesn’t exist yet.
 
 ## What counts as a scope in Incan?
 
@@ -104,8 +99,7 @@ Each `def ...:` body is a **function scope**.
 Methods also have a function-like scope and define receiver names for the method body:
 
 - Instance methods define `self` or `mut self`.
-- Class methods define their explicit first parameter, conventionally `cls`. Inside a `@classmethod`, calling
-`cls(...)` constructs the declaring type.
+- Class methods define their explicit first parameter, conventionally `cls`. Inside a `@classmethod`, calling `cls(...)` constructs the declaring type.
 
 For example:
 
@@ -193,10 +187,8 @@ def shadows_in_block() -> int:
 Notes on `let`:
 
 - `let x = ...` is the explicit form for “**introduce a new binding** in the current scope”.
-- It’s **optional** when introducing a name for the first time (plain `x = ...` will do that if `x` doesn’t exist yet),
-but `let` is how you make **shadowing** unambiguous and readable in nested scopes.
-- `mut x = ...` introduces a **new mutable** binding. Reassigning later uses plain `x = ...` (and requires that `x` was
-introduced with `mut`).
+- It’s **optional** when introducing a name for the first time (plain `x = ...` will do that if `x` doesn’t exist yet), but `let` is how you make **shadowing** unambiguous and readable in nested scopes.
+- `mut x = ...` introduces a **new mutable** binding. Reassigning later uses plain `x = ...` (and requires that `x` was introduced with `mut`).
 
 You get an error if you write this:
 
@@ -258,12 +250,10 @@ def closure_capture() -> int:
     - If you intended a new block-local `x`, use `let x = ...` in the block.
 
 - **“Why does `x = ...` sometimes require `mut`?”**
-    - Only *reassignment* requires `mut`. Plain assignment is inferred: it reassigns if `x` already exists; otherwise it
-    creates a new immutable binding.
+    - Only *reassignment* requires `mut`. Plain assignment is inferred: it reassigns if `x` already exists; otherwise it creates a new immutable binding.
 
 - **“Where do imported names live?”**
-    - Imports add names to the **module scope** (file scope). Inside functions, you can refer to them like any
-    other outer binding.
+    - Imports add names to the **module scope** (file scope). Inside functions, you can refer to them like any other outer binding.
 
 ## See also
 

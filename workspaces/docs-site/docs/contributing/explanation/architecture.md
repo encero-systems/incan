@@ -97,11 +97,9 @@ incan build file.incn
 
 Notes:
 
-- **Debugging individual stages**: Use CLI stage flags (`--lex`, `--parse`, `--check`, `--emit-rust`) to inspect
-intermediate outputs (see [Getting Started](../../tooling/tutorials/getting_started.md)).
+- **Debugging individual stages**: Use CLI stage flags (`--lex`, `--parse`, `--check`, `--emit-rust`) to inspect intermediate outputs (see [Getting Started](../../tooling/tutorials/getting_started.md)).
 - **Multi-file projects**: Import resolution rules and module layout are described in [Imports & Modules](../../language/explanation/imports_and_modules.md).
-- **Rust interop dependencies**: `rust::` imports trigger Cargo dependency injection with a strict policy
-(see [Rust Interop](../../language/how-to/rust_interop.md) and [RFC 013]).
+- **Rust interop dependencies**: `rust::` imports trigger Cargo dependency injection with a strict policy (see [Rust Interop](../../language/how-to/rust_interop.md) and [RFC 013]).
 - **Runtime boundary**: Generated programs depend on `incan_stdlib` and `incan_derive`, but the compiler does not (see `crates/`).
 
 ## Module Layout
@@ -187,8 +185,7 @@ Incan has a **semantic core** crate (`incan_core`) that holds pure, deterministi
 - **Purpose**: centralize semantic policy and pure helpers so compile-time behavior and runtime behavior cannot drift.
 - **Used by**: compiler (typechecker, const-eval, lowering/codegen decisions) and stdlib/runtime helpers.
 - **Constraints**: pure/deterministic (no IO, no global state) and no dependencies on compiler crates.
-- **Stdlib registry**: `incan_core::lang::stdlib::STDLIB_NAMESPACES` drives stdlib import validation, stub path resolution,
-unknown-module hints, and import-activated language features (soft keywords like `async`/`await`).
+- **Stdlib registry**: `incan_core::lang::stdlib::STDLIB_NAMESPACES` drives stdlib import validation, stub path resolution, unknown-module hints, and import-activated language features (soft keywords like `async`/`await`).
 
 `incan_core` should own language-wide policy, not runtime implementations. Existing stdlib-facing surface type metadata is a compatibility boundary; new work should either justify why the metadata is truly language-core policy or push ownership toward library-defined declarations/semantics packs.
 
@@ -199,8 +196,7 @@ See crate-level documentation in `crates/incan_core` for the contract, extension
 Incan has a shared **syntax frontend** crate (`incan_syntax`) that centralizes lexer/parser/AST/diagnostics in a dependency-light crate suitable for reuse across compiler and tooling.
 
 - **Location**: `crates/incan_syntax`
-- **Purpose**: provide a single, shared syntax layer (lexing, parsing, AST, diagnostics) to prevent drift between
-compiler, formatter, LSP, and future interactive tooling.
+- **Purpose**: provide a single, shared syntax layer (lexing, parsing, AST, diagnostics) to prevent drift between compiler, formatter, LSP, and future interactive tooling.
 - **Used by**: compiler frontend and tooling (formatter/LSP); depends on `incan_core::lang` registries for vocabulary ids.
 - **Constraints**: syntax-only (no name resolution/type checking/IR); no dependencies on compiler crates.
 
@@ -275,14 +271,11 @@ Multiple keywords can share the same action descriptor (e.g., a hypothetical `en
     - Builds `SurfaceContext` from imports and aliases.
     - Provides import-driven soft-keyword activation and registry queries.
 - `src/frontend/typechecker/check_stmt.rs` / `check_expr/mod.rs`
-    - `check_surface_stmt()` and `check_surface_expr()` query the registry for typecheck action descriptors and
-      dispatch on the returned action — no `KeywordId` matching.
+    - `check_surface_stmt()` and `check_surface_expr()` query the registry for typecheck action descriptors and dispatch on the returned action — no `KeywordId` matching.
 - `src/backend/ir/lower/stmt.rs` / `lower/expr/mod.rs`
-    - `lower_surface_statement()` and the `Expr::Surface` arm of `lower_expr()` query the registry for lowering
-      action descriptors and dispatch on the returned action — no `KeywordId` matching.
+    - `lower_surface_statement()` and the `Expr::Surface` arm of `lower_expr()` query the registry for lowering action descriptors and dispatch on the returned action — no `KeywordId` matching.
 - `src/backend/ir/scanners/async_.rs`
-    - Detects async runtime requirement by asking the registry about each import and each surface modifier —
-      no hardcoded module names or keyword checks.
+    - Detects async runtime requirement by asking the registry about each import and each surface modifier — no hardcoded module names or keyword checks.
 - `src/backend/ir/surface_semantics.rs`
     - Thin helpers for action execution (assert condition decomposition, await IR wrapping).
 - `src/backend/ir/expr.rs` (`IrExprKind::Call`)
@@ -301,12 +294,9 @@ Feature gating is compile-time and crate-level:
 If the new keyword fits an existing action pattern, only steps 1–3 require code changes:
 
 1. Add activation metadata in `incan_core::lang` registry tables (`KeywordId` + `info_soft()`).
-2. Implement the relevant `SurfaceSemanticsPack` methods in `incan_semantics_stdlib` (or another pack crate):
-parser routing, typecheck action, lowering action, runtime requirements, and call targets as needed.
-3. Ensure parser emits generic surface payload with `SurfaceFeatureKey` handoff (usually automatic via existing
-parser helpers).
-4. **Typechecker / Lowering / Scanning**: no changes needed — the registry returns the action descriptor and the
-existing dispatch handles it.
+2. Implement the relevant `SurfaceSemanticsPack` methods in `incan_semantics_stdlib` (or another pack crate): parser routing, typecheck action, lowering action, runtime requirements, and call targets as needed.
+3. Ensure parser emits generic surface payload with `SurfaceFeatureKey` handoff (usually automatic via existing parser helpers).
+4. **Typechecker / Lowering / Scanning**: no changes needed — the registry returns the action descriptor and the existing dispatch handles it.
 5. Handle the new surface node in the **formatter** (usually a one-liner).
 6. Add parser/typechecker/codegen tests and update snapshots.
 

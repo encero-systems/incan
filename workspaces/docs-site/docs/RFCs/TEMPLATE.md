@@ -15,8 +15,7 @@ RFC NNN: \<short descriptive title\>
 - Deferred: Implementation is deferred to a later time.
 - Done: Implementation is complete.
 - Superseded by RFC NNN: This RFC is superseded by RFC NNN.
-- Rejected: This RFC is rejected.
- -->
+- Rejected: This RFC is rejected. -->
 
 - **Status:** Draft
 - **Created:** \<YYYY-MM-DD\>

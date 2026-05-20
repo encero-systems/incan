@@ -99,8 +99,7 @@ Maintainable Rust withstands change with **minimal risk and effort**—thanks to
 
 **If these are true, your Rust is both readable and maintainable:**
 
-- ✅ **Formatting & lints**: `cargo +nightly fmt --all -- --check` and `cargo clippy --deny warnings` pass; lint level tuned
-to project.
+- ✅ **Formatting & lints**: `cargo +nightly fmt --all -- --check` and `cargo clippy --deny warnings` pass; lint level tuned to project.
 - ✅ **Boundaries**: Modules align with responsibilities; public surface area small and documented.
 - ✅ **Errors**: Clear `Result<T, E>` with actionable messages; categorized `E`.
 - ✅ **Ownership**: Minimal clones; predictable lifetimes; borrowing favored.

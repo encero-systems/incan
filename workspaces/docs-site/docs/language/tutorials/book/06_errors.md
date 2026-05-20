@@ -92,8 +92,7 @@ def normalize(name: str) -> Result[str, NameError]:
 
 1. Write `def safe_div(a: float, b: float) -> Result[float, str]`.
 2. Write `def first(items: List[str]) -> Option[str]` and handle `None` vs `Some(...)` with `match`.
-3. Write `def parse_and_divide(n: float, s: str) -> Result[float, str]` that uses `?` to parse `s` into a `float`,
-then calls `safe_div`.
+3. Write `def parse_and_divide(n: float, s: str) -> Result[float, str]` that uses `?` to parse `s` into a `float`, then calls `safe_div`.
 
 ??? example "One possible solution"
 

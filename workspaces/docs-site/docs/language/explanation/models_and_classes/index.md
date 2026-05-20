@@ -53,8 +53,7 @@ Next: [Models](models.md) and [Classes](classes.md).
 
 A `model` and a `class` are not interchangeable. They compile to Rust structs, but they represent **different language concepts**:
 
-- **Models define data shapes**. They are the canonical representation for schema-like data and are the target for
-schema-focused features like field metadata and aliases.
+- **Models define data shapes**. They are the canonical representation for schema-like data and are the target for schema-focused features like field metadata and aliases.
 - **Classes define behavior**. They can inherit, override methods, and model stateful objects and services.
 - **Feature surface is intentionally different**: field aliases/metadata are **model-only**, while inheritance is **class-only**.
 

@@ -25,24 +25,18 @@ Without a stdlib shape, each library reinvents id allocation, edge storage, and 
 
 ## Goals
 
-- Define normative semantics for a directed-graph type, and optionally for a
-DAG variant or mode, exposed through the stdlib.
-- Specify stable `NodeId` semantics: what it means to add or remove nodes and
-edges, and when ids must not be reused in ways that confuse callers.
-- Specify a minimal interrogation API sufficient for common compiler and
-orchestration patterns: successors, predecessors, roots, sinks, reachability traversal from a start node in at least one documented order, and topological order when acyclic.
-- Keep future stdlib graph expansion on the RFC track rather than letting it
-grow ad hoc.
+- Define normative semantics for a directed-graph type, and optionally for a DAG variant or mode, exposed through the stdlib.
+- Specify stable `NodeId` semantics: what it means to add or remove nodes and edges, and when ids must not be reused in ways that confuse callers.
+- Specify a minimal interrogation API sufficient for common compiler and orchestration patterns: successors, predecessors, roots, sinks, reachability traversal from a start node in at least one documented order, and topological order when acyclic.
+- Keep future stdlib graph expansion on the RFC track rather than letting it grow ad hoc.
 
 ## Non-Goals
 
 - A **graph query language**, **index structures** for scale-out property search, or **disk-backed** storage.
 - **Undirected** graphs as a first-class mandatory type (may be added later via RFC).
 - **Distributed** graphs, **transactions**, or **Cypher**-style interfaces.
-- Mandating one specific backend implementation; the contract is behavioral,
-not implementation-specific.
-- A process-wide or language-global singleton graph. Named registries or
-application-level default graphs may exist in higher-level systems, but this stdlib contract must not require them.
+- Mandating one specific backend implementation; the contract is behavioral, not implementation-specific.
+- A process-wide or language-global singleton graph. Named registries or application-level default graphs may exist in higher-level systems, but this stdlib contract must not require them.
 
 ## Guide-level explanation
 
@@ -234,60 +228,42 @@ The stdlib **must** expose operations equivalent to the following capabilities (
 - **Lookup** node existence by `NodeId`.
 - **Successors** and **predecessors** (or outgoing/incoming edge iteration).
 - **Roots** and **sinks** according to the definitions above.
-- **Reachability traversal** from a start `NodeId` in at least one documented
-order, for example breadth-first search or depth-first search.
+- **Reachability traversal** from a start `NodeId` in at least one documented order, for example breadth-first search or depth-first search.
 
 Implementations **may** add further helpers (e.g. strongly connected components) in later RFCs.
 
 ## Design details
 
-- **Payload model.**
-Nodes should carry a payload slot. Payloads may be ordinary Incan object references such as `model` or `class` values, so that `DiGraph[Step]` means each node's payload is a `Step`. Payloads may also use newtypes or opaque handles where that fits better. The RFC does not mandate one `payload: any` model; the stdlib must document how payloads are represented and how cloning or shared mutation interact with graph operations when payloads are mutable.
+- **Payload model.** Nodes should carry a payload slot. Payloads may be ordinary Incan object references such as `model` or `class` values, so that `DiGraph[Step]` means each node's payload is a `Step`. Payloads may also use newtypes or opaque handles where that fits better. The RFC does not mandate one `payload: any` model; the stdlib must document how payloads are represented and how cloning or shared mutation interact with graph operations when payloads are mutable.
 
-- **Edge metadata.**
-Edges should support an optional kind or label so multiple domains can filter edges without separate side maps. `DiGraph[T]` stores at most one edge per ordered node pair; `MultiDiGraph[T]` stores multiple edge ids per ordered node pair.
+- **Edge metadata.** Edges should support an optional kind or label so multiple domains can filter edges without separate side maps. `DiGraph[T]` stores at most one edge per ordered node pair; `MultiDiGraph[T]` stores multiple edge ids per ordered node pair.
 
-- **Immutability vs mutation.**
-The stdlib may offer mutable graphs, immutable persistent updates, or both as separate types. The chosen model must be documented so carriers such as lazy plans can pick cheap clone semantics where needed.
+- **Immutability vs mutation.** The stdlib may offer mutable graphs, immutable persistent updates, or both as separate types. The chosen model must be documented so carriers such as lazy plans can pick cheap clone semantics where needed.
 
-- **Relationship to other stdlib types.**
-Graph types should compose with existing collections, such as RFC 030 types, where natural, for example returning lists of `NodeId`. They must not silently duplicate dictionary semantics without documenting key conflicts.
+- **Relationship to other stdlib types.** Graph types should compose with existing collections, such as RFC 030 types, where natural, for example returning lists of `NodeId`. They must not silently duplicate dictionary semantics without documenting key conflicts.
 
 - **Graph values vs global singletons (design decision).**
-    - **Normative:** The stdlib graph abstraction must be usable as ordinary
-      first-class data. Many independent instances may exist at once, and
-      callers pass or store them explicitly.
-    - **Normative:** The stdlib must not define or require one ambient graph
-      analogous to RFC 033 `ctx`. Graphs represent structured relational or
-      dependency data that is naturally per-pipeline, per-test, or per-request.
-      Conflating the two would break concurrency, test isolation, and
-      composition.
-    - **Non-normative:** A session, runtime, or application layer may still
-      offer a default or named graph registry for ergonomics, but that remains
-      outside this RFC and must layer on top of value-based graph types.
+    - **Normative:** The stdlib graph abstraction must be usable as ordinary first-class data. Many independent instances may exist at once, and callers pass or store them explicitly.
+    - **Normative:** The stdlib must not define or require one ambient graph analogous to RFC 033 `ctx`. Graphs represent structured relational or dependency data that is naturally per-pipeline, per-test, or per-request. Conflating the two would break concurrency, test isolation, and composition.
+    - **Non-normative:** A session, runtime, or application layer may still offer a default or named graph registry for ergonomics, but that remains outside this RFC and must layer on top of value-based graph types.
 
 ## Alternatives considered
 
-1. **Only document a pattern** such as a hand-rolled `dict` plus lists:
-rejected because it avoids stdlib surface at the cost of fragmentation and weak interoperability between libraries.
+1. **Only document a pattern** such as a hand-rolled `dict` plus lists: rejected because it avoids stdlib surface at the cost of fragmentation and weak interoperability between libraries.
 
-2. **Expose a full-featured property-graph stdlib immediately**: rejected
-because it is too large and blurs boundaries with databases and query engines.
+2. **Expose a full-featured property-graph stdlib immediately**: rejected because it is too large and blurs boundaries with databases and query engines.
 
-3. **Standardize on one external implementation’s user-visible API**: rejected
-because it couples the language too tightly to one dependency layout.
+3. **Standardize on one external implementation’s user-visible API**: rejected because it couples the language too tightly to one dependency layout.
 
 ## Drawbacks
 
 - **Surface area**: even a minimal graph API is a long-lived commitment; changes require RFC discipline.
-- **Performance**: a single generic graph type may not fit every workload.
-Domains may still need specialized structures behind thin wrappers.
+- **Performance**: a single generic graph type may not fit every workload. Domains may still need specialized structures behind thin wrappers.
 - **Teaching cost**: users must learn **when** to use graph stdlib vs plain collections.
 
 ## Layers affected
 
-- **Stdlib / runtime bindings**: new graph types and methods, potentially
-backed by runtime-native structures exposed through the normal stdlib binding path.
+- **Stdlib / runtime bindings**: new graph types and methods, potentially backed by runtime-native structures exposed through the normal stdlib binding path.
 - **Typechecker** — generic methods on graph types, error types for cycle detection.
 - **Formatter / LSP** — completions and formatting for new stdlib paths.
 - **Docs-site** — user-facing reference for graph types and examples.
@@ -369,20 +345,15 @@ backed by runtime-native structures exposed through the normal stdlib binding pa
 
 This section is not normative. It summarizes how popular libraries split directed versus multigraph concerns and DAG policy. It is not a mandate to copy any API.
 
-- **Python (NetworkX).** `DiGraph` is simple by default, with at most one edge
-per ordered node pair. `MultiDiGraph` is the parallel-edge variant. Acyclicity is usually an algorithm-level concern rather than a separate base type.
+- **Python (NetworkX).** `DiGraph` is simple by default, with at most one edge per ordered node pair. `MultiDiGraph` is the parallel-edge variant. Acyclicity is usually an algorithm-level concern rather than a separate base type.
 
-- **Java (JGraphT).** Separate concrete types are common. Authors choose a
-simple directed graph or a multigraph at construction time.
+- **Java (JGraphT).** Separate concrete types are common. Authors choose a simple directed graph or a multigraph at construction time.
 
-- **JavaScript / TypeScript (Graphology).** One graph family with options such
-as `type: 'directed'` and `multi: true | false`, plus specialized constructors. Parallel edges are opt-in.
+- **JavaScript / TypeScript (Graphology).** One graph family with options such as `type: 'directed'` and `multi: true | false`, plus specialized constructors. Parallel edges are opt-in.
 
-- **Ruby (RGL).** Directed adjacency is the common teaching model, and
-multigraph-oriented APIs are less central.
+- **Ruby (RGL).** Directed adjacency is the common teaching model, and multigraph-oriented APIs are less central.
 
-- **Rust (`petgraph`, illustrative only).** `Graph` can represent multiple
-edges between the same node pair, while `GraphMap` does not. Acyclicity is not enforced by default; DAG guarantees are algorithm or wrapper concerns.
+- **Rust (`petgraph`, illustrative only).** `Graph` can represent multiple edges between the same node pair, while `GraphMap` does not. Acyclicity is not enforced by default; DAG guarantees are algorithm or wrapper concerns.
 
 **Loose takeaway for question 1 (DAG shape).** Ecosystems rarely expose a third ubiquitous type name `Dag` alongside `DiGraph`; DAG is often policy on a directed container. A separate `Dag` type in Incan is still allowed if it improves ergonomics or static guarantees, but it is less common in the surveyed libraries.
 

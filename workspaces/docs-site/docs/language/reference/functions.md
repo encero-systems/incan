@@ -74,10 +74,8 @@ def main() -> int:
     - Python `*args` collects a tuple; Incan `*args: T` collects `List[T]`.
     - Python `**kwargs` collects a dict; Incan `**kwargs: T` collects `Dict[str, T]`.
     - Python `**kwargs` is often used as an untyped escape hatch; Incan keyword captures are typed.
-    - Python can unpack any iterable or mapping at runtime; Incan only unpacks into fixed parameters when the compiler
-      can prove the length or key set statically.
-    - `*expr` means "positional expansion" and is valid in calls and list literals. `**expr` means "mapping expansion"
-      and is valid in calls and dictionary literals.
+    - Python can unpack any iterable or mapping at runtime; Incan only unpacks into fixed parameters when the compiler can prove the length or key set statically.
+    - `*expr` means "positional expansion" and is valid in calls and list literals. `**expr` means "mapping expansion" and is valid in calls and dictionary literals.
 
 ## When to Use Rest Parameters
 

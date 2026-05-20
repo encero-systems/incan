@@ -123,8 +123,7 @@ Use `bech32m_encode` and `bech32m_decode` when the external protocol requires Be
 - Do not use lenient decoders for security-sensitive boundaries.
 - Do not treat Base85 variants as interchangeable.
 - Do not describe plain Base58 as checksum-protected.
-- Do not make hash APIs return encoded text by default. Hashing produces bytes; callers can choose `hex`, `base64`, or
-another encoding at the presentation boundary.
+- Do not make hash APIs return encoded text by default. Hashing produces bytes; callers can choose `hex`, `base64`, or another encoding at the presentation boundary.
 
 ## See Also
 

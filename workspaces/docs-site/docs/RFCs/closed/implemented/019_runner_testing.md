@@ -82,12 +82,10 @@ Quick reference:
 
 This RFC is pytest-inspired, but there are a few deliberate differences that are easy to miss if you bring strong pytest/Rust/Jest muscle memory:
 
-- **`@slow` is excluded by default**: you must opt in via `incan test --slow` (closer to Rust’s ignored tests than pytest
-markers).
+- **`@slow` is excluded by default**: you must opt in via `incan test --slow` (closer to Rust’s ignored tests than pytest markers).
 - **`skipif` / `xfailif` conditions must be collection-time evaluatable** (const-evaluable + explicit `testing` probes).
 - **`conftest.incn` is only auto-discovered under `tests/`** (it does not apply to inline `module tests:` in `src/`).
-- **Parallel execution (`--jobs`) uses worker processes**, so process-global state (like `tmp_workdir` and `env`) remains
-isolated.
+- **Parallel execution (`--jobs`) uses worker processes**, so process-global state (like `tmp_workdir` and `env`) remains isolated.
 - **`assert` can bind names via limited patterns** (e.g. `assert opt is Some(v)`), defined in RFC 018.
 
 Quick CLI anchoring:
@@ -489,8 +487,7 @@ In this RFC, “collection-time evaluatable” means “const-evaluable”, usin
 
 Static constructors (explicit exceptions):
 
-- The following call-like forms are treated as **compile-time data constructors** and are allowed at collection time,
-as long as their arguments are themselves collection-time evaluatable:
+- The following call-like forms are treated as **compile-time data constructors** and are allowed at collection time, as long as their arguments are themselves collection-time evaluatable:
     - `param_case(...)`
     - `mark("name")`
     - `skip("reason")`
@@ -693,8 +690,7 @@ Rules:
 - In sequential runs (`--jobs 1`), the runner stops executing further tests immediately after the first failure is recorded.
 - With worker processes (`--jobs > 1`):
     - the runner stops scheduling new tests after the first failure is recorded
-    - in-flight tests may complete and be reported (implementations may choose to terminate workers early, but should
-      prefer graceful shutdown to preserve fixture teardown)
+    - in-flight tests may complete and be reported (implementations may choose to terminate workers early, but should prefer graceful shutdown to preserve fixture teardown)
 
 ### Markers and selection (`-m`)
 
@@ -750,8 +746,7 @@ Terminology:
 Restrictions:
 
 - `TEST_MARKERS` must be collection-time evaluatable.
-- Marker names must match `^[a-z][a-z0-9_]*$` (snake_case). If this is violated, it is a **test collection error**
-(`TestCollectionError`).
+- Marker names must match `^[a-z][a-z0-9_]*$` (snake_case). If this is violated, it is a **test collection error** (`TestCollectionError`).
 
 #### Marker selection expression
 
@@ -925,8 +920,7 @@ The following decorators are recognized when they resolve to the `testing` modul
 
 Rules:
 
-- The condition is evaluated at collection time using the same “const-evaluable subset” used for other compile-time
-evaluation, plus a small set of explicit `testing` probes (see below).
+- The condition is evaluated at collection time using the same “const-evaluable subset” used for other compile-time evaluation, plus a small set of explicit `testing` probes (see below).
 - If the condition is not evaluatable at collection time, it is a **test collection error** (`TestCollectionError`).
 
 #### Collection-time probes (testing)
@@ -1037,8 +1031,7 @@ Resolution:
 Default marks (`TEST_MARKS`):
 
 - `conftest.incn` may define `const TEST_MARKS: List[str]`.
-- All applicable `TEST_MARKS` values from conftest files on the path to a test file are **merged** (union), from
-outer-to-inner directories.
+- All applicable `TEST_MARKS` values from conftest files on the path to a test file are **merged** (union), from outer-to-inner directories.
 - The test file’s own `TEST_MARKS` (if present) is also merged.
 - Per-test and per-case marks are merged on top.
 
@@ -1118,8 +1111,7 @@ This RFC does not specify specific async fixture/test execution semantics.
 Future direction:
 
 - Async fixtures and async tests should compose with the same discovery model.
-- See RFC 004 for Tokio integration; followup RFCs must specify runtime selection, timeout/cancellation interaction, and
-teardown guarantees.
+- See RFC 004 for Tokio integration; followup RFCs must specify runtime selection, timeout/cancellation interaction, and teardown guarantees.
 
 ## Compatibility / migration
 

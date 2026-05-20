@@ -31,11 +31,9 @@ The current `std.web` proves that Incan can compile web programs, but it does no
 
 Current problems:
 
-- Users still encounter backend leakage such as explicit wrapper types and
-backend-oriented handoff details.
+- Users still encounter backend leakage such as explicit wrapper types and backend-oriented handoff details.
 - Routing behavior is split across compiler logic, macros, and runtime helpers.
-- The platform does not yet present one complete framework story for auth,
-middleware, validation, docs, and lifecycle.
+- The platform does not yet present one complete framework story for auth, middleware, validation, docs, and lifecycle.
 
 The goal is not just "web works." The goal is that Incan developers can expose networked applications and APIs with one coherent server-side mental model.
 
@@ -141,8 +139,7 @@ Those may be refined later if needed, but the end-state described here is the ta
 
 1. **FastAPI-first server UX:** the primary serving experience is `App`-owned, decorator-driven, and typed.
 2. **Complete server platform scope:** serving, auth, validation, middleware, lifecycle, and docs are all part of the intended platform, not optional afterthoughts.
-3. **No backend leakage in public APIs:** users should not have to think in
-backend-runtime terms for ordinary API work.
+3. **No backend leakage in public APIs:** users should not have to think in backend-runtime terms for ordinary API work.
 4. **One platform, multiple surfaces:** FastAPI-style APIs, Django-style organization, and DSLs must reduce to one coherent underlying model.
 5. **Library ownership over compiler ownership:** framework behavior belongs in stdlib/libraries; compiler support should remain primitive and general where possible.
 6. **Client compatibility without client ownership:** `std.web` should align with RFC 066 where concepts overlap, but must not own the `std.http` implementation schedule.

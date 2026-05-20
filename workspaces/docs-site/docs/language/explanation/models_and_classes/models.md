@@ -151,8 +151,7 @@ Within a model:
 - aliases must be **non-empty** and contain at least one non-whitespace character
 - aliases must be **unique**
 - aliases must not collide with any canonical field name
-- aliases must not collide with any **visible member name** on the model (fields/methods, including built-in helpers and
-members introduced by derives/traits)
+- aliases must not collide with any **visible member name** on the model (fields/methods, including built-in helpers and members introduced by derives/traits)
 - aliases are matched by **exact string equality** (no Unicode normalization, no case-folding)
 - leading/trailing whitespace is allowed and **significant** (so `"id"` and `" id "` are different wire keys)
 
@@ -277,5 +276,4 @@ See: [Reflection (Reference)](../../reference/reflection.md)
 
 - **Expecting positional construction**: model constructors are keyword-only.
 - **Using `class` for schema mapping**: field metadata/aliases are model-only.
-- **Expecting aliases to rename fields everywhere**: aliases are for specific key positions and wire mapping; the
-canonical name remains the stable identifier in code.
+- **Expecting aliases to rename fields everywhere**: aliases are for specific key positions and wire mapping; the canonical name remains the stable identifier in code.

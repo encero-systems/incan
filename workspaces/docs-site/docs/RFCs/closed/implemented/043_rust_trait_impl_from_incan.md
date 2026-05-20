@@ -317,8 +317,7 @@ Normative rules:
 ### `@rust.derive` decorator
 
 - `@rust.derive(Name1, Name2, ...)` is valid on `model`, `class`, `enum`, and `newtype` declarations.
-- `@rust.derive(...)` on `rusttype` declarations is parsed but rejected until `rusttype` lowers to an owned Rust item;
-the current alias-based lowering cannot carry Rust derive attributes.
+- `@rust.derive(...)` on `rusttype` declarations is parsed but rejected until `rusttype` lowers to an owned Rust item; the current alias-based lowering cannot carry Rust derive attributes.
 - Each third-party derive macro must resolve through an imported Rust macro path and must be backed by a declared Rust dependency in `incan.toml`.
 - The compiler may whitelist built-in Rust derives such as `Clone`, `Copy`, `Debug`, `Default`, `Eq`, `Hash`, `Ord`, `PartialEq`, and `PartialOrd` without requiring a dependency declaration.
 - The implementation emits `#[derive(path::Name1, path::Name2, ...)]` on the generated Rust struct or enum.
@@ -328,12 +327,10 @@ the current alias-based lowering cannot carry Rust derive attributes.
 ### `Awaitable[T]` bridging rules
 
 - `Awaitable[T]` is the user-facing async protocol, following RFC 039.
-- When a `rusttype` declaration adopts `Awaitable[T]`, the Rust backend may generate `impl Future<Output = T> for Type`
-only after it can prove the backing future projection and output mapping are safe.
+- When a `rusttype` declaration adopts `Awaitable[T]`, the Rust backend may generate `impl Future<Output = T> for Type` only after it can prove the backing future projection and output mapping are safe.
 - The generated `poll` method must handle `Pin` projection correctly, preserving Rust pinning guarantees. The implementation must maintain the invariant that `Pin<&mut Type>` corresponds to a safe projection into `Pin<&mut backing_type>`.
 - Output type mapping must use declared Incan/Rust conversion edges when the backing type's future output differs from the adopted `Awaitable[T]` result type.
-- The first implementation rejects `rusttype ... with Awaitable[T]` with a dedicated diagnostic instead of emitting an
-unsound or unverifiable `Future` bridge.
+- The first implementation rejects `rusttype ... with Awaitable[T]` with a dedicated diagnostic instead of emitting an unsound or unverifiable `Future` bridge.
 
 ### Expected diagnostics
 
@@ -511,16 +508,14 @@ Existing code continues to work unchanged:
 - [x] Emit Rust trait impls from `with` adoption for newtype/rusttype declarations.
 - [x] Emit custom targeted methods into Rust trait impls.
 - [x] Emit associated type items into non-local Rust trait impls.
-- [x] Synthesize whole-trait forwarding for valid body-less rusttype adoption by accepting metadata-proven backing impls
-and skipping invalid alias impl emission.
+- [x] Synthesize whole-trait forwarding for valid body-less rusttype adoption by accepting metadata-proven backing impls and skipping invalid alias impl emission.
 - [x] Explicitly gate `Awaitable[T]` to `Future` bridging until safe pin projection and output mapping metadata exist.
 - [x] Tests: codegen snapshot coverage for targeted newtype impls.
 - [x] Tests: integration coverage for imported Rust trait associated types, forwarding, and async bridge gating.
 
 ### Stdlib / docs / release
 
-- [x] Evaluate stdlib Rust adapter migration; no safe adapter migrates yet because `rusttype` derive and `Awaitable`
-bridges are explicitly gated on alias/pinning constraints.
+- [x] Evaluate stdlib Rust adapter migration; no safe adapter migrates yet because `rusttype` derive and `Awaitable` bridges are explicitly gated on alias/pinning constraints.
 - [x] Update trait authoring reference docs.
 - [x] Update newtype reference docs.
 - [x] Update Rust interop docs.

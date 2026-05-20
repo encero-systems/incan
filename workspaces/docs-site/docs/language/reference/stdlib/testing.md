@@ -3,11 +3,9 @@
 This page specifies the standard-library testing API exposed by `std.testing`.
 
 !!! info "Related pages"
-    - If you are looking for how to run tests (`incan test`, discovery rules, CLI flags), see:
-      [Tooling → Testing].
+    - If you are looking for how to run tests (`incan test`, discovery rules, CLI flags), see: [Tooling → Testing].
     - If you want a guided walkthrough, see: [The Incan Book → Unit tests].
-    - If you want the language model for writing tests, including inline `module tests:`, see:
-      [Language → How-to → Testing in Incan].
+    - If you want the language model for writing tests, including inline `module tests:`, see: [Language → How-to → Testing in Incan].
 
 <!-- References -->
 [Tooling → Testing]:../../../tooling/how-to/testing.md

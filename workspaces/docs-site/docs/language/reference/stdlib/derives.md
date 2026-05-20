@@ -3,10 +3,8 @@
 This page documents the derive-related trait families available under `std.derives.*`. Import these traits when you want to adopt them explicitly or refer to them in annotations and bounds.
 
 !!! info "Related pages"
-    - If you want the language-facing explanation of derives, trait authoring, and conflict rules, see:
-      [Language → Reference → Derives & traits].
-    - If you want the per-family reference pages, see:
-      [Comparison], [Copying and Default], and [String representation].
+    - If you want the language-facing explanation of derives, trait authoring, and conflict rules, see: [Language → Reference → Derives & traits].
+    - If you want the per-family reference pages, see: [Comparison], [Copying and Default], and [String representation].
 
 <!-- References -->
 [Language → Reference → Derives & traits]:../derives_and_traits.md

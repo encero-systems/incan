@@ -62,8 +62,7 @@ The authoritative rule set (including the full conflict list) lives in:
 
 Some Python/Rust features are intentionally not part of Incan’s trait/derive surface area:
 
-- **Context managers** (`__enter__` / `__exit__`): prefer scope-based cleanup RAII (Resource Acquisition Is  Initialization)
-style
+- **Context managers** (`__enter__` / `__exit__`): prefer scope-based cleanup RAII (Resource Acquisition Is  Initialization) style
 - **Destructors** (`__del__` / `Drop` as a user feature): cleanup is automatic; exposing destruction hooks adds complexity
 - **`__format__`**: `Display` (`__str__`) + f-strings cover most needs
 

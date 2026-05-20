@@ -382,8 +382,7 @@ Normative style expectations:
 - `short` renders a compact time-of-day timestamp.
 - `complete` renders a full datetime timestamp.
 - `verbose` may render additional metadata and fields, but it must keep the first line message-first and readable.
-- When a record carries active span context, human renderers should be able to expose that hierarchy with lightweight
-span guides rather than long repeated logger prefixes.
+- When a record carries active span context, human renderers should be able to expose that hierarchy with lightweight span guides rather than long repeated logger prefixes.
 
 Illustrative shapes:
 
@@ -565,9 +564,7 @@ Span semantics need more than a helper method. They raise questions about scoped
    - Rejected because spans deserve their own RFC and should build on a stable event record model.
 
 6. **Bake OpenTelemetry attribute types directly into `std.logging`**
-   - Rejected because OpenTelemetry semantic conventions evolve independently and cover more than ordinary log events.
-     The logging API should preserve namespaced structured fields now and let dedicated observability/export RFCs own
-     the mapping contract.
+   - Rejected because OpenTelemetry semantic conventions evolve independently and cover more than ordinary log events. The logging API should preserve namespaced structured fields now and let dedicated observability/export RFCs own the mapping contract.
 
 ## Drawbacks
 
@@ -695,13 +692,10 @@ Configuration precedence tests are deferred with the project/CLI/environment con
 - `short` is the default human style.
 - JSON is a `LogFormat`, not a `LogStyle`, and OTel-oriented JSON uses the official `LogRecord` field aliases.
 - Color policy is human-renderer-only and never affects JSON output.
-- Colorized terminal behavior remains tied to a source-owned CLI/terminal capability surface instead of a Rust
-logging helper.
+- Colorized terminal behavior remains tied to a source-owned CLI/terminal capability surface instead of a Rust logging helper.
 - The filter contract requires a global threshold; per-logger filtering may be added compatibly.
 - The implemented reference surface is source Incan and may only use ordinary `rust::std` imports for host primitives.
 - Rust `tracing` integration is deferred until it can be introduced without replacing the source-owned logging surface.
 - Span, context propagation, and external export APIs are deferred to follow-up RFCs.
-- OpenTelemetry compatibility is an Incan-wide observability goal. RFC 072 adopts the OpenTelemetry log record model,
-while full provider/exporter behavior, semantic convention helpers, tracing decorators, baggage/context propagation, and metrics are deferred to dedicated observability RFCs.
-- RFC 093 owns the full `std.telemetry` provider/exporter direction; RFC 094 and RFC 095 record the context-manager and
-`span` vocabulary foundations needed for ambient but controlled spans.
+- OpenTelemetry compatibility is an Incan-wide observability goal. RFC 072 adopts the OpenTelemetry log record model, while full provider/exporter behavior, semantic convention helpers, tracing decorators, baggage/context propagation, and metrics are deferred to dedicated observability RFCs.
+- RFC 093 owns the full `std.telemetry` provider/exporter direction; RFC 094 and RFC 095 record the context-manager and `span` vocabulary foundations needed for ambient but controlled spans.

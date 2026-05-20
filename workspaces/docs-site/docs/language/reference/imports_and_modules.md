@@ -237,8 +237,7 @@ Some language keywords are **import-activated** (soft keywords). They behave lik
 
 Currently:
 
-- `async` and `await` are activated by importing `std.async` (for example `import std.async` or
-`from std.async.time import sleep`).
+- `async` and `await` are activated by importing `std.async` (for example `import std.async` or `from std.async.time import sleep`).
 
 If you forget the import, you’ll get a targeted diagnostic telling you what to add.
 

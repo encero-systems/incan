@@ -141,8 +141,7 @@ Common categories include `invalid_data`, `truncated_input`, `unsupported_codec`
 ## Keep Compression Separate from Related Work
 
 - Use `std.encoding` after compression when bytes need a text-safe representation.
-- Use hashing after compression only when the digest must cover the compressed bytes. Hash before compression when the
-digest must cover the original payload.
+- Use hashing after compression only when the digest must cover the compressed bytes. Hash before compression when the digest must cover the original payload.
 - Keep password hashing and encryption separate from compression. They have different security contracts.
 - Do not use raw Snappy unless another format specifically requires block-level Snappy behavior.
 

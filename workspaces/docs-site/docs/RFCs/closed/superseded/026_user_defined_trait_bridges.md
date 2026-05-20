@@ -165,10 +165,8 @@ type Pool = newtype rust::sqlx::PgPool
 
 **Parameters**:
 
-- **`trait`** - The Rust trait to delegate (must be an imported symbol, not a string). The compiler generates
-`impl sqlx::Executor for Pool` that forwards the specified methods to the wrapped `PgPool`.
-- **`methods`** - List of method names to delegate. If omitted, delegates **all** trait methods
-(see [Design Decisions: Default Delegation Strategy](#2-default-delegation-strategy)). Use explicit lists when you only need a subset of the trait's methods.
+- **`trait`** - The Rust trait to delegate (must be an imported symbol, not a string). The compiler generates `impl sqlx::Executor for Pool` that forwards the specified methods to the wrapped `PgPool`.
+- **`methods`** - List of method names to delegate. If omitted, delegates **all** trait methods (see [Design Decisions: Default Delegation Strategy](#2-default-delegation-strategy)). Use explicit lists when you only need a subset of the trait's methods.
 
 #### Multiple Traits
 
@@ -208,8 +206,7 @@ type DbConnection = newtype PgConnection
 
 **Parameter**:
 
-- **`methods` (dict form)** - Maps Incan method names (keys) to Rust method names (values).
-The compiler generates methods with the Incan names that delegate to the Rust names.
+- **`methods` (dict form)** - Maps Incan method names (keys) to Rust method names (values). The compiler generates methods with the Incan names that delegate to the Rust names.
 
 **When to use**: The Rust trait uses naming conventions that conflict with Incan style or when avoiding reserved keywords.
 

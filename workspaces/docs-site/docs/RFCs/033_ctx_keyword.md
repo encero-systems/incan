@@ -18,14 +18,11 @@ Introduce `ctx` as a core language keyword that declares a typed, globally acces
 
 Every non-trivial application needs configuration: database paths, batch sizes, API endpoints, feature flags. Today's patterns are painful:
 
-- **Python dataclass + env vars**: manual `os.environ.get("KEY", "default")`
-for every field. No compile-time validation. String-typed. Error-prone.
-- **Pydantic BaseSettings**: typed and env-var-aware, but runtime-only
-validation. No multi-environment resolution. No language integration.
+- **Python dataclass + env vars**: manual `os.environ.get("KEY", "default")` for every field. No compile-time validation. String-typed. Error-prone.
+- **Pydantic BaseSettings**: typed and env-var-aware, but runtime-only validation. No multi-environment resolution. No language integration.
 - **YAML + merge**: `common.yaml` + `prod.yaml` merged at load time. Untyped, no IDE support, merge surprises.
 - **Django settings**: Python module importable globally. Untyped, single-environment, no structured overrides.
-- **Koheesio Context**: dict-like, YAML-loaded, `.get("key")` returns `Any`.
-The surface stays dynamic where Incan should be typed.
+- **Koheesio Context**: dict-like, YAML-loaded, `.get("key")` returns `Any`. The surface stays dynamic where Incan should be typed.
 
 The common pain points:
 
@@ -198,19 +195,14 @@ field_override ::= IDENT "=" expr NEWLINE
 3. The body contains **field declarations** (same syntax as `model` fields) and **match blocks**.
 4. Match blocks reference a user-defined `enum` type. The enum must be in scope.
 5. Match arms can only override fields declared in the same `ctx`. They cannot introduce new fields.
-6. Fields without defaults and without coverage in all match arms are a compile
-error. The context must be fully resolvable.
+6. Fields without defaults and without coverage in all match arms are a compile error. The context must be fully resolvable.
 
 ### Type checking rules
 
-1. **Field types**: same as `model` fields. Primitive types (`str`, `int`,
-`float`, `bool`), `Option[T]`, `list[T]`, and model types are all valid.
-2. **Match arm overrides**: the assigned value must be type-compatible with the
-field's declared type. `batch_size: int = 100` can only be overridden with an `int`.
-3. **Global access**: `AppConfig.field_name` is typed using the field's
-declared type. The typechecker resolves it as a static field access on a known singleton, not a regular instance access.
-4. **Immutability**: context fields are read-only after initialization.
-Assigning to `AppConfig.field = x` outside of a match arm or `.init()` is a compile error.
+1. **Field types**: same as `model` fields. Primitive types (`str`, `int`, `float`, `bool`), `Option[T]`, `list[T]`, and model types are all valid.
+2. **Match arm overrides**: the assigned value must be type-compatible with the field's declared type. `batch_size: int = 100` can only be overridden with an `int`.
+3. **Global access**: `AppConfig.field_name` is typed using the field's declared type. The typechecker resolves it as a static field access on a known singleton, not a regular instance access.
+4. **Immutability**: context fields are read-only after initialization. Assigning to `AppConfig.field = x` outside of a match arm or `.init()` is a compile error.
 
 ### Env var type coercion
 
@@ -232,10 +224,8 @@ For each `match EnumType:` block in a `ctx`, the runtime reads `{env_prefix}{ENU
 
 ### Lifecycle
 
-1. **Before init**: accessing any `ctx` field panics with
-`"AppConfig not initialized"`. If the compiler can prove a field is accessed before `main()`, it emits a compile error.
-2. **Init**: at program startup, or explicitly via `.init()` in tests, the
-runtime resolves axis env vars, evaluates matching arms, applies env var field overrides, and then locks the singleton.
+1. **Before init**: accessing any `ctx` field panics with `"AppConfig not initialized"`. If the compiler can prove a field is accessed before `main()`, it emits a compile error.
+2. **Init**: at program startup, or explicitly via `.init()` in tests, the runtime resolves axis env vars, evaluates matching arms, applies env var field overrides, and then locks the singleton.
 3. **After init** — `AppConfig.field` is a zero-cost read. Immutable. Thread-safe.
 4. **In tests** — `.init()` can be called again (resets the singleton) for per-test configuration.
 
@@ -349,10 +339,8 @@ Ship `ctx` as a library-provided soft keyword instead of a core keyword.
 ## Drawbacks
 
 - **New keyword** — `ctx` becomes reserved, breaking any code using it as an identifier. Acceptable pre-1.0.
-- **Global mutable state**: technically a singleton, which some consider an
-anti-pattern. This is mitigated by immutability after init and reset support in tests.
-- **Hidden dependency**: functions that read `AppConfig.field` have an
-implicit dependency on the context being initialized. That dependency is not visible in the function signature. This is the intended trade-off between explicitness and boilerplate reduction.
+- **Global mutable state**: technically a singleton, which some consider an anti-pattern. This is mitigated by immutability after init and reset support in tests.
+- **Hidden dependency**: functions that read `AppConfig.field` have an implicit dependency on the context being initialized. That dependency is not visible in the function signature. This is the intended trade-off between explicitness and boilerplate reduction.
 
 ## Layers affected
 
@@ -365,23 +353,17 @@ implicit dependency on the context being initialized. That dependency is not vis
 
 ## Unresolved questions
 
-1. **Should fields without defaults require exhaustive match coverage?** If
-`auth_token: str` has no default and `match Env` only covers `Prod`, what happens in `Dev`? Options: compile error requiring all arms, or requiring a default value. Leaning toward: fields without defaults must be covered by all match arms or have a matching env var annotation, with init-time failure if the env var is also absent.
+1. **Should fields without defaults require exhaustive match coverage?** If `auth_token: str` has no default and `match Env` only covers `Prod`, what happens in `Dev`? Options: compile error requiring all arms, or requiring a default value. Leaning toward: fields without defaults must be covered by all match arms or have a matching env var annotation, with init-time failure if the env var is also absent.
 
-2. **Should `env_prefix` be optional?** It could default to
-`{UPPER_SNAKE_CASE_CTX_NAME}_`. Leaning toward: required, because explicit is better than implicit for something that maps to external env vars.
+2. **Should `env_prefix` be optional?** It could default to `{UPPER_SNAKE_CASE_CTX_NAME}_`. Leaning toward: required, because explicit is better than implicit for something that maps to external env vars.
 
-3. **How should nested model fields map to env vars?** For
-`cluster: ClusterConfig`, should `INFRA_CLUSTER__NODE_TYPE` work via a delimiter, or should nested models only be overridable as a whole? Leaning toward: defer nested env var mapping. The initial contract can stay flat, with nested models overridden through match arms.
+3. **How should nested model fields map to env vars?** For `cluster: ClusterConfig`, should `INFRA_CLUSTER__NODE_TYPE` work via a delimiter, or should nested models only be overridable as a whole? Leaning toward: defer nested env var mapping. The initial contract can stay flat, with nested models overridden through match arms.
 
-4. **Auto-init or explicit init?** Should the compiler automatically insert the
-generated init call at the start of `main()`, or must the user call `AppConfig.init()`? Auto-init is more ergonomic; explicit init gives control over ordering when there are multiple `ctx` declarations. Leaning toward: auto-init in `main()`, with `.init()` still available for tests and explicit control.
+4. **Auto-init or explicit init?** Should the compiler automatically insert the generated init call at the start of `main()`, or must the user call `AppConfig.init()`? Auto-init is more ergonomic; explicit init gives control over ordering when there are multiple `ctx` declarations. Leaning toward: auto-init in `main()`, with `.init()` still available for tests and explicit control.
 
-5. **Multiple match axes scope.** This RFC covers single-axis matching only.
-Should multi-axis matching, such as `match RunMode:` plus `match (Env, RunMode):`, be a follow-up RFC or part of this one? Leaning toward: a follow-up RFC. Single-axis matching covers the common case and keeps the initial implementation focused.
+5. **Multiple match axes scope.** This RFC covers single-axis matching only. Should multi-axis matching, such as `match RunMode:` plus `match (Env, RunMode):`, be a follow-up RFC or part of this one? Leaning toward: a follow-up RFC. Single-axis matching covers the common case and keeps the initial implementation focused.
 
-6. **Generated panic compatibility with strict lint settings.** The generated init path may use fail-fast panics for
-env var parse failures and singleton access that occurs before initialization. Both are intentional startup/programming errors, but projects that enable strict lints against generated panic sites will still see diagnostics. Should the generated init function return `Result[None, CtxInitError]` and propagate errors to `main` instead of panicking? That would remove the panic sites but would also require users to handle init errors explicitly. Leaning toward: **keep fail-fast panics in this RFC** — fail-fast startup is the point, and a `Result` return complicates auto-init.
+6. **Generated panic compatibility with strict lint settings.** The generated init path may use fail-fast panics for env var parse failures and singleton access that occurs before initialization. Both are intentional startup/programming errors, but projects that enable strict lints against generated panic sites will still see diagnostics. Should the generated init function return `Result[None, CtxInitError]` and propagate errors to `main` instead of panicking? That would remove the panic sites but would also require users to handle init errors explicitly. Leaning toward: **keep fail-fast panics in this RFC** — fail-fast startup is the point, and a `Result` return complicates auto-init.
 
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 

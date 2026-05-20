@@ -8,8 +8,7 @@ This chapter shows how to write and run **unit tests** in a way that’s friendl
     If you have pytest muscle memory:
 
     - **Discovery**: tests can live in named test files (`test_*.incn`) or in inline `module tests:` blocks.
-    - **Assertions**: the language `assert` statement is always available; import assertion helpers from `std.testing` when a function-call helper is clearer:
-      `from std.testing import assert_eq, assert_ne, assert_true, assert_false, fail`.
+    - **Assertions**: the language `assert` statement is always available; import assertion helpers from `std.testing` when a function-call helper is clearer: `from std.testing import assert_eq, assert_ne, assert_true, assert_false, fail`.
     - **Markers/fixtures**: `@skip`, `@xfail`, `@fixture`, and `@parametrize` are provided by the `std.testing` module.
 
     References:
@@ -136,8 +135,7 @@ Async fixtures still use `@fixture`; there is no async-only decorator. The runne
 
 That's the end of the Incan Book (Basics)! You now know the core language. Here are some directions to explore next:
 
-- [Your first project](../../../tooling/tutorials/your_first_project.md) — Set up a real project with
-`incan init`, Rust crate dependencies, and reproducible builds
+- [Your first project](../../../tooling/tutorials/your_first_project.md) — Set up a real project with `incan init`, Rust crate dependencies, and reproducible builds
 - [Rust interop](../../how-to/rust_interop.md) — Use Rust crates from Incan code
 - [Async programming](../../how-to/async_programming.md) — Write concurrent programs
 - [Standard library reference: `std.testing`](../../reference/stdlib/testing.md) — Full testing API: fixtures, parametrize, skip, xfail

@@ -38,7 +38,6 @@ perf report
 ## Optimization tips (practical)
 
 - **Prefer the canonical build**: `incan build file.incn` (builds the generated Rust project in release mode today).
-- **Avoid unnecessary clones**: the code generator tries to avoid extra copying, but explicit `.clone()` in source
-will be preserved.
+- **Avoid unnecessary clones**: the code generator tries to avoid extra copying, but explicit `.clone()` in source will be preserved.
 - **Prefer iterator-style code**: list comprehensions compile to iterator chains.
 - **Inspect generated Rust**: use `incan --emit-rust file.incn` when you’re not sure what the compiler is emitting.

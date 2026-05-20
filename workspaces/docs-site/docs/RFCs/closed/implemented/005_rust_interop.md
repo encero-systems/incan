@@ -35,8 +35,7 @@ Prime directive: interop must not force users to learn Rust borrowing/lifetimes/
 
 ## Non-Goals
 
-- A promise that “any Rust crate works”. Interop is scoped; outside that scope, failures are expected but must be
-diagnosable.
+- A promise that “any Rust crate works”. Interop is scoped; outside that scope, failures are expected but must be diagnosable.
 - Exposing Rust surface syntax in Incan (`&`, `&mut`, lifetimes, turbofish `::<T>`).
 - Arbitrary proc-macros. (Incan may support a curated derive surface via `@derive`; see below.)
 - Calling `unsafe` Rust items without an explicit Incan opt-in (out of scope for this RFC).
@@ -124,8 +123,7 @@ If `crate_name` is `std`, then:
 
 Reserved (out of scope for this RFC):
 
-- If `crate_name` is `core` or `alloc`, the compiler must emit a compile-time error instructing the user to use
-`rust::std::...` instead (or wait for future `no_std` / target support).
+- If `crate_name` is `core` or `alloc`, the compiler must emit a compile-time error instructing the user to use `rust::std::...` instead (or wait for future `no_std` / target support).
 
 ### Crate naming limitations (normative)
 
@@ -144,12 +142,9 @@ from rust::wasm_bindgen import prelude
 
 Note:
 
-- Cargo/crates.io normalize `-` and `_` in crate names, so `wasm-bindgen` is correctly resolved when referenced as
-`wasm_bindgen` in generated Rust code and dependency keys.
-- The generated Cargo dependency key uses the exact `crate_name` spelling from the `rust::` import (the underscore/Rust-
-identifier form).
-- Explicit package↔crate mapping is only needed for non-trivial mismatches (e.g. `package = "..."` with a different crate
-name), and should live in RFC 013’s `incan.toml` dependency specification rather than in the `rust::` import syntax.
+- Cargo/crates.io normalize `-` and `_` in crate names, so `wasm-bindgen` is correctly resolved when referenced as `wasm_bindgen` in generated Rust code and dependency keys.
+- The generated Cargo dependency key uses the exact `crate_name` spelling from the `rust::` import (the underscore/Rust- identifier form).
+- Explicit package↔crate mapping is only needed for non-trivial mismatches (e.g. `package = "..."` with a different crate name), and should live in RFC 013’s `incan.toml` dependency specification rather than in the `rust::` import syntax.
 
 ### Type mapping (normative)
 
@@ -166,8 +161,7 @@ Interop uses deterministic core type mapping:
 
 Numeric note:
 
-- Rust integer widths other than `i64` (e.g. `usize`, `u128`) are not implicitly mapped to `int`.
-Conversions must be explicit (e.g. via a builtin like `int(...)`) or handled by a dedicated adapter.
+- Rust integer widths other than `i64` (e.g. `usize`, `u128`) are not implicitly mapped to `int`. Conversions must be explicit (e.g. via a builtin like `int(...)`) or handled by a dedicated adapter.
 
 ### Borrowing and string conversion rules (normative)
 
@@ -176,14 +170,10 @@ Incan does not expose Rust borrowing syntax.
 To make common Rust APIs usable (especially those taking `&str`), the compiler applies:
 
 - string literals used where an owned string is required are lowered with `.to_string()`
-- when calling an **external Rust function** (imported via `rust::...`), an argument expression of Incan type `str` is
-lowered as a **borrowed string view** (`&str`) by default (implemented by borrowing the underlying `String`, e.g. `value.as_str()` / `&value` on the Rust side). This makes the common Rust API pattern “takes `&str`” ergonomic without exposing Rust syntax in user code.
-- **Forcing an owned string**: if user code syntactically constructs an owned string expression via `.to_string()` (e.g.
-`value.to_string()`), the compiler must treat that argument as **owned** and pass it by value (a clone), rather than applying the default borrow lowering.
-- This RFC does not require Rust signature inspection to choose between `&str` vs `String`. The rule is purely based on
-the Incan argument expression shape (default: borrowed view; explicit `.to_string()`: owned clone).
-- if a Rust interop call fails due to a `String`/`&str` mismatch for an argument originating from an Incan `str`,
-the compiler must emit a targeted diagnostic pointing at the argument expression and suggesting either:
+- when calling an **external Rust function** (imported via `rust::...`), an argument expression of Incan type `str` is lowered as a **borrowed string view** (`&str`) by default (implemented by borrowing the underlying `String`, e.g. `value.as_str()` / `&value` on the Rust side). This makes the common Rust API pattern “takes `&str`” ergonomic without exposing Rust syntax in user code.
+- **Forcing an owned string**: if user code syntactically constructs an owned string expression via `.to_string()` (e.g. `value.to_string()`), the compiler must treat that argument as **owned** and pass it by value (a clone), rather than applying the default borrow lowering.
+- This RFC does not require Rust signature inspection to choose between `&str` vs `String`. The rule is purely based on the Incan argument expression shape (default: borrowed view; explicit `.to_string()`: owned clone).
+- if a Rust interop call fails due to a `String`/`&str` mismatch for an argument originating from an Incan `str`, the compiler must emit a targeted diagnostic pointing at the argument expression and suggesting either:
     - add `.to_string()` to force passing an owned `String` (clone), or
     - remove `.to_string()` / pass the value directly so the compiler can pass a borrowed view (`&str`) (default).
 
@@ -191,8 +181,7 @@ Scope:
 
 - this RFC requires borrow/ownership adaptation for **strings** (the most common interop mismatch)
 - general borrow inference for arbitrary Rust types is out of scope
-- rust signature inspection (e.g. via rustdoc/rust-analyzer metadata) and compile‑retry ‘guessing’ strategies to auto-fix
-borrow/ownership mismatches are out of scope for this RFC.
+- rust signature inspection (e.g. via rustdoc/rust-analyzer metadata) and compile‑retry ‘guessing’ strategies to auto-fix borrow/ownership mismatches are out of scope for this RFC.
 
 ### Calling model: methods vs associated functions (normative)
 
@@ -201,8 +190,7 @@ Incan uses a single dot-call syntax at the surface for both methods and associat
 Lowering rules:
 
 - If the receiver is a **value**, `value.method(args...)` lowers to a Rust method call: `value.method(args...)`.
-- If the receiver resolves to a **type-like identifier** (an Incan type name or an imported Rust type), then
-`Type.method(args...)` lowers to a Rust associated function call: `Type::method(args...)`.
+- If the receiver resolves to a **type-like identifier** (an Incan type name or an imported Rust type), then `Type.method(args...)` lowers to a Rust associated function call: `Type::method(args...)`.
 
 This is why the examples below use `Instant.now()` and `Uuid.new_v4()` even though the corresponding Rust spelling is `Instant::now()` / `Uuid::new_v4()`.
 
@@ -224,10 +212,8 @@ This is intentionally **not** “arbitrary proc-macros”: the derive set is cur
 
 Implementation model note (important for determinism):
 
-- Even with a curated `@derive(...)` list, the implementation may emit Rust `#[derive(...)]` for those traits and thus
-execute Rust proc-macros at build time (e.g. serde derives).
-- This is acceptable only in combination with locked/pinned dependency resolution ([RFC 013]) and reproducible/offline
-build policy controls ([RFC 020]).
+- Even with a curated `@derive(...)` list, the implementation may emit Rust `#[derive(...)]` for those traits and thus execute Rust proc-macros at build time (e.g. serde derives).
+- This is acceptable only in combination with locked/pinned dependency resolution ([RFC 013]) and reproducible/offline build policy controls ([RFC 020]).
 - The curated derive list is part of Incan’s compatibility contract (versioned, documented, and stable-by-default).
 
 ### Panic/unwind and error policy (normative)
@@ -243,8 +229,7 @@ Rust interop compiles into a single Rust program (generated code + dependencies)
 - Rust `Result`/`Option` values map to Incan `Result`/`Option` and work with `?`/pattern matching as usual.
 - Rust panics behave like panics in generated Rust code:
     - by default they terminate the program/test (panic semantics are Rust-defined)
-    - implementations should ensure the error output clearly indicates “this was a Rust panic” and includes enough context
-      (crate/function if available) to debug
+    - implementations should ensure the error output clearly indicates “this was a Rust panic” and includes enough context (crate/function if available) to debug
     - catching panics and converting them into Incan runtime errors is a possible future extension, but out of scope here
 
 ### Unsafe policy (normative)
@@ -252,8 +237,7 @@ Rust interop compiles into a single Rust program (generated code + dependencies)
 Calling `unsafe` Rust items is out of scope for this RFC.
 
 - The compiler must not generate Rust `unsafe { ... }` on behalf of user code.
-- Therefore, Rust APIs that require `unsafe` are unsupported and should produce a clear, targeted diagnostic explaining
-that “unsafe interop is out of scope” (even if the underlying trigger originates from Rust compilation).
+- Therefore, Rust APIs that require `unsafe` are unsupported and should produce a clear, targeted diagnostic explaining that “unsafe interop is out of scope” (even if the underlying trigger originates from Rust compilation).
 - A future RFC may introduce an explicit `unsafe` block/marker in Incan (and an associated safety policy).
 
 ### Diagnostics expectations (normative)
@@ -305,12 +289,9 @@ def parse_user_data(json_str: str) -> Result[UserData, JsonError]:
 
 Rationale (why these limits exist):
 
-- Arbitrary proc-macros are effectively “run arbitrary Rust at build time”; they undermine determinism, portability,
-and the “Incan stays Incan” surface. A curated `@derive(...)` set keeps the interop contract explicit and reviewable.
-- Trait-heavy and lifetime-heavy Rust APIs often require expressing trait bounds and borrowing/lifetimes at call
-sites; trait bound inference and explicit annotation syntax are addressed by RFC 023 (Compilable Stdlib & Rust Module Binding). Lifetime/borrow surface beyond strings is deferred to a future RFC.
-- Incan’s goal is to remove Rust’s borrow-checker ergonomics from user code. The compiler may adapt borrows internally
-(currently scoped mainly to strings), but users should not be forced to write Rust-like lifetime/borrow annotations.
+- Arbitrary proc-macros are effectively “run arbitrary Rust at build time”; they undermine determinism, portability, and the “Incan stays Incan” surface. A curated `@derive(...)` set keeps the interop contract explicit and reviewable.
+- Trait-heavy and lifetime-heavy Rust APIs often require expressing trait bounds and borrowing/lifetimes at call sites; trait bound inference and explicit annotation syntax are addressed by RFC 023 (Compilable Stdlib & Rust Module Binding). Lifetime/borrow surface beyond strings is deferred to a future RFC.
+- Incan’s goal is to remove Rust’s borrow-checker ergonomics from user code. The compiler may adapt borrows internally (currently scoped mainly to strings), but users should not be forced to write Rust-like lifetime/borrow annotations.
 
 ## Design decisions
 

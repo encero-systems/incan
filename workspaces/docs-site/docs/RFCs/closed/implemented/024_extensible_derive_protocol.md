@@ -66,12 +66,9 @@ def export[T with json.Serialize](data: T) -> str:
 
 ## Non-Goals
 
-- **Implementing specific format libraries.** This RFC uses YAML, Protobuf, Avro, SQL DDL, and others as illustrative
-examples of what the protocol *enables*. It does not propose adding those libraries to the stdlib. Each format would be introduced by its own RFC or feature issue (for example RFC 051 for `JsonValue`).
-- **Migrating built-in derives** (`Eq`, `Clone`, `Debug`, etc.) to the `__derives__` protocol. These remain compiler
-intrinsics handled by the `DeriveId` registry. See [Interaction with existing features](#interaction-with-existing-features) for details.
-- **Runtime reflection of field values.** The protocol relies on existing `__fields__()` metadata reflection for schema
-generators. Dynamic field *value* access (needed to express `__eq__` or `__repr__` in pure Incan) is out of scope.
+- **Implementing specific format libraries.** This RFC uses YAML, Protobuf, Avro, SQL DDL, and others as illustrative examples of what the protocol *enables*. It does not propose adding those libraries to the stdlib. Each format would be introduced by its own RFC or feature issue (for example RFC 051 for `JsonValue`).
+- **Migrating built-in derives** (`Eq`, `Clone`, `Debug`, etc.) to the `__derives__` protocol. These remain compiler intrinsics handled by the `DeriveId` registry. See [Interaction with existing features](#interaction-with-existing-features) for details.
+- **Runtime reflection of field values.** The protocol relies on existing `__fields__()` metadata reflection for schema generators. Dynamic field *value* access (needed to express `__eq__` or `__repr__` in pure Incan) is out of scope.
 
 ## Guide-level explanation (how users think about it)
 
@@ -226,8 +223,7 @@ Here, `Serialize` and `Deserialize` refer to traits defined in the same module. 
 1. Resolves `module_name` to the imported module
 2. Reads `module_name.__derives__` to get the list of derivable traits
 3. Adopts those traits onto the type — their methods become available on instances of the type
-4. Determines the Rust-level `#[derive(...)]` attributes needed (an emission concern, derived from `@rust.derive`
-decorators on the adopted traits)
+4. Determines the Rust-level `#[derive(...)]` attributes needed (an emission concern, derived from `@rust.derive` decorators on the adopted traits)
 
 ### Trait adoption via derive
 
@@ -283,8 +279,7 @@ Three new syntactic elements:
     Parsed as a const assignment where the name is `__derives__` and the value is a list of identifiers. Each identifier
     must resolve to a trait defined in the same module.
 
-2. **`@derive(module)` expansion**: the existing `@derive(...)` syntax is extended to accept module names (not just
-derive names). When the argument resolves to a module with a `__derives__` attribute, it is expanded.
+2. **`@derive(module)` expansion**: the existing `@derive(...)` syntax is extended to accept module names (not just derive names). When the argument resolves to a module with a `__derives__` attribute, it is expanded.
 
     ```incan
     from std.serde import json
@@ -294,8 +289,7 @@ derive names). When the argument resolves to a module with a `__derives__` attri
         x: int
     ```
 
-3. **`@rust.derive` decorator on traits**: declares the Rust `#[derive(...)]` attribute that must be emitted on any
-struct adopting this trait. This is the bridge between an Incan trait and the Rust code generation it requires.
+3. **`@rust.derive` decorator on traits**: declares the Rust `#[derive(...)]` attribute that must be emitted on any struct adopting this trait. This is the bridge between an Incan trait and the Rust code generation it requires.
 
     ```incan
     @rust.derive("serde::Serialize")
@@ -314,8 +308,7 @@ When the compiler encounters `@derive(name)`:
 
 1. **Resolve `name`**: check if it refers to a `DeriveId` (built-in derive) or an imported symbol.
 2. **If `DeriveId`**: existing behavior — emit the corresponding Rust `#[derive(...)]`.
-3. **If module with `__derives__`**: adopt the traits listed in `__derives__` onto the type. The compiler determines the
-necessary Rust-level derives from the adopted traits during emission.
+3. **If module with `__derives__`**: adopt the traits listed in `__derives__` onto the type. The compiler determines the necessary Rust-level derives from the adopted traits during emission.
 4. **If trait from a derivable module**: adopt only that single trait onto the type.
 5. **Error**: if `name` is neither a known derive, a derivable module, nor a trait from one — emit a diagnostic.
 
@@ -495,12 +488,9 @@ Migrate `Eq`, `Clone`, `Debug`, etc. to `__derives__`-based modules. Rejected be
 
 ## Drawbacks
 
-- **Two derive systems**: built-in compiler derives and module-based derives (`__derives__` protocol)
-coexist. This is intentional because they serve different purposes, but it does add conceptual surface area.
-- **Naming collisions**: if a module defines a `Serialize` trait and the user also imports `Serialize` from another
-module, the compiler must disambiguate. Normal trait resolution rules apply, but the error messages need to be clear.
-- **Backend derive deduplication**: the compiler must correctly deduplicate backend-level derive metadata gathered from
-multiple adopted traits. This is straightforward, but it does add another lowering step.
+- **Two derive systems**: built-in compiler derives and module-based derives (`__derives__` protocol) coexist. This is intentional because they serve different purposes, but it does add conceptual surface area.
+- **Naming collisions**: if a module defines a `Serialize` trait and the user also imports `Serialize` from another module, the compiler must disambiguate. Normal trait resolution rules apply, but the error messages need to be clear.
+- **Backend derive deduplication**: the compiler must correctly deduplicate backend-level derive metadata gathered from multiple adopted traits. This is straightforward, but it does add another lowering step.
 
 ## Implementation architecture
 

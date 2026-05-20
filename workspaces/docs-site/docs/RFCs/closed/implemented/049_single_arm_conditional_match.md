@@ -316,23 +316,17 @@ For this RFC's narrow goal, `if let` / `while let` are the better fit.
 
 ## Alternatives considered
 
-1. Keep using full `match` everywhere.
-This preserves one construct but keeps the repetitive `None => pass` / `Err(_) => pass` boilerplate that motivated this RFC.
+1. Keep using full `match` everywhere. This preserves one construct but keeps the repetitive `None => pass` / `Err(_) => pass` boilerplate that motivated this RFC.
 
-2. `PATTERN match VALUE`.
-This is explicit, but it introduces a new dedicated control-flow spelling where a well-understood construct already exists.
+2. `PATTERN match VALUE`. This is explicit, but it introduces a new dedicated control-flow spelling where a well-understood construct already exists.
 
-3. Extend `is`, as in `if value is Some(child):`.
-This is plausible, especially given RFC 018, but it frames the feature more as a boolean pattern test than as a single-arm destructuring branch.
+3. Extend `is`, as in `if value is Some(child):`. This is plausible, especially given RFC 018, but it frames the feature more as a boolean pattern test than as a single-arm destructuring branch.
 
-4. Walrus-style binding.
-This is awkward for pattern-matching constructs, especially around `Some(...)`, `Ok(...)`, and other constructors. It obscures the fact that the operation is a pattern match rather than assignment.
+4. Walrus-style binding. This is awkward for pattern-matching constructs, especially around `Some(...)`, `Ok(...)`, and other constructors. It obscures the fact that the operation is a pattern match rather than assignment.
 
-5. General Rust passthrough for `let` inside `if` / `while`.
-This was rejected because it weakens Incan's ownership of its own syntax and semantics.
+5. General Rust passthrough for `let` inside `if` / `while`. This was rejected because it weakens Incan's ownership of its own syntax and semantics.
 
-6. Ship only `if let` now and defer `while let`.
-This was rejected because the two constructs share the same mental model, pattern semantics, and implementation machinery. Deferring `while let` would force users back into `while true` plus `match` / `break` boilerplate for the looping form of the exact same problem.
+6. Ship only `if let` now and defer `while let`. This was rejected because the two constructs share the same mental model, pattern semantics, and implementation machinery. Deferring `while let` would force users back into `while true` plus `match` / `break` boilerplate for the looping form of the exact same problem.
 
 ## Drawbacks
 

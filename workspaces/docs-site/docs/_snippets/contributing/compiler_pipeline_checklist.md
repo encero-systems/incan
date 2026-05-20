@@ -2,8 +2,7 @@ Keep the pipeline aligned (to avoid language/tooling drift):
 
 - **Syntax crate (`crates/incan_syntax/`)**: lexer → parser → AST → diagnostics
 - **Formatter (`src/format/`)**: prints AST back (idempotent; never emits invalid syntax)
-- **Semantic core (`crates/incan_core/`)**: canonical vocab / shared semantic helpers (avoid duplicating “meaning” in multiple
-layers)
+- **Semantic core (`crates/incan_core/`)**: canonical vocab / shared semantic helpers (avoid duplicating “meaning” in multiple layers)
 - **Compiler (`src/frontend/`, `src/backend/`)**:
     - **typechecker** validates and annotates
     - **lowering** turns AST into IR

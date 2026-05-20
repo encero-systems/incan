@@ -127,8 +127,7 @@ Delimiter behavior is normative:
 Buffer extraction behavior is normative:
 
 - `getvalue()` returns a `bytes` snapshot of the buffer contents.
-- `into_bytes()` returns the buffer bytes without changing the cursor. Implementations may avoid an extra copy when
-ownership rules permit it, but callers must not rely on consumption or aliasing behavior.
+- `into_bytes()` returns the buffer bytes without changing the cursor. Implementations may avoid an extra copy when ownership rules permit it, but callers must not rely on consumption or aliasing behavior.
 - `remaining()` returns the number of unread bytes from the current cursor position to the logical end of the buffer.
 
 ### Numeric helper surface

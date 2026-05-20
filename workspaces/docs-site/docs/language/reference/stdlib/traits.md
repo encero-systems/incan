@@ -3,8 +3,7 @@
 This page documents the standard trait families available under `std.traits.*`. Use these modules when you want trait names explicitly in source, type annotations, or trait adoption.
 
 !!! info "Related pages"
-    - If you want the protocol-by-protocol language reference, see:
-      [Stdlib traits overview].
+    - If you want the protocol-by-protocol language reference, see: [Stdlib traits overview].
 
 <!-- References -->
 [Stdlib traits overview]:../stdlib_traits/index.md

@@ -37,6 +37,5 @@ That tradeoff is only worth it when the output is application-shaped. If the cod
 
 ## Source notes
 
-- Stack Overflow's 2025 Developer Survey calls Rust the "most admired programming language (72%)":
-[Technology | 2025 Stack Overflow Developer Survey](https://survey.stackoverflow.co/2025/technology/).
+- Stack Overflow's 2025 Developer Survey calls Rust the "most admired programming language (72%)": [Technology | 2025 Stack Overflow Developer Survey](https://survey.stackoverflow.co/2025/technology/).
 

@@ -25,13 +25,11 @@ Write an RFC when the *user-facing meaning* of the language changes, for example
 
 ## Workflow
 
-1. **(Optional) Start with an issue**
-File an “RFC proposal” issue to align on the problem and scope.
+1. **(Optional) Start with an issue** File an “RFC proposal” issue to align on the problem and scope.
 
 2. **Create the RFC file**
     - Copy the template: [RFC template](../../RFCs/TEMPLATE.md)
-    - Create a new file under `workspaces/docs-site/docs/RFCs/` named: `NNN_short_slug.md`
-      (example: `017_match_guards.md`)
+    - Create a new file under `workspaces/docs-site/docs/RFCs/` named: `NNN_short_slug.md` (example: `017_match_guards.md`)
     - Pick the next available `NNN` from the [RFC index](../../RFCs/index.md).
 
 3. **Fill in the RFC**
@@ -47,8 +45,7 @@ File an “RFC proposal” issue to align on the problem and scope.
     - Link the PR in the RFC’s “Status” section.
     - Expect iteration: RFCs usually evolve over review.
 
-5. **Discuss**
-Use the PR discussion (and/or the linked issue) to gather feedback and converge.
+5. **Discuss** Use the PR discussion (and/or the linked issue) to gather feedback and converge.
 
 ## After acceptance
 

@@ -54,10 +54,8 @@ The workspace uses **Cargo workspace package metadata**, so you only bump versio
 
 Notes:
 
-- The compiler exposes the version as `incan::version::INCAN_VERSION`, backed by
-`env!("CARGO_PKG_VERSION")`, so it updates automatically with the Cargo version.
-- Codegen snapshots are version-agnostic (they normalize the codegen header to
-`v<INCAN_VERSION>`), so version bumps should not churn snapshot files.
+- The compiler exposes the version as `incan::version::INCAN_VERSION`, backed by `env!("CARGO_PKG_VERSION")`, so it updates automatically with the Cargo version.
+- Codegen snapshots are version-agnostic (they normalize the codegen header to `v<INCAN_VERSION>`), so version bumps should not churn snapshot files.
 
 ### Code Generation Overview
 

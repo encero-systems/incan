@@ -97,8 +97,7 @@ Incan supports two const “families” because Rust’s `const` rules are stric
 - **Frozen consts**:
     - for data that should be baked into the program but exposed through a **read-only API**
     - includes strings/bytes and common containers (lists/dicts/sets)
-    - represented using frozen stdlib wrappers like `FrozenStr`, `FrozenBytes`, `FrozenList[T]`, `FrozenDict[K, V]`,
-      `FrozenSet[T]`
+    - represented using frozen stdlib wrappers like `FrozenStr`, `FrozenBytes`, `FrozenList[T]`, `FrozenDict[K, V]`, `FrozenSet[T]`
     - the compiler emits baked `'static` backing data and constructs frozen wrappers from it
 
 Important detail: in `const` context, Incan treats `str`/`bytes` and common containers as **frozen** to preserve deep immutability. In other words, `const` is not “just a `let` that runs earlier”.

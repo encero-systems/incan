@@ -22,16 +22,13 @@ Choose Incan when you want:
 - a simpler authoring experience (Python-like syntax) with strong, explicit types
 - strong structure for “application code” without writing Rust everywhere
 - Cargo + Rust crates as the implementation target and escape hatch, not the primary authoring language
-- less time spent on ownership/lifetime “plumbing” for everyday app code
-(Incan uses safe ownership defaults and emits Rust that satisfies the borrow checker)
+- less time spent on ownership/lifetime “plumbing” for everyday app code (Incan uses safe ownership defaults and emits Rust that satisfies the borrow checker)
 
 ## Tradeoffs and boundaries to keep in mind
 
 - Incan is in Beta; expect evolution, especially in tooling and ecosystem interop.
-- The compiler pipeline is effectively “two-step” (Incan → Rust → machine code).
-In practice, that usually means **seconds**, not minutes, but it is still a tradeoff.
-- Rust interop is powerful but comes with contracts (dependency policy, type mapping).
-Today, interop prefers **owned** types; borrowing/lifetime-heavy Rust APIs may not map cleanly yet.
+- The compiler pipeline is effectively “two-step” (Incan → Rust → machine code). In practice, that usually means **seconds**, not minutes, but it is still a tradeoff.
+- Rust interop is powerful but comes with contracts (dependency policy, type mapping). Today, interop prefers **owned** types; borrowing/lifetime-heavy Rust APIs may not map cleanly yet.
 
 See also:
 

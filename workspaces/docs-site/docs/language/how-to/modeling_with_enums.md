@@ -113,8 +113,7 @@ def execute(cmd: Command) -> Result[str, str]:
 Tips:
 
 - Keep the payload minimal; prefer IDs over large embedded objects if you can look them up.
-- If the set of commands is open-ended (plugins), consider a trait-based approach instead.
-See: [Traits as language hooks](../explanation/traits_as_language_hooks.md) (open-ended “interfaces” via `trait`).
+- If the set of commands is open-ended (plugins), consider a trait-based approach instead. See: [Traits as language hooks](../explanation/traits_as_language_hooks.md) (open-ended “interfaces” via `trait`).
 
 ## Pattern 3: Error hierarchies
 

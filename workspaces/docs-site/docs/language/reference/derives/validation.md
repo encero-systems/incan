@@ -17,8 +17,7 @@ See also:
 
 Rule:
 
-- If a model derives `Validate`, you must construct it via `TypeName.new(...)` (validated construction).
-Raw construction via `TypeName(...)` is a compile-time error.
+- If a model derives `Validate`, you must construct it via `TypeName.new(...)` (validated construction). Raw construction via `TypeName(...)` is a compile-time error.
 
 Semantics:
 

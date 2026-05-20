@@ -70,8 +70,7 @@ Behavior:
 - Default mode compiles a source file into an executable.
 - `--lib` builds the current project as a library. In this mode, `src/lib.incn` is required and `FILE` is optional.
 - Prints the generated Rust project path (example): `target/incan/<name>/`
-- Builds the generated Rust project and prints the binary path (example):
-`target/incan/.cargo-target/release/<name>`
+- Builds the generated Rust project and prints the binary path (example): `target/incan/.cargo-target/release/<name>`
 - In `--lib` mode, also emits a library artifact under `target/lib/` (including `<name>.incnlib`).
 
 Dependency flags:
