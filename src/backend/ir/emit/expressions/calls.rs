@@ -1916,7 +1916,7 @@ mod tests {
         let byte_list = IrType::List(Box::new(IrType::Numeric(NumericTypeId::U8)));
         let mut registry = FunctionRegistry::new();
         registry.register(
-            "ordinal_key_append_bytes".to_string(),
+            "_append_bytes".to_string(),
             vec![FunctionParam {
                 name: "out".to_string(),
                 ty: byte_list.clone(),
@@ -1950,7 +1950,7 @@ mod tests {
         };
         let emitter = IrEmitter::new(&registry);
         let func = local_arg(
-            "ordinal_key_append_bytes",
+            "_append_bytes",
             IrType::Function {
                 params: vec![byte_list, IrType::Bytes],
                 ret: Box::new(IrType::Unit),
@@ -1960,10 +1960,8 @@ mod tests {
         let data = local_arg("data", IrType::Bytes);
         let path = vec![
             "std".to_string(),
-            "datetime".to_string(),
-            "civil".to_string(),
-            "naive".to_string(),
-            "ordinal_key_append_bytes".to_string(),
+            "collections".to_string(),
+            "_append_bytes".to_string(),
         ];
         let tokens = emitter
             .emit_call_expr(
@@ -1976,7 +1974,7 @@ mod tests {
             .map_err(|err| std::io::Error::other(format!("canonical mutable stdlib call should emit: {err:?}")))?;
         assert_eq!(
             render(tokens),
-            "crate::__incan_std::datetime::civil::naive::ordinal_key_append_bytes(&mutout,data.clone())"
+            "crate::__incan_std::collections::_append_bytes(&mutout,data.clone())"
         );
         Ok(())
     }

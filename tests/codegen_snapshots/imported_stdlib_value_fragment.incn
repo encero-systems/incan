@@ -1,0 +1,6 @@
+from std.datetime.civil.naive import ordinal_key_byte
+
+
+def main() -> None:
+    out = ordinal_key_byte(7)
+    assert len(out) == 1

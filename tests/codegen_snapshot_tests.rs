@@ -3297,19 +3297,19 @@ fn test_ordinal_map_str_fast_lookup_codegen() {
 }
 
 #[test]
-fn test_imported_stdlib_mut_param_codegen() {
-    let source = load_test_file("imported_stdlib_mut_param");
+fn test_imported_stdlib_value_fragment_codegen() {
+    let source = load_test_file("imported_stdlib_value_fragment");
     let rust_code = generate_rust(&source);
     let compact = rust_code.chars().filter(|ch| !ch.is_whitespace()).collect::<String>();
     assert!(
-        compact.contains("::ordinal_key_append_byte(&mutout,7);"),
-        "expected imported stdlib mut parameter to pass a mutable borrow; generated:\n{rust_code}"
+        compact.contains("::ordinal_key_byte(7);"),
+        "expected imported stdlib value fragment helper to be called directly; generated:\n{rust_code}"
     );
     assert!(
-        !compact.contains("::ordinal_key_append_byte(out.clone(),"),
-        "imported stdlib mut parameter was cloned instead of mutably borrowed; generated:\n{rust_code}"
+        !compact.contains("ordinal_key_append_byte"),
+        "stale datetime ordinal append helper leaked into generated code; generated:\n{rust_code}"
     );
-    insta::assert_snapshot!("imported_stdlib_mut_param", rust_code);
+    insta::assert_snapshot!("imported_stdlib_value_fragment", rust_code);
 }
 
 /// RFC 023: Additional inference cases (Display, Dict key hashing, arithmetic, transitive propagation).
