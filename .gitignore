@@ -55,6 +55,11 @@ site/
 
 # -- Project-specific files --
 examples/advanced/test_output.txt
+
+# OrdinalMap benchmark local outputs
+benchmarks/collections/ordinal_map/__pycache__/
+benchmarks/collections/ordinal_map/target/
+
 # Generated files we do not want to commit
 workspaces/docs-site/docs/_snippets/rfcs_refs.md
 workspaces/docs-site/docs/_snippets/tables/rfcs_index.md
