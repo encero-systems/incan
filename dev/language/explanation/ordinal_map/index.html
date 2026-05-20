@@ -11,21 +11,25 @@
       
       
       
+        <link rel="prev" href="../datetime_model/">
       
       
-      <link rel="icon" href="../../assets/images/favicon.png">
+        <link rel="next" href="../derives_and_traits/">
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
       <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.5.49">
     
     
       
-        <title>RFC 101: std.collections.OrdinalMap — deterministic compact key-to-ordinal lookup - Incan Documentation</title>
+        <title>OrdinalMap - Incan Documentation</title>
       
     
     
-      <link rel="stylesheet" href="../../assets/stylesheets/main.6f8fc17f.min.css">
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.6f8fc17f.min.css">
       
         
-        <link rel="stylesheet" href="../../assets/stylesheets/palette.06af60db.min.css">
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.06af60db.min.css">
       
       
 
@@ -44,11 +48,11 @@
       
     
     
-      <link rel="stylesheet" href="../../stylesheets/pygments.css">
+      <link rel="stylesheet" href="../../../stylesheets/pygments.css">
     
       <link rel="stylesheet" href="/shared/incapunk/incapunk.css">
     
-    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
     
       
 
@@ -74,7 +78,7 @@
     <div data-md-component="skip">
       
         
-        <a href="#rfc-101-stdcollectionsordinalmap-deterministic-compact-key-to-ordinal-lookup" class="md-skip">
+        <a href="#why-ordinalmap-exists" class="md-skip">
           Skip to content
         </a>
       
@@ -94,7 +98,7 @@
 
 <header class="md-header md-header--shadow" data-md-component="header">
   <nav class="md-header__inner md-grid" aria-label="Header">
-    <a href="../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../.." title="Incan Documentation" class="md-header__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -113,7 +117,7 @@
         <div class="md-header__topic" data-md-component="header-topic">
           <span class="md-ellipsis">
             
-              RFC 101: std.collections.OrdinalMap — deterministic compact key-to-ordinal lookup
+              OrdinalMap
             
           </span>
         </div>
@@ -212,7 +216,7 @@
 
 <nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
   <label class="md-nav__title" for="__drawer">
-    <a href="../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
+    <a href="../../.." title="Incan Documentation" class="md-nav__button md-logo" aria-label="Incan Documentation" data-md-component="logo">
       
   <img src="/shared/incapunk/wordmark_small_001.png" alt="logo">
 
@@ -241,7 +245,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../.." class="md-nav__link">
+      <a href="../../.." class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -292,7 +296,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../start_here/" class="md-nav__link ">
+            <a href="../../../start_here/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -325,7 +329,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_python/" class="md-nav__link">
+      <a href="../../../start_here/coming_from_python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -346,7 +350,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/coming_from_rust/" class="md-nav__link">
+      <a href="../../../start_here/coming_from_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -367,7 +371,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/pipelines_and_automation/" class="md-nav__link">
+      <a href="../../../start_here/pipelines_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -388,7 +392,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../start_here/beginner/" class="md-nav__link">
+      <a href="../../../start_here/beginner/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -445,7 +449,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../comparisons/" class="md-nav__link ">
+            <a href="../../../comparisons/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -478,7 +482,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/python/" class="md-nav__link">
+      <a href="../../../comparisons/python/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -499,7 +503,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/rust/" class="md-nav__link">
+      <a href="../../../comparisons/rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -520,7 +524,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../comparisons/python_compatibility_tools/" class="md-nav__link">
+      <a href="../../../comparisons/python_compatibility_tools/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -545,6 +549,8 @@
       
   
   
+    
+  
   
   
     
@@ -570,16 +576,16 @@
       
     
     
-    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/" class="md-nav__link ">
+            <a href="../../" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -596,7 +602,7 @@
             
           </div>
         
-        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4">
             <span class="md-nav__icon md-icon"></span>
             Language
@@ -707,7 +713,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/tutorials/book/" class="md-nav__link ">
+            <a href="../../tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -740,7 +746,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/01_hello_world/" class="md-nav__link">
+      <a href="../../tutorials/book/01_hello_world/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -761,7 +767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/02_values_variables_and_types/" class="md-nav__link">
+      <a href="../../tutorials/book/02_values_variables_and_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -782,7 +788,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/03_functions/" class="md-nav__link">
+      <a href="../../tutorials/book/03_functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -803,7 +809,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/04_control_flow/" class="md-nav__link">
+      <a href="../../tutorials/book/04_control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -824,7 +830,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/05_modules_and_imports/" class="md-nav__link">
+      <a href="../../tutorials/book/05_modules_and_imports/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -845,7 +851,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/06_errors/" class="md-nav__link">
+      <a href="../../tutorials/book/06_errors/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -866,7 +872,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/07_strings_and_formatting/" class="md-nav__link">
+      <a href="../../tutorials/book/07_strings_and_formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -887,7 +893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/08_collections_and_iteration/" class="md-nav__link">
+      <a href="../../tutorials/book/08_collections_and_iteration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -908,7 +914,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/09_enums/" class="md-nav__link">
+      <a href="../../tutorials/book/09_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -929,7 +935,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/10_models_vs_classes/" class="md-nav__link">
+      <a href="../../tutorials/book/10_models_vs_classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -950,7 +956,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/11_traits_and_derives/" class="md-nav__link">
+      <a href="../../tutorials/book/11_traits_and_derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -971,7 +977,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/12_newtypes/" class="md-nav__link">
+      <a href="../../tutorials/book/12_newtypes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -992,7 +998,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/book/13_unit_tests/" class="md-nav__link">
+      <a href="../../tutorials/book/13_unit_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1021,7 +1027,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/dates_and_times/" class="md-nav__link">
+      <a href="../../tutorials/dates_and_times/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1042,7 +1048,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/build_your_first_api/" class="md-nav__link">
+      <a href="../../tutorials/build_your_first_api/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1063,7 +1069,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/fallible_and_infallible_paths/" class="md-nav__link">
+      <a href="../../tutorials/fallible_and_infallible_paths/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1084,7 +1090,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/tutorials/web_framework/" class="md-nav__link">
+      <a href="../../tutorials/web_framework/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1196,7 +1202,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/async_programming/" class="md-nav__link">
+      <a href="../../how-to/async_programming/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1217,7 +1223,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/customize_derived_behavior/" class="md-nav__link">
+      <a href="../../how-to/customize_derived_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1238,7 +1244,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/dates_and_times/" class="md-nav__link">
+      <a href="../../how-to/dates_and_times/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1259,7 +1265,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_handling_recipes/" class="md-nav__link">
+      <a href="../../how-to/error_handling_recipes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1280,7 +1286,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/error_messages/" class="md-nav__link">
+      <a href="../../how-to/error_messages/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1301,7 +1307,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/file_io/" class="md-nav__link">
+      <a href="../../how-to/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1322,7 +1328,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/binary_text_encoding/" class="md-nav__link">
+      <a href="../../how-to/binary_text_encoding/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1343,7 +1349,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/compression/" class="md-nav__link">
+      <a href="../../how-to/compression/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1364,7 +1370,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/dynamic_json/" class="md-nav__link">
+      <a href="../../how-to/dynamic_json/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1385,7 +1391,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/generators/" class="md-nav__link">
+      <a href="../../how-to/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1406,7 +1412,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/imports_and_modules/" class="md-nav__link">
+      <a href="../../how-to/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1427,7 +1433,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/module_state/" class="md-nav__link">
+      <a href="../../how-to/module_state/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1448,7 +1454,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_collections/" class="md-nav__link">
+      <a href="../../how-to/choosing_collections/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1469,7 +1475,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/choosing_numeric_types/" class="md-nav__link">
+      <a href="../../how-to/choosing_numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1490,7 +1496,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/modeling_with_enums/" class="md-nav__link">
+      <a href="../../how-to/modeling_with_enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1511,7 +1517,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/project_lifecycle/" class="md-nav__link">
+      <a href="../../how-to/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1532,7 +1538,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/testing_stdlib/" class="md-nav__link">
+      <a href="../../how-to/testing_stdlib/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1553,7 +1559,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/string_processing/" class="md-nav__link">
+      <a href="../../how-to/string_processing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1574,7 +1580,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/working_with_uuids/" class="md-nav__link">
+      <a href="../../how-to/working_with_uuids/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1595,7 +1601,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/performance/" class="md-nav__link">
+      <a href="../../how-to/performance/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1616,7 +1622,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_interop/" class="md-nav__link">
+      <a href="../../how-to/rust_interop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1637,7 +1643,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/how-to/rust_types_for_python_devs/" class="md-nav__link">
+      <a href="../../how-to/rust_types_for_python_devs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1743,7 +1749,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/language/" class="md-nav__link">
+      <a href="../../reference/language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1764,7 +1770,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/feature_inventory/" class="md-nav__link">
+      <a href="../../reference/feature_inventory/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1785,7 +1791,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/code_style/" class="md-nav__link">
+      <a href="../../reference/code_style/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1806,7 +1812,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/functions/" class="md-nav__link">
+      <a href="../../reference/functions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1827,7 +1833,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/generators/" class="md-nav__link">
+      <a href="../../reference/generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1848,7 +1854,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/symbol_aliases/" class="md-nav__link">
+      <a href="../../reference/symbol_aliases/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1869,7 +1875,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/callable_presets/" class="md-nav__link">
+      <a href="../../reference/callable_presets/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1890,7 +1896,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/glossary/" class="md-nav__link">
+      <a href="../../reference/glossary/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1911,7 +1917,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/file_io/" class="md-nav__link">
+      <a href="../../reference/file_io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1932,7 +1938,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/imports_and_modules/" class="md-nav__link">
+      <a href="../../reference/imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1953,7 +1959,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/static_storage/" class="md-nav__link">
+      <a href="../../reference/static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1974,7 +1980,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/numeric_semantics/" class="md-nav__link">
+      <a href="../../reference/numeric_semantics/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -1995,7 +2001,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/project_lifecycle/" class="md-nav__link">
+      <a href="../../reference/project_lifecycle/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2016,7 +2022,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/strings/" class="md-nav__link">
+      <a href="../../reference/strings/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2037,7 +2043,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/reflection/" class="md-nav__link">
+      <a href="../../reference/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2058,7 +2064,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives_and_traits/" class="md-nav__link">
+      <a href="../../reference/derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2139,7 +2145,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib/" class="md-nav__link ">
+            <a href="../../reference/stdlib/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2172,7 +2178,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/async/" class="md-nav__link">
+      <a href="../../reference/stdlib/async/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2193,7 +2199,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/collections/" class="md-nav__link">
+      <a href="../../reference/stdlib/collections/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2214,7 +2220,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/compression/" class="md-nav__link">
+      <a href="../../reference/stdlib/compression/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2235,7 +2241,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/derives/" class="md-nav__link">
+      <a href="../../reference/stdlib/derives/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2256,7 +2262,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/datetime/" class="md-nav__link">
+      <a href="../../reference/stdlib/datetime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2277,7 +2283,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/encoding/" class="md-nav__link">
+      <a href="../../reference/stdlib/encoding/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2298,7 +2304,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/fs/" class="md-nav__link">
+      <a href="../../reference/stdlib/fs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2319,7 +2325,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/graph/" class="md-nav__link">
+      <a href="../../reference/stdlib/graph/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2340,7 +2346,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/hash/" class="md-nav__link">
+      <a href="../../reference/stdlib/hash/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2361,7 +2367,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/io/" class="md-nav__link">
+      <a href="../../reference/stdlib/io/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2382,7 +2388,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/json/" class="md-nav__link">
+      <a href="../../reference/stdlib/json/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2403,7 +2409,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/logging/" class="md-nav__link">
+      <a href="../../reference/stdlib/logging/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2424,7 +2430,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/regex/" class="md-nav__link">
+      <a href="../../reference/stdlib/regex/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2445,7 +2451,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/uuid/" class="md-nav__link">
+      <a href="../../reference/stdlib/uuid/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2466,7 +2472,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/tempfile/" class="md-nav__link">
+      <a href="../../reference/stdlib/tempfile/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2487,7 +2493,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/reflection/" class="md-nav__link">
+      <a href="../../reference/stdlib/reflection/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2508,7 +2514,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/result/" class="md-nav__link">
+      <a href="../../reference/stdlib/result/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2529,7 +2535,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/traits/" class="md-nav__link">
+      <a href="../../reference/stdlib/traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2550,7 +2556,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/testing/" class="md-nav__link">
+      <a href="../../reference/stdlib/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2571,7 +2577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib/math/" class="md-nav__link">
+      <a href="../../reference/stdlib/math/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2634,7 +2640,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/reference/stdlib_traits/" class="md-nav__link ">
+            <a href="../../reference/stdlib_traits/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -2667,7 +2673,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/collection_protocols/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/collection_protocols/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2688,7 +2694,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/indexing_and_slicing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2709,7 +2715,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/callable/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/callable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2730,7 +2736,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/awaitable/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/awaitable/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2751,7 +2757,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/error/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/error/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2772,7 +2778,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/operators/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/operators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2793,7 +2799,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/stdlib_traits/conversions/" class="md-nav__link">
+      <a href="../../reference/stdlib_traits/conversions/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2873,7 +2879,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/string_representation/" class="md-nav__link">
+      <a href="../../reference/derives/string_representation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2894,7 +2900,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/comparison/" class="md-nav__link">
+      <a href="../../reference/derives/comparison/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2915,7 +2921,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/copying_default/" class="md-nav__link">
+      <a href="../../reference/derives/copying_default/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2936,7 +2942,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/serialization/" class="md-nav__link">
+      <a href="../../reference/derives/serialization/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2957,7 +2963,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/validation/" class="md-nav__link">
+      <a href="../../reference/derives/validation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -2978,7 +2984,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/reference/derives/custom_behavior/" class="md-nav__link">
+      <a href="../../reference/derives/custom_behavior/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3012,8 +3018,10 @@
                 
   
   
+    
   
   
+  
     
     
       
@@ -3061,16 +3069,18 @@
       
         
       
+        
+      
     
     
       
     
     
-    <li class="md-nav__item md-nav__item--nested">
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5" checked>
         
           
           <label class="md-nav__link" for="__nav_4_5" id="__nav_4_5_label" tabindex="0">
@@ -3084,7 +3094,7 @@
             <span class="md-nav__icon md-icon"></span>
           </label>
         
-        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="false">
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_5_label" aria-expanded="true">
           <label class="md-nav__title" for="__nav_4_5">
             <span class="md-nav__icon md-icon"></span>
             Explanation
@@ -3098,7 +3108,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_incan/" class="md-nav__link">
+      <a href="../why_incan/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3119,7 +3129,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/why_not_just_rust/" class="md-nav__link">
+      <a href="../why_not_just_rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3140,7 +3150,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_incan_works/" class="md-nav__link">
+      <a href="../how_incan_works/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3161,7 +3171,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/compile_time_and_runtime/" class="md-nav__link">
+      <a href="../compile_time_and_runtime/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3182,7 +3192,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/rust_shaped_confidence/" class="md-nav__link">
+      <a href="../rust_shaped_confidence/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3203,7 +3213,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/control_flow/" class="md-nav__link">
+      <a href="../control_flow/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3224,7 +3234,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/callable_presets/" class="md-nav__link">
+      <a href="../callable_presets/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3245,7 +3255,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/closures/" class="md-nav__link">
+      <a href="../closures/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3266,7 +3276,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/consts/" class="md-nav__link">
+      <a href="../consts/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3287,7 +3297,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/generators/" class="md-nav__link">
+      <a href="../generators/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3308,7 +3318,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/static_storage/" class="md-nav__link">
+      <a href="../static_storage/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3329,7 +3339,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/numeric_types/" class="md-nav__link">
+      <a href="../numeric_types/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3350,7 +3360,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/datetime_model/" class="md-nav__link">
+      <a href="../datetime_model/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3368,10 +3378,143 @@
                 
   
   
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  <span class="md-ellipsis">
+    OrdinalMap
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  <span class="md-ellipsis">
+    OrdinalMap
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#the-table-index-case" class="md-nav__link">
+    <span class="md-ellipsis">
+      The table-index case
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#why-not-dict-or-frozendict" class="md-nav__link">
+    <span class="md-ellipsis">
+      Why not dict or FrozenDict
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#determinism-is-the-point" class="md-nav__link">
+    <span class="md-ellipsis">
+      Determinism is the point
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#exact-lookup-stays-the-default" class="md-nav__link">
+    <span class="md-ellipsis">
+      Exact lookup stays the default
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#key-types-are-intentionally-scalar" class="md-nav__link">
+    <span class="md-ellipsis">
+      Key types are intentionally scalar
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#performance-model" class="md-nav__link">
+    <span class="md-ellipsis">
+      Performance model
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#prior-art" class="md-nav__link">
+    <span class="md-ellipsis">
+      Prior art
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#see-also" class="md-nav__link">
+    <span class="md-ellipsis">
+      See also
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
+      <a href="../derives_and_traits/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3392,7 +3535,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/call_site_type_arguments/" class="md-nav__link">
+      <a href="../call_site_type_arguments/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3413,7 +3556,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/how_derives_work/" class="md-nav__link">
+      <a href="../how_derives_work/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3434,7 +3577,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/enums/" class="md-nav__link">
+      <a href="../enums/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3455,7 +3598,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/error_handling/" class="md-nav__link">
+      <a href="../error_handling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3476,7 +3619,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/imports_and_modules/" class="md-nav__link">
+      <a href="../imports_and_modules/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3516,12 +3659,12 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_20" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
         
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../language/explanation/models_and_classes/" class="md-nav__link ">
+            <a href="../models_and_classes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3532,14 +3675,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_20" id="__nav_4_5_20_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_20_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_20">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_21">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -3554,7 +3697,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/models/" class="md-nav__link">
+      <a href="../models_and_classes/models/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3575,7 +3718,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/models_and_classes/classes/" class="md-nav__link">
+      <a href="../models_and_classes/classes/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3604,7 +3747,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/traits_as_language_hooks/" class="md-nav__link">
+      <a href="../traits_as_language_hooks/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3625,7 +3768,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../language/explanation/scopes_and_name_resolution/" class="md-nav__link">
+      <a href="../scopes_and_name_resolution/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3692,7 +3835,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../tooling/" class="md-nav__link ">
+            <a href="../../../tooling/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -3770,7 +3913,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/getting_started/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/getting_started/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3791,7 +3934,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/your_first_project/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/your_first_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3812,7 +3955,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
+      <a href="../../../tooling/tutorials/pipeline_mini_project/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3896,7 +4039,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/install_and_run/" class="md-nav__link">
+      <a href="../../../tooling/how-to/install_and_run/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3917,7 +4060,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/dependencies/" class="md-nav__link">
+      <a href="../../../tooling/how-to/dependencies/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3938,7 +4081,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../tooling/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3959,7 +4102,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/troubleshooting/" class="md-nav__link">
+      <a href="../../../tooling/how-to/troubleshooting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -3980,7 +4123,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/editor_setup/" class="md-nav__link">
+      <a href="../../../tooling/how-to/editor_setup/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4001,7 +4144,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/lsp/" class="md-nav__link">
+      <a href="../../../tooling/how-to/lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4022,7 +4165,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/formatting/" class="md-nav__link">
+      <a href="../../../tooling/how-to/formatting/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4043,7 +4186,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/how-to/testing/" class="md-nav__link">
+      <a href="../../../tooling/how-to/testing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4115,7 +4258,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/projects_today/" class="md-nav__link">
+      <a href="../../../tooling/explanation/projects_today/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4136,7 +4279,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/explanation/lsp_architecture/" class="md-nav__link">
+      <a href="../../../tooling/explanation/lsp_architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4214,7 +4357,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/cli_reference/" class="md-nav__link">
+      <a href="../../../tooling/reference/cli_reference/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4235,7 +4378,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/contract_metadata/" class="md-nav__link">
+      <a href="../../../tooling/reference/contract_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4256,7 +4399,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/checked_api_metadata/" class="md-nav__link">
+      <a href="../../../tooling/reference/checked_api_metadata/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4277,7 +4420,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/project_configuration/" class="md-nav__link">
+      <a href="../../../tooling/reference/project_configuration/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4298,7 +4441,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
+      <a href="../../../tooling/reference/lsp_protocol_support/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4359,7 +4502,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../whitepapers/" class="md-nav__link ">
+            <a href="../../../whitepapers/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4392,7 +4535,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
+      <a href="../../../whitepapers/incan_ecosystem_north_star/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4460,7 +4603,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/" class="md-nav__link ">
+            <a href="../../../contributing/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4570,7 +4713,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../contributing/tutorials/book/" class="md-nav__link ">
+            <a href="../../../contributing/tutorials/book/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -4603,7 +4746,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/01_architecture_tour/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4624,7 +4767,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/02_layering_and_boundaries/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4645,7 +4788,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/03_proposals_issues_vs_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4666,7 +4809,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/04_add_a_builtin/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4687,7 +4830,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/05_add_new_syntax/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4708,7 +4851,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/06_tooling_loop_formatter_and_tests/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4729,7 +4872,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/07_tooling_loop_lsp/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4750,7 +4893,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
+      <a href="../../../contributing/tutorials/book/08_docsite_contributor_loop/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4836,7 +4979,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/extending_language/" class="md-nav__link">
+      <a href="../../../contributing/how-to/extending_language/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4857,7 +5000,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
+      <a href="../../../contributing/how-to/authoring_vocab_crates/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4878,7 +5021,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
+      <a href="../../../contributing/how-to/benchmarks_and_profiling/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4899,7 +5042,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/ci_and_automation/" class="md-nav__link">
+      <a href="../../../contributing/how-to/ci_and_automation/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -4920,7 +5063,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/how-to/writing_rfcs/" class="md-nav__link">
+      <a href="../../../contributing/how-to/writing_rfcs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5000,7 +5143,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/architecture/" class="md-nav__link">
+      <a href="../../../contributing/explanation/architecture/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5021,7 +5164,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/duckborrowing/" class="md-nav__link">
+      <a href="../../../contributing/explanation/duckborrowing/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5042,7 +5185,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/layering/" class="md-nav__link">
+      <a href="../../../contributing/explanation/layering/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5063,7 +5206,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
+      <a href="../../../contributing/explanation/incapunk_docs_theme/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5084,7 +5227,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
+      <a href="../../../contributing/explanation/readable-maintainable-rust/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5105,7 +5248,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
+      <a href="../../../contributing/explanation/stdlib_testing_internals/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5134,7 +5277,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../" class="md-nav__link">
+      <a href="../../../RFCs/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5191,7 +5334,7 @@
           
           
           <div class="md-nav__link md-nav__container">
-            <a href="../../release_notes/" class="md-nav__link ">
+            <a href="../../../release_notes/" class="md-nav__link ">
               
   
   <span class="md-ellipsis">
@@ -5224,7 +5367,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_3/" class="md-nav__link">
+      <a href="../../../release_notes/0_3/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5245,7 +5388,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_2/" class="md-nav__link">
+      <a href="../../../release_notes/0_2/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5266,7 +5409,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../release_notes/0_1/" class="md-nav__link">
+      <a href="../../../release_notes/0_1/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5294,7 +5437,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../roadmap/" class="md-nav__link">
+      <a href="../../../roadmap/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5314,7 +5457,7 @@
   
   
     <li class="md-nav__item">
-      <a href="../../stability/" class="md-nav__link">
+      <a href="../../../stability/" class="md-nav__link">
         
   
   <span class="md-ellipsis">
@@ -5354,360 +5497,72 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#summary" class="md-nav__link">
+  <a href="#the-table-index-case" class="md-nav__link">
     <span class="md-ellipsis">
-      Summary
+      The table-index case
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#core-model" class="md-nav__link">
+  <a href="#why-not-dict-or-frozendict" class="md-nav__link">
     <span class="md-ellipsis">
-      Core model
+      Why not dict or FrozenDict
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#motivation" class="md-nav__link">
+  <a href="#determinism-is-the-point" class="md-nav__link">
     <span class="md-ellipsis">
-      Motivation
+      Determinism is the point
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#goals" class="md-nav__link">
+  <a href="#exact-lookup-stays-the-default" class="md-nav__link">
     <span class="md-ellipsis">
-      Goals
+      Exact lookup stays the default
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#non-goals" class="md-nav__link">
+  <a href="#key-types-are-intentionally-scalar" class="md-nav__link">
     <span class="md-ellipsis">
-      Non-Goals
+      Key types are intentionally scalar
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#guide-level-explanation" class="md-nav__link">
+  <a href="#performance-model" class="md-nav__link">
     <span class="md-ellipsis">
-      Guide-level explanation
+      Performance model
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#reference-level-explanation" class="md-nav__link">
+  <a href="#prior-art" class="md-nav__link">
     <span class="md-ellipsis">
-      Reference-level explanation
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Reference-level explanation">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#module-and-type" class="md-nav__link">
-    <span class="md-ellipsis">
-      Module and type
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#ordinal-key-contract" class="md-nav__link">
-    <span class="md-ellipsis">
-      Ordinal key contract
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#construction-from-keys" class="md-nav__link">
-    <span class="md-ellipsis">
-      Construction from keys
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#construction-from-pairs" class="md-nav__link">
-    <span class="md-ellipsis">
-      Construction from pairs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#lookup-apis" class="md-nav__link">
-    <span class="md-ellipsis">
-      Lookup APIs
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#unchecked-lookup" class="md-nav__link">
-    <span class="md-ellipsis">
-      Unchecked lookup
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#deterministic-storage-and-compact-ordinals" class="md-nav__link">
-    <span class="md-ellipsis">
-      Deterministic storage and compact ordinals
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#serialization" class="md-nav__link">
-    <span class="md-ellipsis">
-      Serialization
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#size-introspection" class="md-nav__link">
-    <span class="md-ellipsis">
-      Size introspection
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#error-model" class="md-nav__link">
-    <span class="md-ellipsis">
-      Error model
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#relationship-to-dict-and-frozendict" class="md-nav__link">
-    <span class="md-ellipsis">
-      Relationship to dict and FrozenDict
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#design-details" class="md-nav__link">
-    <span class="md-ellipsis">
-      Design details
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Design details">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#pure-incan-stdlib-ownership" class="md-nav__link">
-    <span class="md-ellipsis">
-      Pure-Incan stdlib ownership
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#lookup-algorithm-freedom" class="md-nav__link">
-    <span class="md-ellipsis">
-      Lookup algorithm freedom
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#prior-art-and-acknowledgement" class="md-nav__link">
-    <span class="md-ellipsis">
-      Prior art and acknowledgement
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#deterministic-retry-policy" class="md-nav__link">
-    <span class="md-ellipsis">
-      Deterministic retry policy
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#exact-verification" class="md-nav__link">
-    <span class="md-ellipsis">
-      Exact verification
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#key-encoding-and-schema-evolution" class="md-nav__link">
-    <span class="md-ellipsis">
-      Key encoding and schema evolution
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#dataset-and-metadata-usage" class="md-nav__link">
-    <span class="md-ellipsis">
-      Dataset and metadata usage
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#api-aliases" class="md-nav__link">
-    <span class="md-ellipsis">
-      API aliases
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#alternatives-considered" class="md-nav__link">
-    <span class="md-ellipsis">
-      Alternatives considered
-    </span>
-  </a>
-  
-    <nav class="md-nav" aria-label="Alternatives considered">
-      <ul class="md-nav__list">
-        
-          <li class="md-nav__item">
-  <a href="#string-only-map" class="md-nav__link">
-    <span class="md-ellipsis">
-      String-only map
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#general-frozen-dictionary-optimization" class="md-nav__link">
-    <span class="md-ellipsis">
-      General frozen dictionary optimization
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#builtin-dict-with-conventions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Builtin dict with conventions
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#hand-written-rust-runtime-type" class="md-nav__link">
-    <span class="md-ellipsis">
-      Hand-written Rust runtime type
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#fingerprint-only-verified-map" class="md-nav__link">
-    <span class="md-ellipsis">
-      Fingerprint-only verified map
-    </span>
-  </a>
-  
-</li>
-        
-          <li class="md-nav__item">
-  <a href="#full-database-index-abstraction" class="md-nav__link">
-    <span class="md-ellipsis">
-      Full database index abstraction
-    </span>
-  </a>
-  
-</li>
-        
-      </ul>
-    </nav>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#drawbacks" class="md-nav__link">
-    <span class="md-ellipsis">
-      Drawbacks
+      Prior art
     </span>
   </a>
   
 </li>
       
         <li class="md-nav__item">
-  <a href="#implementation-architecture" class="md-nav__link">
+  <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
-      Implementation architecture
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#layers-affected" class="md-nav__link">
-    <span class="md-ellipsis">
-      Layers affected
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
-  <a href="#unresolved-questions" class="md-nav__link">
-    <span class="md-ellipsis">
-      Unresolved questions
+      See also
     </span>
   </a>
   
@@ -5731,247 +5586,72 @@
   
 
 
-<h1 id="rfc-101-stdcollectionsordinalmap-deterministic-compact-key-to-ordinal-lookup">RFC 101: <code>std.collections.OrdinalMap</code> — deterministic compact key-to-ordinal lookup<a class="headerlink" href="#rfc-101-stdcollectionsordinalmap-deterministic-compact-key-to-ordinal-lookup" title="Permanent link">&para;</a></h1>
-<ul>
-<li><strong>Status:</strong> Draft</li>
-<li><strong>Created:</strong> 2026-05-19</li>
-<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
-<li><strong>Related:</strong><ul>
-<li>RFC 009 (sized numeric types)</li>
-<li>RFC 022 (namespaced stdlib modules and compiler handoff)</li>
-<li>RFC 023 (compilable stdlib and Rust module binding)</li>
-<li>RFC 030 (<code>std.collections</code> extended collection types)</li>
-<li>RFC 052 (module static storage)</li>
-<li>RFC 065 (<code>std.hash</code> stable hashing primitives)</li>
-<li>RFC 086 (schema descriptors and adapters)</li>
-</ul>
-</li>
-<li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/595</li>
-<li><strong>RFC PR:</strong> —</li>
-<li><strong>Written against:</strong> v0.3</li>
-<li><strong>Shipped in:</strong> —</li>
-</ul>
-<h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes <code>std.collections.OrdinalMap</code>, a pure-Incan immutable map from deterministically encodable keys to compact integer ordinals. The type gives schemas, catalogs, generated metadata, and immutable dataset dictionaries a reproducible way to turn names or scalar values into stable integer codes, while keeping safe lookup exact, deterministic, serializable, and separate from mutable <code>dict</code> or general <code>FrozenDict</code> semantics.</p>
-<h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
+<h1 id="why-ordinalmap-exists">Why <code>OrdinalMap</code> exists<a class="headerlink" href="#why-ordinalmap-exists" title="Permanent link">&para;</a></h1>
+<p><code>OrdinalMap[K]</code> is a deterministic bridge from a stable key domain to integer positions. It exists for code that wants to stop carrying names, UUIDs, dates, or enum values through hot paths once those values have been validated.</p>
+<p>The common shape is:</p>
 <ol>
-<li><strong>Ordinal maps are immutable key-to-integer maps:</strong> an <code>OrdinalMap[K]</code> maps each unique key of type <code>K</code> to a non-negative integer ordinal.</li>
-<li><strong>Keys are deterministic encodings, not arbitrary hashables:</strong> supported keys must implement a stable key-encoding contract so equal keys produce identical canonical bytes across platforms.</li>
-<li><strong>Construction is deterministic:</strong> the same canonical input must produce the same ordinals, lookup structure, and serialized bytes for a given Incan version and format version.</li>
-<li><strong>Safe lookup is exact:</strong> default lookup APIs must not silently return an ordinal for a missing key.</li>
-<li><strong>Storage is compact:</strong> ordinal cells should use the smallest supported unsigned storage width that can represent the maximum ordinal.</li>
-<li><strong>Unchecked lookup is explicit:</strong> a proven-present fast path may exist, but it must be visibly unsafe in the API and must not be the default behavior.</li>
-<li><strong>The stdlib source owns the feature:</strong> the public implementation should be authored in Incan, using existing stdlib primitives for hashing, bytes, typed integers, and I/O rather than hiding the data structure behind a hand-written Rust runtime type.</li>
+<li>Build or load a fixed key domain.</li>
+<li>Validate user-facing names or external values against that domain.</li>
+<li>Execute later work against integer ordinals.</li>
+<li>Persist the same key-to-ordinal contract as reproducible bytes.</li>
 </ol>
-<h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Large systems frequently need to resolve stable names or scalar values into integer positions before doing real work. Column names become column ordinals, field names become field IDs, table names become catalog IDs, enum-like values become compact codes, and string or scalar dictionary values become physical segment codes. Once a query, transformation, or scan has resolved a key to an ordinal, the hot path can use integer slots instead of repeated string comparisons.</p>
-<p>Builtin <code>dict</code> is the right tool for mutable, general-purpose lookup. It is not the right public abstraction for immutable, reproducible, serialized lookup tables that should be rebuilt byte-for-byte across machines. <code>FrozenDict</code> is the right general frozen dictionary shape, but it is intentionally broad and should not be overloaded with specialized minimal-perfect-hash or ordinal-specific behavior.</p>
-<p>The motivating requirement is not merely speed. Determinism matters because generated metadata, persisted catalogs, and immutable dataset segments must be reproducible. If the same schema or dictionary domain produces different index bytes depending on process randomness, host platform, or insertion-order accidents, downstream artifacts become harder to diff, cache, test, verify, and distribute.</p>
-<p>Purpose-built data libraries also need a primitive below full physical indexing. A table with hundreds of columns and billions of rows should not resolve column names inside the row loop. The plan should resolve names to ordinals once, then execute against integer slots. For dictionary-encoded scalar columns, the segment dictionary should resolve a value such as <code>"paid"</code> or <code>Status.Paid</code> to an integer code once, then scan or compare packed integer codes.</p>
-<p>This RFC is directly informed by Daniel Lemire's <a href="https://github.com/lemire/constmap"><code>constmap</code></a> work and by Thomas Mueller Graf and Daniel Lemire's <a href="https://arxiv.org/abs/2201.01174">binary fuse</a> and <a href="https://arxiv.org/abs/1912.08258">xor filter</a> papers. That work demonstrates the practical value of immutable compact maps built from a known key set, including fast lookup, compact storage, verified and unchecked lookup modes, and serialization. <code>OrdinalMap</code> adapts those lessons to Incan's stdlib goals: pure-Incan source ownership, deterministic construction, exact safe lookup, generic deterministic scalar keys, and ordinal/code-oriented semantics rather than a string-only <code>uint64</code> map.</p>
-<h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
+<p>That makes <code>OrdinalMap</code> useful for schemas, generated catalogs, dictionary-encoded scalar domains, query plans, and dataset sidecars.</p>
+<h2 id="the-table-index-case">The table-index case<a class="headerlink" href="#the-table-index-case" title="Permanent link">&para;</a></h2>
+<p>Imagine a table with 200 columns and billions of rows. Query text, file metadata, and user APIs naturally talk about columns by name:</p>
+<div class="language-text highlight"><pre><span></span><code>status, amount, customer_id
+</code></pre></div>
+<p>Execution engines do not want to compare those names repeatedly while scanning data. They want column slots:</p>
+<div class="language-text highlight"><pre><span></span><code>2, 3, 1
+</code></pre></div>
+<p><code>OrdinalMap[str]</code> lets a planner resolve names once and then carry integer positions through the plan. The map is not the physical table index by itself. It is the stable name-to-slot primitive that larger table indexes, catalogs, and InQL-style planners can build on.</p>
+<p>The same idea applies when the key is not text. A dataset may need stable ordinals for UUID tenants, civil dates, fixed enum values, or generated identifiers. <code>OrdinalMap</code> handles those through the <code>OrdinalKey</code> contract rather than forcing users to stringify precise values.</p>
+<h2 id="why-not-dict-or-frozendict">Why not <code>dict</code> or <code>FrozenDict</code><a class="headerlink" href="#why-not-dict-or-frozendict" title="Permanent link">&para;</a></h2>
+<p>A builtin <code>dict[K, int]</code> is the right default when the mapping is ordinary program state: mutable, incrementally built, and not meant to define a portable byte contract.</p>
+<p><code>FrozenDict</code> is the right abstraction for a general immutable mapping. Its value type is arbitrary, and its job is to preserve mapping semantics.</p>
+<p><code>OrdinalMap</code> is narrower:</p>
 <ul>
-<li>Add <code>OrdinalMap[K]</code> to <code>std.collections</code> as an immutable, deterministic key-to-ordinal lookup type.</li>
-<li>Define a stable key-encoding contract for key types that can be used with <code>OrdinalMap</code>.</li>
-<li>Support construction from ordered keys where ordinals are input positions.</li>
-<li>Support construction from explicit key/ordinal pairs where ordinals are caller-provided.</li>
-<li>Require exact safe lookup semantics for default APIs.</li>
-<li>Define deterministic construction and deterministic serialization requirements.</li>
-<li>Select compact ordinal storage width from the maximum ordinal.</li>
-<li>Provide batch lookup APIs for resolving many keys without forcing callers into repeated boilerplate.</li>
-<li>Provide byte-size introspection and serialization/deserialization APIs suitable for persisted metadata.</li>
-<li>Keep the feature pure-Incan at the stdlib source level, with Rust used only as the normal generated-code and primitive-runtime substrate.</li>
+<li>values are ordinals;</li>
+<li>construction validates a complete fixed domain;</li>
+<li>serialization is deterministic;</li>
+<li>key encodings are explicit;</li>
+<li>safe lookup is exact;</li>
+<li>unchecked lookup is opt-in for proven-present hot paths;</li>
+<li>compact ordinal storage can choose the smallest payload width that fits the maximum ordinal.</li>
 </ul>
-<h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
+<p>Keeping those semantics in a separate type makes the contract visible instead of hiding it inside a general mapping.</p>
+<h2 id="determinism-is-the-point">Determinism is the point<a class="headerlink" href="#determinism-is-the-point" title="Permanent link">&para;</a></h2>
+<p>For generated metadata and large datasets, deterministic output matters as much as lookup speed. Two equivalent maps should serialize to identical bytes. That lets callers cache, diff, ship, and validate indexes without relying on process-local hash order or incidental construction order.</p>
+<p><code>from_keys</code> uses input order as the ordinal contract. <code>from_pairs</code> accepts explicit ordinals and canonicalizes serialized output so pair order does not matter. <code>from_bytes</code> validates the stored key encoding before returning a map, so an <code>OrdinalMap[Date]</code> payload cannot be silently decoded as a string-key map.</p>
+<h2 id="exact-lookup-stays-the-default">Exact lookup stays the default<a class="headerlink" href="#exact-lookup-stays-the-default" title="Permanent link">&para;</a></h2>
+<p>Compact immutable-map designs often expose an unchecked path because it can be much faster. The tradeoff is missing-key behavior: if the caller asks for a key outside the known domain, an unchecked structure may fail in implementation-specific ways or reconstruct an ordinal for a different stored key.</p>
+<p>Incan keeps exact lookup as the default contract. <code>get</code>, <code>require</code>, membership, indexing, <code>get_many</code>, and <code>require_many</code> verify that the queried key matches the stored key before returning an ordinal.</p>
+<p>Unchecked lookup remains available because it is useful after validation. A planner can resolve and validate a query's names once, then execute with <code>get_unchecked</code> or <code>get_many_unchecked</code> because the plan already proved the keys are present.</p>
+<h2 id="key-types-are-intentionally-scalar">Key types are intentionally scalar<a class="headerlink" href="#key-types-are-intentionally-scalar" title="Permanent link">&para;</a></h2>
+<p><code>OrdinalKey</code> is the boundary for key types. A key type must provide canonical bytes for each value and a stable type-level encoding identifier for serialized maps.</p>
+<p>The supported surface is deterministic scalar data: text, bytes, booleans, integers, fixed-precision decimals, UUIDs, civil dates and times, stable scalar value enums, and user-defined types that implement <code>OrdinalKey</code>.</p>
+<p>Decimals are accepted because <code>decimal[p, s]</code> is precise and compiler-checked. The key bytes use the <code>Decimal128</code> runtime representation: the signed coefficient in little-endian bytes followed by the stored scale byte.</p>
+<p>Floats are excluded because NaN payloads, negative zero, infinities, and cross-language canonicalization need their own explicit design. If a domain behaves like money, use a decimal value or scaled integer. If it behaves like a finite measurement code, model that code directly.</p>
+<h2 id="performance-model">Performance model<a class="headerlink" href="#performance-model" title="Permanent link">&para;</a></h2>
+<p><code>OrdinalMap</code> is optimized for known key domains and repeated lookup, not for incremental mutation. Construction pays validation cost up front. Lookup then works against compact payload sections plus runtime caches.</p>
+<p>The repository benchmark in <code>benchmarks/collections/ordinal_map</code> compares:</p>
 <ul>
-<li>This RFC does not replace builtin <code>dict</code>.</li>
-<li>This RFC does not replace <code>FrozenDict</code>.</li>
-<li>This RFC does not define a mutable ordered map.</li>
-<li>This RFC does not define a row-level database index, B-tree, bitmap index, inverted index, vector index, or range index.</li>
-<li>This RFC does not require <code>OrdinalMap</code> to support arbitrary user-defined objects in the first implementation slice.</li>
-<li>This RFC does not require floating-point keys in the first implementation slice.</li>
-<li>This RFC does not require compiler const-evaluation or pre-baked static emission in the first implementation slice, although the design should allow that optimization later.</li>
-<li>This RFC does not standardize probabilistic missing-key behavior as the default safe API.</li>
-<li>This RFC does not expose backend hash-table, minimal-perfect-hash, or fuse-filter internals as part of the public contract.</li>
+<li>Python <code>dict</code>;</li>
+<li>Python <code>fastconstmap.ConstMap</code>;</li>
+<li>Python <code>fastconstmap.VerifiedConstMap</code>;</li>
+<li>Incan <code>OrdinalMap[str]</code>;</li>
+<li>the earlier handwritten Rust spike baseline.</li>
 </ul>
-<h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
-<p>Use <code>OrdinalMap</code> when a stable set of keys needs stable integer positions.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.collections</span><span class="w"> </span><span class="kn">import</span> <span class="nc">OrdinalMap</span>
-
-<span class="n">columns</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span><span class="s2">&quot;order_id&quot;</span><span class="p">,</span> <span class="s2">&quot;customer_id&quot;</span><span class="p">,</span> <span class="s2">&quot;status&quot;</span><span class="p">,</span> <span class="s2">&quot;amount&quot;</span><span class="p">])</span><span class="o">?</span>
-
-<span class="k">assert</span> <span class="n">columns</span><span class="p">[</span><span class="s2">&quot;status&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">2</span>
-<span class="k">assert</span> <span class="n">columns</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;missing&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">is_none</span><span class="p">()</span>
-</code></pre></div>
-<p>The simplest construction form takes an ordered key list. The ordinal is the key's position in that list.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">statuses</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span><span class="s2">&quot;pending&quot;</span><span class="p">,</span> <span class="s2">&quot;paid&quot;</span><span class="p">,</span> <span class="s2">&quot;cancelled&quot;</span><span class="p">])</span><span class="o">?</span>
-
-<span class="k">assert</span> <span class="n">statuses</span><span class="p">[</span><span class="s2">&quot;pending&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">0</span>
-<span class="k">assert</span> <span class="n">statuses</span><span class="p">[</span><span class="s2">&quot;paid&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span>
-<span class="k">assert</span> <span class="n">statuses</span><span class="p">[</span><span class="s2">&quot;cancelled&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">2</span>
-</code></pre></div>
-<p>Explicit ordinals are useful when ordinals come from a file format, schema registry, generated catalog, or physical storage layout.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">field_ids</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_pairs</span><span class="p">([</span>
-    <span class="p">(</span><span class="s2">&quot;order_id&quot;</span><span class="p">,</span> <span class="mi">10</span><span class="p">),</span>
-    <span class="p">(</span><span class="s2">&quot;customer_id&quot;</span><span class="p">,</span> <span class="mi">12</span><span class="p">),</span>
-    <span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">,</span> <span class="mi">18</span><span class="p">),</span>
-<span class="p">])</span><span class="o">?</span>
-
-<span class="k">assert</span> <span class="n">field_ids</span><span class="p">[</span><span class="s2">&quot;status&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">18</span>
-</code></pre></div>
-<p>Ordinal maps are not limited to strings. They can map any key with a stable canonical byte encoding.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">customer_ids</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span><span class="mi">1001</span><span class="n">_u64</span><span class="p">,</span> <span class="mi">1002</span><span class="n">_u64</span><span class="p">,</span> <span class="mi">1003</span><span class="n">_u64</span><span class="p">])</span><span class="o">?</span>
-<span class="k">assert</span> <span class="n">customer_ids</span><span class="p">[</span><span class="mi">1002</span><span class="n">_u64</span><span class="p">]</span> <span class="o">==</span> <span class="mi">1</span>
-</code></pre></div>
-<p>For dictionary-encoded data, an ordinal map can translate values into compact codes before execution enters a hot row loop.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">status_codes</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span><span class="s2">&quot;cancelled&quot;</span><span class="p">,</span> <span class="s2">&quot;paid&quot;</span><span class="p">,</span> <span class="s2">&quot;pending&quot;</span><span class="p">])</span><span class="o">?</span>
-<span class="n">paid_code</span> <span class="o">=</span> <span class="n">status_codes</span><span class="o">.</span><span class="n">require</span><span class="p">(</span><span class="s2">&quot;paid&quot;</span><span class="p">)</span><span class="o">?</span>
-
-<span class="c1"># A scan can compare stored integer codes to `paid_code` instead of comparing strings for every row.</span>
-</code></pre></div>
-<p>Batch lookup resolves many names or values at once.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">wanted</span> <span class="o">=</span> <span class="n">columns</span><span class="o">.</span><span class="n">require_many</span><span class="p">([</span><span class="s2">&quot;status&quot;</span><span class="p">,</span> <span class="s2">&quot;amount&quot;</span><span class="p">])</span><span class="o">?</span>
-<span class="k">assert</span> <span class="n">wanted</span> <span class="o">==</span> <span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
-</code></pre></div>
-<p>Persisted metadata can serialize an ordinal map. Deserialization must validate the format, key encoding, construction metadata, and exact-lookup data before returning a usable map.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">blob</span> <span class="o">=</span> <span class="n">columns</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">()</span>
-<span class="n">round_trip</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span><span class="o">.</span><span class="n">from_bytes</span><span class="p">(</span><span class="n">blob</span><span class="p">)</span><span class="o">?</span>
-<span class="k">assert</span> <span class="n">round_trip</span><span class="p">[</span><span class="s2">&quot;amount&quot;</span><span class="p">]</span> <span class="o">==</span> <span class="mi">3</span>
-</code></pre></div>
-<h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
-<h3 id="module-and-type">Module and type<a class="headerlink" href="#module-and-type" title="Permanent link">&para;</a></h3>
-<p><code>std.collections</code> must expose <code>OrdinalMap[K]</code> as a public immutable collection type. <code>OrdinalMap[K]</code> maps keys of type <code>K</code> to non-negative integer ordinals.</p>
-<p><code>OrdinalMap[K]</code> must require <code>K</code> to satisfy the ordinal-key contract defined by this RFC or by the accepted final design. A key type that lacks a stable canonical encoding must not be accepted by <code>OrdinalMap</code>.</p>
-<p>The type must be immutable after construction. APIs that appear to add, remove, or reassign entries must return a new map or be absent.</p>
-<h3 id="ordinal-key-contract">Ordinal key contract<a class="headerlink" href="#ordinal-key-contract" title="Permanent link">&para;</a></h3>
-<p>The stdlib must define an ordinal-key contract for key types that can be used with <code>OrdinalMap</code>. The contract must provide canonical bytes for a key value and must identify the key encoding used by serialized maps.</p>
-<p>The exact trait name is unresolved. This RFC uses <code>OrdinalKey</code> as the descriptive name.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">trait</span> <span class="nc">OrdinalKey</span><span class="p">:</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">ordinal_bytes</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bytes</span><span class="p">:</span> <span class="o">...</span>
-    <span class="k">def</span><span class="w"> </span><span class="nf">ordinal_encoding</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span> <span class="o">...</span>
-</code></pre></div>
-<p>The key encoding must be deterministic across supported platforms. It must not depend on locale, process-randomized hash seeds, pointer identity, memory layout, map iteration order, or implementation-defined object identity.</p>
-<p>The initial supported key set should include <code>str</code>, <code>bytes</code>, <code>bool</code>, fixed-width signed and unsigned integers, and value enums whose values have stable scalar encodings. Additional scalar stdlib types such as UUIDs, dates, times, and datetimes may implement the contract when their canonical byte encodings are already stable.</p>
-<p><code>str</code> keys must encode their exact Unicode string value as UTF-8 bytes without implicit case folding, locale handling, or normalization. If callers need normalized keys, they must normalize before construction.</p>
-<p><code>bytes</code> keys must encode as their raw byte contents.</p>
-<p>Fixed-width integer keys must encode using a specified byte order. This RFC requires little-endian two's-complement representation for signed fixed-width integers and little-endian representation for unsigned fixed-width integers unless the final design chooses a different single canonical byte order.</p>
-<p>Floating-point keys are intentionally excluded from the required initial key set because NaN payloads, negative zero, and cross-language canonicalization rules need a separate decision.</p>
-<h3 id="construction-from-keys">Construction from keys<a class="headerlink" href="#construction-from-keys" title="Permanent link">&para;</a></h3>
-<p><code>OrdinalMap.from_keys(keys: list[K]) -&gt; Result[OrdinalMap[K], OrdinalMapError]</code> must construct a map where each key's ordinal is its zero-based position in the input list.</p>
-<p>Construction from keys must reject duplicate keys. Duplicate detection must use the key's equality semantics and canonical ordinal bytes consistently. If two values compare equal, they must not appear as distinct keys. If two non-equal values produce the same canonical bytes, construction must fail with an encoding-collision error because the key contract has been violated.</p>
-<p>For a fixed ordered input list, construction must be deterministic. The implementation may use hashing or retry-based placement internally, but all seeds, retries, placement choices, and serialized output must be derived deterministically from the canonical input and format version.</p>
-<h3 id="construction-from-pairs">Construction from pairs<a class="headerlink" href="#construction-from-pairs" title="Permanent link">&para;</a></h3>
-<p><code>OrdinalMap.from_pairs(entries: list[Tuple[K, int]]) -&gt; Result[OrdinalMap[K], OrdinalMapError]</code> must construct a map where each key maps to the explicit non-negative ordinal supplied by the caller.</p>
-<p>Construction from pairs must reject duplicate keys. It must reject negative ordinals. It should reject duplicate ordinals by default because ordinal maps are primarily position/code maps, not many-to-one labels. If the final design permits duplicate ordinals, that behavior must be explicit in the constructor name or options.</p>
-<p>Construction from pairs must be deterministic regardless of the input pair order when explicit ordinals are the same. The serialized representation should use a canonical order derived from key bytes or ordinal order so byte output is reproducible.</p>
-<h3 id="lookup-apis">Lookup APIs<a class="headerlink" href="#lookup-apis" title="Permanent link">&para;</a></h3>
-<p><code>OrdinalMap[K].get(key: K) -&gt; Option[int]</code> must return <code>Some(ordinal)</code> when <code>key</code> is present and <code>None</code> when it is absent.</p>
-<p><code>OrdinalMap[K].require(key: K) -&gt; Result[int, OrdinalMapError]</code> must return the ordinal when present and a missing-key error when absent.</p>
-<p><code>OrdinalMap[K].__getitem__(key: K) -&gt; int</code> should return the ordinal when present. The missing-key behavior of indexing must be consistent with Incan's collection indexing conventions. If ordinary indexing cannot return <code>Result</code>, <code>get</code> and <code>require</code> must remain the preferred APIs in examples that handle missing keys.</p>
-<p><code>OrdinalMap[K].__contains__(key: K) -&gt; bool</code> must return whether <code>key</code> is present.</p>
-<p><code>OrdinalMap[K].get_many(keys: list[K]) -&gt; list[Option[int]]</code> must perform batch lookup while preserving input order.</p>
-<p><code>OrdinalMap[K].require_many(keys: list[K]) -&gt; Result[list[int], OrdinalMapError]</code> must perform batch lookup and return a missing-key error if any key is absent. The error should identify at least one missing key position and should identify all missing key positions when practical.</p>
-<p>Safe lookup APIs must be exact. They must not return an ordinal for an absent key due only to hash or fingerprint collision. If an implementation uses fingerprints internally, it must verify enough key material to reject absent keys exactly before returning from safe APIs.</p>
-<h3 id="unchecked-lookup">Unchecked lookup<a class="headerlink" href="#unchecked-lookup" title="Permanent link">&para;</a></h3>
-<p>An unchecked lookup API may be provided for callers that can prove a key is present through external invariants or prior exact validation. The API must be explicitly named, such as <code>get_unchecked</code>, <code>require_unchecked</code>, or an accepted equivalent.</p>
-<p>Unchecked lookup must not be used by <code>get</code>, <code>require</code>, <code>__getitem__</code>, <code>__contains__</code>, <code>get_many</code>, or <code>require_many</code>.</p>
-<p>Unchecked lookup must document its missing-key behavior as undefined or implementation-specific. It must not silently become the default surface because the primary <code>OrdinalMap</code> contract is exact lookup.</p>
-<h3 id="deterministic-storage-and-compact-ordinals">Deterministic storage and compact ordinals<a class="headerlink" href="#deterministic-storage-and-compact-ordinals" title="Permanent link">&para;</a></h3>
-<p>An implementation should store ordinals using the smallest unsigned integer width that can represent the maximum ordinal in the map. The required width choices are <code>u8</code>, <code>u16</code>, <code>u32</code>, and <code>u64</code>.</p>
-<p>A map whose maximum ordinal is at most <code>255</code> should use <code>u8</code> ordinal cells. A map whose maximum ordinal is at most <code>65535</code> should use <code>u16</code> ordinal cells. A map whose maximum ordinal is at most <code>4294967295</code> should use <code>u32</code> ordinal cells. Larger supported ordinals should use <code>u64</code> ordinal cells.</p>
-<p>The public API returns ordinary Incan <code>int</code> ordinals unless a narrower return type is explicitly requested by a future RFC. Compact storage is an implementation and serialization property, not a narrowing of the public value.</p>
-<h3 id="serialization">Serialization<a class="headerlink" href="#serialization" title="Permanent link">&para;</a></h3>
-<p><code>OrdinalMap[K].to_bytes() -&gt; bytes</code> must return a deterministic byte representation for the map.</p>
-<p><code>OrdinalMap[K].from_bytes(data: bytes) -&gt; Result[OrdinalMap[K], OrdinalMapError]</code> must parse and validate a serialized map before returning it.</p>
-<p>Serialized ordinal maps must include at least a magic value, format version, key encoding identifier, key count, ordinal width, lookup algorithm identifier, exact-verification mode, construction metadata required for lookup, and the lookup/value payload. If the exact lookup mode requires stored key bytes or a key table, that data must be part of the serialized representation.</p>
-<p>Serialization must use fixed byte order for numeric fields. This RFC requires little-endian numeric fields unless the final design chooses a different single canonical byte order.</p>
-<p>Two maps constructed from equivalent canonical input under the same format version must serialize to identical bytes.</p>
-<p>Deserialization must reject unknown required format versions, unsupported key encodings, malformed payloads, duplicate keys in stored exact-verification data, invalid ordinal widths, invalid counts, truncated payloads, and inconsistent payload lengths.</p>
-<h3 id="size-introspection">Size introspection<a class="headerlink" href="#size-introspection" title="Permanent link">&para;</a></h3>
-<p><code>OrdinalMap[K].nbytes() -&gt; int</code> should return the number of bytes retained by the ordinal-map payload, excluding ordinary object/header overhead that cannot be made portable across backends.</p>
-<p><code>OrdinalMap[K].serialized_size() -&gt; int</code> should return the number of bytes <code>to_bytes()</code> would produce without requiring callers to materialize the serialized bytes when practical.</p>
-<p>The documentation must distinguish payload size from total process heap usage.</p>
-<h3 id="error-model">Error model<a class="headerlink" href="#error-model" title="Permanent link">&para;</a></h3>
-<p>The stdlib must define <code>OrdinalMapError</code> or an equivalent stable error type. It must expose a stable category string and a human-readable message.</p>
-<p>Error categories should include duplicate key, duplicate ordinal, negative ordinal, unsupported key type, key encoding collision, missing key, malformed serialized data, unsupported serialized version, unsupported key encoding, unsupported ordinal width, and lookup-construction failure.</p>
-<h3 id="relationship-to-dict-and-frozendict">Relationship to <code>dict</code> and <code>FrozenDict</code><a class="headerlink" href="#relationship-to-dict-and-frozendict" title="Permanent link">&para;</a></h3>
-<p><code>OrdinalMap</code> must not change builtin <code>dict</code> semantics.</p>
-<p><code>OrdinalMap</code> must not change <code>FrozenDict</code> semantics.</p>
-<p><code>OrdinalMap</code> should live in <code>std.collections</code> as a specialized collection for deterministic immutable ordinal lookup. It may share ordinary collection protocols such as <code>len</code>, membership, iteration, and indexing where those protocols fit the exact lookup contract.</p>
-<h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
-<h3 id="pure-incan-stdlib-ownership">Pure-Incan stdlib ownership<a class="headerlink" href="#pure-incan-stdlib-ownership" title="Permanent link">&para;</a></h3>
-<p>The user-facing type should be implemented in Incan stdlib source. That does not mean the generated program avoids Rust; Incan compiles to Rust. It means the data-structure algorithm, public methods, validation rules, and serialization contract are expressed as Incan code where practical.</p>
-<p>The implementation may use existing stdlib primitives whose backing requires host support, such as stable hash algorithms, typed integer operations, byte buffers, and file I/O. It should not introduce a hand-written Rust-only <code>OrdinalMap</code> runtime type as the primary implementation because that would undermine the goal of demonstrating that Incan can express the data structure itself.</p>
-<h3 id="lookup-algorithm-freedom">Lookup algorithm freedom<a class="headerlink" href="#lookup-algorithm-freedom" title="Permanent link">&para;</a></h3>
-<p>This RFC does not standardize a specific minimal-perfect-hash or fuse-filter algorithm. The public contract is deterministic construction, exact safe lookup, compact ordinal storage, and deterministic serialization.</p>
-<p>The implementation may use a binary-fuse-style structure, a minimal perfect hash family, a sorted table for small maps, or another deterministic layout as long as the public requirements hold. It may choose simpler representations for very small maps if that is faster or smaller after overhead.</p>
-<h3 id="prior-art-and-acknowledgement">Prior art and acknowledgement<a class="headerlink" href="#prior-art-and-acknowledgement" title="Permanent link">&para;</a></h3>
-<p>Daniel Lemire's <a href="https://github.com/lemire/constmap"><code>constmap</code></a> project is the immediate practical inspiration for this RFC. The project describes a compact immutable string-to-<code>uint64</code> map using the binary fuse filter construction, with lookup shaped around one hash computation, three array accesses, and XOR reconstruction. Its README also calls out the trade-off between unchecked lookup and verified missing-key detection, plus serialization for reuse. <code>OrdinalMap</code> should acknowledge that prior art while deliberately choosing a different public contract: deterministic generic ordinal keys, exact safe lookup, pure-Incan stdlib source, and persistent metadata suitability.</p>
-<p>The algorithmic family comes from Thomas Mueller Graf and Daniel Lemire's <a href="https://arxiv.org/abs/2201.01174">"Binary Fuse Filters: Fast and Smaller Than Xor Filters"</a> and the earlier <a href="https://arxiv.org/abs/1912.08258">"Xor Filters: Faster and Smaller Than Bloom and Cuckoo Filters"</a>. This RFC does not require Incan to standardize those algorithms, but they are important prior art for the space/time trade-offs motivating the feature.</p>
-<h3 id="deterministic-retry-policy">Deterministic retry policy<a class="headerlink" href="#deterministic-retry-policy" title="Permanent link">&para;</a></h3>
-<p>If the implementation uses retry-based construction, the retry sequence must be deterministic. A conforming strategy is to derive a base seed from the canonical key encodings, map format version, key encoding identifier, and algorithm identifier, then derive attempt seeds from that base seed and a monotonically increasing attempt number.</p>
-<p>The implementation must define a deterministic failure mode if construction cannot find a valid layout within its supported attempt budget. Failure must return <code>OrdinalMapError</code>; it must not loop indefinitely.</p>
-<h3 id="exact-verification">Exact verification<a class="headerlink" href="#exact-verification" title="Permanent link">&para;</a></h3>
-<p>Safe lookup requires exact missing-key rejection. A compact implementation may use fingerprints as an early reject, but it must be able to verify the queried key exactly before returning an ordinal from safe APIs.</p>
-<p>The exact verification data may be stored as canonical key bytes, a sorted side table, a collision bucket table, or another deterministic structure. The exact representation is not standardized by this RFC, but it must participate in <code>to_bytes()</code> and <code>from_bytes()</code> so persisted maps remain exact.</p>
-<p>An explicitly probabilistic mode may be considered in the future for callers that accept false-positive risk. That mode must not be named or documented as the ordinary safe <code>OrdinalMap</code> contract.</p>
-<h3 id="key-encoding-and-schema-evolution">Key encoding and schema evolution<a class="headerlink" href="#key-encoding-and-schema-evolution" title="Permanent link">&para;</a></h3>
-<p>Serialized maps are tied to a key encoding identifier. If a type's canonical encoding changes in a backward-incompatible way, maps serialized with the old encoding must either continue to load through a compatibility path or fail with an unsupported key encoding error.</p>
-<p>User-defined key encodings must be versioned if they can be persisted. The final design should decide whether user-defined <code>OrdinalKey</code> implementations can be used in serialized maps without an explicit encoding version.</p>
-<h3 id="dataset-and-metadata-usage">Dataset and metadata usage<a class="headerlink" href="#dataset-and-metadata-usage" title="Permanent link">&para;</a></h3>
-<p>For schema-like data, <code>OrdinalMap[str]</code> resolves field names or column names to integer positions. Query and transformation systems can resolve names once during planning, then execute against integer slots.</p>
-<p>For immutable dictionary-encoded data, <code>OrdinalMap[K]</code> resolves a distinct scalar domain value to a compact code. A scan can compare stored integer codes rather than comparing full key values repeatedly.</p>
-<p>For catalogs and generated metadata, <code>OrdinalMap</code> gives deterministic bytes that can be cached, diffed, shipped, and validated. This is more important than raw lookup speed alone because metadata reproducibility affects build systems, storage snapshots, and tests.</p>
-<h3 id="api-aliases">API aliases<a class="headerlink" href="#api-aliases" title="Permanent link">&para;</a></h3>
-<p>The accepted design may add aliases for common specializations. For example, <code>NameIndex</code> could be an alias for <code>OrdinalMap[str]</code> if the final naming discussion decides that schema/name lookup needs a clearer user-facing name.</p>
-<p>Aliases must not obscure the generic contract. <code>OrdinalMap[K]</code> remains the normative type proposed by this RFC unless the RFC is renamed before acceptance.</p>
-<h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
-<h3 id="string-only-map">String-only map<a class="headerlink" href="#string-only-map" title="Permanent link">&para;</a></h3>
-<p>A string-only map is simpler and matches many schema and catalog use cases. It is too narrow for immutable scalar dictionaries, enum-coded columns, numeric identifiers, UUID-like values, and other deterministic scalar domains. The better boundary is a stable key-encoding contract.</p>
-<h3 id="general-frozen-dictionary-optimization">General frozen dictionary optimization<a class="headerlink" href="#general-frozen-dictionary-optimization" title="Permanent link">&para;</a></h3>
-<p>Optimizing <code>FrozenDict</code> would hide a specialized ordinal/code lookup contract inside a general mapping type. That would make missing-key semantics, compact ordinal storage, serialization, and unchecked lookup harder to explain. <code>FrozenDict</code> should remain the general frozen dictionary, while <code>OrdinalMap</code> owns the specialized deterministic ordinal use case.</p>
-<h3 id="builtin-dict-with-conventions">Builtin <code>dict</code> with conventions<a class="headerlink" href="#builtin-dict-with-conventions" title="Permanent link">&para;</a></h3>
-<p>Users can build a <code>dict[str, int]</code>, but that does not give deterministic serialized layout, compact ordinal storage, exact persisted lookup data, or a reproducible construction contract. <code>dict</code> remains appropriate for dynamic in-memory maps.</p>
-<h3 id="hand-written-rust-runtime-type">Hand-written Rust runtime type<a class="headerlink" href="#hand-written-rust-runtime-type" title="Permanent link">&para;</a></h3>
-<p>A hand-written Rust runtime type can be fast, but it sends the wrong message for a stdlib collection whose purpose is to show that Incan can own data-structure logic. Rust should remain the generated-code target and primitive substrate, not the only place where the actual collection exists.</p>
-<h3 id="fingerprint-only-verified-map">Fingerprint-only verified map<a class="headerlink" href="#fingerprint-only-verified-map" title="Permanent link">&para;</a></h3>
-<p>Fingerprint-only maps can be compact and fast, but they are not exact unless the fingerprint width is treated as part of an explicitly probabilistic contract. Persisted metadata and dataset dictionaries should not silently accept false positives. Fingerprints may be an optimization, but safe lookup must verify exact key membership.</p>
-<h3 id="full-database-index-abstraction">Full database index abstraction<a class="headerlink" href="#full-database-index-abstraction" title="Permanent link">&para;</a></h3>
-<p>A database index abstraction would need row identifiers, duplicate keys, range scans, null semantics, updates, segment visibility, and physical planning integration. <code>OrdinalMap</code> is smaller: it maps stable keys to integer ordinals. More complete physical indexes can build on ordinal maps where appropriate.</p>
-<h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
-<p><code>OrdinalMap</code> adds a specialized collection to the stdlib, and specialized collections carry documentation and teaching cost. The type must justify itself through real uses in schemas, metadata, catalogs, and immutable dictionaries rather than through benchmark novelty.</p>
-<p>Exact safe lookup costs more memory than fingerprint-only lookup. This is the right trade-off for persisted and correctness-sensitive data, but it means the most compact benchmark shape cannot be the default safe contract.</p>
-<p>Generic key support requires a stable encoding story. If the key contract is too broad, serialized maps become fragile. If it is too narrow, the type becomes a string-only convenience. The initial key set must be chosen conservatively.</p>
-<p>Construction can be more expensive than building a <code>dict</code>, especially for large maps. The type is intended for build-once, query-many workloads; it should not be promoted for one-off small maps.</p>
-<p>Unchecked lookup is useful for proven-present hot paths, but it is easy to misuse. The API must make unsafety visible and examples should prefer exact lookup unless a caller has already validated presence.</p>
-<h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p>This section is non-normative.</p>
-<p>The recommended shape is a pure-Incan implementation in <code>std.collections</code> backed by typed lists, stable hash helpers from <code>std.hash</code>, byte serialization helpers from <code>std.io</code> and <code>std.encoding</code>, and ordinary Incan model/enum definitions for the public error and representation choices.</p>
-<p>The first implementation can choose a straightforward deterministic layout and add more compact layouts behind the same public contract after tests and benchmarks exist. A small-map representation may be better for tens of keys, while a minimal-perfect or fuse-style representation may be better for thousands or millions of keys.</p>
-<p>Compiler support can later recognize literal or module-static <code>OrdinalMap.from_keys(...)</code> and precompute the serialized or in-memory representation at compile time. That optimization should preserve the same public Incan construction semantics rather than introducing a separate compiler-only behavior.</p>
-<h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
+<p>Treat benchmark numbers as measured local data, not API guarantees. The latest 1,000,000-key comparison is a single directional local run rather than a median over repeated samples. In that run, <code>OrdinalMap[str]</code> exact single-key lookup was lower than Python plus <code>fastconstmap.VerifiedConstMap</code>, and unchecked single-key lookup was lower than <code>fastconstmap.ConstMap</code>. Exact batch lookup remained slower than <code>fastconstmap.VerifiedConstMap</code>; unchecked batch lookup was lower than <code>fastconstmap.ConstMap</code>. <code>OrdinalMap</code> uses more payload bytes per key and construction remains slower because construction validates and canonicalizes records before producing deterministic payload sections.</p>
+<p>The public value of <code>OrdinalMap</code> does not depend on a benchmark claim alone. The durable contract is deterministic exact key-to-ordinal lookup over scalar key domains, with explicit serialization and a separate unchecked path for validated hot loops.</p>
+<h2 id="prior-art">Prior art<a class="headerlink" href="#prior-art" title="Permanent link">&para;</a></h2>
+<p><code>OrdinalMap</code> is informed by compact immutable map work such as Daniel Lemire's <a href="https://github.com/lemire/constmap"><code>constmap</code></a> and related binary-fuse/xor-filter designs. Incan adapts the useful lessons: known-key construction, compact storage, checked and unchecked lookup modes, serialization, and benchmarkable large-map behavior.</p>
+<p>The Incan contract is deliberately different from a string-only <code>uint64</code> map. It is generic over deterministic scalar keys, keeps safe lookup exact by default, and models the value as an ordinal/code rather than an arbitrary integer payload.</p>
+<h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Typechecker / Symbol resolution</strong>: validates generic <code>OrdinalMap[K]</code> construction against the ordinal-key contract and reports unsupported key types.</li>
-<li><strong>IR Lowering</strong>: may need to preserve enough static construction information for later compile-time baking, if that optimization is added.</li>
-<li><strong>Emission</strong>: may eventually emit pre-baked deterministic ordinal-map payloads for module-static or const-compatible construction.</li>
-<li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: adds the public pure-Incan <code>OrdinalMap</code> type, key-encoding contract, error type, constructors, lookup APIs, and serialization APIs.</li>
-<li><strong>LSP / Tooling</strong>: should surface completions and hover documentation for <code>OrdinalMap</code>, supported key types, missing-key APIs, and unchecked lookup warnings.</li>
+<li><a href="../../how-to/choosing_collections/">Choosing collection types</a></li>
+<li><a href="../../reference/stdlib/collections/"><code>std.collections</code> reference</a></li>
+<li><a href="../../../RFCs/closed/implemented/101_std_collections_ordinal_map/">RFC 101: <code>std.collections.OrdinalMap</code></a></li>
 </ul>
-<h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
-<ul>
-<li>Should the final public name be <code>OrdinalMap</code>, <code>NameIndex</code>, <code>StringIndex</code>, or another name that better communicates the type's intended use?</li>
-<li>What exact name and method shape should the stable key-encoding contract use?</li>
-<li>Which key types are required in the first implementation slice?</li>
-<li>Should <code>from_pairs</code> reject duplicate ordinals unconditionally, or should many-to-one explicit ordinals be supported through a separate constructor?</li>
-<li>What exact missing-key behavior should <code>__getitem__</code> use for <code>OrdinalMap</code>?</li>
-<li>Should unchecked lookup be included in the first implementation slice, or deferred until real users need the proven-present fast path?</li>
-<li>What exact serialized format version, magic value, and metadata fields should be standardized before Draft moves to Planned?</li>
-<li>What exact exact-verification representation should the first implementation use?</li>
-<li>Should a probabilistic fingerprint-only mode exist at all, or should it stay outside the stdlib?</li>
-<li>Should compiler const-baking be part of the acceptance criteria, or a later optimization after the pure-Incan stdlib implementation lands?</li>
-</ul>
-<!-- Rename this section to "Design Decisions" once all questions have been resolved.
-     An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
 
 
 
@@ -6020,18 +5700,18 @@
     </div>
     
     
-    <script id="__config" type="application/json">{"base": "../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    <script id="__config" type="application/json">{"base": "../../..", "features": ["navigation.instant", "navigation.sections", "navigation.indexes", "content.code.copy", "content.code.annotate", "content.tabs.link"], "search": "../../../assets/javascripts/workers/search.6ce7567c.min.js", "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
     
     
-      <script src="../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
+      <script src="../../../assets/javascripts/bundle.88dd0f4e.min.js"></script>
       
-        <script src="../../_snippets/javascripts/mathjax.js"></script>
+        <script src="../../../_snippets/javascripts/mathjax.js"></script>
       
         <script src="https://unpkg.com/tablesort@5.3.0/dist/tablesort.min.js"></script>
       
-        <script src="../../_snippets/javascripts/tablesort.js"></script>
+        <script src="../../../_snippets/javascripts/tablesort.js"></script>
       
-        <script src="../../_snippets/javascripts/rfc_table_filter.js"></script>
+        <script src="../../../_snippets/javascripts/rfc_table_filter.js"></script>
       
     
   </body>

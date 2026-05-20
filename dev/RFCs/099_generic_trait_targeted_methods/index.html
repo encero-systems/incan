@@ -3061,6 +3061,8 @@
       
         
       
+        
+      
     
     
       
@@ -3371,6 +3373,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/explanation/ordinal_map/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    OrdinalMap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3516,7 +3539,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_20" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
         
           
           
@@ -3532,14 +3555,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_20" id="__nav_4_5_20_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_20_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_20">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_21">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5436,6 +5459,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#trait-owned-capability-families" class="md-nav__link">
+    <span class="md-ellipsis">
+      Trait-owned capability families
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#where-constraints" class="md-nav__link">
     <span class="md-ellipsis">
       Where constraints
@@ -5622,15 +5654,17 @@
 <li>RFC 056 (<code>std.io</code>)</li>
 <li>RFC 091 (constrained integer newtype storage carriers)</li>
 <li>RFC 098 (native associated types for traits)</li>
+<li>RFC 101 (<code>std.collections.OrdinalMap</code>)</li>
 </ul>
 </li>
 <li><strong>Issue:</strong> https://github.com/dannys-code-corner/incan/issues/581</li>
+<li><strong>Blocks:</strong> https://github.com/dannys-code-corner/incan/issues/596 (v0.5 RFC 101 trait-system bridge removal)</li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.3</li>
 <li><strong>Shipped in:</strong> —</li>
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC introduces generic trait-targeted methods: methods declared inside the owning type body may carry their own type parameters, target a trait instantiation with <code>for Trait[...]</code>, and add <code>where</code> constraints that make the method define a checked family of trait adoptions rather than one concrete adoption at a time. The primary motivation is numeric and storage-carrier dispatch: <code>std.io.BytesIO</code> should be able to define one <code>write[T ... for BinaryWrite[T] ...]</code> method family for exact-width integers and another for storage-backed integer newtypes, while preserving Incan's Python-shaped class authoring model and avoiding Rust-shaped <code>impl Trait for Type</code> blocks.</p>
+<p>This RFC introduces generic trait-targeted methods: methods declared inside the owning type body may carry their own type parameters, target a trait instantiation with <code>for Trait[...]</code>, and add <code>where</code> constraints that make the method define a checked family of trait adoptions rather than one concrete adoption at a time. It also defines how trait-owned capability families can make an existing deterministic type family satisfy a trait without adding Rust-shaped external implementation blocks. The primary motivation is numeric and storage-carrier dispatch: <code>std.io.BytesIO</code> should be able to define one <code>write[T ... for BinaryWrite[T] ...]</code> method family for exact-width integers and another for storage-backed integer newtypes, while traits such as <code>OrdinalKey</code> should be able to own deterministic key conformance for language scalar families.</p>
 <h2 id="core-model">Core model<a class="headerlink" href="#core-model" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Behavior lives on the owning type:</strong> when a class, model, enum, newtype, or rusttype owns behavior, generic trait-targeted methods are written in that declaration body.</li>
@@ -5639,11 +5673,13 @@
 <li><strong>No Rust <code>impl</code> syntax leaks into Incan:</strong> the backend may emit Rust <code>impl</code> blocks, but source uses class bodies, <code>with</code>, <code>for</code>, and <code>where</code>.</li>
 <li><strong>Storage dispatch is explicit:</strong> a storage-backed newtype may delegate representation work through <code>T.Storage</code>, but the source-level type remains the nominal newtype and no ambient primitive conversion is created.</li>
 <li><strong>Overlaps must be diagnosed:</strong> if two generic trait-targeted methods could satisfy the same trait instantiation for the same receiver type and type arguments, the compiler must reject the ambiguity unless another accepted RFC defines specialization.</li>
+<li><strong>Traits may own capability families:</strong> when a trait defines a canonical contract over a finite or registry-backed language type family, the trait can expose that conformance through checked capability metadata instead of reopening each existing type declaration.</li>
 </ol>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>RFC 009 made exact-width numeric types first-class. RFC 056 then used trait-backed numeric I/O so <code>BytesIO</code> could read and write <code>u8</code>, <code>i8</code>, <code>u16</code>, <code>i16</code>, <code>u32</code>, <code>i32</code>, <code>u64</code>, <code>i64</code>, <code>u128</code>, <code>i128</code>, <code>f32</code>, and <code>f64</code> without exposing a public matrix of method names. That design is right, but the current language still pressures implementations toward repeated one-type-at-a-time adoptions, hardcoded builtin dispatch, or backend-specific escape hatches. The language has the vocabulary for generic bounds and method-level trait targeting, but it lacks a source form for saying "this class method satisfies a whole generic family of trait instantiations."</p>
 <p>RFC 091 adds a second pressure point. A constrained integer newtype such as <code>Month = newtype int[ge=1, le=12, storage=u8]</code> is logically a <code>Month</code>, not a <code>u8</code>, but representation-oriented traits such as binary writing often want to use the compact storage carrier once validation has already happened. The feature needed here is not "treat <code>Month</code> as a <code>u8</code>." It is a checked way for a method family to say that storage-backed values can participate in a trait when their storage carrier participates in the corresponding representation trait.</p>
-<p>Incan should solve this in the class-body model users already know. Python's class model teaches that a class bundles data and functionality, and Incan's class docs follow that direction: classes are behavior-first, methods are the primary API, and <code>extends</code> is reserved for inheritance and method reuse. Adding an external <code>impl</code> or <code>extend Type with Trait</code> block would solve the backend problem while making the authoring surface less Incan. The language should instead let <code>BytesIO</code> teach existing <code>BytesIO</code> values the generic trait behavior by putting the method on <code>BytesIO</code> itself.</p>
+<p>Incan should solve owned behavior in the class-body model users already know. Python's class model teaches that a class bundles data and functionality, and Incan's class docs follow that direction: classes are behavior-first, methods are the primary API, and <code>extends</code> is reserved for inheritance and method reuse. Adding an external <code>impl</code> or <code>extend Type with Trait</code> block would solve the backend problem while making the authoring surface less Incan. The language should instead let <code>BytesIO</code> teach existing <code>BytesIO</code> values the generic trait behavior by putting the method on <code>BytesIO</code> itself.</p>
+<p>RFC 101 exposed the complementary case. <code>std.collections.OrdinalKey</code> owns a deterministic key contract for existing language scalar families such as <code>str</code>, <code>bytes</code>, exact-width integers, decimal, UUID, dates, and stable value enums. Reopening each type declaration is the wrong mental model, and external <code>impl</code> blocks would import Rust's coherence surface into Incan source. The trait should own the canonical conformance family, while the compiler proves membership from language registries, associated type metadata, and the trait contract.</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Allow methods in concrete type bodies to declare method-level generic parameters and target a generic trait instantiation in the same method header.</li>
@@ -5651,6 +5687,7 @@
 <li>Add method-local <code>where</code> constraints for projected associated types and concrete receiver capability checks needed by those adoption families.</li>
 <li>Support numeric family dispatch for exact-width integer and float helper traits without requiring a hand-authored method per primitive type.</li>
 <li>Support storage-carrier dispatch for constrained integer newtypes without weakening RFC 091's logical-type versus storage-carrier boundary.</li>
+<li>Support trait-owned capability families for deterministic registry-backed contracts such as stable ordinal keys.</li>
 <li>Preserve the existing <code>with TraitName</code> and method-level <code>for TraitName</code> mental model from RFC 043.</li>
 <li>Reject overlapping adoption families clearly rather than adding specialization by accident.</li>
 </ul>
@@ -5663,6 +5700,7 @@
 <li>This RFC does not make storage-backed newtypes subtype or implicitly convert to their storage carrier.</li>
 <li>This RFC does not introduce trait specialization or overlapping implementation precedence.</li>
 <li>This RFC does not require generic associated types.</li>
+<li>This RFC does not add arbitrary package monkey-patching for existing types. Trait-owned capability families are canonical contracts owned by the trait and checked by the compiler, not per-package alternate implementations.</li>
 </ul>
 <h2 id="guide-level-explanation">Guide-level explanation<a class="headerlink" href="#guide-level-explanation" title="Permanent link">&para;</a></h2>
 <p>A class that owns behavior can define a generic trait-targeted method directly in its body. The method's generic header lists the method type parameter, the trait target, and any extra constraints that determine when the adoption family exists:</p>
@@ -5718,11 +5756,21 @@
 <h3 id="adoption-family-semantics">Adoption-family semantics<a class="headerlink" href="#adoption-family-semantics" title="Permanent link">&para;</a></h3>
 <p>A generic trait-targeted method in a concrete type body establishes a trait adoption family for the enclosing type. For each substitution of the method type parameters that satisfies the method's bounds and <code>where</code> constraints, the enclosing type is considered to adopt the targeted trait instantiation, and the method body satisfies the corresponding trait method. The compiler must check the method signature against the targeted trait method after substituting the method type parameters, associated type projections, and constraints.</p>
 <p>The enclosing type does not need to list every covered trait instantiation in its declaration header. For example, <code>BytesIO</code> should not have to spell <code>with BinaryWrite[u8], BinaryWrite[i8], BinaryWrite[u16], ...</code> when a single generic trait-targeted method covers the exact-width numeric family. The adoption family is still explicit because it is attached to a method that names <code>for BinaryWrite[T]</code> and declares the constraints on <code>T</code>.</p>
+<h3 id="trait-owned-capability-families">Trait-owned capability families<a class="headerlink" href="#trait-owned-capability-families" title="Permanent link">&para;</a></h3>
+<p>Some traits define a canonical contract for an existing language type family rather than behavior owned by one class body. <code>OrdinalKey</code> is the motivating example: the trait owns the deterministic key encoding contract, and <code>str</code>, <code>bytes</code>, exact-width integers, decimal, UUID, civil date/time values, and stable scalar value enums satisfy that contract when their language-defined representation has a deterministic encoding.</p>
+<p>The compiler must model these as checked trait conformance facts, not as ad hoc name checks in each caller. A trait-owned capability family has:</p>
+<ul>
+<li>a fully qualified trait identity;</li>
+<li>a finite or registry-backed type-family predicate;</li>
+<li>required methods, associated type bindings, or constants supplied by the trait contract and language metadata;</li>
+<li>deterministic overlap rules so a type has at most one visible conformance for the same trait instantiation.</li>
+</ul>
+<p>Source should not spell Rust-style external implementation blocks for this. The trait owns the intent, the compiler proves that a concrete type is in the supported family, and backend lowering emits whatever target representation is required. If the proof depends on associated types, the associated type bindings must be exposed through the same implementation metadata described by RFC 098.</p>
 <h3 id="where-constraints">Where constraints<a class="headerlink" href="#where-constraints" title="Permanent link">&para;</a></h3>
 <p>A <code>where</code> constraint in a method generic header may express trait conformance for a type parameter, an associated type projection, or a concrete type expression. Examples include <code>where T.Storage with FixedWidthInteger</code> and <code>where BytesIO with BinaryWrite[T.Storage]</code>. A <code>where</code> constraint must be checked statically and must not be treated as a runtime guard. If the compiler cannot prove a <code>where</code> constraint for a candidate substitution, that substitution does not satisfy the adoption family.</p>
 <p>This RFC defines method-local <code>where</code> constraints only for generic trait-targeted methods. A later RFC may generalize <code>where</code> clauses to functions, type aliases, class declarations, and trait declarations, but this RFC does not require that larger surface.</p>
 <h3 id="storage-backed-integer-dispatch">Storage-backed integer dispatch<a class="headerlink" href="#storage-backed-integer-dispatch" title="Permanent link">&para;</a></h3>
-<p>Storage-backed constrained integer newtypes may expose a compiler-provided <code>StorageBackedInteger</code> capability. That capability should include an associated type named <code>Storage</code>, whose binding is the exact-width integer storage carrier declared by <code>storage=&lt;integer-carrier&gt;</code>, and a value-level method that lets already-validated values expose their storage representation for representation-oriented work. A type such as <code>type Month = newtype int[ge=1, le=12, storage=u8]</code> therefore satisfies <code>StorageBackedInteger</code> with <code>type Storage = u8</code>.</p>
+<p>Storage-backed constrained integer newtypes may expose a trait-owned <code>StorageBackedInteger</code> capability. That capability should include an associated type named <code>Storage</code>, whose binding is the exact-width integer storage carrier declared by <code>storage=&lt;integer-carrier&gt;</code>, and a value-level method that lets already-validated values expose their storage representation for representation-oriented work. A type such as <code>type Month = newtype int[ge=1, le=12, storage=u8]</code> therefore satisfies <code>StorageBackedInteger</code> with <code>type Storage = u8</code>.</p>
 <p>Using <code>T.Storage</code> in a generic trait-targeted method must not create ambient primitive conversion. A <code>Month</code> remains a <code>Month</code>, a <code>u8</code> remains a <code>u8</code>, and a method that delegates through <code>value.to_storage()</code> is explicitly choosing a representation path for an already-validated value. Reconstructing a storage-backed newtype from storage data must continue to use the checked newtype construction path so storage carrier values that are representable but semantically invalid still fail validation.</p>
 <h3 id="coherence-and-ambiguity">Coherence and ambiguity<a class="headerlink" href="#coherence-and-ambiguity" title="Permanent link">&para;</a></h3>
 <p>The compiler must reject overlapping generic trait-targeted methods when two methods could satisfy the same trait instantiation for the same enclosing type and substituted type arguments. This RFC does not introduce specialization, priority ordering, or "more specific wins" selection. If a future RFC adds specialization, it may relax this rule with explicit precedence semantics, but the default behavior must be ambiguity rejection.</p>
@@ -5750,6 +5798,7 @@
 <h3 id="numeric-family-traits">Numeric family traits<a class="headerlink" href="#numeric-family-traits" title="Permanent link">&para;</a></h3>
 <p>The standard library or builtin trait surface should define numeric family traits over the RFC 009 registry rather than forcing each numeric helper surface to discover widths by string matching. This RFC uses illustrative names such as <code>FixedWidthInteger</code>, <code>FixedWidthFloat</code>, <code>FixedWidthNumeric</code>, and <code>StorageBackedInteger</code>; the final names should align with the existing stdlib trait naming style before this RFC moves out of Draft.</p>
 <p>The important contract is registry-backed membership. If a trait claims to represent fixed-width integers, its membership must come from the numeric registry introduced by RFC 009, not from duplicated lists in each library. Aliases such as <code>byte</code> and <code>integer</code> should resolve to their canonical numeric identities before family membership is checked, so alias spelling does not create extra adoption families.</p>
+<p>The same registry-backed model applies outside numeric I/O. A trait such as <code>OrdinalKey</code> may define a deterministic key family over language scalar registries and exact stdlib scalar metadata. That does not make <code>str</code> or <code>u32</code> reopenable; it means the trait contract and registry facts together establish one canonical conformance.</p>
 <h3 id="interaction-with-stdio">Interaction with <code>std.io</code><a class="headerlink" href="#interaction-with-stdio" title="Permanent link">&para;</a></h3>
 <p>RFC 056 deliberately made numeric reads and writes trait-backed rather than a public matrix of method names. Generic trait-targeted methods are the missing authoring surface for that design. <code>BytesIO</code> can define one method family for fixed-width numeric writes, one for fixed-width numeric reads where the result type is expected, and one for storage-backed integer newtypes that delegate through their storage carriers.</p>
 <p><code>int</code> remains an alias for <code>i64</code>, so an <code>int</code> value should satisfy the same numeric family membership as <code>i64</code> after alias normalization. This does not create a separate <code>BinaryWrite[int]</code> implementation alongside <code>BinaryWrite[i64]</code>; the trait target should canonicalize through the same alias rules RFC 009 uses for type identity.</p>
@@ -5772,12 +5821,12 @@
 <p>The trait solver also has more work to do. It must reason about adoption families, associated type projections, alias-normalized numeric family membership, and overlap detection. The benefit is that this work becomes central and checked instead of being duplicated across stdlib modules and backend codegen branches.</p>
 <p>Storage-carrier dispatch may tempt users to think representation and semantics are interchangeable. The language and docs must be blunt: storage dispatch is a representation-oriented delegation tool, not a permission to bypass validation or treat domain newtypes as primitive numbers.</p>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
-<p>This section is non-normative. A practical implementation should model generic trait-targeted methods as checked trait adoption families attached to the enclosing type's metadata. During typechecking, the method's type parameters, target trait expression, and <code>where</code> constraints should be stored together so trait conformance queries can ask whether a concrete trait instantiation is covered. Backend lowering may then emit a target-language generic implementation, a finite expansion for registry-known numeric families, or another representation that preserves the same checked semantics.</p>
+<p>This section is non-normative. A practical implementation should model generic trait-targeted methods as checked trait adoption families attached to the enclosing type's metadata. During typechecking, the method's type parameters, target trait expression, and <code>where</code> constraints should be stored together so trait conformance queries can ask whether a concrete trait instantiation is covered. Trait-owned capability families should be stored in the same conformance model, keyed by trait identity and type-family predicate, so generic bounds, method lookup, lowering, metadata export, and diagnostics read the same facts. Backend lowering may then emit a target-language generic implementation, a finite expansion for registry-known families, or another representation that preserves the same checked semantics.</p>
 <p>Storage-backed constrained newtypes should expose their storage carrier through checked metadata produced by RFC 091. The storage-backed capability should be derived from that metadata rather than requiring users to restate <code>type Storage = ...</code> manually for every storage-backed newtype.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Parser / AST</strong>: method generic headers must accept <code>for TraitExpression</code> and method-local <code>where</code> constraints.</li>
-<li><strong>Typechecker / Symbol resolution</strong>: concrete type metadata must record generic trait-targeted adoption families, check method signatures against targeted trait methods, evaluate <code>where</code> constraints, and reject overlapping families.</li>
+<li><strong>Typechecker / Symbol resolution</strong>: concrete type metadata must record generic trait-targeted adoption families, trait metadata must record trait-owned capability families, method signatures must be checked against targeted trait methods, <code>where</code> constraints must be evaluated, and overlapping families must be rejected.</li>
 <li><strong>IR Lowering</strong>: lowered method metadata must preserve the targeted trait instantiation and generic constraints so backend dispatch remains checked.</li>
 <li><strong>Emission</strong>: Rust emission should lower eligible generic trait-targeted methods to valid Rust trait implementations or equivalent generated code while respecting coherence.</li>
 <li><strong>Stdlib / Runtime (<code>incan_stdlib</code>)</strong>: numeric family traits and storage-backed integer traits should be exposed where <code>std.io</code>, codecs, serializers, and related APIs need them.</li>
@@ -5793,7 +5842,7 @@
 <li>Should storage-backed integer newtypes expose a standard <code>to_storage()</code> method, a property, or a more explicit representation adapter?</li>
 <li>Should binary reading for storage-backed newtypes be included in the same design, and if so, what error type should construction-from-storage use when the storage value is representable but violates the newtype's semantic constraints?</li>
 <li>Should alias-normalized types such as <code>int</code> and <code>i64</code> appear as one trait instantiation in diagnostics or preserve the authored spelling where possible?</li>
-<li>Should external trait adoption for owned traits or owned types be revisited later, or should Incan continue to require trait behavior to live in the owning type declaration except for Rust interop wrappers?</li>
+<li>What exact source spelling, metadata annotation, or trait declaration shape should a trait use to declare a trait-owned capability family, and which families are accepted for the RFC 099 implementation milestone?</li>
 </ul>
 <!-- Rename this section to "Design Decisions" once all questions have been resolved.
      An RFC cannot move from Draft to Planned until no unresolved questions remain. -->

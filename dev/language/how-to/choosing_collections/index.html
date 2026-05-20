@@ -1565,6 +1565,66 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#use-ordinalmap-for-stable-key-to-position-lookup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use OrdinalMap for stable key-to-position lookup
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Use OrdinalMap for stable key-to-position lookup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#build-a-schema-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      Build a schema index
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-external-ordinals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use external ordinals
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choose-the-lookup-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      Choose the lookup path
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-non-string-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use non-string keys
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#persist-an-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      Persist an index
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       See also
@@ -3181,6 +3241,8 @@
       
         
       
+        
+      
     
     
       
@@ -3491,6 +3553,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/ordinal_map/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    OrdinalMap
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3636,7 +3719,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_20" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
         
           
           
@@ -3652,14 +3735,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_20" id="__nav_4_5_20_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_20_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_20">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_21">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5537,6 +5620,66 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#use-ordinalmap-for-stable-key-to-position-lookup" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use OrdinalMap for stable key-to-position lookup
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Use OrdinalMap for stable key-to-position lookup">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#build-a-schema-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      Build a schema index
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-external-ordinals" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use external ordinals
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#choose-the-lookup-path" class="md-nav__link">
+    <span class="md-ellipsis">
+      Choose the lookup path
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#use-non-string-keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      Use non-string keys
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#persist-an-index" class="md-nav__link">
+    <span class="md-ellipsis">
+      Persist an index
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#see-also" class="md-nav__link">
     <span class="md-ellipsis">
       See also
@@ -5600,6 +5743,10 @@
 <tr>
 <td>Always process the next highest-priority item</td>
 <td><code>PriorityQueue[T]</code></td>
+</tr>
+<tr>
+<td>Resolve a fixed key domain to stable integer positions</td>
+<td><code>OrdinalMap[K]</code></td>
 </tr>
 </tbody>
 </table>
@@ -5723,9 +5870,96 @@
 
     <span class="k">assert</span> <span class="n">largest_first</span><span class="o">.</span><span class="nb">pop</span><span class="p">()</span> <span class="o">==</span> <span class="mi">30</span>
 </code></pre></div>
+<h2 id="use-ordinalmap-for-stable-key-to-position-lookup">Use <code>OrdinalMap</code> for stable key-to-position lookup<a class="headerlink" href="#use-ordinalmap-for-stable-key-to-position-lookup" title="Permanent link">&para;</a></h2>
+<p>Use <code>OrdinalMap[K]</code> when the keys are known up front and each key needs a stable integer ordinal. This is a good fit for schema fields, column names, generated catalogs, dictionary-encoded scalar domains, and query-planning metadata.</p>
+<p>Use builtin <code>dict[K, int]</code> when the map is mutable, built incrementally, or does not need deterministic serialized bytes. Use <code>OrderedDict[K, V]</code> when insertion order is the contract and values are arbitrary. Use <code>OrdinalMap[K]</code> when the value is specifically the key's integer position/code and the map should be immutable after construction.</p>
+<h3 id="build-a-schema-index">Build a schema index<a class="headerlink" href="#build-a-schema-index" title="Permanent link">&para;</a></h3>
+<p>Use <code>from_keys</code> when the input order is the ordinal contract. The first key maps to <code>0</code>, the second key maps to <code>1</code>, and so on.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.collections</span><span class="w"> </span><span class="kn">import</span> <span class="nc">OrdinalMap</span><span class="p">,</span> <span class="nc">OrdinalMapError</span><span class="p">,</span> <span class="nc">OrdinalMapErrorKind</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">OrdinalMapError</span><span class="p">]:</span>
+    <span class="n">columns</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span><span class="s2">&quot;order_id&quot;</span><span class="p">,</span> <span class="s2">&quot;customer_id&quot;</span><span class="p">,</span> <span class="s2">&quot;status&quot;</span><span class="p">,</span> <span class="s2">&quot;amount&quot;</span><span class="p">])</span><span class="o">?</span>
+
+    <span class="k">assert</span> <span class="n">columns</span><span class="o">.</span><span class="n">require</span><span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">)</span><span class="o">?</span> <span class="o">==</span> <span class="mi">2</span>
+    <span class="k">assert</span> <span class="n">columns</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;missing&quot;</span><span class="p">)</span> <span class="o">==</span> <span class="kc">None</span>
+    <span class="k">assert</span> <span class="n">columns</span><span class="o">.</span><span class="n">require_many</span><span class="p">([</span><span class="s2">&quot;status&quot;</span><span class="p">,</span> <span class="s2">&quot;amount&quot;</span><span class="p">])</span><span class="o">?</span> <span class="o">==</span> <span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
+
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="kc">None</span><span class="p">)</span>
+</code></pre></div>
+<p>Construction rejects duplicate keys because the key domain must be one-to-one with ordinals.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">duplicate</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span><span class="s2">&quot;status&quot;</span><span class="p">,</span> <span class="s2">&quot;status&quot;</span><span class="p">])</span>
+<span class="k">match</span> <span class="n">duplicate</span><span class="p">:</span>
+    <span class="nb">Ok</span><span class="p">(</span><span class="n">_</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">assert</span> <span class="kc">False</span>
+    <span class="nb">Err</span><span class="p">(</span><span class="n">err</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="k">assert</span> <span class="n">err</span><span class="o">.</span><span class="n">kind</span><span class="p">()</span> <span class="o">==</span> <span class="nc">OrdinalMapErrorKind</span><span class="o">.</span><span class="nc">DuplicateKey</span>
+</code></pre></div>
+<h3 id="use-external-ordinals">Use external ordinals<a class="headerlink" href="#use-external-ordinals" title="Permanent link">&para;</a></h3>
+<p>Use <code>from_pairs</code> when ordinals come from an external schema, persisted catalog, or wire contract. Pair order does not affect serialization; equivalent key/ordinal pairs produce identical bytes.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">field_ids</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_pairs</span><span class="p">([</span>
+    <span class="p">(</span><span class="s2">&quot;order_id&quot;</span><span class="p">,</span> <span class="mi">10</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;customer_id&quot;</span><span class="p">,</span> <span class="mi">11</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">,</span> <span class="mi">12</span><span class="p">),</span>
+<span class="p">])</span><span class="o">?</span>
+
+<span class="n">same_ids</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_pairs</span><span class="p">([</span>
+    <span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">,</span> <span class="mi">12</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;order_id&quot;</span><span class="p">,</span> <span class="mi">10</span><span class="p">),</span>
+    <span class="p">(</span><span class="s2">&quot;customer_id&quot;</span><span class="p">,</span> <span class="mi">11</span><span class="p">),</span>
+<span class="p">])</span><span class="o">?</span>
+
+<span class="k">assert</span> <span class="n">field_ids</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">()</span> <span class="o">==</span> <span class="n">same_ids</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">()</span>
+</code></pre></div>
+<p><code>from_pairs</code> rejects duplicate keys, negative ordinals, and duplicate ordinals. If one ordinal should point at many labels, use a different model such as <code>dict[int, list[str]]</code>.</p>
+<h3 id="choose-the-lookup-path">Choose the lookup path<a class="headerlink" href="#choose-the-lookup-path" title="Permanent link">&para;</a></h3>
+<p>Use <code>get</code> when absence is normal control flow.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="n">columns</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;discount_code&quot;</span><span class="p">):</span>
+    <span class="nb">Some</span><span class="p">(</span><span class="nb">index</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;column index: </span><span class="si">{</span><span class="nb">index</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
+    <span class="kc">None</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="s2">&quot;column not present&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Use <code>require</code> when absence should be a recoverable error value.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">status_index</span> <span class="o">=</span> <span class="n">columns</span><span class="o">.</span><span class="n">require</span><span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">)</span><span class="o">?</span>
+</code></pre></div>
+<p>Use indexing only when the key is expected to be present and ordinary mapping-style failure is acceptable.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">status_index</span> <span class="o">=</span> <span class="n">columns</span><span class="p">[</span><span class="s2">&quot;status&quot;</span><span class="p">]</span>
+</code></pre></div>
+<p>Use <code>get_unchecked</code> only when an external invariant or prior exact check has already proven that the key is present. A query planner, for example, can validate user-supplied names once and then use unchecked lookup while executing a hot loop over already-validated fields.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">if</span> <span class="s2">&quot;status&quot;</span> <span class="ow">in</span> <span class="n">columns</span><span class="p">:</span>
+    <span class="n">status_index</span> <span class="o">=</span> <span class="n">columns</span><span class="o">.</span><span class="n">get_unchecked</span><span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">)</span>
+</code></pre></div>
+<h3 id="use-non-string-keys">Use non-string keys<a class="headerlink" href="#use-non-string-keys" title="Permanent link">&para;</a></h3>
+<p><code>OrdinalMap</code> requires <code>OrdinalKey</code> keys with deterministic canonical bytes and a stable encoding identifier. The standard key surface covers deterministic scalar keys such as <code>str</code>, <code>bytes</code>, <code>bool</code>, integers, fixed-precision decimal values, UUID values, date/time values, stable value enums, and user-defined adopters. Floats are excluded; use a deterministic domain model, integer-scaled value, decimal value, or explicit string representation for floating-point-like concepts.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.collections</span><span class="w"> </span><span class="kn">import</span> <span class="nc">OrdinalMap</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.datetime</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Date</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">std.uuid</span><span class="w"> </span><span class="kn">import</span> <span class="nc">UUID</span>
+
+<span class="n">price</span><span class="p">:</span> <span class="n">decimal</span><span class="p">[</span><span class="mi">5</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="mf">19.99</span><span class="n">d</span>
+<span class="n">fee</span><span class="p">:</span> <span class="n">decimal</span><span class="p">[</span><span class="mi">5</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span> <span class="o">=</span> <span class="mf">1.25</span><span class="n">d</span>
+<span class="n">amount_codes</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_pairs</span><span class="p">([(</span><span class="n">price</span><span class="p">,</span> <span class="mi">1999</span><span class="p">),</span> <span class="p">(</span><span class="n">fee</span><span class="p">,</span> <span class="mi">125</span><span class="p">)])</span><span class="o">?</span>
+
+<span class="n">statement_days</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_keys</span><span class="p">([</span>
+    <span class="nc">Date</span><span class="p">(</span><span class="n">year</span><span class="o">=</span><span class="mi">2026</span><span class="p">,</span> <span class="n">month</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">day</span><span class="o">=</span><span class="mi">1</span><span class="p">),</span>
+    <span class="nc">Date</span><span class="p">(</span><span class="n">year</span><span class="o">=</span><span class="mi">2026</span><span class="p">,</span> <span class="n">month</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">day</span><span class="o">=</span><span class="mi">2</span><span class="p">),</span>
+<span class="p">])</span><span class="o">?</span>
+
+<span class="n">tenant</span> <span class="o">=</span> <span class="nc">UUID</span><span class="o">.</span><span class="n">from_int</span><span class="p">(</span><span class="mi">113059749145936325402354257176981405696</span><span class="p">)</span>
+<span class="n">tenant_slots</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_pairs</span><span class="p">([(</span><span class="n">tenant</span><span class="p">,</span> <span class="mi">42</span><span class="p">)])</span><span class="o">?</span>
+
+<span class="k">assert</span> <span class="n">statement_days</span><span class="o">.</span><span class="n">require</span><span class="p">(</span><span class="nc">Date</span><span class="p">(</span><span class="n">year</span><span class="o">=</span><span class="mi">2026</span><span class="p">,</span> <span class="n">month</span><span class="o">=</span><span class="mi">5</span><span class="p">,</span> <span class="n">day</span><span class="o">=</span><span class="mi">2</span><span class="p">))</span><span class="o">?</span> <span class="o">==</span> <span class="mi">1</span>
+<span class="k">assert</span> <span class="n">tenant_slots</span><span class="o">.</span><span class="n">require</span><span class="p">(</span><span class="n">tenant</span><span class="p">)</span><span class="o">?</span> <span class="o">==</span> <span class="mi">42</span>
+<span class="k">assert</span> <span class="n">amount_codes</span><span class="o">.</span><span class="n">require</span><span class="p">(</span><span class="n">price</span><span class="p">)</span><span class="o">?</span> <span class="o">==</span> <span class="mi">1999</span>
+</code></pre></div>
+<h3 id="persist-an-index">Persist an index<a class="headerlink" href="#persist-an-index" title="Permanent link">&para;</a></h3>
+<p>Use <code>to_bytes</code> when a generated catalog or dataset sidecar needs reproducible bytes. Use <code>from_bytes</code> with an explicit type annotation so the stored key encoding is checked against the key type you expect.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">blob</span> <span class="o">=</span> <span class="n">columns</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">()</span>
+<span class="n">restored</span><span class="p">:</span> <span class="nc">OrdinalMap</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nc">OrdinalMap</span><span class="o">.</span><span class="n">from_bytes</span><span class="p">(</span><span class="n">blob</span><span class="p">)</span><span class="o">?</span>
+
+<span class="k">assert</span> <span class="n">restored</span><span class="o">.</span><span class="n">to_bytes</span><span class="p">()</span> <span class="o">==</span> <span class="n">blob</span>
+<span class="k">assert</span> <span class="n">restored</span><span class="o">.</span><span class="n">require</span><span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">)</span><span class="o">?</span> <span class="o">==</span> <span class="n">columns</span><span class="o">.</span><span class="n">require</span><span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">)</span><span class="o">?</span>
+</code></pre></div>
+<p>Use <code>serialized_size()</code> when comparing persisted payload size. Use <code>nbytes()</code> or <code>storage_bytes()</code> when comparing compact payload sections in memory; those values exclude ordinary object/header overhead and runtime lookup caches.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../reference/stdlib/collections/">std.collections reference</a></li>
+<li><a href="../../explanation/ordinal_map/">Why <code>OrdinalMap</code> exists</a></li>
 <li><a href="../../tutorials/book/08_collections_and_iteration/">Collections and iteration tutorial</a></li>
 <li><a href="../../reference/stdlib_traits/collection_protocols/">Collection protocols</a></li>
 </ul>
