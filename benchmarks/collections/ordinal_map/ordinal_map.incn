@@ -13,12 +13,7 @@ def make_keys(count: int) -> list[str]:
     """
     Build deterministic column-name keys for the benchmark.
     """
-    mut keys: list[str] = []
-    mut idx = 0
-    while idx < count:
-        keys.append(f"field_{idx:08d}")
-        idx = idx + 1
-    return keys
+    return [f"field_{idx:08d}" for idx in range(count)]
 
 
 def make_probe_indexes(key_count: int, probe_count: int) -> list[int]:
