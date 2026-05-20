@@ -1,6 +1,6 @@
 //! Collection helpers for the first pass (fields/methods + derive-driven injections).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::*;
 use crate::frontend::symbols::{CallableParam, FieldInfo, MethodInfo, PropertyInfo, ResolvedType, TypeBoundInfo};
@@ -11,7 +11,7 @@ use incan_core::lang::derives::{self, DeriveId};
 ///
 /// During first-pass collection the owner type symbol is not yet registered, so simple self-references like `->
 /// Session` would otherwise fall back to `TypeVar("Session")`.
-fn owner_resolved_type(owner_name: &str, owner_type_params: &[TypeParam]) -> ResolvedType {
+pub(super) fn owner_resolved_type(owner_name: &str, owner_type_params: &[TypeParam]) -> ResolvedType {
     if owner_type_params.is_empty() {
         return ResolvedType::Named(owner_name.to_string());
     }
@@ -106,13 +106,85 @@ fn resolve_owner_self_reference(
     }
 }
 
+pub(super) fn type_param_name_set(
+    owner_type_params: &[TypeParam],
+    method_type_params: &[TypeParam],
+) -> HashSet<String> {
+    owner_type_params
+        .iter()
+        .chain(method_type_params.iter())
+        .map(|param| param.name.clone())
+        .collect()
+}
+
+fn shadow_declared_type_params(ty: ResolvedType, type_param_names: &HashSet<String>) -> ResolvedType {
+    match ty {
+        ResolvedType::Named(name) | ResolvedType::TypeVar(name) if type_param_names.contains(&name) => {
+            ResolvedType::TypeVar(name)
+        }
+        ResolvedType::Generic(name, args) => ResolvedType::Generic(
+            name,
+            args.into_iter()
+                .map(|arg| shadow_declared_type_params(arg, type_param_names))
+                .collect(),
+        ),
+        ResolvedType::Function(params, ret) => ResolvedType::Function(
+            params
+                .into_iter()
+                .map(|param| CallableParam {
+                    name: param.name,
+                    ty: shadow_declared_type_params(param.ty, type_param_names),
+                    kind: param.kind,
+                    has_default: param.has_default,
+                })
+                .collect(),
+            Box::new(shadow_declared_type_params(*ret, type_param_names)),
+        ),
+        ResolvedType::Tuple(items) => ResolvedType::Tuple(
+            items
+                .into_iter()
+                .map(|item| shadow_declared_type_params(item, type_param_names))
+                .collect(),
+        ),
+        ResolvedType::FrozenList(inner) => {
+            ResolvedType::FrozenList(Box::new(shadow_declared_type_params(*inner, type_param_names)))
+        }
+        ResolvedType::FrozenSet(inner) => {
+            ResolvedType::FrozenSet(Box::new(shadow_declared_type_params(*inner, type_param_names)))
+        }
+        ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(
+            Box::new(shadow_declared_type_params(*key, type_param_names)),
+            Box::new(shadow_declared_type_params(*value, type_param_names)),
+        ),
+        ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(shadow_declared_type_params(*inner, type_param_names))),
+        ResolvedType::RefMut(inner) => {
+            ResolvedType::RefMut(Box::new(shadow_declared_type_params(*inner, type_param_names)))
+        }
+        other => other,
+    }
+}
+
+pub(super) fn resolve_declared_type(
+    checker: &mut TypeChecker,
+    ty: &Spanned<Type>,
+    type_param_names: &HashSet<String>,
+    owner_name: Option<&str>,
+    owner_self_ty: Option<&ResolvedType>,
+) -> ResolvedType {
+    let resolved = checker.resolve_type_checked(ty);
+    let resolved = shadow_declared_type_params(resolved, type_param_names);
+    resolve_owner_self_reference(resolved, owner_name, owner_self_ty)
+}
+
 /// Build method symbol metadata from one declared method while resolving owner `Self` references.
 fn method_info_from_decl(
     method: &Spanned<MethodDecl>,
     checker: &mut TypeChecker,
     owner_name: Option<&str>,
+    owner_type_params: &[TypeParam],
     owner_self_ty: Option<&ResolvedType>,
 ) -> MethodInfo {
+    let active_type_params = type_param_name_set(owner_type_params, &method.node.type_params);
     let type_params: Vec<String> = method.node.type_params.iter().map(|tp| tp.name.clone()).collect();
     let type_param_bounds: HashMap<String, Vec<String>> = method
         .node
@@ -144,11 +216,7 @@ fn method_info_from_decl(
                             .type_args
                             .iter()
                             .map(|type_arg| {
-                                resolve_owner_self_reference(
-                                    checker.resolve_type_checked(type_arg),
-                                    owner_name,
-                                    owner_self_ty,
-                                )
+                                resolve_declared_type(checker, type_arg, &active_type_params, owner_name, owner_self_ty)
                             })
                             .collect(),
                         module_path: checker.trait_bound_module_path(&bound.name),
@@ -164,14 +232,16 @@ fn method_info_from_decl(
         .map(|p| {
             CallableParam::named_with_default(
                 p.node.name.clone(),
-                resolve_owner_self_reference(checker.resolve_type_checked(&p.node.ty), owner_name, owner_self_ty),
+                resolve_declared_type(checker, &p.node.ty, &active_type_params, owner_name, owner_self_ty),
                 p.node.kind,
                 p.node.default.is_some(),
             )
         })
         .collect();
-    let return_type = resolve_owner_self_reference(
-        checker.resolve_type_checked(&method.node.return_type),
+    let return_type = resolve_declared_type(
+        checker,
+        &method.node.return_type,
+        &active_type_params,
         owner_name,
         owner_self_ty,
     );
@@ -182,9 +252,7 @@ fn method_info_from_decl(
             .node
             .type_args
             .iter()
-            .map(|type_arg| {
-                resolve_owner_self_reference(checker.resolve_type_checked(type_arg), owner_name, owner_self_ty)
-            })
+            .map(|type_arg| resolve_declared_type(checker, type_arg, &active_type_params, owner_name, owner_self_ty))
             .collect(),
         module_path: checker.trait_bound_module_path(&target.node.name),
     });
@@ -219,6 +287,7 @@ pub(super) fn collect_method_overloads(
                 method,
                 checker,
                 owner_name,
+                owner_type_params,
                 owner_self_ty.as_ref(),
             ));
     }
@@ -293,14 +362,23 @@ pub(super) fn collect_fields(
     fields: &[Spanned<FieldDecl>],
     checker: &mut TypeChecker,
     owner: &str,
+    owner_type_params: &[TypeParam],
 ) -> HashMap<String, FieldInfo> {
+    let owner_self_ty = owner_resolved_type(owner, owner_type_params);
+    let active_type_params = type_param_name_set(owner_type_params, &[]);
     fields
         .iter()
         .map(|f| {
             (
                 f.node.name.clone(),
                 FieldInfo {
-                    ty: checker.resolve_type_checked(&f.node.ty),
+                    ty: resolve_declared_type(
+                        checker,
+                        &f.node.ty,
+                        &active_type_params,
+                        Some(owner),
+                        Some(&owner_self_ty),
+                    ),
                     visibility: f.node.visibility,
                     owner: Some(owner.to_string()),
                     has_default: f.node.default.is_some(),
@@ -320,14 +398,17 @@ pub(super) fn collect_properties(
     owner_type_params: &[TypeParam],
 ) -> HashMap<String, PropertyInfo> {
     let owner_self_ty = owner_name.map(|name| owner_resolved_type(name, owner_type_params));
+    let active_type_params = type_param_name_set(owner_type_params, &[]);
     properties
         .iter()
         .map(|property| {
             (
                 property.node.name.clone(),
                 PropertyInfo {
-                    return_type: resolve_owner_self_reference(
-                        checker.resolve_type_checked(&property.node.return_type),
+                    return_type: resolve_declared_type(
+                        checker,
+                        &property.node.return_type,
+                        &active_type_params,
                         owner_name,
                         owner_self_ty.as_ref(),
                     ),

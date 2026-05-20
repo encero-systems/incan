@@ -3308,6 +3308,44 @@ def f() -> None:
     Ok(())
 }
 
+#[test]
+fn test_imported_rust_type_like_constructor_without_metadata_is_rejected() {
+    let source = r#"
+from rust::std::ops import Range
+
+def f() -> None:
+  _ = Range(1, 3)
+"#;
+    let errs = check_str_err(source, "expected Rust constructor metadata diagnostic");
+    assert!(
+        errs.iter()
+            .any(|e| e.message.contains("Cannot construct imported Rust item") && e.message.contains("std::ops::Range")),
+        "expected Rust constructor metadata diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_imported_rust_function_without_metadata_stays_permissive() {
+    let source = r#"
+from rust::std::fs import read_to_string
+
+def f() -> None:
+  _ = read_to_string("input.csv")
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_imported_rust_named_constructor_without_metadata_stays_permissive() {
+    let source = r#"
+from rust::std::ops import Range
+
+def f() -> None:
+  _ = Range(start=1, end=3)
+"#;
+    assert!(check_str(source).is_ok());
+}
+
 /// Field access on a Rust type that isn't a known inherent associated function should be permissive
 /// (metadata only covers inherent methods, not consts, type aliases, or trait-provided items).
 #[test]
@@ -7507,6 +7545,25 @@ pub def get_value[T](boxed: Boxed[T]) -> T:
 }
 
 #[test]
+fn test_explicit_generic_model_constructor_args_specialize_field_types() {
+    let source = r#"
+pub trait Iterator[T]:
+  def __next__(mut self) -> Option[T]: ...
+
+  def zip[U](self, other: Iterator[U]) -> Iterator[tuple[T, U]]:
+    return ZipIterator[T, Self, U, Iterator[U]](left=self, right=other)
+
+pub model ZipIterator[T, Left with Iterator[T], U, Right with Iterator[U]] with Iterator[tuple[T, U]]:
+  left: Left
+  right: Right
+
+  def __next__(mut self) -> Option[tuple[T, U]]:
+    return None
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
 fn test_generic_class_field_access_substitutes_nested_field_type() {
     let source = r#"
 pub class Boxed[T]:
@@ -7514,6 +7571,29 @@ pub class Boxed[T]:
 
 pub def get_values[T](boxed: Boxed[T]) -> List[T]:
   return boxed.values
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_generic_model_field_type_params_shadow_value_variants() {
+    let source = r#"
+pub enum JoinSide:
+  Left
+  Right
+
+pub trait Iterator[T]:
+  def __next__(mut self) -> Option[T]: ...
+
+  def zip[U](self, other: Iterator[U]) -> Iterator[tuple[T, U]]:
+    return ZipIterator[T, Self, U, Iterator[U]](left=self, right=other)
+
+pub model ZipIterator[T, Left with Iterator[T], U, Right with Iterator[U]] with Iterator[tuple[T, U]]:
+  left: Left
+  right: Right
+
+  def __next__(mut self) -> Option[tuple[T, U]]:
+    return None
 "#;
     assert!(check_str(source).is_ok());
 }

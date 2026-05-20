@@ -717,7 +717,6 @@ fn collect_public_fields(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget, cra
                 type_shape,
             });
         }
-        collected.sort_by(|a, b| a.name.cmp(&b.name));
         return collected;
     }
 
@@ -736,7 +735,6 @@ fn collect_public_fields(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget, cra
             type_shape,
         });
     }
-    fields.sort_by(|a, b| a.name.cmp(&b.name));
     fields
 }
 
@@ -1043,6 +1041,37 @@ impl Labelled for Thing {}
             "expected direct Labelled impl in metadata, got {:?}",
             info.implemented_traits
         );
+        Ok(())
+    }
+
+    #[test]
+    fn type_metadata_preserves_struct_field_declaration_order() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo_field_order_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )?;
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"pub struct Pair {
+    pub zeta: i64,
+    pub alpha: i64,
+}
+"#,
+        )?;
+
+        let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let metadata = extract_rust_item(&workspace, "demo_field_order_probe::Pair")?;
+        let RustItemKind::Type(info) = metadata.kind else {
+            return Err(std::io::Error::other("expected type metadata").into());
+        };
+        let fields = info.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>();
+        assert_eq!(fields, ["zeta", "alpha"]);
         Ok(())
     }
 }

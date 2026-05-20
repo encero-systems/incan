@@ -1493,6 +1493,33 @@ impl AstLowering {
             if is_known_struct || is_resolved_type_name {
                 return self.lower_constructor_call(&constructor_name, type_args, args, call_span);
             }
+
+            if let Some(field_names) = self
+                .type_info
+                .as_ref()
+                .and_then(|info| info.rust_named_field_constructor_fields(call_span))
+                .map(|fields| fields.to_vec())
+            {
+                let lowered_args = self.lower_call_args(args)?;
+                let fields = field_names
+                    .into_iter()
+                    .zip(lowered_args)
+                    .map(|(field_name, arg)| (field_name, arg.expr))
+                    .collect();
+                let expr_ty = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.expr_type(call_span))
+                    .map(|ty| self.lower_resolved_type(ty))
+                    .unwrap_or(IrType::Unknown);
+                return Ok((
+                    IrExprKind::Struct {
+                        name: name.clone(),
+                        fields,
+                    },
+                    expr_ty,
+                ));
+            }
         }
 
         let imported_callee_path = match &f.node {

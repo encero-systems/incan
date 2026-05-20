@@ -8,10 +8,12 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::resolved_type_subst::substitute_resolved_type;
 use crate::frontend::symbols::{FieldInfo, ResolvedType, SymbolKind, TypeInfo};
 use crate::frontend::typechecker::IdentKind;
+use incan_core::interop::{RustFieldInfo, RustItemKind, RustTypeInfo};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
+use std::collections::{HashMap, HashSet};
 
 use super::TypeChecker;
 
@@ -20,6 +22,16 @@ mod builtins;
 mod constructors;
 mod generic_bounds;
 mod rust_boundary;
+
+fn rust_path_last_segment_looks_like_type(path: &str) -> bool {
+    path.rsplit("::")
+        .next()
+        .unwrap_or(path)
+        .trim_start_matches("r#")
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase())
+}
 
 impl TypeChecker {
     /// Type-check a call expression after parsing has identified the callee, explicit type arguments, and value
@@ -180,8 +192,9 @@ impl TypeChecker {
                                 return self.check_constructor(name, args, span);
                             }
                         }
-                        let explicit_constructor_ty =
-                            self.explicit_constructor_result_type(name, &type_info, type_args, span);
+                        let explicit_constructor_context =
+                            self.explicit_constructor_type_context(name, &type_info, type_args, span);
+                        let explicit_constructor_ty = explicit_constructor_context.as_ref().map(|(ty, _)| ty.clone());
                         if let TypeInfo::Model(model) = &type_info
                             && model
                                 .derives
@@ -207,9 +220,14 @@ impl TypeChecker {
                             TypeInfo::Class(info) => Some(info.fields.clone()),
                             _ => None,
                         };
-                        let Some(fields) = ctor_fields else {
+                        let Some(mut fields) = ctor_fields else {
                             return ResolvedType::Unknown;
                         };
+                        if let Some((_, type_bindings)) = &explicit_constructor_context {
+                            for field in fields.values_mut() {
+                                field.ty = substitute_resolved_type(&field.ty, type_bindings);
+                            }
+                        }
                         let constructor_ty = self.check_model_or_class_constructor_call(name, &fields, args, span);
                         self.record_expr_type(callee.span, ResolvedType::Named(name.clone()));
                         self.type_info
@@ -228,22 +246,68 @@ impl TypeChecker {
                             self.check_call_args(args);
                             return ResolvedType::Unknown;
                         }
-                        if let Some(meta) = &info.metadata
-                            && let incan_core::interop::RustItemKind::Function(sig) = &meta.kind
-                        {
-                            let error_count_before = self.errors.len();
-                            let result = self.validate_rust_function_call(info.path.as_str(), sig, args, span);
-                            if self.errors.len() == error_count_before {
-                                self.record_expr_type(
-                                    callee.span,
-                                    self.resolved_function_type_from_rust_sig(sig, false),
-                                );
-                                self.type_info
-                                    .expressions
-                                    .ident_kinds
-                                    .insert((callee.span.start, callee.span.end), IdentKind::RustImport);
+                        if let Some(meta) = &info.metadata {
+                            match &meta.kind {
+                                RustItemKind::Function(sig) => {
+                                    let error_count_before = self.errors.len();
+                                    let result = self.validate_rust_function_call(info.path.as_str(), sig, args, span);
+                                    if self.errors.len() == error_count_before {
+                                        self.record_expr_type(
+                                            callee.span,
+                                            self.resolved_function_type_from_rust_sig(sig, false),
+                                        );
+                                        self.type_info
+                                            .expressions
+                                            .ident_kinds
+                                            .insert((callee.span.start, callee.span.end), IdentKind::RustImport);
+                                    }
+                                    return result;
+                                }
+                                RustItemKind::Type(type_info) if !type_info.fields.is_empty() => {
+                                    let error_count_before = self.errors.len();
+                                    let result = self.check_rust_named_field_constructor_call(
+                                        info.path.as_str(),
+                                        type_info,
+                                        args,
+                                        span,
+                                    );
+                                    if self.errors.len() == error_count_before {
+                                        self.record_expr_type(callee.span, ResolvedType::RustPath(info.path.clone()));
+                                        self.type_info
+                                            .expressions
+                                            .ident_kinds
+                                            .insert((callee.span.start, callee.span.end), IdentKind::RustImport);
+                                    }
+                                    return result;
+                                }
+                                RustItemKind::Type(_) => {
+                                    self.check_call_args(args);
+                                    self.errors
+                                        .push(errors::rust_constructor_metadata_unavailable(info.path.as_str(), span));
+                                    return ResolvedType::Unknown;
+                                }
+                                RustItemKind::Unsupported { description } => {
+                                    self.check_call_args(args);
+                                    self.errors.push(errors::rust_item_shape_not_supported(
+                                        info.path.as_str(),
+                                        description.as_str(),
+                                        span,
+                                    ));
+                                    return ResolvedType::Unknown;
+                                }
+                                _ => {
+                                    self.check_call_args(args);
+                                    self.errors
+                                        .push(errors::rust_constructor_metadata_unavailable(info.path.as_str(), span));
+                                    return ResolvedType::Unknown;
+                                }
                             }
-                            return result;
+                        } else if rust_path_last_segment_looks_like_type(info.path.as_str()) {
+                            return self.check_metadata_free_rust_named_field_constructor_call(
+                                info.path.as_str(),
+                                args,
+                                span,
+                            );
                         }
                     }
                     // RFC 042: traits are abstract — reject `TraitName(...)` constructor syntax.
@@ -344,6 +408,166 @@ impl TypeChecker {
                 ResolvedType::Unknown
             }
         }
+    }
+
+    /// Type-check a call to an imported Rust named-field struct using rust-inspect field metadata.
+    fn check_rust_named_field_constructor_call(
+        &mut self,
+        path: &str,
+        type_info: &RustTypeInfo,
+        args: &[CallArg],
+        span: Span,
+    ) -> ResolvedType {
+        let fields_by_name: HashMap<&str, &RustFieldInfo> = type_info
+            .fields
+            .iter()
+            .map(|field| (field.name.as_str(), field))
+            .collect();
+        let mut selected_fields = Vec::with_capacity(args.len());
+        let mut provided = HashSet::new();
+        let mut positional_index = 0usize;
+        let mut has_shape_error = false;
+        let mut emitted_arity_error = false;
+
+        for arg in args {
+            match arg {
+                CallArg::Positional(expr) => {
+                    let Some(field) = type_info.fields.get(positional_index) else {
+                        self.check_expr(expr);
+                        if !emitted_arity_error {
+                            self.errors
+                                .push(errors::builtin_arity(path, type_info.fields.len(), args.len(), span));
+                            emitted_arity_error = true;
+                        }
+                        has_shape_error = true;
+                        continue;
+                    };
+                    positional_index += 1;
+                    self.check_rust_struct_field_expr(field, expr);
+                    if !provided.insert(field.name.clone()) {
+                        self.errors.push(errors::duplicate_constructor_field(
+                            path,
+                            field.name.as_str(),
+                            expr.span,
+                        ));
+                        has_shape_error = true;
+                        continue;
+                    }
+                    selected_fields.push(field.name.clone());
+                }
+                CallArg::Named(field_name, expr) => {
+                    let Some(field) = fields_by_name.get(field_name.as_str()) else {
+                        self.check_expr(expr);
+                        self.errors.push(errors::missing_field(path, field_name, expr.span));
+                        has_shape_error = true;
+                        continue;
+                    };
+                    self.check_rust_struct_field_expr(field, expr);
+                    if !provided.insert(field.name.clone()) {
+                        self.errors.push(errors::duplicate_constructor_field(
+                            path,
+                            field.name.as_str(),
+                            expr.span,
+                        ));
+                        has_shape_error = true;
+                        continue;
+                    }
+                    selected_fields.push(field.name.clone());
+                }
+                CallArg::PositionalUnpack(expr) | CallArg::KeywordUnpack(expr) => {
+                    self.check_expr(expr);
+                    if !emitted_arity_error {
+                        self.errors
+                            .push(errors::builtin_arity(path, type_info.fields.len(), args.len(), span));
+                        emitted_arity_error = true;
+                    }
+                    has_shape_error = true;
+                }
+            }
+        }
+
+        for field in &type_info.fields {
+            if !provided.contains(&field.name) {
+                self.errors.push(errors::missing_required_constructor_field(
+                    path,
+                    field.name.as_str(),
+                    span,
+                ));
+                has_shape_error = true;
+            }
+        }
+
+        if !has_shape_error {
+            self.type_info
+                .record_rust_named_field_constructor_fields(span, selected_fields);
+        }
+        ResolvedType::RustPath(path.to_string())
+    }
+
+    /// Type-check a Rust type-shaped constructor when metadata is unavailable but source names every field.
+    ///
+    /// Metadata is still required for positional construction because field order must come from Rust. Named source
+    /// arguments already carry the field names lowering needs, so this path can preserve InQL/Substrait-style protobuf
+    /// constructors without emitting invalid tuple calls.
+    fn check_metadata_free_rust_named_field_constructor_call(
+        &mut self,
+        path: &str,
+        args: &[CallArg],
+        span: Span,
+    ) -> ResolvedType {
+        let mut selected_fields = Vec::with_capacity(args.len());
+        let mut provided = HashSet::new();
+        let mut has_shape_error = false;
+        let mut emitted_metadata_error = false;
+
+        for arg in args {
+            match arg {
+                CallArg::Named(field_name, expr) => {
+                    self.check_expr(expr);
+                    if !provided.insert(field_name.clone()) {
+                        self.errors.push(errors::duplicate_constructor_field(
+                            path,
+                            field_name.as_str(),
+                            expr.span,
+                        ));
+                        has_shape_error = true;
+                        continue;
+                    }
+                    selected_fields.push(field_name.clone());
+                }
+                CallArg::Positional(expr) => {
+                    self.check_expr(expr);
+                    if !emitted_metadata_error {
+                        self.errors
+                            .push(errors::rust_constructor_metadata_unavailable(path, span));
+                        emitted_metadata_error = true;
+                    }
+                    has_shape_error = true;
+                }
+                CallArg::PositionalUnpack(expr) | CallArg::KeywordUnpack(expr) => {
+                    self.check_expr(expr);
+                    if !emitted_metadata_error {
+                        self.errors
+                            .push(errors::rust_constructor_metadata_unavailable(path, span));
+                        emitted_metadata_error = true;
+                    }
+                    has_shape_error = true;
+                }
+            }
+        }
+
+        if !has_shape_error {
+            self.type_info
+                .record_rust_named_field_constructor_fields(span, selected_fields);
+            return ResolvedType::RustPath(path.to_string());
+        }
+        ResolvedType::Unknown
+    }
+
+    /// Type-check a Rust struct field argument with the metadata-provided target type as context.
+    fn check_rust_struct_field_expr(&mut self, field: &RustFieldInfo, expr: &Spanned<Expr>) -> ResolvedType {
+        let expected = self.resolved_type_from_rust_shape(&field.type_shape);
+        self.check_expr_with_expected(expr, Some(&expected))
     }
 
     /// Type-check RFC 047 graph direct constructors (`DiGraph[T]()`, `Dag[T]()`, `MultiDiGraph[T]()`).

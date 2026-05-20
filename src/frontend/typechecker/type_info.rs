@@ -166,6 +166,12 @@ pub struct RustInteropArtifacts {
     /// Keyed by `(receiver_span.start, receiver_span.end, method_name)` so lowering can preserve borrow-sensitive
     /// lookup calls like `HashMap.get(key)` without re-querying rust-inspect metadata in the backend.
     pub regular_method_arg_shape_preserving_calls: HashSet<(usize, usize, String)>,
+    /// Imported Rust named-field struct constructor calls keyed by full call-expression span.
+    ///
+    /// The frontend resolves positional source arguments against rust-inspect field metadata. Lowering consumes the
+    /// resolved field names so `Range(1, 3)` can emit `Range { start: 1, end: 3 }` instead of an invalid tuple-style
+    /// Rust constructor.
+    pub named_field_constructor_fields: HashMap<(usize, usize), Vec<String>>,
 }
 
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
@@ -554,6 +560,21 @@ impl TypeCheckInfo {
             receiver_span.end,
             method.to_string(),
         ));
+    }
+
+    /// Return the Rust struct field names selected for this named-field constructor call, if any.
+    pub fn rust_named_field_constructor_fields(&self, span: Span) -> Option<&[String]> {
+        self.rust
+            .named_field_constructor_fields
+            .get(&(span.start, span.end))
+            .map(Vec::as_slice)
+    }
+
+    /// Record the Rust struct field names selected for a named-field constructor call.
+    pub(crate) fn record_rust_named_field_constructor_fields(&mut self, span: Span, fields: Vec<String>) {
+        self.rust
+            .named_field_constructor_fields
+            .insert((span.start, span.end), fields);
     }
 
     /// Return rest-aware callable metadata recorded for the full call expression span, if any.

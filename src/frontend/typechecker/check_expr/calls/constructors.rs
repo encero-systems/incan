@@ -3,6 +3,7 @@
 use super::TypeChecker;
 use crate::frontend::ast::{CallArg, Expr, ParamKind, Span, Spanned, Type};
 use crate::frontend::diagnostics::errors;
+use crate::frontend::resolved_type_subst::type_param_subst_map_call_site;
 use crate::frontend::symbols::{CallableParam, FieldInfo, ResolvedType, SymbolKind, TypeInfo, ValueEnumInfo};
 use crate::frontend::typechecker::helpers::option_ty;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
@@ -223,14 +224,14 @@ impl TypeChecker {
         self.constructor_result_type_with_bindings(name, &std::collections::HashMap::new())
     }
 
-    /// Compute a constructor result type from explicit call-site type arguments.
-    pub(in crate::frontend::typechecker::check_expr::calls) fn explicit_constructor_result_type(
+    /// Resolve explicit constructor type arguments and build the type-parameter bindings they imply.
+    pub(in crate::frontend::typechecker::check_expr::calls) fn explicit_constructor_type_context(
         &mut self,
         name: &str,
         type_info: &TypeInfo,
         type_args: &[Spanned<Type>],
         span: Span,
-    ) -> Option<ResolvedType> {
+    ) -> Option<(ResolvedType, std::collections::HashMap<String, ResolvedType>)> {
         if type_args.is_empty() {
             return None;
         }
@@ -248,12 +249,11 @@ impl TypeChecker {
                 type_args.len(),
                 span,
             ));
-            return Some(ResolvedType::Unknown);
+            return Some((ResolvedType::Unknown, std::collections::HashMap::new()));
         }
-        Some(ResolvedType::Generic(
-            name.to_string(),
-            type_args.iter().map(|ty| self.resolve_type_checked(ty)).collect(),
-        ))
+        let resolved_args: Vec<ResolvedType> = type_args.iter().map(|ty| self.resolve_type_checked(ty)).collect();
+        let bindings = type_param_subst_map_call_site(type_params, &resolved_args);
+        Some((ResolvedType::Generic(name.to_string(), resolved_args), bindings))
     }
 
     /// Compute the constructor result surface type, substituting any generic bindings inferred from constructor fields.

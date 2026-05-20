@@ -1254,6 +1254,16 @@ pub fn rust_item_shape_not_supported(path: &str, description: &str, span: Span) 
     .with_note("RFC 041 intentionally limits which Rust item shapes are typechecked directly")
 }
 
+/// A Rust import is being used as a constructor, but the compiler lacks enough metadata to emit valid Rust.
+pub fn rust_constructor_metadata_unavailable(path: &str, span: Span) -> CompileError {
+    CompileError::type_error(
+        format!("Cannot construct imported Rust item `rust::{path}` without constructor metadata"),
+        span,
+    )
+    .with_hint("Use an associated Rust constructor method, a helper function, or refresh Rust metadata for this item")
+    .with_note("Named-field Rust structs require field metadata so Incan can emit a Rust struct literal")
+}
+
 /// `type X = rusttype Y` requires `Y` to resolve to a Rust-origin imported item.
 pub fn rusttype_requires_rust_backing(type_name: &str, span: Span) -> CompileError {
     CompileError::type_error(

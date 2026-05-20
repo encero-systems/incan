@@ -3441,6 +3441,117 @@ pub def forward(value: Thing) -> None:
 
     #[cfg(feature = "rust_inspect")]
     #[test]
+    fn test_codegen_emits_named_field_struct_literal_for_imported_rust_type_constructor()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use incan_core::interop::{
+            RustFieldInfo, RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeShape, RustVisibility,
+        };
+
+        let source = r#"
+from rust::demo import Pair
+
+pub def make_pair() -> Pair:
+  return Pair(1, 2)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = seeded_rust_inspect_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(manifest_dir.clone());
+        tc.rust_inspect_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: "demo::Pair".to_string(),
+                    definition_path: Some("demo::Pair".to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Type(RustTypeInfo {
+                        methods: Vec::new(),
+                        implemented_traits: Vec::new(),
+                        fields: vec![
+                            RustFieldInfo {
+                                name: "zeta".to_string(),
+                                type_display: "i64".to_string(),
+                                type_shape: RustTypeShape::Int,
+                            },
+                            RustFieldInfo {
+                                name: "alpha".to_string(),
+                                type_display: "i64".to_string(),
+                                type_shape: RustTypeShape::Int,
+                            },
+                        ],
+                        variants: Vec::new(),
+                    }),
+                },
+            )
+            .map_err(|e| std::io::Error::other(format!("seed rust-inspect type: {e}")))?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("Pair {") && code.contains("zeta: 1") && code.contains("alpha: 2"),
+            "expected named-field Rust struct literal in generated code; got:\n{code}"
+        );
+        assert!(
+            !code.contains("Pair(1, 2)"),
+            "imported named-field Rust structs must not emit tuple-style constructors; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_uses_source_field_names_for_metadata_free_rust_type_constructor()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+
+        let source = r#"
+from rust::demo import Pair
+
+pub def make_pair() -> Pair:
+  return Pair(zeta=1, alpha=2)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let mut tc = TypeChecker::new();
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("Pair {") && code.contains("zeta: 1") && code.contains("alpha: 2"),
+            "expected source-named Rust struct literal in generated code; got:\n{code}"
+        );
+        assert!(
+            !code.contains("Pair(zeta = 1, alpha = 2)") && !code.contains("Pair(1, 2)"),
+            "metadata-free named Rust constructors must not emit call syntax; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
     fn test_codegen_borrows_rust_backed_method_args_from_metadata() -> Result<(), Box<dyn std::error::Error>> {
         use crate::frontend::typechecker::TypeChecker;
         use incan_core::interop::{

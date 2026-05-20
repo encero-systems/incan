@@ -18,7 +18,7 @@ mod stdlib_imports;
 
 use self::decl_helpers::{
     collect_fields, collect_method_aliases, collect_method_overloads, collect_methods_from_overloads,
-    collect_properties, inject_validate_methods,
+    collect_properties, inject_validate_methods, owner_resolved_type, resolve_declared_type, type_param_name_set,
 };
 
 type InheritedMembers = (
@@ -441,7 +441,7 @@ impl TypeChecker {
 
     /// Register a model declaration with its fields, methods, and derived traits.
     fn collect_model(&mut self, model: &ModelDecl, span: Span) {
-        let fields = collect_fields(&model.fields, self, &model.name);
+        let fields = collect_fields(&model.fields, self, &model.name, &model.type_params);
         let properties = collect_properties(&model.properties, self, Some(&model.name), &model.type_params);
         let mut method_overloads =
             collect_method_overloads(&model.methods, self, Some(&model.name), &model.type_params);
@@ -459,7 +459,8 @@ impl TypeChecker {
         );
         let method_aliases = collect_method_aliases(&model.method_aliases, &mut methods, &mut method_overloads);
         self.collect_method_partials(&model.name, &model.method_partials, &mut methods, &mut method_overloads);
-        let mut trait_adoptions = self.collect_trait_adoption_infos(&model.traits);
+        let mut trait_adoptions =
+            self.collect_trait_adoption_infos(&model.traits, Some(&model.name), &model.type_params);
         trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
 
         self.symbols.define(Symbol {
@@ -485,7 +486,7 @@ impl TypeChecker {
         let (mut fields, mut properties, mut methods, mut method_overloads) = self.inherit_from_parent(&class.extends);
 
         // Add own fields (can override inherited ones)
-        fields.extend(collect_fields(&class.fields, self, &class.name));
+        fields.extend(collect_fields(&class.fields, self, &class.name, &class.type_params));
         properties.extend(collect_properties(
             &class.properties,
             self,
@@ -502,7 +503,8 @@ impl TypeChecker {
         let derives = self.extract_derive_names(&class.decorators);
         let method_aliases = collect_method_aliases(&class.method_aliases, &mut methods, &mut method_overloads);
         self.collect_method_partials(&class.name, &class.method_partials, &mut methods, &mut method_overloads);
-        let mut trait_adoptions = self.collect_trait_adoption_infos(&class.traits);
+        let mut trait_adoptions =
+            self.collect_trait_adoption_infos(&class.traits, Some(&class.name), &class.type_params);
         trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
 
         self.symbols.define(Symbol {
@@ -541,7 +543,14 @@ impl TypeChecker {
     }
 
     /// Resolve direct trait adoptions, retaining generic trait arguments for later dispatch checks.
-    fn collect_trait_adoption_infos(&mut self, traits: &[Spanned<TraitBound>]) -> Vec<TypeBoundInfo> {
+    fn collect_trait_adoption_infos(
+        &mut self,
+        traits: &[Spanned<TraitBound>],
+        owner_name: Option<&str>,
+        owner_type_params: &[TypeParam],
+    ) -> Vec<TypeBoundInfo> {
+        let active_type_params = type_param_name_set(owner_type_params, &[]);
+        let owner_self_ty = owner_name.map(|name| owner_resolved_type(name, owner_type_params));
         traits
             .iter()
             .map(|trait_ref| {
@@ -553,7 +562,9 @@ impl TypeChecker {
                         .node
                         .type_args
                         .iter()
-                        .map(|arg| self.resolve_type_checked(arg))
+                        .map(|arg| {
+                            resolve_declared_type(self, arg, &active_type_params, owner_name, owner_self_ty.as_ref())
+                        })
                         .collect(),
                     module_path,
                 }
@@ -1002,7 +1013,7 @@ impl TypeChecker {
                     .map(|target| (rebinding.node.name.clone(), target))
             })
             .collect();
-        let trait_adoptions = self.collect_trait_adoption_infos(&nt.traits);
+        let trait_adoptions = self.collect_trait_adoption_infos(&nt.traits, Some(&nt.name), &nt.type_params);
 
         // Define a placeholder symbol FIRST so methods can reference the newtype name
         self.symbols.define(Symbol {
@@ -1117,7 +1128,7 @@ impl TypeChecker {
                 .collect(),
         });
 
-        let mut trait_adoptions = self.collect_trait_adoption_infos(&en.traits);
+        let mut trait_adoptions = self.collect_trait_adoption_infos(&en.traits, Some(&en.name), &en.type_params);
         trait_adoptions.extend(self.collect_derive_trait_adoption_infos(&derives));
         self.symbols.define(Symbol {
             name: en.name.clone(),
