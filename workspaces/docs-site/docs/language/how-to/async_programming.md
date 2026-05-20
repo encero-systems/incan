@@ -3,15 +3,12 @@
 Incan provides full async/await support powered by the Tokio runtime. This guide covers all async features available in Incan.
 
 !!! important "Async is import-activated"
-    `async` and `await` are **soft keywords**: they become reserved keywords only after importing `std.async`
-    (for example `import std.async` or `from std.async.time import sleep`).
+    `async` and `await` are **soft keywords**: they become reserved keywords only after importing `std.async` (for example `import std.async` or `from std.async.time import sleep`).
 
 !!! note "Coming from Python?"
-    Incan's async model mirrors Python's `asyncio` — you'll find `async def`, `await`, task spawning, and timeouts all
-    work the same way.
+    Incan's async model mirrors Python's `asyncio` — you'll find `async def`, `await`, task spawning, and timeouts all work the same way.
 
-    The key difference is under the hood: Incan compiles to Rust and uses Tokio, giving you the familiar Python syntax
-    with Rust-level async performance.
+    The key difference is under the hood: Incan compiles to Rust and uses Tokio, giving you the familiar Python syntax with Rust-level async performance.
 
 ## Quick Start
 
@@ -33,12 +30,12 @@ def main() -> None:
 
 Async APIs in `std.async` document cancellation with four contract terms:
 
-| Term | Meaning |
-| ---- | ------- |
-| `cancel-safe` | Cancelling a pending wait does not consume the value, acquire the resource, or otherwise complete the operation. |
-| `cancel-safe-but-lossy` | Cancelling the wait does not complete the operation, but a value or queue position owned by that wait may be lost. |
-| `not cancel-safe` | Cancelling a pending wait can break the operation's coordination contract or leave other participants waiting. |
-| `durable once spawned` | Work continues after it is spawned unless it finishes or is explicitly aborted; dropping the handle detaches the work and loses the result. |
+| Term                    | Meaning                                                                                                                                     |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| `cancel-safe`           | Cancelling a pending wait does not consume the value, acquire the resource, or otherwise complete the operation.                            |
+| `cancel-safe-but-lossy` | Cancelling the wait does not complete the operation, but a value or queue position owned by that wait may be lost.                          |
+| `not cancel-safe`       | Cancelling a pending wait can break the operation's coordination contract or leave other participants waiting.                              |
+| `durable once spawned`  | Work continues after it is spawned unless it finishes or is explicitly aborted; dropping the handle detaches the work and loses the result. |
 
 ### Async Functions
 
@@ -324,8 +321,7 @@ async def consume() -> None:
     - **Ownership semantics**: When all senders are dropped, the channel closes and `recv()` returns `None`
     - **No shared queue**: Unlike `asyncio.Queue`, you can't just pass the queue around — you pass senders or the receiver
 
-    The Python equivalent would use `asyncio.Queue` with `put()`/`get()`, but lacks the automatic "channel closed" signal
-    when producers finish.
+    The Python equivalent would use `asyncio.Queue` with `put()`/`get()`, but lacks the automatic "channel closed" signal when producers finish.
 
 **Bounded vs Unbounded:**
 

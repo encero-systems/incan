@@ -24,12 +24,9 @@ Start with a `class` when:
 - you need **mutable state** (`mut self`) or **inheritance** (`extends`)
 
 !!! tip "Coming from Python?"
-    A `model` is closest to a Python `@dataclass` (or a Pydantic `Basemodel`) in spirit: you declare fields, and you get
-    a constructor automatically.
+    A `model` is closest to a Python `@dataclass` (or a Pydantic `Basemodel`) in spirit: you declare fields, and you get a constructor automatically.
 
-    In Incan you **don’t** write an `__init__`/init method. You construct values with keyword arguments matching the declared
-    fields (as shown below), and you can give fields default values in the declaration when needed. For validation or alternate 
-    construction, write a separate helper/factory function (often returning `Result`).
+    In Incan you **don’t** write an `__init__`/init method. You construct values with keyword arguments matching the declared fields (as shown below), and you can give fields default values in the declaration when needed. For validation or alternate construction, write a separate helper/factory function (often returning `Result`).
 
 ## A `model` (data-first)
 

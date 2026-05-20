@@ -27,21 +27,7 @@ Decode failures return `Result[..., EncodingError]`. Strict decoding is the defa
 
 Decode functions are strict unless the function name says otherwise.
 
-```incan
-from std.encoding import base64, hex
-
-raw = base64.b64decode("aGVsbG8/")?
-fingerprint = hex.unhexlify("68656c6c6f3f")?
-```
-
 Lenient decoding uses separate names instead of boolean flags. Lenient mode is only available where the format has a clear interoperability convention, such as ignoring ASCII whitespace in copied base64 or hex.
-
-```incan
-from std.encoding import base64, hex
-
-raw = base64.b64decode_lenient("aGVs bG8/\n")?
-fingerprint = hex.decode_lenient("68 65 6c 6c 6f 3f")?
-```
 
 Malformed alphabet characters, structurally impossible lengths, and bad checksums still fail in lenient mode.
 
@@ -54,14 +40,6 @@ Malformed alphabet characters, structurally impossible lengths, and bad checksum
 | `hex.encode(source, target, chunk_size: int = 65536)` | `Result[str, EncodingError]` | Lowercase hexadecimal text from `bytes`, `BytesIO`, or `Path`. |
 | `hex.decode(source, target, chunk_size: int = 65536)` | `Result[bytes, EncodingError]` | Strict decode of even-length hex text from `str`, `BytesIO`, or `Path`. |
 | `hex.decode_lenient(text: str)` | `Result[bytes, EncodingError]` | Decode while accepting ASCII whitespace. |
-
-```incan
-from std.encoding import hex
-
-text = hex.hexlify(b"hello?")
-assert text == "68656c6c6f3f"
-assert hex.unhexlify(text)? == b"hello?"
-```
 
 ## Base32
 
@@ -98,17 +76,6 @@ Use the hex-alphabet functions when an external protocol requires that variant. 
 | `base64.urlsafe_b64encode_stream(source, target, chunk_size: int = 65536)` | `Result[None, EncodingError]` | Stream URL-safe base64 output. |
 | `base64.urlsafe_b64decode_stream(source, target, chunk_size: int = 65536)` | `Result[None, EncodingError]` | Stream strict URL-safe base64 input. |
 
-```incan
-from std.encoding import base64
-
-token = base64.b64encode(b"hello?")
-assert token == "aGVsbG8/"
-assert base64.b64decode(token)? == b"hello?"
-
-url_token = base64.urlsafe_b64encode(b"hello?")
-assert url_token == "aGVsbG8_"
-```
-
 ## Base85
 
 `std.encoding.base85` keeps the major base85 variants separate.
@@ -140,6 +107,7 @@ Do not treat base85 variants as interchangeable. They use different alphabets an
 | `base58.b58decode(text: str)` | `Result[bytes, EncodingError]` | Strict Bitcoin alphabet decode. |
 | `base58.encode(source, target, chunk_size: int = 65536)` | `Result[str, EncodingError]` | Bitcoin Base58 from `bytes`, `BytesIO`, or `Path`. |
 | `base58.decode(source, target, chunk_size: int = 65536)` | `Result[bytes, EncodingError]` | Strict Bitcoin Base58 from `str`, `BytesIO`, or `Path`. |
+
 Base58 is not a checksum format by itself. Protocols that add checksums should expose separately named helpers rather than weakening plain `b58decode`.
 
 ## Bech32 and Bech32m
@@ -158,20 +126,6 @@ Bech32 and Bech32m are distinct variants. Use the helper that matches the extern
 ## Source/Sink I/O
 
 Canonical `encode` and `decode` functions compose with `std.io.BytesIO` and `std.fs.Path`. A `Path` is treated as a finite binary source or sink: the function opens it and uses the same source/sink transform path as in-memory streams. Hex, Base32, Base64, Base85, and Base58 expose source/sink helpers; Bech32 remains a word-oriented checksum API instead of a byte stream codec.
-
-```incan
-from std.encoding import base64
-from std.fs import Path
-from std.io import BytesIO
-
-source = BytesIO(b"hello?")
-target = BytesIO()
-base64.encode(source, target, chunk_size=2)?
-
-assert target.into_bytes() == b"aGVsbG8/"
-
-base64.encode(Path("payload.bin"), Path("payload.b64"))?
-```
 
 Source/sink functions do not insert line wrapping by default. MIME-style wrapped output must use a clearly named helper or option when that surface exists.
 

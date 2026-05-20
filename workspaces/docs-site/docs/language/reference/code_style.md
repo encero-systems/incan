@@ -31,8 +31,7 @@ Incan formatting optimizes for a few stable outcomes:
 !!! note "The Zen of Incan"
     --8<-- "_snippets/language/zen_of_incan.md"
 
-    This guide turns the Zen's style philosophy into concrete formatting and naming rules.  
-    You can print it with `incan run -c "import this"`.
+    This guide turns the Zen's style philosophy into concrete formatting and naming rules. You can print it with `incan run -c "import this"`.
 
 ## Required Baseline
 

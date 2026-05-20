@@ -4,17 +4,17 @@ This page collects practical recipes for `std.datetime`: reading clocks, parsing
 
 ## Choose the right type
 
-| Need | Type |
-| ---- | ---- |
-| Measure elapsed runtime work | `Instant` plus `Duration` |
-| Store a system-clock timestamp | `SystemTime` |
-| Store a calendar date | `Date` |
-| Store a wall-clock time | `Time` |
-| Store a date and time with no offset | `DateTime` |
-| Store a date and time with a concrete UTC offset | `DateTimeOffset` |
-| Add fixed days, seconds, or nanoseconds | `TimeDelta` |
-| Add calendar years or months | `YearMonthInterval` |
-| Add a compound civil interval | `DateTimeInterval` |
+| Need                                             | Type                      |
+| ------------------------------------------------ | ------------------------- |
+| Measure elapsed runtime work                     | `Instant` plus `Duration` |
+| Store a system-clock timestamp                   | `SystemTime`              |
+| Store a calendar date                            | `Date`                    |
+| Store a wall-clock time                          | `Time`                    |
+| Store a date and time with no offset             | `DateTime`                |
+| Store a date and time with a concrete UTC offset | `DateTimeOffset`          |
+| Add fixed days, seconds, or nanoseconds          | `TimeDelta`               |
+| Add calendar years or months                     | `YearMonthInterval`       |
+| Add a compound civil interval                    | `DateTimeInterval`        |
 
 ## Read the clock
 
@@ -51,13 +51,13 @@ def parse_inputs(date_text: str, time_text: str) -> Result[DateTime, DateTimeErr
 
 Useful ISO shapes:
 
-| Type | Example |
-| ---- | ------- |
-| `Date` | `"2026-04-14"` |
-| `Time` | `"12:34:56"` |
-| `Time` with nanoseconds | `"12:34:56.123456789"` |
-| `DateTime` | `"2026-04-14T12:34:56"` |
-| `DateTimeOffset` | `"2026-04-14T12:34:56+01:00"` |
+| Type                    | Example                       |
+| ----------------------- | ----------------------------- |
+| `Date`                  | `"2026-04-14"`                |
+| `Time`                  | `"12:34:56"`                  |
+| `Time` with nanoseconds | `"12:34:56.123456789"`        |
+| `DateTime`              | `"2026-04-14T12:34:56"`       |
+| `DateTimeOffset`        | `"2026-04-14T12:34:56+01:00"` |
 
 ## Parse custom text
 

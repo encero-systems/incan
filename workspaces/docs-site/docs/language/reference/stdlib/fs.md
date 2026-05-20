@@ -61,14 +61,7 @@ Use `try_exists()` when "missing" and "could not check" lead to different behavi
 
 ## Glob Patterns
 
-Use `std.fs.glob` when you need the same pattern rules for strings that are not filesystem paths:
-
-```incan
-from std.fs.glob import filter_matches, matches
-
-println(matches("routes/users.incn", "routes/*.incn"))
-api_routes = filter_matches(["api/users", "docs/readme", "api/orders"], "api/*")
-```
+Use `std.fs.glob` when you need the same pattern rules for strings that are not filesystem paths.
 
 | API                                               | Returns     | Description                               |
 | ------------------------------------------------- | ----------- | ----------------------------------------- |
@@ -129,15 +122,7 @@ Successful writes do not imply crash-safe persistence. Call `sync()` or `sync_da
 
 ## OpenOptions
 
-`OpenOptions` provides explicit open flags:
-
-```incan
-from std.fs import OpenOptions, Path
-
-file = OpenOptions().read(true).write(true).create(true).open(Path("data.bin"))?
-```
-
-Builder methods are `read`, `write`, `append`, `truncate`, `create`, and `create_new`.
+`OpenOptions` provides explicit open flags. Builder methods are `read`, `write`, `append`, `truncate`, `create`, and `create_new`; `open(path)` returns `Result[File, IoError]`.
 
 ## Temporary Files
 

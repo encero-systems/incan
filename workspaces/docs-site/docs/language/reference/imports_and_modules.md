@@ -371,8 +371,7 @@ import rust::std::time
 ```
 
 !!! warning "The `std` root is reserved"
-    Bare `import std::fs` refers to **Incan’s** standard library, not Rust’s.
-    Always use the `rust::std::` prefix when you need Rust’s stdlib.
+    Bare `import std::fs` refers to **Incan’s** standard library, not Rust’s. Always use the `rust::std::` prefix when you need Rust’s stdlib.
 
 Note: using these requires understanding the underlying Rust types. Prefer Incan built-ins (`read_file`, `write_file`, etc.) where available.
 

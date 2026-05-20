@@ -20,8 +20,7 @@ For details and tasks, use the split pages:
 <!-- TODO: Add a link to the standard library sections once we create them -->
 
 !!! info "Coming from Python?"
-    In Python, packages are driven by directory structure and `__init__.py`.  
-    In Incan, directories are recognized automatically; you can use `mod.incn` when you need a directory/module
+    In Python, packages are driven by directory structure and `__init__.py`. In Incan, directories are recognized automatically; you can use `mod.incn` when you need a directory/module
     entrypoint.
 
 ## How module discovery works (conceptual)

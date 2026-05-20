@@ -75,11 +75,9 @@ A `model` and a `class` are not interchangeable. They compile to Rust structs, b
     - `model` = "this is data" (like a plain struct)
     - `class` = "this is an object with behavior" (can add inheritance + trait composition)
 
-    The compiler resolves inheritance at compile time by generating fields/methods/trait impls.
-    In practice, this is still "zero-cost": choose `model` vs `class` for clarity and API design, not performance.
+    The compiler resolves inheritance at compile time by generating fields/methods/trait impls. In practice, this is still "zero-cost": choose `model` vs `class` for clarity and API design, not performance.
 
-    **Why no `struct` keyword?**  
-    Incan uses `model` and `class` instead because:
+    **Why no `struct` keyword?** Incan uses `model` and `class` instead because:
 
     1. **Python familiarity** — Python developers know `class`, not `struct`
     2. **Clearer semantics** — `model` says "this is data", not "this is a memory layout"

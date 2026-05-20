@@ -82,12 +82,12 @@ The stdlib boundary is:
 
 Incan separates elapsed-time intervals from civil-calendar intervals:
 
-| Type | Meaning |
-| ---- | ------- |
-| `Duration` | Nonnegative runtime elapsed time |
-| `TimeDelta` | Signed civil day/time interval |
-| `YearMonthInterval` | Signed calendar year/month interval |
-| `DateTimeInterval` | Compound civil interval with year/month and day/time parts |
+| Type                | Meaning                                                    |
+| ------------------- | ---------------------------------------------------------- |
+| `Duration`          | Nonnegative runtime elapsed time                           |
+| `TimeDelta`         | Signed civil day/time interval                             |
+| `YearMonthInterval` | Signed calendar year/month interval                        |
+| `DateTimeInterval`  | Compound civil interval with year/month and day/time parts |
 
 The distinction is intentional. "One month" cannot be reduced to a fixed number of days without picking a start date. "One second" can be represented as a fixed duration.
 

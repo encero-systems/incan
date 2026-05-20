@@ -73,8 +73,7 @@ model Task:
 ```
 
 !!! note "Why `__lt__`?"
-    `sorted(...)` needs an ordering rule. Incan uses the `<` hook (`__lt__`) as the basis for ordering, so implementing
-    `__lt__` gives the runtime a way to compare two values and sort a list.
+    `sorted(...)` needs an ordering rule. Incan uses the `<` hook (`__lt__`) as the basis for ordering, so implementing `__lt__` gives the runtime a way to compare two values and sort a list.
 
     See [Derives: Comparison → Ord](../reference/derives/comparison.md#ord-ordering) for the canonical ordering rules.
 

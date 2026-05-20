@@ -5,8 +5,7 @@ This guide shows practical ways to use enums to model real program structure: st
 If you haven’t read it yet, start with: [Enums](../explanation/enums.md).
 
 ??? info "Coming from TS/JS?"
-    If you’re used to discriminated unions (`{ kind: "A", ... } | { kind: "B", ... }`), Incan enums play the same role:
-    a closed set of variants with typed payloads, and `match` for case handling.
+    If you’re used to discriminated unions (`{ kind: "A", ... } | { kind: "B", ... }`), Incan enums play the same role: a closed set of variants with typed payloads, and `match` for case handling.
 
     **Example**:
 

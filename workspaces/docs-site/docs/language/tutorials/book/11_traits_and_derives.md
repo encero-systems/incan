@@ -40,8 +40,7 @@ Traits are always abstract in Incan. That means two things:
 - You can use a trait directly in annotations to mean “any concrete adopter of this capability”.
 
 !!! tip "Coming from Python?"
-    **Traits** are like a typed interface (represented in Python by a `Protocol` or `abc.ABC`): “anything that implements
-    these methods can be treated as this capability”.
+    **Traits** are like a typed interface (represented in Python by a `Protocol` or `abc.ABC`): “anything that implements these methods can be treated as this capability”.
 
 ### Protocol traits and hooks
 

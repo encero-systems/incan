@@ -607,8 +607,7 @@ Incan supports two wrapper modes: `html()` and `jsx()`. Both compile to the same
     #            ↑ This is a string literal
     ```
 
-    The content inside `html()` is a **string** that gets parsed at compile time.
-    Your IDE sees a string, not markup.
+    The content inside `html()` is a **string** that gets parsed at compile time. Your IDE sees a string, not markup.
 
 - `jsx()` enables native syntax (inspired by React's JSX syntax):
 
@@ -617,8 +616,7 @@ Incan supports two wrapper modes: `html()` and `jsx()`. Both compile to the same
     #          ↑ This is NOT a string — it's native Incan syntax
     ```
 
-    The content inside `jsx()` is **parsed directly by Incan** as first-class syntax.
-    Your IDE sees markup, not a string.
+    The content inside `jsx()` is **parsed directly by Incan** as first-class syntax. Your IDE sees markup, not a string.
 
 #### Parser Behavior
 

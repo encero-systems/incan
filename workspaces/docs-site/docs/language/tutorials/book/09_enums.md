@@ -12,11 +12,9 @@ enum Command:
 ```
 
 !!! tip "Coming from Python?"
-    Python’s `Enum` is mostly “named constants”. If you want variants that carry different data, Python often uses:
-    strings, `dataclass` hierarchies, or `Union` types.
+    Python’s `Enum` is mostly “named constants”. If you want variants that carry different data, Python often uses: strings, `dataclass` hierarchies, or `Union` types.
 
-    In Incan, `enum` variants can carry data (like `Add(int)`), and `match` gives you an exhaustive, compiler-checked way
-    to handle every case.
+    In Incan, `enum` variants can carry data (like `Add(int)`), and `match` gives you an exhaustive, compiler-checked way to handle every case.
 
 ## Matching on enums
 

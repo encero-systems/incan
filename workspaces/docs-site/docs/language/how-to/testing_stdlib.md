@@ -126,21 +126,21 @@ The mapping is semantic. The compiler may implement the language statement as an
 
 Test markers control how `incan test` discovers and runs tests:
 
-| Decorator                           | Effect                                                               |
-| ----------------------------------- | -------------------------------------------------------------------- |
-| `@test`                             | Marks a non-`test_*` function as a test.                             |
-| `@skip(reason?)`                    | Skips the test unconditionally.                                      |
-| `@skipif(condition, reason?)`        | Skips the test when a collection-time condition is true.             |
-| `@xfail(reason?)`                   | Marks the test as expected to fail (XPASS if it passes).             |
-| `@xfailif(condition, reason?)`       | Marks the test expected-fail when a collection-time condition is true. |
-| `@slow`                             | Excludes the test by default; include with `incan test --slow`.      |
-| `@mark(name)`                       | Adds a custom marker for `incan test -m` selection.                  |
-| `@timeout(duration)`                | Overrides the timeout for the generated test batch.                  |
-| `@fixture`                          | Declares a test fixture (see below).                                 |
-| `@parametrize(argnames, argvalues)` | Runs the test once per parameter set.                                |
-| `param_case(..., id?, marks?)`      | Gives one parameter set an explicit id and/or marks.                 |
-| `@resource(name)` / `@serial`       | Applies runner scheduling constraints for shared or exclusive tests. |
-| `platform()` / `feature(name)`       | Collection-time probes for `skipif` / `xfailif`.                    |
+| Decorator                           | Effect                                                                 |
+| ----------------------------------- | ---------------------------------------------------------------------- |
+| `@test`                             | Marks a non-`test_*` function as a test.                               |
+| `@skip(reason?)`                    | Skips the test unconditionally.                                        |
+| `@skipif(condition, reason?)`       | Skips the test when a collection-time condition is true.               |
+| `@xfail(reason?)`                   | Marks the test as expected to fail (XPASS if it passes).               |
+| `@xfailif(condition, reason?)`      | Marks the test expected-fail when a collection-time condition is true. |
+| `@slow`                             | Excludes the test by default; include with `incan test --slow`.        |
+| `@mark(name)`                       | Adds a custom marker for `incan test -m` selection.                    |
+| `@timeout(duration)`                | Overrides the timeout for the generated test batch.                    |
+| `@fixture`                          | Declares a test fixture (see below).                                   |
+| `@parametrize(argnames, argvalues)` | Runs the test once per parameter set.                                  |
+| `param_case(..., id?, marks?)`      | Gives one parameter set an explicit id and/or marks.                   |
+| `@resource(name)` / `@serial`       | Applies runner scheduling constraints for shared or exclusive tests.   |
+| `platform()` / `feature(name)`      | Collection-time probes for `skipif` / `xfailif`.                       |
 
 Unlike the language `assert` statement, markers are `std.testing` APIs. Import the marker decorators you use.
 

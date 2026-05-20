@@ -13,8 +13,7 @@ For a guided walkthrough, see: [The Incan Book → Unit tests](../../language/tu
 --8<-- "_snippets/callouts/no_install_fallback.md"
 
 !!! note "If something fails"
-    If you run into errors, see [Troubleshooting](troubleshooting.md).
-    If it still looks like a bug, please [file an issue on GitHub](https://github.com/dannys-code-corner/incan/issues).
+    If you run into errors, see [Troubleshooting](troubleshooting.md). If it still looks like a bug, please [file an issue on GitHub](https://github.com/dannys-code-corner/incan/issues).
 
 You can write tests in either of two places:
 

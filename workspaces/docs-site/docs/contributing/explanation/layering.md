@@ -130,8 +130,7 @@ We want one “source of truth” for language behavior so the compiler and runt
 ## Guardrails (how it is enforced)
 
 - **Dependency gate**: `tests/layering_guard.rs` fails if `incan_stdlib` appears in the compiler crate’s
-    `[dependencies]` section of the root `Cargo.toml`. (Keeping `incan_stdlib` in `[dev-dependencies]` for parity tests
-    is allowed.)
+    `[dependencies]` section of the root `Cargo.toml`. (Keeping `incan_stdlib` in `[dev-dependencies]` for parity tests is allowed.)
 
 ## How to add shared behavior safely
 

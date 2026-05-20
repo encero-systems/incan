@@ -14,19 +14,9 @@ This page specifies the standard-library testing API exposed by `std.testing`.
 
 ## Importing the testing API
 
-The language `assert` statement is always available and does not require importing `std.testing`:
+The language `assert` statement is always available and does not require importing `std.testing`.
 
-```incan
-assert user.active
-assert count == 3, "unexpected row count"
-```
-
-`std.testing` provides the helper functions and test decorators:
-
-```incan
-import std.testing as testing
-from std.testing import assert_eq, assert_ne, assert_true, assert_false, fail
-```
+`std.testing` provides the helper functions and test decorators.
 
 ## Assertion functions
 
@@ -135,18 +125,7 @@ Fixture scopes:
 
 Fixtures may use one top-level `yield` statement. Statements before `yield` are setup, the yielded value is injected, and statements after `yield` run as teardown at the fixture scope boundary. Teardown can reference setup locals and fixture parameters, runs after failing tests when the worker remains alive, and fails the run if teardown itself fails. Timeout-enforced worker termination can bypass teardown.
 
-Async fixtures use the same `@fixture` decorator:
-
-```incan
-from std.async import sleep_ms
-from std.testing import fixture
-
-@fixture
-async def resource() -> int:
-    await sleep_ms(1)
-    yield 42
-    await sleep_ms(1)
-```
+Async fixtures use the same `@fixture` decorator.
 
 Async fixture contract:
 

@@ -93,39 +93,9 @@ pub model UuidError with Error:
 
 Known `kind` values include `invalid_length`, `invalid_format`, `invalid_character`, `invalid_bytes`, and `io_error`.
 
-## Examples
-
-```incan
-from std.uuid import UUID, UuidError, UuidVariant, UuidVersion
-
-
-def main() -> Result[None, UuidError]:
-    uuid = UUID.parse("550e8400-e29b-41d4-a716-446655440000")?
-
-    assert uuid.canonical()? == "550e8400-e29b-41d4-a716-446655440000"
-    assert uuid.version()? == UuidVersion.V4
-    assert uuid.variant()? == UuidVariant.Rfc9562
-
-    roundtrip = UUID.parse(uuid.canonical()?)?
-    assert roundtrip == uuid
-    return Ok(None)
-```
-
 ## Generation Helpers
 
 `std.uuid` generates RFC 9562 versions 1, 3, 4, 5, 6, 7, and 8. Version 2 remains parseable and inspectable but has no generator because RFC 9562 leaves DCE Security UUID generation outside the core specification.
-
-```incan
-from std.uuid import NAMESPACE_DNS, UUID, UuidError
-
-
-def main() -> Result[None, UuidError]:
-    request_id = UUID.v7()?
-    stable_id = UUID.v5(NAMESPACE_DNS, "www.example.com")?
-    println(request_id.to_string())
-    println(stable_id.to_urn())
-    return Ok(None)
-```
 
 ## See Also
 

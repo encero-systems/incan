@@ -195,8 +195,7 @@ Notes:
 Out of scope (to avoid overlap with RFC 015):
 
 - A project-level config key in `incan.toml` that sets default Cargo policy.
-    If and when we add it, it must follow RFC 015’s `incan.toml` approach and
-    must not conflict with the CLI/env precedence defined above.
+    If and when we add it, it must follow RFC 015’s `incan.toml` approach and must not conflict with the CLI/env precedence defined above.
 
 ### Generated project locations and persistence (normative)
 

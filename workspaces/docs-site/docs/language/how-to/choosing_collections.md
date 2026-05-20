@@ -2,16 +2,16 @@
 
 Use builtin `list`, `dict`, and `set` first. Reach for `std.collections` when the collection's behavior is part of the program design rather than just a storage detail.
 
-| Need | Use |
-| --- | --- |
-| Append and pop at both ends | `Deque[T]` |
-| Count occurrences | `Counter[T]` |
-| Materialize a value for missing keys | `DefaultDict[K, V]` |
-| Keep insertion order visible | `OrderedDict[K, V]` or `OrderedSet[T]` |
-| Traverse in sorted order | `SortedDict[K, V]` or `SortedSet[T]` |
-| Layer overrides over defaults | `ChainMap[K, V]` |
-| Always process the next highest-priority item | `PriorityQueue[T]` |
-| Resolve a fixed key domain to stable integer positions | `OrdinalMap[K]` |
+| Need                                                   | Use                                    |
+| ------------------------------------------------------ | -------------------------------------- |
+| Append and pop at both ends                            | `Deque[T]`                             |
+| Count occurrences                                      | `Counter[T]`                           |
+| Materialize a value for missing keys                   | `DefaultDict[K, V]`                    |
+| Keep insertion order visible                           | `OrderedDict[K, V]` or `OrderedSet[T]` |
+| Traverse in sorted order                               | `SortedDict[K, V]` or `SortedSet[T]`   |
+| Layer overrides over defaults                          | `ChainMap[K, V]`                       |
+| Always process the next highest-priority item          | `PriorityQueue[T]`                     |
+| Resolve a fixed key domain to stable integer positions | `OrdinalMap[K]`                        |
 
 ## Use `Deque` for front-and-back queues
 

@@ -23,4 +23,3 @@ Incan compiles `.incn` source code to Rust, then builds an executable.
 - Build/run commands: [Install, build, and run](../../tooling/how-to/install_and_run.md)
 - CLI surface: [CLI reference](../../tooling/reference/cli_reference.md)
 - Deeper internals (contributors): [Compiler architecture](../../contributing/explanation/architecture.md)
-

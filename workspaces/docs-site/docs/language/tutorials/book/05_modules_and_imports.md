@@ -39,8 +39,7 @@ incan run main.incn
 By default, definitions are **module-private** (only usable inside the same `.incn` file). Prefix a declaration with `pub` to **export** it so other modules can import it.
 
 !!! tip "Coming from Python?"
-    In Python, most top-level definitions are effectively importable.
-    In Incan, you typically make the intended “public API” of a module explicit with `pub`.
+    In Python, most top-level definitions are effectively importable. In Incan, you typically make the intended “public API” of a module explicit with `pub`.
 
 For more detail on `pub` (including how it affects `model`/`class` fields), see: [Models & Classes](../../explanation/models_and_classes/index.md).
 

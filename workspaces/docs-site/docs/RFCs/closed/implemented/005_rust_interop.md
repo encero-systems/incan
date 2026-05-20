@@ -221,8 +221,7 @@ Implementation model note (important for determinism):
 Rust interop compiles into a single Rust program (generated code + dependencies). This is **not** an `extern "C"` [^extern-c] FFI (Foreign Function Interface) boundary.
 
 [^extern-c]: `extern "C"` selects the C ABI/calling convention for interop with C. It matters because unwinding (panics)
-    across a real `extern "C"` boundary is not allowed; in Incan interop we generate one Rust program, so this is a normal
-    Rust-to-Rust call path, not an FFI boundary.
+    across a real `extern "C"` boundary is not allowed; in Incan interop we generate one Rust program, so this is a normal Rust-to-Rust call path, not an FFI boundary.
 
 **Policy**:
 

@@ -1,8 +1,7 @@
 # Incan feature inventory
 
 !!! warning "Generated file"
-    Do not edit this page by hand.
-    If it looks wrong/outdated, update `crates/incan_core/src/lang/features.rs` and regenerate it.
+    Do not edit this page by hand. If it looks wrong/outdated, update `crates/incan_core/src/lang/features.rs` and regenerate it.
 
     Regenerate with: `cargo run -p incan_core --bin generate_lang_reference`
 

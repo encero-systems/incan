@@ -107,45 +107,13 @@ The `ordinal_encoding()` string is part of the serialized type contract. Change 
 
 User-defined keys usually implement only `ordinal_encoding`, `from_ordinal_bytes`, and `ordinal_bytes`. The default `ordinal_hash` and `ordinal_bytes_equal` methods derive from `ordinal_bytes`; builtin key implementations override them so hot lookups can hash and compare without materializing a fresh byte vector.
 
-User-defined key shape:
-
-```incan
-from std.collections import OrdinalKey, OrdinalMap, OrdinalMapError
-
-@derive(Clone, Eq)
-model ColumnId with OrdinalKey:
-    value: int
-
-    @staticmethod
-    def ordinal_encoding() -> str:
-        return "example:column-id-v1"
-
-    @staticmethod
-    def from_ordinal_bytes(data: bytes) -> Result[Self, OrdinalMapError]:
-        if len(data) != 1:
-            return Err(OrdinalMapError.invalid_key_record("ColumnId requires one byte"))
-        return Ok(ColumnId(value=int(data[0])))
-
-    def ordinal_bytes(self) -> bytes:
-        value: u8 = self.value.wrapping_resize()
-        return [value]
-
-columns = OrdinalMap.from_pairs([(ColumnId(value=1), 10), (ColumnId(value=2), 11)])?
-```
+User-defined key implementations should keep `ordinal_encoding()` stable for a given byte layout and should change it when stored bytes are no longer compatible.
 
 ### Serialization and size
 
 The serialized container uses the `INCAN_ORDMAP` magic value and records the format version, key encoding identifier, key count, ordinal width, lookup algorithm identifier, exact-verification mode, construction metadata, and lookup/value payload. Serialization is deterministic: equivalent canonical input under the same format version produces identical bytes.
 
 `from_bytes` validates the container before returning a map. It rejects malformed payloads, unsupported versions, unsupported lookup modes, non-canonical ordinal widths, key encoding mismatches, and lookup payloads that do not match the stored keys and ordinals.
-
-```incan
-encoded = columns.to_bytes()
-restored: OrdinalMap[str] = OrdinalMap.from_bytes(encoded)?
-
-assert restored.to_bytes() == encoded
-assert restored.require("status")? == columns.require("status")?
-```
 
 Compact ordinal width is selected from the maximum ordinal. Maps whose maximum ordinal fits in `u8`, `u16`, `u32`, or `u64` use that width internally and in the serialized payload. Public lookup still returns ordinary `int`.
 
@@ -199,16 +167,6 @@ Common decoding error kinds:
 | `deque.to_list()` | `list[T]` | Snapshot values in front-to-back order. |
 | `deque.clear()` | `None` | Remove all values. |
 
-```incan
-from std.collections import Deque
-
-mut queue = Deque[str]()
-queue.append("normal")
-queue.appendleft("urgent")
-
-next = queue.popleft()
-```
-
 ## Counter
 
 `Counter[T]` stores counts by element. Missing elements read as zero.
@@ -224,13 +182,6 @@ next = queue.popleft()
 | `counter.total()` | `int` | Sum of counts. |
 | `counter.most_common(n: int = -1)` | `list[tuple[T, int]]` | Highest-count elements, or all elements when `n` is negative. |
 | `counter.elements()` | `list[T]` | Expand positive counts back into repeated elements. |
-
-```incan
-from std.collections import Counter
-
-counts = Counter.from_iter(["apple", "banana", "apple"])
-assert counts.get("apple") == 2
-```
 
 ## DefaultDict
 
@@ -305,29 +256,6 @@ assert counts.get("apple") == 2
 | `chain.pop_layer()` | `OrderedDict[K, V]` | Remove the highest-precedence mapping layer. |
 
 Model and class field overlays use compiler-generated `__field_value__(name: str) -> Option[T]` and `__field_items__() -> list[tuple[str, T]]` views, where `T` is either the common field type or a union of the exposed field types. `ChainMap` accepts `__field_items__()` snapshots through `from_field_layers()` and `push_field_layer()`; these layers are read-only snapshots and preserve the field ordering reported by `__fields__()`.
-
-```incan
-from std.collections import ChainMap
-
-defaults = OrderedDict.from_items([("region", "eu-west-1"), ("retries", "3")])
-override = OrderedDict.from_items([("region", "us-east-1")])
-cfg = ChainMap.from_layers([override, defaults])
-
-assert cfg["region"] == "us-east-1"
-assert cfg["retries"] == "3"
-```
-
-```incan
-model Defaults:
-    region: str
-    retries: str
-
-cfg = ChainMap.from_field_layers([Defaults(region="eu-west-1", retries="3").__field_items__()])
-cfg.push_layer(OrderedDict.from_items([("region", "us-east-1")]))
-
-assert cfg["region"] == "us-east-1"
-assert cfg["retries"] == "3"
-```
 
 ## PriorityQueue
 

@@ -1,6 +1,13 @@
 # RFC 008: Const Bindings
 
-**Status:** Done **Created:** 2025-12-10 **Issue:** [#12](https://github.com/dannys-code-corner/incan/pull/12) **Implemented:** 2025-12-23
+- **Status:** Implemented
+- **Created:** 2025-12-10
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:** RFC 000 (core language)
+- **Issue:** —
+- **RFC PR:** [#12](https://github.com/dannys-code-corner/incan/pull/12)
+- **Written against:** v0.1
+- **Shipped in:** v0.1
 
 ## Summary
 

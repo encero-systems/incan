@@ -57,15 +57,15 @@ model WarehouseRow:
 
 Aliases canonicalize to exact Incan types.
 
-| Alias | Canonical type |
-| ----- | -------------- |
-| `smallint`, `short` | `i16` |
-| `integer` | `i32` |
-| `int`, `bigint`, `long` | `i64` |
-| `hugeint` | `i128` |
-| `real`, `fp32` | `f32` |
-| `float`, `double`, `fp64` | `f64` |
-| `numeric[p, s]` | `decimal[p, s]` |
+| Alias                     | Canonical type  |
+| ------------------------- | --------------- |
+| `smallint`, `short`       | `i16`           |
+| `integer`                 | `i32`           |
+| `int`, `bigint`, `long`   | `i64`           |
+| `hugeint`                 | `i128`          |
+| `real`, `fp32`            | `f32`           |
+| `float`, `double`, `fp64` | `f64`           |
+| `numeric[p, s]`           | `decimal[p, s]` |
 
 Use canonical names when the exact width is the important thing. Use aliases when matching source vocabulary matters more.
 

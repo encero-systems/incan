@@ -101,8 +101,7 @@ Design proposals for upcoming features are recorded in the form of [RFCs].
 ## Compiler & Contributing
 
 !!! info "For contributors"
-    Architecture and compiler-internals docs are primarily for contributors. If you’re learning the language, start with
-    the Book and the Language Guide instead of RFCs.
+    Architecture and compiler-internals docs are primarily for contributors. If you’re learning the language, start with the Book and the Language Guide instead of RFCs.
 
 Docs for contributors working on the compiler and language evolution:
 

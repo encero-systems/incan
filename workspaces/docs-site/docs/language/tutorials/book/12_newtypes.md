@@ -30,8 +30,7 @@ def main() -> None:
 ```
 
 !!! tip "Coming from Python?"
-    This is similar to creating a tiny wrapper class just to avoid mixing up values, but with less runtime overhead and
-    better static checking.
+    This is similar to creating a tiny wrapper class just to avoid mixing up values, but with less runtime overhead and better static checking.
 
 ## Constructing and unwrapping
 

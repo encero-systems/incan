@@ -1,8 +1,7 @@
 # Incan language reference
 
 !!! warning "Generated file"
-    Do not edit this page by hand.
-    If it looks wrong/outdated, regenerate it from source and commit the result.
+    Do not edit this page by hand. If it looks wrong/outdated, regenerate it from source and commit the result.
 
     Regenerate with: `cargo run -p incan_core --bin generate_lang_reference`
 

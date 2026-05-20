@@ -17,17 +17,6 @@ Named file and directory creation is fallible because it reserves real host file
 | `file.path()` | `Path` | Current filesystem path for the temporary file. |
 | `file.persist()` | `Result[Path, IoError]` | Keep the file at its current path and disable automatic deletion. |
 
-```incan
-from std.fs import IoError, Path
-from std.tempfile import NamedTemporaryFile
-
-def write_report(text: str) -> Result[Path, IoError]:
-    temp = NamedTemporaryFile.try_new_with("report-", ".txt", None)?
-    path = temp.path()
-    path.write_text(text, "utf-8", "strict", None)?
-    return temp.persist()
-```
-
 While the wrapper is live and not persisted, dropping it deletes the file. `path()` is useful for APIs that need a filename rather than an already-open handle.
 
 ## TemporaryDirectory
@@ -38,17 +27,6 @@ While the wrapper is live and not persisted, dropping it deletes the file. `path
 | `TemporaryDirectory.try_new_with(prefix: str, suffix: str, dir: Option[Path])` | `Result[TemporaryDirectory, IoError]` | Create a temporary directory with configured naming or parent directory. |
 | `directory.path()` | `Path` | Current filesystem path for the temporary directory. |
 | `directory.persist()` | `Result[Path, IoError]` | Keep the directory tree at its current path and disable automatic deletion. |
-
-```incan
-from std.fs import IoError, Path
-from std.tempfile import TemporaryDirectory
-
-def stage_artifact(name: str, data: bytes) -> Result[Path, IoError]:
-    workspace = TemporaryDirectory.try_new_with("stage-", "", None)?
-    artifact = workspace.path() / name
-    artifact.write_bytes(data)?
-    return workspace.persist()
-```
 
 Dropping an unpersisted `TemporaryDirectory` removes the whole temporary tree. Use `persist()` for outputs that intentionally survive the current scope.
 
@@ -66,35 +44,11 @@ Dropping an unpersisted `TemporaryDirectory` removes the whole temporary tree. U
 | `spool.path()` | `Result[Path, IoError]` | Return the temporary file path after rollover. |
 | `spool.persist()` | `Result[Path, IoError]` | Roll over if needed, keep the file, and disable automatic deletion. |
 
-```incan
-from std.fs import IoError, Path
-from std.tempfile import SpooledTemporaryFile
-
-def collect_payload(chunks: list[bytes]) -> Result[Path, IoError]:
-    spool = SpooledTemporaryFile(max_size=1024 * 1024)
-    for chunk in chunks:
-        spool.write(chunk)?
-    return spool.persist()
-```
-
 Before rollover, data lives in `std.io.BytesIO` and `path()` returns `Err(IoError)` because there is no filesystem path. After rollover, the stream uses a `std.fs.File` handle and the `NamedTemporaryFile` cleanup contract. Dropping an unpersisted rolled spool deletes the temporary file; `persist()` keeps it and returns the ordinary `Path`.
 
 ## Parent Directory
 
-Pass `dir` when temporary locations must live under a specific parent:
-
-```incan
-from std.fs import IoError, Path
-from std.tempfile import NamedTemporaryFile
-
-def scratch_under(root: Path) -> Result[Path, IoError]:
-    temp = NamedTemporaryFile.try_new_with("scratch-", ".bin", Some(root))?
-    path = temp.path()
-    path.write_bytes(b"scratch")?
-    return temp.persist()
-```
-
-The `dir` argument accepts `Option[Path]`. Wrap string parents with `Path("...")` before passing them. Failure details are returned as `IoError` with the requested parent path when creation fails.
+The `dir` argument accepts `Option[Path]` when temporary locations must live under a specific parent. Wrap string parents with `Path("...")` before passing them. Failure details are returned as `IoError` with the requested parent path when creation fails.
 
 ## See Also
 

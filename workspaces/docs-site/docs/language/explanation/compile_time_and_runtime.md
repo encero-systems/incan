@@ -72,13 +72,13 @@ This is not ceremony for its own sake. It lets the compiler understand the progr
 
 When writing Incan, ask:
 
-| Question | Compile-time design | Runtime design |
-| --- | --- | --- |
-| Is this known from the source code itself? | yes | usually no |
-| Does it depend on the current run? | no | yes |
-| Can the compiler use it to reject bad code? | yes | only through explicit runtime checks |
-| Can it be baked into the output program? | often | no |
-| Examples | types, consts, model fields, traits, derives | env vars, files, clock time, network, database rows |
+| Question                                    | Compile-time design                          | Runtime design                                      |
+| ------------------------------------------- | -------------------------------------------- | --------------------------------------------------- |
+| Is this known from the source code itself?  | yes                                          | usually no                                          |
+| Does it depend on the current run?          | no                                           | yes                                                 |
+| Can the compiler use it to reject bad code? | yes                                          | only through explicit runtime checks                |
+| Can it be baked into the output program?    | often                                        | no                                                  |
+| Examples                                    | types, consts, model fields, traits, derives | env vars, files, clock time, network, database rows |
 
 Rule of thumb:
 
@@ -257,12 +257,12 @@ Here `T` is an arbitrary type parameter: read it as "any type", with `with Named
 
 That is the main shift from Python duck typing to Incan traits:
 
-| Python duck typing | Incan traits |
-| --- | --- |
-| Capability is discovered when code runs | Capability is declared in source |
+| Python duck typing                       | Incan traits                                            |
+| ---------------------------------------- | ------------------------------------------------------- |
+| Capability is discovered when code runs  | Capability is declared in source                        |
 | A missing method becomes a runtime error | A missing trait obligation becomes a compile-time error |
-| Very flexible by default | Flexible when the capability is named |
-| Good for exploratory code | Good for APIs that should stay correct as they grow |
+| Very flexible by default                 | Flexible when the capability is named                   |
+| Good for exploratory code                | Good for APIs that should stay correct as they grow     |
 
 The goal is not to force every function to accept one concrete type. The goal is to let the compiler understand the shape of the flexibility.
 

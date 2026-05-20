@@ -1,6 +1,17 @@
 # RFC 013: Rust Crate Dependencies
 
-**Status:** Implemented **Created:** 2025-12-16 **Issue:** [#72](https://github.com/dannys-code-corner/incan/issues/72) **Author(s):** Danny Meijer (@danny-meijer) **Supersedes:** Parts of RFC 005 (Cargo integration section) **Related:** RFC 015 (project lifecycle + `incan.toml`), RFC 020 (Cargo offline/locked policy)
+- **Status:** Implemented
+- **Created:** 2025-12-16
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Supersedes:** Parts of RFC 005 (Cargo integration section)
+- **Related:**
+    - RFC 005 (Rust interop)
+    - RFC 015 (project lifecycle + `incan.toml`)
+    - RFC 020 (Cargo offline/locked policy)
+- **Issue:** [#72](https://github.com/dannys-code-corner/incan/issues/72)
+- **RFC PR:** —
+- **Written against:** v0.1
+- **Shipped in:** v0.2
 
 ## Summary
 

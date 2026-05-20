@@ -89,9 +89,7 @@ This is a good fit for boundary-style APIs: HTTP headers, labels, metadata, or a
 
     Python often uses `**kwargs` as a flexible "anything goes" escape hatch. Incan does not: every captured keyword value must match the declared value type.
 
-    Python also unpacks arbitrary iterables and mappings at runtime. Incan keeps the same surface spelling, but the
-    compiler must know what the unpacked value can provide. A `List[int]` can feed a positional rest parameter, while an
-    inline `[1, 2]` can also prove the two values needed by a fixed call like `point(*[1, 2])`.
+    Python also unpacks arbitrary iterables and mappings at runtime. Incan keeps the same surface spelling, but the compiler must know what the unpacked value can provide. A `List[int]` can feed a positional rest parameter, while an inline `[1, 2]` can also prove the two values needed by a fixed call like `point(*[1, 2])`.
 
 ### Combining both forms
 

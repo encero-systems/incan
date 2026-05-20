@@ -1,8 +1,6 @@
-# `std.regex`
+# `std.regex` reference
 
-`std.regex` provides compiled regular expressions, match spans, capture results, splitting, and replacement for ordinary Incan text-processing code.
-
-The stdlib regex engine is intentionally the safe default: it follows the predictable Rust-regex/RE2-style model rather than a fully backtracking Python/PCRE-style model. Use it for validation, extraction, cleanup, log processing, and other large-text workflows where regex should not introduce catastrophic backtracking risk. Lookaround, backreferences inside patterns, and other features that require backtracking semantics are not part of `std.regex`.
+`std.regex` provides compiled regular expressions, match spans, capture results, splitting, and replacement for ordinary Incan text-processing code. For task-oriented examples, see [Regular expressions](../../how-to/regular_expressions.md).
 
 ## Imports
 
@@ -10,53 +8,28 @@ The stdlib regex engine is intentionally the safe default: it follows the predic
 from std.regex import Captures, Match, Regex, RegexError
 ```
 
-## Engine Boundary
+## Engine boundary
 
-The core pattern surface supports literals, character classes, quantifiers, alternation, grouping, anchors, indexed captures, named captures, inline flags, and Unicode-aware matching by default.
+The stdlib regex engine is the safe default: it follows the predictable Rust-regex/RE2-style model rather than a fully backtracking Python/PCRE-style model.
 
-The safe-default boundary is part of the Incan contract, not an accidental backend detail:
+| Surface | Contract |
+| --- | --- |
+| Supported patterns | Literals, character classes, quantifiers, alternation, grouping, anchors, indexed captures, named captures, inline flags, and Unicode-aware matching by default. |
+| Supported constructor flags | `ignore_case`, `multiline`, `dotall`, and `verbose`. |
+| Unsupported patterns | Lookaround such as `(?=...)` or `(?<=...)`, pattern backreferences such as `\1`, and engine-specific features beyond the documented safe surface. |
+| Span model | Match offsets are byte positions in the input text. |
 
-- Supported: ordinary regular-expression matching over `str`, including named and indexed capture groups.
-- Supported: inline flags and constructor flags for ignore-case, multiline, dotall, and verbose modes.
-- Not supported: lookaround such as `(?=...)` or `(?<=...)`.
-- Not supported: backreferences inside the pattern such as `\1` as a matching constraint.
-- Not promised: engine-specific features beyond the documented safe surface.
+## `Regex`
 
-Use literal string helpers such as `split`, `replace`, and `contains` for fixed text. Use `std.regex` when the pattern itself is the program contract.
+`Regex` is a compiled, reusable pattern. Construction validates the pattern and returns `Result[Regex, RegexError]`.
 
-## Types
-
-### `Regex`
-
-`Regex` is a compiled, reusable pattern. Construction validates the pattern and returns a `Result`.
-
-```incan
-pattern = Regex("^v(?P<major>\\d+)\\.(?P<minor>\\d+)$")?
-```
-
-Constructor flags keep configuration separate from the pattern text:
-
-```incan
-case_insensitive = Regex("error: (?P<code>\\w+)", ignore_case=true)?
-line_start = Regex("^warning:", multiline=true)?
-```
-
-Supported constructor flags:
-
-| Flag | Default | Effect |
+| Constructor argument | Default | Meaning |
 | --- | --- | --- |
-| `ignore_case` | `false` | Match letters case-insensitively. |
-| `multiline` | `false` | Make `^` and `$` match line boundaries inside the input. |
-| `dotall` | `false` | Make `.` match newlines. |
-| `verbose` | `false` | Allow whitespace and comments in patterns according to the safe engine's verbose syntax. |
-
-Inline flags remain valid when the pattern needs to travel as a self-contained literal:
-
-```incan
-labels = Regex("(?im)^warning: (?P<body>.+)$")?
-```
-
-Methods:
+| `pattern: str` | required | Regular-expression pattern text. |
+| `ignore_case: bool` | `false` | Match letters case-insensitively. |
+| `multiline: bool` | `false` | Make `^` and `$` match line boundaries inside the input. |
+| `dotall: bool` | `false` | Make `.` match newlines. |
+| `verbose: bool` | `false` | Allow whitespace and comments in patterns according to the safe engine's verbose syntax. |
 
 | Method | Returns | Description |
 | --- | --- | --- |
@@ -75,20 +48,18 @@ Methods:
 | `regex.replace_all_literal(text: str, repl: str)` | `str` | Replace every match without capture interpolation. |
 | `regex.replacen_literal(text: str, limit: int, repl: str)` | `str` | Replace at most `limit` matches without capture interpolation. |
 
-### `Match`
+## `Match`
 
 `Match` represents one match span.
 
 | Method | Returns | Description |
 | --- | --- | --- |
 | `match.as_str()` | `str` | Matched text. |
-| `match.start()` | `int` | Start offset. |
-| `match.end()` | `int` | End offset. |
-| `match.span()` | `tuple[int, int]` | Start and end offsets. |
+| `match.start()` | `int` | Start byte offset. |
+| `match.end()` | `int` | End byte offset. |
+| `match.span()` | `tuple[int, int]` | Start and end byte offsets. |
 
-Offsets are byte positions in the input text, matching the safe engine's span model. Use them with APIs that document the same offset model; do not assume they can be reused unchanged against a separate encoded representation.
-
-### `Captures`
+## `Captures`
 
 `Captures` represents one successful match plus its capture groups. Group `0` is always the full match. Numbered groups start at `1`, and named groups are looked up by name.
 
@@ -102,108 +73,9 @@ Offsets are byte positions in the input text, matching the safe engine's span mo
 
 Unmatched optional groups are explicit `None` values. They are not coerced to empty strings in `group(...)`, `groups()`, `groupdict()`, or replacement callbacks.
 
-```incan
-from std.regex import Regex, RegexError
+## Replacement strings
 
-
-def main() -> Result[None, RegexError]:
-    release = Regex("^v(?P<major>\\d+)\\.(?P<minor>\\d+)(?:\\.(?P<patch>\\d+))?$")?
-    caps = release.full_match("v0.3")
-
-    match caps:
-        Some(version) =>
-            assert version.group("major") == Some("0")
-            assert version.group("minor") == Some("3")
-            assert version.group("patch") == None
-        None =>
-            println("not a release tag")
-
-    return Ok(None)
-```
-
-## Searching And Scanning
-
-Use `is_match(...)` when only the boolean matters, `find(...)` / `find_iter(...)` when spans matter, and `captures(...)` / `captures_iter(...)` when capture groups matter.
-
-```incan
-from std.regex import Regex, RegexError
-
-
-def main() -> Result[None, RegexError]:
-    word = Regex("\\w+")?
-
-    for item in word.find_iter("alpha beta"):
-        println(f"{item.start()}:{item.end()} {item.as_str()}")
-
-    return Ok(None)
-```
-
-`find_iter(...)` and `captures_iter(...)` scan left to right and return non-overlapping results.
-
-## Splitting
-
-Regex splitting is for pattern separators rather than fixed separators.
-
-```incan
-from std.regex import Regex, RegexError
-
-
-def main() -> Result[None, RegexError]:
-    separator = Regex("\\s*,\\s*")?
-    fields = separator.split("name, email, active").collect()
-
-    assert fields == ["name", "email", "active"]
-    return Ok(None)
-```
-
-Use `splitn(...)` when the rest of the string should remain intact after a fixed number of separator matches:
-
-```incan
-header = Regex("\\s*:\\s*")?
-parts = header.splitn("content-type: text/plain; charset=utf-8", 1).collect()
-```
-
-## Replacement
-
-Replacement strings support capture interpolation with `$1` for numbered captures and `${name}` for named captures.
-
-```incan
-from std.regex import Regex, RegexError
-
-
-def main() -> Result[None, RegexError]:
-    slug = Regex("[^A-Za-z0-9]+")?
-    clean = slug.replace_all("Incan 0.3 regex", "-")
-
-    version = Regex("v(?P<major>\\d+)\\.(?P<minor>\\d+)")?
-    normalized = version.replace_all("v0.3", "major=${major}, minor=$2")
-
-    assert clean == "Incan-0-3-regex"
-    assert normalized == "major=0, minor=3"
-    return Ok(None)
-```
-
-Use a callable replacement when the replacement depends on code instead of interpolation text. The callable receives `Captures` for the current match and returns the replacement string.
-
-```incan
-from std.regex import Captures, Regex, RegexError
-
-
-def reverse_name(caps: Captures) -> str:
-    first = caps.group("first").unwrap_or("")
-    last = caps.group("last").unwrap_or("")
-    return f"{last}, {first}"
-
-
-def main() -> Result[None, RegexError]:
-    name = Regex("(?P<first>\\w+)\\s+(?P<last>\\w+)")?
-    out = name.replace_all("Ada Lovelace", reverse_name)
-
-    assert out == "Lovelace, Ada"
-    return Ok(None)
-```
-
-Use the `replace_literal(...)`, `replace_all_literal(...)`, and `replacen_literal(...)` methods when a replacement string must be inserted exactly as written instead of interpreting `$1` or `${name}` as capture references.
+Replacement strings support capture interpolation with `$1` for numbered captures and `${name}` for named captures. The literal replacement methods insert replacement text exactly as written instead of interpreting capture references.
 
 ## Errors
 
@@ -216,8 +88,9 @@ Use the `replace_literal(...)`, `replace_all_literal(...)`, and `replacen_litera
 
 Rejected pattern syntax returns a `RegexError`. Error text is diagnostic text; program logic should branch on `kind()` values when it needs a stable category.
 
-## See Also
+## See also
 
+- [Regular expressions](../../how-to/regular_expressions.md)
 - [Strings and bytes](../strings.md)
 - [Callable objects](../stdlib_traits/callable.md)
 - [RFC 059: std.regex](../../../RFCs/closed/implemented/059_std_regex.md)

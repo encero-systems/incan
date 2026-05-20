@@ -13,16 +13,16 @@ Compression is not archive handling. Use `std.compression` for byte streams such
 
 Prefer an explicit codec whenever the format is known from a protocol, file extension, header, configuration value, or caller contract.
 
-| Situation | Prefer |
-| --- | --- |
-| HTTP-style payloads or `.gz` files | `gzip` |
-| zlib-wrapped deflate from older protocols | `zlib` |
-| raw deflate blocks from a protocol that says "deflate" explicitly | `deflate` |
-| data pipelines and log files that want high compression and fast decode | `zstd` |
-| existing `.bz2` files | `bz2` |
-| existing `.xz` / LZMA-family files | `lzma` |
-| framed Snappy streams | `snappy` |
-| raw Snappy blocks required by a storage format | `snappy.raw` |
+| Situation                                                               | Prefer       |
+| ----------------------------------------------------------------------- | ------------ |
+| HTTP-style payloads or `.gz` files                                      | `gzip`       |
+| zlib-wrapped deflate from older protocols                               | `zlib`       |
+| raw deflate blocks from a protocol that says "deflate" explicitly       | `deflate`    |
+| data pipelines and log files that want high compression and fast decode | `zstd`       |
+| existing `.bz2` files                                                   | `bz2`        |
+| existing `.xz` / LZMA-family files                                      | `lzma`       |
+| framed Snappy streams                                                   | `snappy`     |
+| raw Snappy blocks required by a storage format                          | `snappy.raw` |
 
 Do not silently try codecs in a loop. If the format is ambiguous, use the explicit autodetection helpers so the policy is visible at the call site.
 

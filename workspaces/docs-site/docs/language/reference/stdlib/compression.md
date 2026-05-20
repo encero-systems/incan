@@ -24,28 +24,13 @@ Use explicit codec modules when the data format is known. Use autodetection only
 | `snappy` | framed Snappy |
 | `snappy.raw` | raw Snappy blocks for advanced interop |
 
-Each top-level codec namespace exposes one-shot helpers:
-
-```incan
-compressed = gzip.compress(payload, level=None)?
-plain = gzip.decompress(compressed)?
-```
+Each top-level codec namespace exposes one-shot helpers: `compress(payload, level=None)` and `decompress(payload)`.
 
 The default `snappy` namespace uses framed Snappy. Raw Snappy is available under `std.compression.snappy.raw`, but it is not part of autodetection because raw blocks do not carry a reliable frame signature.
 
 ## Streaming
 
-Every required codec module exposes stream helpers over `std.io.BytesIO` and `std.fs.File`:
-
-```incan
-from std.compression import zstd
-from std.fs import Path
-
-source = Path("events.jsonl.zst").open("rb")?
-target = Path("events.jsonl").open("wb")?
-zstd.decompress_stream(source, target)?
-target.flush()?
-```
+Every required codec module exposes stream helpers over `std.io.BytesIO` and `std.fs.File`.
 
 `compress_stream(source, target, level=None, chunk_size=65536)` reads plain bytes from `source` and writes compressed bytes to `target`. `decompress_stream(source, target, chunk_size=65536)` reads compressed bytes and writes plain bytes.
 
@@ -65,11 +50,7 @@ Codecs with numeric levels return `CompressionError(kind="invalid_level", ...)` 
 
 ## Autodetection
 
-Autodetection is explicit and decompression-only:
-
-```incan
-codec, plain = decompress_auto(blob, allowed=[Codec.Gzip, Codec.Zstd])?
-```
+Autodetection is explicit and decompression-only.
 
 `decompress_auto(data, allowed=Codec.all())` returns `(Codec, bytes)`. `decompress_auto_stream(source, target, allowed=Codec.all(), chunk_size=65536)` writes the decoded stream to `target` and returns the detected `Codec`.
 
@@ -87,12 +68,6 @@ Fallible helpers return `Result[..., CompressionError]`.
 | `codec` | The codec involved in the failure, when known. |
 | `operation` | The operation that failed, such as `compress`, `decompress_stream`, or `decompress_auto_stream`. |
 | `detail` | Backend or stdlib validation detail for diagnostics. |
-
-```incan
-match gzip.decompress(blob):
-    Ok(plain) => println(len(plain))
-    Err(err) => println(err.kind)
-```
 
 ## Boundaries
 

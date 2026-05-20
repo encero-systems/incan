@@ -1,6 +1,13 @@
 # RFC 000: Incan Core Language RFC (Phase 1)
 
-**Status:** Done **Created:** 2024-11-26 **Issue:** [#50](https://github.com/dannys-code-corner/incan/pull/50)
+- **Status:** Implemented
+- **Created:** 2024-11-26
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:** —
+- **Issue:** —
+- **RFC PR:** [#50](https://github.com/dannys-code-corner/incan/pull/50)
+- **Written against:** v0.1
+- **Shipped in:** v0.1
 
 This RFC consolidates the core semantics decisions for Incan's first implementation phase.
 

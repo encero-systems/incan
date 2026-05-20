@@ -276,8 +276,7 @@ Three new syntactic elements:
     __derives__ = [Serialize, Deserialize]
     ```
 
-    Parsed as a const assignment where the name is `__derives__` and the value is a list of identifiers. Each identifier
-    must resolve to a trait defined in the same module.
+    Parsed as a const assignment where the name is `__derives__` and the value is a list of identifiers. Each identifier must resolve to a trait defined in the same module.
 
 2. **`@derive(module)` expansion**: the existing `@derive(...)` syntax is extended to accept module names (not just derive names). When the argument resolves to a module with a `__derives__` attribute, it is expanded.
 

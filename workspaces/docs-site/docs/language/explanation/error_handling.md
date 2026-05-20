@@ -18,8 +18,7 @@ The key ideas:
 - use `match` when you want to handle success/error differently
 
 ??? info "Coming from Python?"
-    Python uses exceptions, which can introduce hidden control flow (“anything can throw from anywhere”).
-    Python 3.10+ has `match`/`case`, but it still won’t enforce exhaustiveness the way Incan does.
+    Python uses exceptions, which can introduce hidden control flow (“anything can throw from anywhere”). Python 3.10+ has `match`/`case`, but it still won’t enforce exhaustiveness the way Incan does.
 
     A rough translation is:
 
@@ -73,8 +72,7 @@ The key ideas:
     ```
 
 ??? info "Coming from TS/JS?"
-    In JS/TS, `try/catch` works, but failures are often effectively “untyped” at the boundary (anything can be thrown, and
-    caught values are frequently `unknown`).
+    In JS/TS, `try/catch` works, but failures are often effectively “untyped” at the boundary (anything can be thrown, and caught values are frequently `unknown`).
 
     In Incan, fallibility is explicit in the return type, and you handle it with `Result` + `match` (or propagate it with
     `?`).
@@ -139,8 +137,7 @@ def main() -> None:
 ```
 
 !!! info "Coming from Python?"
-    In Python, `Optional[T]` is a type hint that indicates the value may be `None`.  
-    In Incan, `Option[T]` is an explicit enum that the compiler can reason about and enforce.
+    In Python, `Optional[T]` is a type hint that indicates the value may be `None`. In Incan, `Option[T]` is an explicit enum that the compiler can reason about and enforce.
 
 ## The `?` operator (propagation)
 

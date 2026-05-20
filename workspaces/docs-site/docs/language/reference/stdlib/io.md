@@ -29,18 +29,6 @@ Use `BytesIO` for parser fixtures, protocol payloads, generated binary blobs, an
 | `buf.into_bytes()` | `bytes` | Return the buffer bytes without changing the cursor. |
 | `buf.remaining()` | `int` | Unread bytes from the cursor to the end. |
 
-```incan
-from std.io import BytesIO, Endian, IoError
-
-def read_header(data: bytes) -> Result[int, IoError]:
-    buf = BytesIO(data)
-    magic = buf.read_exact(4)?
-    if len(magic) != 4:
-        return Err(IoError(operation="read_header", kind="invalid_input", detail="bad magic", position=buf.tell()))
-    version: u32 = buf.read(Endian.Little)?
-    return Ok(int(version))
-```
-
 ## Binary Numeric I/O
 
 `BytesIO` uses trait-backed overloads for exact-width numeric reads and writes. Callers use `read(endian)` and `write(value, endian)` directly on the stream.
@@ -55,19 +43,5 @@ Reads are selected by the expected result type, so provide static type context. 
 | `BinaryWrite[T]` | `write(value: T, endian: Endian) -> Result[None, IoError]` |
 
 Supported `T` values are `u8`, `i8`, `u16`, `i16`, `u32`, `i32`, `u64`, `i64`, `u128`, `i128`, `f32`, and `f64`. Endianness is ignored for one-byte values.
-
-```incan
-from std.io import BytesIO, Endian, IoError
-
-def encode_count(count: u32) -> Result[bytes, IoError]:
-    out = BytesIO()
-    out.write(count, Endian.Little)?
-    return Ok(out.into_bytes())
-
-def decode_count(data: bytes) -> Result[u32, IoError]:
-    buf = BytesIO(data)
-    count: u32 = buf.read(Endian.Little)?
-    return Ok(count)
-```
 
 `BytesIO` is in-memory only. Use `std.tempfile.SpooledTemporaryFile` when a stream should start in memory and roll over to a temporary file after a size threshold.

@@ -1,8 +1,15 @@
 # RFC 021: Model field metadata and schema-safe aliases
 
-## Status
-
-**Status:** Implemented **Author(s):** Danny Meijer (@danny-meijer) **Issue:** [#94](https://github.com/dannys-code-corner/incan/issues/94) **Related:** RFC 005 (Rust interop), RFC 017 (constrained types)
+- **Status:** Implemented
+- **Created:** —
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:**
+    - RFC 005 (Rust interop)
+    - RFC 017 (constrained types)
+- **Issue:** [#94](https://github.com/dannys-code-corner/incan/issues/94)
+- **RFC PR:** —
+- **Written against:** v0.1
+- **Shipped in:** v0.1
 
 ## Summary
 

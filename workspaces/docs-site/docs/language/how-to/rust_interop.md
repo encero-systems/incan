@@ -343,16 +343,16 @@ Prefer fixing the source or tightening the generated lowering when a warning is 
 
 When calling Rust functions or methods, the compiler can apply a bounded, compiler-managed coercion model for built-in types:
 
-| Incan built-in | Canonical Rust lowering | Admitted Rust boundary targets |
-| -------------- | ----------------------- | ------------------------------ |
-| `int`          | `i64`                   | `i64`                          |
-| `float`        | `f64`                   | `f64`                          |
-| exact-width numerics | matching Rust scalar | same type or provably lossless widening |
-| `bool`         | `bool`                  | `bool`                         |
-| `str`          | `String`                | `String`, `&str`               |
-| `bytes`        | `Vec<u8>`               | `Vec<u8>`, `&[u8]`             |
-| `List[T]`      | `Vec<T>`                | `Vec<U>` when Rust accepts `U: From<T>` |
-| `None` / unit  | `()`                    | `()`                           |
+| Incan built-in       | Canonical Rust lowering | Admitted Rust boundary targets          |
+| -------------------- | ----------------------- | --------------------------------------- |
+| `int`                | `i64`                   | `i64`                                   |
+| `float`              | `f64`                   | `f64`                                   |
+| exact-width numerics | matching Rust scalar    | same type or provably lossless widening |
+| `bool`               | `bool`                  | `bool`                                  |
+| `str`                | `String`                | `String`, `&str`                        |
+| `bytes`              | `Vec<u8>`               | `Vec<u8>`, `&[u8]`                      |
+| `List[T]`            | `Vec<T>`                | `Vec<U>` when Rust accepts `U: From<T>` |
+| `None` / unit        | `()`                    | `()`                                    |
 
 Exact-width numeric adaptation is intentionally narrow. `i8` can flow into an `i16`/`i32`/`i64` Rust parameter, `u8` can flow into a wider unsigned or strictly wider signed parameter, and `f32` can flow into `f64`. Narrowing, signed-to-unsigned conversion, and `float`/`f64` to `f32` are rejected unless the Incan code performs an explicit conversion first.
 
@@ -461,27 +461,26 @@ def main() -> None:
 
 Incan types map to canonical Rust types:
 
-| Incan          | Rust            |
-| -------------- | --------------- |
-| `int`          | `i64`           |
-| `float`        | `f64`           |
-| `i8` / `u8` etc. | matching Rust primitive |
-| `decimal[p, s]` | `incan_stdlib::num::Decimal128` |
-| `str`          | `String`        |
-| `bytes`        | `Vec<u8>`       |
-| `bool`         | `bool`          |
-| `List[T]`      | `Vec<T>`        |
-| `Dict[K, V]`   | `HashMap<K, V>` |
-| `Set[T]`       | `HashSet<T>`    |
-| `Option[T]`    | `Option<T>`     |
-| `Result[T, E]` | `Result<T, E>`  |
-| `None` / unit  | `()`            |
+| Incan            | Rust                            |
+| ---------------- | ------------------------------- |
+| `int`            | `i64`                           |
+| `float`          | `f64`                           |
+| `i8` / `u8` etc. | matching Rust primitive         |
+| `decimal[p, s]`  | `incan_stdlib::num::Decimal128` |
+| `str`            | `String`                        |
+| `bytes`          | `Vec<u8>`                       |
+| `bool`           | `bool`                          |
+| `List[T]`        | `Vec<T>`                        |
+| `Dict[K, V]`     | `HashMap<K, V>`                 |
+| `Set[T]`         | `HashSet<T>`                    |
+| `Option[T]`      | `Option<T>`                     |
+| `Result[T, E]`   | `Result<T, E>`                  |
+| `None` / unit    | `()`                            |
 
 ### String arguments and borrowing
 
 !!! tip "Coming from Rust?"
-    You never write `&str` or lifetimes in Incan. When you pass a `str` value to an external Rust function, the
-    compiler automatically passes it as a borrowed `&str` — the most common pattern in Rust APIs.
+    You never write `&str` or lifetimes in Incan. When you pass a `str` value to an external Rust function, the compiler automatically passes it as a borrowed `&str` — the most common pattern in Rust APIs.
 
     If a Rust function requires an owned `String` instead, append `.to_string()` at the call site:
 
@@ -548,8 +547,7 @@ If the scrutinee is typed as a bare imported Rust path (not a `rusttype` alias),
 ## Best Practices
 
 1. **Use `incan fmt` to fix import style**: the formatter always normalizes `rust::` imports to `::` notation.
-    If you (or a collaborator) wrote `from rust.serde_json import Value`, running `incan fmt` silently rewrites it
-    to `from rust::serde_json import Value`.
+    If you (or a collaborator) wrote `from rust.serde_json import Value`, running `incan fmt` silently rewrites it to `from rust::serde_json import Value`.
 
 2. **Prefer Incan types**: Use Incan's built-in types when possible. Use Rust types only when you need
     specific functionality.

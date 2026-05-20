@@ -1,6 +1,18 @@
 # RFC 022: Namespaced stdlib modules and compiler→stdlib handoff
 
-**Status:** Implemented **Created:** 2026-02-06 **Author(s):** Danny Meijer (@dannymeijer) **Related:** RFC 000 (core imports/modules), RFC 005 (Rust interop), RFC 051 (`JsonValue`), RFC 013 (Rust crate dependencies), RFC 020 (offline/locked policy) **Issue:** [#120](https://github.com/dannys-code-corner/incan/issues/120)
+- **Status:** Implemented
+- **Created:** 2026-02-06
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:**
+    - RFC 000 (core imports/modules)
+    - RFC 005 (Rust interop)
+    - RFC 013 (Rust crate dependencies)
+    - RFC 020 (offline/locked policy)
+    - RFC 051 (`JsonValue`)
+- **Issue:** [#120](https://github.com/dannys-code-corner/incan/issues/120)
+- **RFC PR:** —
+- **Written against:** v0.1
+- **Shipped in:** v0.2
 
 ## Summary
 

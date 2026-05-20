@@ -131,15 +131,19 @@ nav:
           - Binary-text encoding: language/how-to/binary_text_encoding.md
           - Compression: language/how-to/compression.md
           - Dynamic JSON: language/how-to/dynamic_json.md
+          - Hashing data: language/how-to/hashing_data.md
+          - Logging: language/how-to/logging.md
           - Generators: language/how-to/generators.md
           - Imports and modules: language/how-to/imports_and_modules.md
           - Module state: language/how-to/module_state.md
           - Choosing collection types: language/how-to/choosing_collections.md
+          - Working with graphs: language/how-to/working_with_graphs.md
           - Choosing numeric types: language/how-to/choosing_numeric_types.md
           - Modeling with enums: language/how-to/modeling_with_enums.md
           - Project lifecycle: language/how-to/project_lifecycle.md
           - Testing: language/how-to/testing_stdlib.md
           - String processing: language/how-to/string_processing.md
+          - Regular expressions: language/how-to/regular_expressions.md
           - Working with UUIDs: language/how-to/working_with_uuids.md
           - Performance: language/how-to/performance.md
           - Rust interop: language/how-to/rust_interop.md
@@ -214,6 +218,7 @@ nav:
           - Numeric types: language/explanation/numeric_types.md
           - Date and time model: language/explanation/datetime_model.md
           - OrdinalMap: language/explanation/ordinal_map.md
+          - Graph model: language/explanation/graph_model.md
           - Derives & traits (explained): language/explanation/derives_and_traits.md
           - Why call-site type args exist: language/explanation/call_site_type_arguments.md
           - How derives work: language/explanation/how_derives_work.md

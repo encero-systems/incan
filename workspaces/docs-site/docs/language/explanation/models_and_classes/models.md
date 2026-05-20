@@ -42,8 +42,7 @@ def main() -> None:
     - **metadata**: additional information about a field (e.g., a description or an alias)
 
 ??? info "Coming from Rust?"
-    Both `model` and `class` compile to Rust `struct`s + `impl`s. A `model` is semantically "this is data";
-    a `class` is "this is an object with behavior".
+    Both `model` and `class` compile to Rust `struct`s + `impl`s. A `model` is semantically "this is data"; a `class` is "this is an object with behavior".
 
     - `def m(self)` corresponds to an immutable receiver (roughly like `&self`)
     - `def m(mut self)` corresponds to a mutable receiver (roughly like `&mut self`)
@@ -138,11 +137,9 @@ def demo(w: WeirdWireKeys) -> int:
 ```
 
 ??? info "What counts as a code-spellable alias?"
-    A code-spellable alias is one you can write in the three code positions above because it *looks like* an identifier
-    (e.g. `"todays_date"`) or a keyword that Incan allows in those positions (e.g. `"type"`).
+    A code-spellable alias is one you can write in the three code positions above because it *looks like* an identifier (e.g. `"todays_date"`) or a keyword that Incan allows in those positions (e.g. `"type"`).
 
-    Other aliases are valid wire keys but not valid code names (e.g. `"1"`, `"created at"`). Use the canonical field name
-    in code; the alias is used for wire mapping and reflection.
+    Other aliases are valid wire keys but not valid code names (e.g. `"1"`, `"created at"`). Use the canonical field name in code; the alias is used for wire mapping and reflection.
 
 ### Alias constraints (to avoid ambiguity)
 

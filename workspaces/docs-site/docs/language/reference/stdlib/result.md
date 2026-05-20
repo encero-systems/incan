@@ -2,24 +2,7 @@
 
 `std.result` exposes Incan-authored helper functions for the `Result[T, E]` combinator surface.
 
-Each helper has the same branch behavior as the corresponding `Result` method. The method form is usually the clearest spelling for pipelines:
-
-```incan
-return read_config(path).and_then(validate_config).map_err(ConfigError.Parse)
-```
-
-Direct helper imports are available when a function-shaped API is clearer:
-
-```incan
-from std.result import map as result_map
-
-def double(value: int) -> int:
-    return value * 2
-
-def main() -> None:
-    value: Result[int, str] = Ok(21)
-    doubled = result_map(value, double)
-```
+Each helper has the same branch behavior as the corresponding `Result` method. The method form is usually the clearest spelling for pipelines; direct helper imports are available when a function-shaped API is clearer.
 
 ## Functions
 

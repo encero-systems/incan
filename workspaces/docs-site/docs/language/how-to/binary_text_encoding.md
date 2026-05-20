@@ -10,14 +10,14 @@ from std.encoding import base32, base58, base64, base85, bech32, hex
 
 ## Choose a Format
 
-| Format | Use it for | Watch for |
-| --- | --- | --- |
-| Hex | Debug output, digests, binary fixtures, protocols that require base16. | Output is twice as long as the input. |
-| Base32 | Copyable uppercase tokens, DNS-like or case-sensitive environments, RFC 4648 protocols. | Standard Base32 and Base32hex are different alphabets. |
-| Base64 | General API payloads, compact binary fields, common wire formats. | Use URL-safe helpers for URLs; do not silently swap alphabets. |
-| Base85 | Denser ASCII output for protocols that name a Base85 variant. | Ascii85, Git-style Base85, and Z85 are not interchangeable. |
-| Base58 | Human-facing identifiers that avoid visually ambiguous characters. | Plain Base58 has no checksum. Add checksum behavior in a separately named protocol helper. |
-| Bech32 / Bech32m | Address-like strings with a human-readable prefix and checksum. | Payload data is five-bit words, not raw bytes. |
+| Format           | Use it for                                                                              | Watch for                                                                                  |
+| ---------------- | --------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
+| Hex              | Debug output, digests, binary fixtures, protocols that require base16.                  | Output is twice as long as the input.                                                      |
+| Base32           | Copyable uppercase tokens, DNS-like or case-sensitive environments, RFC 4648 protocols. | Standard Base32 and Base32hex are different alphabets.                                     |
+| Base64           | General API payloads, compact binary fields, common wire formats.                       | Use URL-safe helpers for URLs; do not silently swap alphabets.                             |
+| Base85           | Denser ASCII output for protocols that name a Base85 variant.                           | Ascii85, Git-style Base85, and Z85 are not interchangeable.                                |
+| Base58           | Human-facing identifiers that avoid visually ambiguous characters.                      | Plain Base58 has no checksum. Add checksum behavior in a separately named protocol helper. |
+| Bech32 / Bech32m | Address-like strings with a human-readable prefix and checksum.                         | Payload data is five-bit words, not raw bytes.                                             |
 
 ## Encode Bytes
 

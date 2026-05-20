@@ -1,6 +1,16 @@
 # RFC 007: Inline Tests
 
-**Status:** Planned **Created:** 2024-12-10 **Issue:** [#54](https://github.com/dannys-code-corner/incan/pull/54)
+- **Status:** Superseded
+- **Superseded by:** RFC 018, RFC 019
+- **Created:** 2024-12-10
+- **Author(s):** Danny Meijer (@dannymeijer)
+- **Related:**
+    - RFC 018 (language primitives for testing)
+    - RFC 019 (test runner, CLI, and ecosystem)
+- **Issue:** —
+- **RFC PR:** [#54](https://github.com/dannys-code-corner/incan/pull/54)
+- **Written against:** v0.1
+- **Shipped in:** —
 
 ## Summary
 

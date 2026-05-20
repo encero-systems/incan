@@ -12,8 +12,7 @@ In Incan, `const` exists to make intent explicit and to unlock compiler guarante
 - **Reproducibility**: keeps “configuration tables” and other fixed data out of runtime control flow.
 
 !!! info "Coming from Python?"
-    In Python, “constants” are mostly a convention (e.g. `MAX_RETRIES = 5`) and can still be reassigned at runtime.
-    In Incan, `const` is a language feature with compile-time validation and immutability guarantees.
+    In Python, “constants” are mostly a convention (e.g. `MAX_RETRIES = 5`) and can still be reassigned at runtime. In Incan, `const` is a language feature with compile-time validation and immutability guarantees.
 
 ## How do I use it?
 
@@ -23,8 +22,7 @@ In Incan, `const` exists to make intent explicit and to unlock compiler guarante
 - **Initializer rules**: the initializer must be **const-evaluable** (no runtime calls)
 
 !!! tip "Rule of thumb"
-    If you can’t evaluate the initializer without running the program (IO, time, function calls, loops), it doesn’t belong
-    in a `const`.
+    If you can’t evaluate the initializer without running the program (IO, time, function calls, loops), it doesn’t belong in a `const`.
 
 ## How is `const` different from a regular variable?
 
@@ -38,11 +36,9 @@ In Incan, `const` exists to make intent explicit and to unlock compiler guarante
     - may be mutable (`mut`) depending on the binding
 
 !!! info "Coming from TS/JS?"
-    In TypeScript/JavaScript, `const` mostly means “this binding can’t be reassigned” (the value can still be mutable),
-    and it can be computed at runtime.
+    In TypeScript/JavaScript, `const` mostly means “this binding can’t be reassigned” (the value can still be mutable), and it can be computed at runtime.
 
-    In Incan, `const` means “compile-time constant”: the initializer must be const-evaluable, and the result is exposed as
-    a read-only (frozen) value.
+    In Incan, `const` means “compile-time constant”: the initializer must be const-evaluable, and the result is exposed as a read-only (frozen) value.
 
 ## When should I use `static` instead?
 
@@ -103,8 +99,7 @@ Incan supports two const “families” because Rust’s `const` rules are stric
 Important detail: in `const` context, Incan treats `str`/`bytes` and common containers as **frozen** to preserve deep immutability. In other words, `const` is not “just a `let` that runs earlier”.
 
 !!! info "Coming from Rust?"
-    This is similar to Rust’s split between “things that can be `const`” and “things that need `'static` backing data and
-    a safe API”.
+    This is similar to Rust’s split between “things that can be `const`” and “things that need `'static` backing data and a safe API”.
 
 ## Examples
 

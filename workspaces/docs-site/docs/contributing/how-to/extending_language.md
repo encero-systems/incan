@@ -135,8 +135,7 @@ Use this only when the feature is genuinely syntactic/control-flow.
 - Update lexer parity tests (keyword/operator/punctuation registry parity)
 
 !!! note "Word-operators (special case)"
-    If the new “keyword” is meant to behave like an operator (it participates in expression precedence like `and`, `or`,
-    `not`, `in`, `is`), treat it as a **word-operator**:
+    If the new “keyword” is meant to behave like an operator (it participates in expression precedence like `and`, `or`, `not`, `in`, `is`), treat it as a **word-operator**:
 
     - Add it to `crates/incan_core/src/lang/operators.rs` (precedence/fixity source of truth)
     - Add a corresponding `KeywordId` + `KEYWORDS` entry in `crates/incan_core/src/lang/keywords.rs` (so the lexer will still lex it as a keyword)
@@ -253,13 +252,10 @@ Action descriptors are small enums (e.g., `SurfaceStmtLoweringAction::AssertCall
     1. Add a new variant to the relevant action enum in `crates/incan_semantics_core/src/lib.rs` (e.g., `SurfaceStmtLoweringAction::YourPattern`).
     2. Add a handler arm in the corresponding compiler module (`lower_surface_statement()`, `check_surface_stmt()`, etc.).
 
-    This is deliberately rare — action descriptors represent *compiler behavior patterns*, not individual keywords.
-    You might add many keywords before needing a new pattern.
+    This is deliberately rare — action descriptors represent *compiler behavior patterns*, not individual keywords. You might add many keywords before needing a new pattern.
 
 !!! tip "Key difference from Path B"
-    Path B creates new AST variants and new IR variants for each keyword. Path C reuses the generic `Surface` AST nodes
-    and the existing `IrExprKind::Call` with `canonical_path` metadata — so you don't need to touch the IR definition or
-    the emitter's call-emission logic at all.
+    Path B creates new AST variants and new IR variants for each keyword. Path C reuses the generic `Surface` AST nodes and the existing `IrExprKind::Call` with `canonical_path` metadata — so you don't need to touch the IR definition or the emitter's call-emission logic at all.
 
 ---
 

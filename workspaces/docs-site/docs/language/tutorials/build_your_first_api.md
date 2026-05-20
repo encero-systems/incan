@@ -5,8 +5,7 @@ This tutorial walks you through running the built-in web framework and serving a
 Prerequisite: [Install, build, and run](../../tooling/how-to/install_and_run.md).
 
 !!! note "If something fails"
-    If you hit errors while building/running, start with [Troubleshooting](../../tooling/how-to/troubleshooting.md).
-    If it still looks like a bug, please [file an issue on GitHub](https://github.com/dannys-code-corner/incan/issues).
+    If you hit errors while building/running, start with [Troubleshooting](../../tooling/how-to/troubleshooting.md). If it still looks like a bug, please [file an issue on GitHub](https://github.com/dannys-code-corner/incan/issues).
 
 ## Step 1: Run the hello web example
 
