@@ -8,7 +8,7 @@ from std.collections import OrdinalKey, OrdinalMapError
 from std.datetime.error import DateTimeError
 from std.datetime.civil.intervals import TimeDelta, YearMonthInterval, DateTimeInterval
 from std.datetime.civil.naive import DateTime, FixedOffset, utc, _ParsedOffset, _ParsedTemporal, _parse_offset, _strptime_temporal, _strftime_datetime_inner
-from std.datetime.civil.naive import ordinal_key_append_bytes, ordinal_key_append_signed_magnitude_i64, ordinal_key_read_signed_magnitude_i64, ordinal_key_signed_magnitude_i64_is_canonical
+from std.datetime.civil.naive import ordinal_key_bytes, ordinal_key_signed_magnitude_i64, ordinal_key_read_signed_magnitude_i64, ordinal_key_signed_magnitude_i64_is_canonical
 
 pub model DateTimeOffset with OrdinalKey:
     """
@@ -101,9 +101,8 @@ pub model DateTimeOffset with OrdinalKey:
         """
         Return canonical fixed-width fixed-offset datetime bytes for `OrdinalMap`.
         """
-        mut out: list[u8] = []
-        ordinal_key_append_bytes(out, self.datetime.ordinal_bytes())
-        ordinal_key_append_signed_magnitude_i64(out, self.offset.seconds)
+        mut out = ordinal_key_bytes(self.datetime.ordinal_bytes())
+        out.extend(ordinal_key_signed_magnitude_i64(self.offset.seconds))
         return out
 
     def strftime(self, format: str) -> Result[str, DateTimeError]:

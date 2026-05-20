@@ -167,10 +167,11 @@ pub model Date with OrdinalKey:
         """
         Return canonical fixed-width date bytes for `OrdinalMap`.
         """
-        mut out: list[u8] = []
-        ordinal_key_append_signed_magnitude_i64(out, self.year)
-        ordinal_key_append_byte(out, self.month)
-        ordinal_key_append_byte(out, self.day)
+        mut out = ordinal_key_signed_magnitude_i64(self.year)
+        month: u8 = self.month.wrapping_resize()
+        day: u8 = self.day.wrapping_resize()
+        out.append(month)
+        out.append(day)
         return out
 
     def strftime(self, format: str) -> Result[str, DateTimeError]:
@@ -484,12 +485,11 @@ pub model Time with OrdinalKey:
         """
         Return canonical fixed-width time bytes for `OrdinalMap`.
         """
-        mut out: list[u8] = []
-        ordinal_key_append_byte(out, self.hour)
-        ordinal_key_append_byte(out, self.minute)
-        ordinal_key_append_byte(out, self.second)
-        ordinal_key_append_u32_le(out, self.nanosecond)
-        return out
+        hour: u8 = self.hour.wrapping_resize()
+        minute: u8 = self.minute.wrapping_resize()
+        second: u8 = self.second.wrapping_resize()
+        nanos = ordinal_key_u32_le(self.nanosecond)
+        return [hour, minute, second, nanos[0], nanos[1], nanos[2], nanos[3]]
 
     def strftime(self, format: str) -> Result[str, DateTimeError]:
         """
@@ -655,9 +655,8 @@ pub model DateTime with OrdinalKey:
         """
         Return canonical fixed-width datetime bytes for `OrdinalMap`.
         """
-        mut out: list[u8] = []
-        ordinal_key_append_bytes(out, self.date.ordinal_bytes())
-        ordinal_key_append_bytes(out, self.time.ordinal_bytes())
+        mut out = ordinal_key_bytes(self.date.ordinal_bytes())
+        out.extend(ordinal_key_bytes(self.time.ordinal_bytes()))
         return out
 
     def strftime(self, format: str) -> Result[str, DateTimeError]:
@@ -1634,35 +1633,35 @@ def _datetime_from_unix_nanoseconds_utc(nanoseconds: int) -> DateTime:
     return DateTime(date=date, time=time)
 
 
-pub def ordinal_key_append_bytes(mut out: list[u8], data: bytes) -> None:
+pub def ordinal_key_bytes(data: bytes) -> list[u8]:
     """
-    Append raw bytes to an ordinal-key buffer.
+    Return raw bytes as an ordinal-key fragment.
     """
-    for index in range(len(data)):
-        out.append(data[index])
+    return [data[index] for index in range(len(data))]
 
 
-pub def ordinal_key_append_byte(mut out: list[u8], value: int) -> None:
+pub def ordinal_key_byte(value: int) -> list[u8]:
     """
-    Append the low byte of an integer to an ordinal-key buffer.
+    Return the low byte of an integer as an ordinal-key fragment.
     """
     byte: u8 = value.wrapping_resize()
-    out.append(byte)
+    return [byte]
 
 
-pub def ordinal_key_append_u32_le(mut out: list[u8], value: int) -> None:
+pub def ordinal_key_u32_le(value: int) -> list[u8]:
     """
-    Append a non-negative 32-bit integer in little-endian byte order.
+    Return a non-negative 32-bit integer in little-endian byte order.
     """
-    ordinal_key_append_byte(out, value % 256)
-    ordinal_key_append_byte(out, (value // 256) % 256)
-    ordinal_key_append_byte(out, (value // 65536) % 256)
-    ordinal_key_append_byte(out, (value // 16777216) % 256)
+    byte0: u8 = (value % 256).wrapping_resize()
+    byte1: u8 = ((value // 256) % 256).wrapping_resize()
+    byte2: u8 = ((value // 65536) % 256).wrapping_resize()
+    byte3: u8 = ((value // 16777216) % 256).wrapping_resize()
+    return [byte0, byte1, byte2, byte3]
 
 
-pub def ordinal_key_append_signed_magnitude_i64(mut out: list[u8], value: int) -> None:
+pub def ordinal_key_signed_magnitude_i64(value: int) -> list[u8]:
     """
-    Append a sign byte followed by a 64-bit little-endian magnitude.
+    Return a sign byte followed by a 64-bit little-endian magnitude.
 
     Date/time ordinal encodings use this form for human-domain fields that can be negative, such as Gregorian years or
     UTC offsets, without depending on host integer representation.
@@ -1672,15 +1671,16 @@ pub def ordinal_key_append_signed_magnitude_i64(mut out: list[u8], value: int) -
     if value < 0:
         sign = 1
         magnitude = 0 - value
-    ordinal_key_append_byte(out, sign)
-    ordinal_key_append_byte(out, magnitude % 256)
-    ordinal_key_append_byte(out, (magnitude // 256) % 256)
-    ordinal_key_append_byte(out, (magnitude // 65536) % 256)
-    ordinal_key_append_byte(out, (magnitude // 16777216) % 256)
-    ordinal_key_append_byte(out, (magnitude // 4294967296) % 256)
-    ordinal_key_append_byte(out, (magnitude // 1099511627776) % 256)
-    ordinal_key_append_byte(out, (magnitude // 281474976710656) % 256)
-    ordinal_key_append_byte(out, (magnitude // 72057594037927936) % 256)
+    sign_byte: u8 = sign.wrapping_resize()
+    byte0: u8 = (magnitude % 256).wrapping_resize()
+    byte1: u8 = ((magnitude // 256) % 256).wrapping_resize()
+    byte2: u8 = ((magnitude // 65536) % 256).wrapping_resize()
+    byte3: u8 = ((magnitude // 16777216) % 256).wrapping_resize()
+    byte4: u8 = ((magnitude // 4294967296) % 256).wrapping_resize()
+    byte5: u8 = ((magnitude // 1099511627776) % 256).wrapping_resize()
+    byte6: u8 = ((magnitude // 281474976710656) % 256).wrapping_resize()
+    byte7: u8 = ((magnitude // 72057594037927936) % 256).wrapping_resize()
+    return [sign_byte, byte0, byte1, byte2, byte3, byte4, byte5, byte6, byte7]
 
 
 pub def ordinal_key_read_u32_le(data: bytes, offset: int) -> int:
