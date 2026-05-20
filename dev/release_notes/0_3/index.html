@@ -4467,6 +4467,8 @@
         
       
         
+      
+        
           
         
       
@@ -4826,6 +4828,8 @@
       
         
       
+        
+      
     
     
       
@@ -4889,6 +4893,27 @@
   
   <span class="md-ellipsis">
     Author library DSLs with incan_vocab
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/auditing_generated_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Auditing generated Rust
   </span>
   
 
@@ -4990,6 +5015,8 @@
       
         
       
+        
+      
     
     
       
@@ -5053,6 +5080,27 @@
   
   <span class="md-ellipsis">
     Duckborrowing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/generated_rust_quality/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust quality
   </span>
   
 
@@ -5137,6 +5185,76 @@
   
   <span class="md-ellipsis">
     std.testing internals
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_5" id="__nav_7_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust stdlib coverage
   </span>
   
 
@@ -6596,6 +6714,7 @@ one-shot, BytesIO stream, file stream, autodetection, option error, and chunk-si
 <li><strong>Tooling</strong>: <code>incan lock</code> now treats manifest projects as a project-wide lock surface, covering declared scripts and test harness dependency inputs so multi-entrypoint projects do not alternate stale-lock warnings between <code>incan test</code> and <code>incan run src/extra.incn</code> (#505).</li>
 <li><strong>Tooling</strong>: <code>incan fmt</code> now wraps long class trait adoption headers into parseable parenthesized <code>with (...)</code> lists, keeping broad adoption surfaces such as <code>_BytesIO</code> readable and below the line-length target (#565).</li>
 <li><strong>Tooling</strong>: Project-aware commands now enforce <code>[project].requires-incan</code>, env-level <code>requires-incan</code> can narrow named environment workflows, and <code>incan env show</code> / <code>env run --dry-run</code> report the effective toolchain compatibility before scripts run; RFC 073 matrix expansion remains deferred beyond <code>0.3</code> (#401, RFC 073).</li>
+<li><strong>Tooling/Compiler</strong>: Generated Rust quality now has artifact-level package baselines, representative stdlib generated-Rust snapshots plus coverage inventory, an audit-report helper with a deterministic strict gate, package-facing callable characterization, a native Rust consumer fixture for generated libraries, and ownership-planner hot-path improvements that avoid proven-unnecessary clone calls for Copy comprehensions and selected owned iterator sources (#599, #600, #601, #602, #603).</li>
 </ul>
 <h3 id="documentation">Documentation<a class="headerlink" href="#documentation" title="Permanent link">&para;</a></h3>
 <ul>
@@ -6619,6 +6738,7 @@ one-shot, BytesIO stream, file stream, autodetection, option error, and chunk-si
 <li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.47</code>.</li>
 <li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.48</code>.</li>
 <li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.49</code>.</li>
+<li><strong>Project metadata</strong>: Workspace package metadata and Cargo lock entries now identify the development line as <code>0.3.0-dev.50</code>.</li>
 </ul>
 <h2 id="known-limitations-03">Known limitations (0.3)<a class="headerlink" href="#known-limitations-03" title="Permanent link">&para;</a></h2>
 <ul>

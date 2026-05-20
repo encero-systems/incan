@@ -4463,6 +4463,8 @@
         
       
         
+      
+        
           
         
       
@@ -4822,6 +4824,8 @@
       
         
       
+        
+      
     
     
       
@@ -4885,6 +4889,27 @@
   
   <span class="md-ellipsis">
     Author library DSLs with incan_vocab
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/how-to/auditing_generated_rust/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Auditing generated Rust
   </span>
   
 
@@ -4986,6 +5011,8 @@
       
         
       
+        
+      
     
     
       
@@ -5049,6 +5076,27 @@
   
   <span class="md-ellipsis">
     Duckborrowing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/explanation/generated_rust_quality/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust quality
   </span>
   
 
@@ -5133,6 +5181,76 @@
   
   <span class="md-ellipsis">
     std.testing internals
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_7_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_7_5" id="__nav_7_5_label" tabindex="0">
+            
+  
+  <span class="md-ellipsis">
+    Reference
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_7_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_7_5">
+            <span class="md-nav__icon md-icon"></span>
+            Reference
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../contributing/reference/generated_rust_stdlib_coverage/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Generated Rust stdlib coverage
   </span>
   
 
@@ -5852,6 +5970,7 @@ Cargo metadata
 <p>The recommended architecture is to extend library builds with a caller adapter generation pass that consumes checked public API metadata and caller export declarations. The adapter should call into the generated implementation crate through stable internal paths chosen by the compiler, while exposing only the caller namespace to host Rust code.</p>
 <p>The support crate should remain narrow and versioned. Generated artifacts should declare the caller ABI version they were emitted against and validate it at initialization. Metadata should be inspectable by docs, LSP, and registry tooling so Rust-hosted integration can be documented and discovered without building the package.</p>
 <p>Local development may later add a build-script helper that invokes the Incan compiler from a Rust workspace, but that helper should produce the same caller boundary as a prebuilt or published package.</p>
+<p>Current package-facing characterization shows that ordinary <code>incan build --lib</code> artifacts can already expose owned scalar callable parameters through generated package exports, but borrowed non-<code>Copy</code> callable parameters are not yet consumable across a <code>pub::</code> package boundary. A producer export such as <code>Callable[Payload, None]</code> currently emits a Rust signature shaped like <code>fn(&amp;Payload) -&gt; ()</code>, while a downstream Incan consumer observer still emits <code>fn(Payload)</code>, causing Cargo type checking to fail. The caller adapter work must either generate a compatible borrowed wrapper for that boundary or reject/document the unsupported export before producing a broken consumer build.</p>
 <h2 id="layers-affected">Layers affected<a class="headerlink" href="#layers-affected" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Library artifact model</strong>: library builds must be able to include caller metadata and generated caller adapters alongside existing semantic manifests and generated Rust crates.</li>
