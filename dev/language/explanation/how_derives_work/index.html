@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3071,6 +3163,8 @@
       
         
       
+        
+      
     
     
       
@@ -3402,6 +3496,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../derives_and_traits/" class="md-nav__link">
         
   
@@ -3638,7 +3753,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3654,14 +3769,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5670,8 +5785,7 @@
 </ul>
 <hr />
 <h2 id="the-intent">The intent<a class="headerlink" href="#the-intent" title="Permanent link">&para;</a></h2>
-<p>Incan’s derive system exists to give you <strong>out-of-the-box behavior</strong> (Debug, Display, Eq, Ord, Hash, Clone, Default,
-serde derives, etc.) without boilerplate.</p>
+<p>Incan’s derive system exists to give you <strong>out-of-the-box behavior</strong> (Debug, Display, Eq, Ord, Hash, Clone, Default, serde derives, etc.) without boilerplate.</p>
 <p>At a high level:</p>
 <ul>
 <li>you write <code>@derive(...)</code> on a <code>model</code>/<code>class</code>/<code>enum</code>/<code>newtype</code></li>
@@ -5685,8 +5799,7 @@ serde derives, etc.) without boilerplate.</p>
 <li>it marks functions whose body is provided by Rust (via <code>rust.module()</code>)</li>
 <li>it marks “compiler-provided implementation” stubs in the stdlib</li>
 </ul>
-<p>The compiler is responsible for providing the implementation; the stdlib is the stable vocabulary and signature
-registry.</p>
+<p>The compiler is responsible for providing the implementation; the stdlib is the stable vocabulary and signature registry.</p>
 <hr />
 <h2 id="derives-vs-dunders">Derives vs dunders<a class="headerlink" href="#derives-vs-dunders" title="Permanent link">&para;</a></h2>
 <p>Incan separates two cases:</p>
@@ -5694,8 +5807,7 @@ registry.</p>
 <li><strong>Derives</strong>: default, structural behavior (field-based)</li>
 <li><strong>Dunder hooks</strong>: custom behavior (<code>__str__</code>, <code>__eq__</code>, <code>__lt__</code>, <code>__hash__</code>)</li>
 </ul>
-<p>If you try to do <em>both</em> for the same capability, that’s a <strong>conflict</strong> and should be treated as an error: the compiler
-must not have to guess which implementation “wins”.</p>
+<p>If you try to do <em>both</em> for the same capability, that’s a <strong>conflict</strong> and should be treated as an error: the compiler must not have to guess which implementation “wins”.</p>
 <p>Example conflicts:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Eq</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
@@ -5712,8 +5824,7 @@ must not have to guess which implementation “wins”.</p>
 <h2 id="non-goals-deliberate-omissions">Non-goals (deliberate omissions)<a class="headerlink" href="#non-goals-deliberate-omissions" title="Permanent link">&para;</a></h2>
 <p>Some Python/Rust features are intentionally not part of Incan’s trait/derive surface area:</p>
 <ul>
-<li><strong>Context managers</strong> (<code>__enter__</code> / <code>__exit__</code>): prefer scope-based cleanup RAII (Resource Acquisition Is  Initialization)
-  style</li>
+<li><strong>Context managers</strong> (<code>__enter__</code> / <code>__exit__</code>): prefer scope-based cleanup RAII (Resource Acquisition Is  Initialization) style</li>
 <li><strong>Destructors</strong> (<code>__del__</code> / <code>Drop</code> as a user feature): cleanup is automatic; exposing destruction hooks adds complexity</li>
 <li><strong><code>__format__</code></strong>: <code>Display</code> (<code>__str__</code>) + f-strings cover most needs</li>
 </ul>

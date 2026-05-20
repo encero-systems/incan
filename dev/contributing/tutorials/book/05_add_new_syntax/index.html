@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5656,8 +5771,7 @@
 <ul>
 <li><strong>Syntax crate (<code>crates/incan_syntax/</code>)</strong>: lexer → parser → AST → diagnostics</li>
 <li><strong>Formatter (<code>src/format/</code>)</strong>: prints AST back (idempotent; never emits invalid syntax)</li>
-<li><strong>Semantic core (<code>crates/incan_core/</code>)</strong>: canonical vocab / shared semantic helpers (avoid duplicating “meaning” in multiple
-  layers)</li>
+<li><strong>Semantic core (<code>crates/incan_core/</code>)</strong>: canonical vocab / shared semantic helpers (avoid duplicating “meaning” in multiple layers)</li>
 <li><strong>Compiler (<code>src/frontend/</code>, <code>src/backend/</code>)</strong>:<ul>
 <li><strong>typechecker</strong> validates and annotates</li>
 <li><strong>lowering</strong> turns AST into IR</li>
@@ -5666,8 +5780,7 @@
 </li>
 <li><strong>Runtime/stdlib (<code>crates/incan_stdlib/</code>, <code>stdlib/</code>)</strong>: behavior that can live outside the compiler should live here</li>
 </ul>
-<p><em>Rule of thumb</em>: prefer pushing shared meaning “down” into <code>incan_core</code>/<code>incan_syntax</code>/<code>incan_stdlib</code>, and keep the <code>incan</code>
-(root) crate focused on orchestration and pipeline wiring.</p>
+<p><em>Rule of thumb</em>: prefer pushing shared meaning “down” into <code>incan_core</code>/<code>incan_syntax</code>/<code>incan_stdlib</code>, and keep the <code>incan</code> (root) crate focused on orchestration and pipeline wiring.</p>
 <p>You should expect Rust exhaustiveness errors to guide your work when you add enum variants.</p>
 <h2 id="pick-a-first-syntax-change-that-stays-small">Pick a “first syntax change” that stays small<a class="headerlink" href="#pick-a-first-syntax-change-that-stays-small" title="Permanent link">&para;</a></h2>
 <p>A good first syntax change:</p>

@@ -1167,6 +1167,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1505,6 +1513,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../generators/" class="md-nav__link">
         
   
@@ -1573,6 +1623,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1678,6 +1749,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3183,6 +3275,8 @@
       
         
       
+        
+      
     
     
       
@@ -3514,6 +3608,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3659,7 +3774,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3675,14 +3790,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5705,12 +5820,10 @@
 
 
 <h1 id="binary-text-encoding-in-incan">Binary-Text Encoding in Incan<a class="headerlink" href="#binary-text-encoding-in-incan" title="Permanent link">&para;</a></h1>
-<p>Use <code>std.encoding</code> when binary data must cross a text boundary: API payloads, identifiers, fixtures, addresses, logs,
-or files that need an ASCII representation of bytes.</p>
+<p>Use <code>std.encoding</code> when binary data must cross a text boundary: API payloads, identifiers, fixtures, addresses, logs, or files that need an ASCII representation of bytes.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="n">base32</span><span class="p">,</span> <span class="n">base58</span><span class="p">,</span> <span class="n">base64</span><span class="p">,</span> <span class="n">base85</span><span class="p">,</span> <span class="n">bech32</span><span class="p">,</span> <span class="nb">hex</span>
 </code></pre></div>
-<p><code>std.encoding</code> is not text decoding. Use <code>std.fs.Path.read_text()</code> and <code>write_text()</code> for UTF-8 files. It is also not
-compression, encryption, hashing, or media decoding. It only changes how bytes are represented.</p>
+<p><code>std.encoding</code> is not text decoding. Use <code>std.fs.Path.read_text()</code> and <code>write_text()</code> for UTF-8 files. It is also not compression, encryption, hashing, or media decoding. It only changes how bytes are represented.</p>
 <h2 id="choose-a-format">Choose a Format<a class="headerlink" href="#choose-a-format" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5772,8 +5885,7 @@ compression, encryption, hashing, or media decoding. It only changes how bytes a
 <span class="k">assert</span> <span class="n">token</span> <span class="o">==</span> <span class="s2">&quot;aGVsbG8_&quot;</span>
 </code></pre></div>
 <h2 id="decode-strictly-at-boundaries">Decode Strictly at Boundaries<a class="headerlink" href="#decode-strictly-at-boundaries" title="Permanent link">&para;</a></h2>
-<p>Decoders return <code>Result[..., EncodingError]</code>, and strict decoding is the default. That is the right behavior for API
-boundaries, protocol parsers, signature inputs, and stored data.</p>
+<p>Decoders return <code>Result[..., EncodingError]</code>, and strict decoding is the default. That is the right behavior for API boundaries, protocol parsers, signature inputs, and stored data.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="nc">EncodingError</span><span class="p">,</span> <span class="n">base64</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">parse_api_token</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">bytes</span><span class="p">,</span> <span class="nc">EncodingError</span><span class="p">]:</span>
@@ -5787,18 +5899,15 @@ boundaries, protocol parsers, signature inputs, and stored data.</p>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">payload</span><span class="p">))</span>
 </code></pre></div>
 <h2 id="use-lenient-decoders-only-for-copied-text">Use Lenient Decoders Only for Copied Text<a class="headerlink" href="#use-lenient-decoders-only-for-copied-text" title="Permanent link">&para;</a></h2>
-<p>Lenient helpers exist for formats with a normal interoperability rule, such as ignoring ASCII whitespace in copied or
-wrapped text. They are separate functions so leniency is visible at the call site.</p>
+<p>Lenient helpers exist for formats with a normal interoperability rule, such as ignoring ASCII whitespace in copied or wrapped text. They are separate functions so leniency is visible at the call site.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="n">base64</span><span class="p">,</span> <span class="nb">hex</span>
 
 <span class="n">raw</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64decode_lenient</span><span class="p">(</span><span class="s2">&quot;aGVs bG8/</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
 <span class="n">fingerprint</span> <span class="o">=</span> <span class="nb">hex</span><span class="o">.</span><span class="n">decode_lenient</span><span class="p">(</span><span class="s2">&quot;68 65 6c 6c 6f 3f&quot;</span><span class="p">)</span><span class="o">?</span>
 </code></pre></div>
-<p>Lenient decoding is still validation. It does not accept another alphabet, repair arbitrary input, or ignore bad
-checksums.</p>
+<p>Lenient decoding is still validation. It does not accept another alphabet, repair arbitrary input, or ignore bad checksums.</p>
 <h2 id="move-data-through-files-and-streams">Move Data Through Files and Streams<a class="headerlink" href="#move-data-through-files-and-streams" title="Permanent link">&para;</a></h2>
-<p>The canonical source/sink helpers accept bytes, <code>std.io.BytesIO</code>, and <code>std.fs.Path</code>. A <code>Path</code> is treated as a finite
-binary source or sink, so file and stream usage follow the same transform path.</p>
+<p>The canonical source/sink helpers accept bytes, <code>std.io.BytesIO</code>, and <code>std.fs.Path</code>. A <code>Path</code> is treated as a finite binary source or sink, so file and stream usage follow the same transform path.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="nc">EncodingError</span><span class="p">,</span> <span class="n">base64</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span>
@@ -5812,11 +5921,9 @@ binary source or sink, so file and stream usage follow the same transform path.<
     <span class="n">base64</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">chunk_size</span><span class="o">=</span><span class="mi">8192</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">target</span><span class="o">.</span><span class="n">into_bytes</span><span class="p">())</span>
 </code></pre></div>
-<p>Prefer these helpers over open-coded file reads when the task is "encode this source into that sink." Use
-<code>Path.read_bytes()</code> or <code>BytesIO</code> directly when the caller needs to inspect or transform the bytes before encoding.</p>
+<p>Prefer these helpers over open-coded file reads when the task is "encode this source into that sink." Use <code>Path.read_bytes()</code> or <code>BytesIO</code> directly when the caller needs to inspect or transform the bytes before encoding.</p>
 <h2 id="handle-bech32-payloads-as-five-bit-words">Handle Bech32 Payloads as Five-Bit Words<a class="headerlink" href="#handle-bech32-payloads-as-five-bit-words" title="Permanent link">&para;</a></h2>
-<p>Bech32 and Bech32m are address formats, not generic byte streams. The encoded text contains a human-readable prefix,
-a separator, five-bit payload words, and a checksum. Convert byte-oriented data into five-bit words before encoding.</p>
+<p>Bech32 and Bech32m are address formats, not generic byte streams. The encoded text contains a human-readable prefix, a separator, five-bit payload words, and a checksum. Convert byte-oriented data into five-bit words before encoding.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="nc">EncodingError</span><span class="p">,</span> <span class="n">bech32</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">encode_address</span><span class="p">(</span><span class="n">hrp</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">raw_words</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nc">EncodingError</span><span class="p">]:</span>
@@ -5827,16 +5934,14 @@ a separator, five-bit payload words, and a checksum. Convert byte-oriented data 
     <span class="n">hrp</span><span class="p">,</span> <span class="n">words</span> <span class="o">=</span> <span class="n">bech32</span><span class="o">.</span><span class="n">bech32_decode</span><span class="p">(</span><span class="n">address</span><span class="p">)</span><span class="o">?</span>
     <span class="k">return</span> <span class="n">bech32</span><span class="o">.</span><span class="n">convertbits</span><span class="p">(</span><span class="n">words</span><span class="p">,</span> <span class="mi">5</span><span class="p">,</span> <span class="mi">8</span><span class="p">,</span> <span class="n">pad</span><span class="o">=</span><span class="k">false</span><span class="p">)</span>
 </code></pre></div>
-<p>Use <code>bech32m_encode</code> and <code>bech32m_decode</code> when the external protocol requires Bech32m. A valid Bech32 checksum should
-not be accepted as Bech32m, or the other way around.</p>
+<p>Use <code>bech32m_encode</code> and <code>bech32m_decode</code> when the external protocol requires Bech32m. A valid Bech32 checksum should not be accepted as Bech32m, or the other way around.</p>
 <h2 id="avoid-format-shortcuts">Avoid Format Shortcuts<a class="headerlink" href="#avoid-format-shortcuts" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Do not auto-detect the format from the text shape. Require the caller or protocol to name it.</li>
 <li>Do not use lenient decoders for security-sensitive boundaries.</li>
 <li>Do not treat Base85 variants as interchangeable.</li>
 <li>Do not describe plain Base58 as checksum-protected.</li>
-<li>Do not make hash APIs return encoded text by default. Hashing produces bytes; callers can choose <code>hex</code>, <code>base64</code>, or
-  another encoding at the presentation boundary.</li>
+<li>Do not make hash APIs return encoded text by default. Hashing produces bytes; callers can choose <code>hex</code>, <code>base64</code>, or another encoding at the presentation boundary.</li>
 </ul>
 <h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>

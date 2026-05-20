@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6016,11 +6131,7 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">authorize</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="kt">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Auth</span><span class="p">,</span> <span class="nc">Error</span><span class="p">]:</span>
     <span class="k">return</span> <span class="n">gateway</span><span class="o">.</span><span class="n">authorize</span><span class="p">(</span><span class="n">req</span><span class="p">)</span>
 </code></pre></div>
-<p>Telemetry APIs should therefore stay partial-friendly: prefer named parameters, expose semantic-convention helpers as
-plain functions that return <code>Attributes</code>, and allow configured decorator callables to be named and reused. Partials are
-not a separate telemetry abstraction; they are the language-level way to preset ordinary callable surfaces. Top-level
-partials still follow RFC 084's declaration-safe preset rules, so dynamic values and function references belong in local
-partials, wrapper functions, or decorator application arguments rather than top-level partial presets.</p>
+<p>Telemetry APIs should therefore stay partial-friendly: prefer named parameters, expose semantic-convention helpers as plain functions that return <code>Attributes</code>, and allow configured decorator callables to be named and reused. Partials are not a separate telemetry abstraction; they are the language-level way to preset ordinary callable surfaces. Top-level partials still follow RFC 084's declaration-safe preset rules, so dynamic values and function references belong in local partials, wrapper functions, or decorator application arguments rather than top-level partial presets.</p>
 <h3 id="block-level-spans-use-vocabulary-syntax">Block-level spans use vocabulary syntax<a class="headerlink" href="#block-level-spans-use-vocabulary-syntax" title="Permanent link">&para;</a></h3>
 <p>RFC 095 defines <code>span</code> as a standard telemetry vocabulary block layered over RFC 094 context managers. This gives non-function operation scopes a native spelling without making general resource management telemetry-shaped:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.telemetry.vocab</span>

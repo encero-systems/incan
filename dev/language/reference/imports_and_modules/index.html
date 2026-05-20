@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3429,6 +3521,8 @@
       
         
       
+        
+      
     
     
       
@@ -3760,6 +3854,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3905,7 +4020,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3921,14 +4036,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6402,8 +6517,7 @@
 <li>Rust interop alias: <code>Vec[T]</code> (accepted as <code>List[T]</code>)</li>
 </ul>
 <p>When passing a direct <code>list[T]</code> to an external Rust function or method that expects <code>Vec&lt;U&gt;</code>, Incan emits element-level <code>.into()</code> conversions and leaves Rust to validate the required <code>From&lt;T&gt;</code> implementation.</p>
-<p>The generated language reference shows the canonical name and aliases in one place:
-<a href="../language/">Language reference (generated)</a>.</p>
+<p>The generated language reference shows the canonical name and aliases in one place: <a href="../language/">Language reference (generated)</a>.</p>
 <h3 id="built-in-functions-always-available">Built-in functions (always available)<a class="headerlink" href="#built-in-functions-always-available" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Output</span>
 <span class="nb">println</span><span class="p">(</span><span class="n">value</span><span class="p">)</span>      <span class="c1"># Print with newline</span>
@@ -6429,13 +6543,11 @@
 <span class="nb">set</span><span class="p">()</span>               <span class="c1"># Empty Set</span>
 <span class="nb">set</span><span class="p">(</span><span class="n">iterable</span><span class="p">)</span>       <span class="c1"># Convert to Set</span>
 </code></pre></div>
-<p>Every core builtin function is also reachable through <code>std.builtins.&lt;name&gt;</code>. This is an explicit escape path for code
-that needs the core builtin when an inner scope or an imported DSL gives the unqualified name a different meaning:</p>
+<p>Every core builtin function is also reachable through <code>std.builtins.&lt;name&gt;</code>. This is an explicit escape path for code that needs the core builtin when an inner scope or an imported DSL gives the unqualified name a different meaning:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">total</span><span class="p">(</span><span class="nb">values</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
   <span class="k">return</span> <span class="n">std</span><span class="o">.</span><span class="n">builtins</span><span class="o">.</span><span class="nb">sum</span><span class="p">(</span><span class="nb">values</span><span class="p">)</span>
 </code></pre></div>
-<p><code>std.builtins</code> is typechecker-only. It has no source stub or emitted runtime module, and builtin types such as <code>int</code>,
-<code>List[T]</code>, and <code>Result[T, E]</code> remain root prelude types.</p>
+<p><code>std.builtins</code> is typechecker-only. It has no source stub or emitted runtime module, and builtin types such as <code>int</code>, <code>List[T]</code>, and <code>Result[T, E]</code> remain root prelude types.</p>
 <h2 id="special-import-import-this">Special import: <code>import this</code><a class="headerlink" href="#special-import-import-this" title="Permanent link">&para;</a></h2>
 <p><code>import this</code> is always available and prints the Incan “Zen” design principles when imported:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>-c<span class="w"> </span><span class="s2">&quot;import this&quot;</span>
@@ -6456,9 +6568,7 @@ that needs the core builtin when an inner scope or an imported DSL gives the unq
 <h2 id="incan-standard-library-std">Incan standard library (<code>std.*</code>)<a class="headerlink" href="#incan-standard-library-std" title="Permanent link">&para;</a></h2>
 <!-- TODO: move this to its own section -->
 
-<p>Incan's standard library lives under the <code>std</code> namespace. Import modules and items from it just like any other module.
-The compiler activates features (e.g. async runtime, web framework) automatically based on which <code>std.*</code> modules you
-import — no manual feature flags needed.</p>
+<p>Incan's standard library lives under the <code>std</code> namespace. Import modules and items from it just like any other module. The compiler activates features (e.g. async runtime, web framework) automatically based on which <code>std.*</code> modules you import — no manual feature flags needed.</p>
 <h3 id="available-modules">Available modules<a class="headerlink" href="#available-modules" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -6520,8 +6630,7 @@ import — no manual feature flags needed.</p>
 <p>Some language keywords are <strong>import-activated</strong> (soft keywords). They behave like identifiers by default and only become reserved keywords after importing a particular <code>std.*</code> namespace.</p>
 <p>Currently:</p>
 <ul>
-<li><code>async</code> and <code>await</code> are activated by importing <code>std.async</code> (for example <code>import std.async</code> or
-  <code>from std.async.time import sleep</code>).</li>
+<li><code>async</code> and <code>await</code> are activated by importing <code>std.async</code> (for example <code>import std.async</code> or <code>from std.async.time import sleep</code>).</li>
 </ul>
 <p>If you forget the import, you’ll get a targeted diagnostic telling you what to add.</p>
 <p>Example:</p>
@@ -6727,11 +6836,9 @@ hint: Add `import std.async` or `from std.async import ...`
 </code></pre></div>
 <div class="admonition warning">
 <p class="admonition-title">The <code>std</code> root is reserved</p>
-<p>Bare <code>import std::fs</code> refers to <strong>Incan’s</strong> standard library, not Rust’s.
-Always use the <code>rust::std::</code> prefix when you need Rust’s stdlib.</p>
+<p>Bare <code>import std::fs</code> refers to <strong>Incan’s</strong> standard library, not Rust’s. Always use the <code>rust::std::</code> prefix when you need Rust’s stdlib.</p>
 </div>
-<p>Note: using these requires understanding the underlying Rust types. Prefer Incan built-ins (<code>read_file</code>, <code>write_file</code>,
-etc.) where available.</p>
+<p>Note: using these requires understanding the underlying Rust types. Prefer Incan built-ins (<code>read_file</code>, <code>write_file</code>, etc.) where available.</p>
 <h2 id="rust-crates-vs-incan-modules-important">Rust crates vs Incan modules (important)<a class="headerlink" href="#rust-crates-vs-incan-modules-important" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>External crates</strong>: Prefer <code>rust::...</code> imports (e.g. <code>import rust::serde_json</code>), which also enables automatic dependency management for generated <code>Cargo.toml</code>.</li>

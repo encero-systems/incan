@@ -1393,6 +1393,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1619,6 +1627,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1687,6 +1737,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1792,6 +1863,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3297,6 +3389,8 @@
       
         
       
+        
+      
     
     
       
@@ -3628,6 +3722,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3773,7 +3888,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3789,14 +3904,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5933,8 +6048,7 @@
 
 
 <h1 id="web-framework">Web Framework<a class="headerlink" href="#web-framework" title="Permanent link">&para;</a></h1>
-<p>Incan includes a web framework that compiles to <a href="https://docs.rs/axum/latest/axum/">Axum</a>,
-giving you Flask/FastAPI-like syntax with native Rust performance.</p>
+<p>Incan includes a web framework that compiles to <a href="https://docs.rs/axum/latest/axum/">Axum</a>, giving you Flask/FastAPI-like syntax with native Rust performance.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="admonition note">
 <p class="admonition-title">No-install fallback</p>
@@ -6007,10 +6121,7 @@ giving you Flask/FastAPI-like syntax with native Rust performance.</p>
     <span class="k">return</span> <span class="kt">Json</span><span class="p">(</span><span class="n">fetch_posts</span><span class="p">(</span><span class="n">year</span><span class="p">,</span> <span class="n">month</span><span class="p">))</span>
 </code></pre></div>
 <h3 id="http-methods">HTTP Methods<a class="headerlink" href="#http-methods" title="Permanent link">&para;</a></h3>
-<p>Specify allowed methods with the <code>methods</code> parameter.
-Handlers can be registered for multiple HTTP methods by passing multiple entries.
-Import the method constants from the web prelude (e.g. <code>GET</code>, <code>POST</code>).
-Supported methods are <code>GET</code>, <code>POST</code>, <code>PUT</code>, <code>DELETE</code>, and <code>PATCH</code>.</p>
+<p>Specify allowed methods with the <code>methods</code> parameter. Handlers can be registered for multiple HTTP methods by passing multiple entries. Import the method constants from the web prelude (e.g. <code>GET</code>, <code>POST</code>). Supported methods are <code>GET</code>, <code>POST</code>, <code>PUT</code>, <code>DELETE</code>, and <code>PATCH</code>.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.web</span><span class="w"> </span><span class="kn">import</span> <span class="n">route</span><span class="p">,</span> <span class="kt">Json</span><span class="p">,</span> <span class="kt">Response</span><span class="p">,</span> <span class="nc">GET</span><span class="p">,</span> <span class="nc">POST</span><span class="p">,</span> <span class="nc">PUT</span><span class="p">,</span> <span class="nc">DELETE</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
 

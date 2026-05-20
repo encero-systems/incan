@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3218,6 +3310,8 @@
       
         
       
+        
+      
     
     
       
@@ -3549,6 +3643,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3694,7 +3809,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3710,14 +3825,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5781,42 +5896,11 @@
 </code></pre></div>
 <p>The implementation is split into <code>std.datetime.runtime</code>, <code>std.datetime.civil</code>, and <code>std.datetime.error</code>; <code>std.datetime</code> re-exports the public prelude.</p>
 <h2 id="runtime-timing-values">Runtime timing values<a class="headerlink" href="#runtime-timing-values" title="Permanent link">&para;</a></h2>
-<p><code>Duration</code> is the elapsed-time value type. It wraps Rust <code>std::time::Duration</code>, is nonnegative, and has unit factories:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.datetime</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Duration</span>
-
-<span class="kt">short</span> <span class="o">=</span> <span class="nc">Duration</span><span class="o">.</span><span class="n">milliseconds</span><span class="p">(</span><span class="mi">250</span><span class="p">)</span>
-<span class="n">longer</span> <span class="o">=</span> <span class="kt">short</span> <span class="o">+</span> <span class="nc">Duration</span><span class="o">.</span><span class="n">seconds</span><span class="p">(</span><span class="mi">2</span><span class="p">)</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">longer</span><span class="o">.</span><span class="n">whole_seconds</span><span class="p">())</span>
-</code></pre></div>
-<p><code>Instant</code> represents a monotonic clock reading:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.datetime</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Duration</span><span class="p">,</span> <span class="nc">Instant</span>
-
-<span class="n">start</span> <span class="o">=</span> <span class="nc">Instant</span><span class="o">.</span><span class="n">now</span><span class="p">()</span>
-<span class="n">stop</span> <span class="o">=</span> <span class="n">start</span><span class="o">.</span><span class="n">checked_add</span><span class="p">(</span><span class="nc">Duration</span><span class="o">.</span><span class="n">seconds</span><span class="p">(</span><span class="mi">2</span><span class="p">))</span><span class="o">?</span>
-<span class="n">elapsed</span> <span class="o">=</span> <span class="n">stop</span><span class="o">.</span><span class="n">duration_since</span><span class="p">(</span><span class="n">start</span><span class="p">)</span>
-</code></pre></div>
-<p><code>SystemTime</code> represents a host system-clock timestamp. Construction from Unix time can fail when the platform cannot represent the requested timestamp, so Unix factories return <code>Result</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.datetime</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Duration</span><span class="p">,</span> <span class="nc">SystemTime</span>
-
-<span class="n">timestamp</span> <span class="o">=</span> <span class="nc">SystemTime</span><span class="o">.</span><span class="n">from_unix_seconds</span><span class="p">(</span><span class="mi">1_700_000_000</span><span class="p">)</span><span class="o">?</span>
-<span class="nb">next</span> <span class="o">=</span> <span class="n">timestamp</span><span class="o">.</span><span class="n">checked_add</span><span class="p">(</span><span class="nc">Duration</span><span class="o">.</span><span class="n">seconds</span><span class="p">(</span><span class="mi">30</span><span class="p">))</span><span class="o">?</span>
-<span class="nb">println</span><span class="p">(</span><span class="nc">SystemTime</span><span class="o">.</span><span class="n">now</span><span class="p">()</span><span class="o">.</span><span class="n">unix_seconds</span><span class="p">()</span> <span class="o">&gt;</span> <span class="mi">0</span><span class="p">)</span>
-</code></pre></div>
+<p><code>Duration</code> is the elapsed-time value type. It wraps Rust <code>std::time::Duration</code>, is nonnegative, and has unit factories such as seconds, milliseconds, microseconds, and nanoseconds.</p>
+<p><code>Instant</code> represents a monotonic clock reading for elapsed-time measurement. <code>SystemTime</code> represents a host system-clock timestamp. Construction from Unix time can fail when the platform cannot represent the requested timestamp, so Unix factories return <code>Result</code>.</p>
 <h2 id="civil-values">Civil values<a class="headerlink" href="#civil-values" title="Permanent link">&para;</a></h2>
-<p><code>Date</code>, <code>Time</code>, and <code>DateTime</code> represent calendar dates, wall-clock times, and naive datetimes. <code>Date.utc_today()</code> and <code>DateTime.utc_now()</code> read the host clock through <code>SystemTime</code> and convert the Unix timestamp to UTC civil fields in Incan:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.datetime</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Date</span><span class="p">,</span> <span class="nc">DateTime</span><span class="p">,</span> <span class="nc">Time</span>
-
-<span class="n">date</span> <span class="o">=</span> <span class="nc">Date</span><span class="o">.</span><span class="n">fromisoformat</span><span class="p">(</span><span class="s2">&quot;2026-04-14&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="n">time</span> <span class="o">=</span> <span class="nc">Time</span><span class="o">.</span><span class="n">fromisoformat</span><span class="p">(</span><span class="s2">&quot;12:34:56.123456789&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="n">stamp</span> <span class="o">=</span> <span class="nc">DateTime</span><span class="o">.</span><span class="n">combine</span><span class="p">(</span><span class="n">date</span><span class="p">,</span> <span class="n">time</span><span class="p">)</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">stamp</span><span class="o">.</span><span class="n">isoformat</span><span class="p">())</span>
-<span class="nb">println</span><span class="p">(</span><span class="nc">Date</span><span class="o">.</span><span class="n">utc_today</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">())</span>
-<span class="nb">println</span><span class="p">(</span><span class="nc">DateTime</span><span class="o">.</span><span class="n">utc_now</span><span class="p">()</span><span class="o">.</span><span class="n">isoformat</span><span class="p">())</span>
-</code></pre></div>
+<p><code>Date</code>, <code>Time</code>, and <code>DateTime</code> represent calendar dates, wall-clock times, and naive datetimes. <code>Date.utc_today()</code> and <code>DateTime.utc_now()</code> read the host clock through <code>SystemTime</code> and convert the Unix timestamp to UTC civil fields in Incan.</p>
 <p><code>Date</code>, <code>Time</code>, and <code>DateTime</code> support <code>isoformat()</code>, <code>fromisoformat(...)</code>, <code>strftime(...)</code>, and <code>strptime(...)</code>. The format surface is Incan-defined and Python-shaped; <code>%f</code> formats and parses nanoseconds as 9 fractional digits rather than Python's microsecond ceiling.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">parsed</span> <span class="o">=</span> <span class="nc">DateTime</span><span class="o">.</span><span class="n">strptime</span><span class="p">(</span><span class="s2">&quot;2026-04-14 07:08:09.123456789&quot;</span><span class="p">,</span> <span class="s2">&quot;</span><span class="si">%F</span><span class="s2"> %T.</span><span class="si">%f</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">parsed</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">%a</span><span class="s2"> %b %_d %H:%M:%S.</span><span class="si">%f</span><span class="s2"> %Y&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">)</span>
-</code></pre></div>
 <p><code>Date</code> also supports <code>weekday()</code>, <code>iso_week()</code>, <code>day_of_year()</code>, <code>quarter()</code>, and ISO calendar construction with <code>fromisocalendar(...)</code>.</p>
 <h2 id="format-directives">Format directives<a class="headerlink" href="#format-directives" title="Permanent link">&para;</a></h2>
 <p><code>strftime(...)</code> and <code>strptime(...)</code> format strings are ordinary text plus percent directives. In <code>%Y-%m-%dT%H:%M:%S.%f%z</code>, <code>%Y</code>, <code>%m</code>, <code>%d</code>, <code>%H</code>, <code>%M</code>, <code>%S</code>, <code>%f</code>, and <code>%z</code> are directives; <code>-</code>, <code>T</code>, <code>:</code>, and <code>.</code> are literal characters that must appear exactly when parsing.</p>
@@ -6057,29 +6141,10 @@
 </table>
 <p>Numeric formatting directives accept padding modifiers: <code>%-d</code> disables padding, <code>%_d</code> uses spaces, and <code>%0d</code> uses zeroes. Modifiers are not supported on compound aliases such as <code>%F</code>, <code>%T</code>, or <code>%c</code>; <code>%:z</code> uses <code>:</code> for the offset separator rather than numeric padding.</p>
 <h2 id="fixed-offsets">Fixed offsets<a class="headerlink" href="#fixed-offsets" title="Permanent link">&para;</a></h2>
-<p><code>FixedOffset</code> stores a concrete UTC offset in whole minutes. <code>DateTimeOffset</code> pairs a naive <code>DateTime</code> with that offset and supports ISO text, <code>%z</code>, and <code>%:z</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.datetime</span><span class="w"> </span><span class="kn">import</span> <span class="nc">DateTime</span><span class="p">,</span> <span class="nc">DateTimeOffset</span><span class="p">,</span> <span class="nc">FixedOffset</span>
-
-<span class="n">stamp</span> <span class="o">=</span> <span class="nc">DateTime</span><span class="o">.</span><span class="n">fromisoformat</span><span class="p">(</span><span class="s2">&quot;2026-04-14T12:34:56.123456789&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="n">offset</span> <span class="o">=</span> <span class="nc">FixedOffset</span><span class="o">.</span><span class="n">hours</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span><span class="o">?</span>
-<span class="n">aware</span> <span class="o">=</span> <span class="nc">DateTimeOffset</span><span class="p">(</span><span class="n">datetime</span><span class="o">=</span><span class="n">stamp</span><span class="p">,</span> <span class="n">offset</span><span class="o">=</span><span class="n">offset</span><span class="p">)</span>
-
-<span class="nb">println</span><span class="p">(</span><span class="n">aware</span><span class="o">.</span><span class="n">isoformat</span><span class="p">())</span>                    <span class="c1"># 2026-04-14T12:34:56.123456789+01:00</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">aware</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">%F</span><span class="s2"> %T.</span><span class="si">%f</span><span class="s2">%z&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">)</span>        <span class="c1"># 2026-04-14 12:34:56.123456789+0100</span>
-<span class="nb">println</span><span class="p">(</span><span class="n">aware</span><span class="o">.</span><span class="n">strftime</span><span class="p">(</span><span class="s2">&quot;</span><span class="si">%F</span><span class="s2"> %T.</span><span class="si">%f</span><span class="s2">%:z&quot;</span><span class="p">)</span><span class="o">?</span><span class="p">)</span>       <span class="c1"># 2026-04-14 12:34:56.123456789+01:00</span>
-</code></pre></div>
+<p><code>FixedOffset</code> stores a concrete UTC offset in whole minutes. <code>DateTimeOffset</code> pairs a naive <code>DateTime</code> with that offset and supports ISO text, <code>%z</code>, and <code>%:z</code>.</p>
 <p>Named timezone lookup is not part of <code>std.datetime</code>. A named zone such as <code>Europe/Amsterdam</code> is not one permanent offset; it resolves to an offset for a specific instant or local civil time because daylight-saving and historical rules change. Timezone-aware <code>today</code> / <code>now</code> helpers and named-zone rule data belong in separately versioned packages such as <code>pub.timezones</code>.</p>
 <h2 id="intervals">Intervals<a class="headerlink" href="#intervals" title="Permanent link">&para;</a></h2>
 <p><code>TimeDelta</code> is a day/time interval. <code>YearMonthInterval</code> is a year/month interval. <code>DateTimeInterval</code> is a compound interval that normalizes within compatible buckets but does not collapse months into days or years into fixed-length durations.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.datetime</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Date</span><span class="p">,</span> <span class="nc">DateTimeInterval</span><span class="p">,</span> <span class="nc">TimeDelta</span><span class="p">,</span> <span class="nc">YearMonthInterval</span>
-
-<span class="n">anchor</span> <span class="o">=</span> <span class="nc">Date</span><span class="o">.</span><span class="n">fromisoformat</span><span class="p">(</span><span class="s2">&quot;2026-04-14&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="n">next_week</span> <span class="o">=</span> <span class="n">anchor</span> <span class="o">+</span> <span class="nc">TimeDelta</span><span class="o">.</span><span class="n">days</span><span class="p">(</span><span class="mi">7</span><span class="p">)</span>
-<span class="n">quarter_end</span> <span class="o">=</span> <span class="n">anchor</span> <span class="o">+</span> <span class="nc">YearMonthInterval</span><span class="o">.</span><span class="n">months</span><span class="p">(</span><span class="mi">3</span><span class="p">)</span>
-
-<span class="n">normalized</span> <span class="o">=</span> <span class="nc">DateTimeInterval</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="n">months</span><span class="o">=</span><span class="mi">15</span><span class="p">,</span> <span class="n">days</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">hours</span><span class="o">=</span><span class="mi">24</span><span class="p">)</span>
-<span class="k">assert</span> <span class="n">normalized</span> <span class="o">==</span> <span class="nc">DateTimeInterval</span><span class="o">.</span><span class="n">new</span><span class="p">(</span><span class="n">years</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">months</span><span class="o">=</span><span class="mi">3</span><span class="p">,</span> <span class="n">days</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
-</code></pre></div>
 <p>When a <code>DateTimeInterval</code> is applied to a civil value, the year/month portion is applied first, then the day/time/fractional portion.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>

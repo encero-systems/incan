@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5880,13 +5995,11 @@
 <p>Buffer extraction behavior is normative:</p>
 <ul>
 <li><code>getvalue()</code> returns a <code>bytes</code> snapshot of the buffer contents.</li>
-<li><code>into_bytes()</code> returns the buffer bytes without changing the cursor. Implementations may avoid an extra copy when
-  ownership rules permit it, but callers must not rely on consumption or aliasing behavior.</li>
+<li><code>into_bytes()</code> returns the buffer bytes without changing the cursor. Implementations may avoid an extra copy when ownership rules permit it, but callers must not rely on consumption or aliasing behavior.</li>
 <li><code>remaining()</code> returns the number of unread bytes from the current cursor position to the logical end of the buffer.</li>
 </ul>
 <h3 id="numeric-helper-surface">Numeric helper surface<a class="headerlink" href="#numeric-helper-surface" title="Permanent link">&para;</a></h3>
-<p>The numeric helper surface is committed, not tentative. It is trait-backed rather than a public matrix of dozens of
-method names:</p>
+<p>The numeric helper surface is committed, not tentative. It is trait-backed rather than a public matrix of dozens of method names:</p>
 <ul>
 <li><code>Endian</code> exposes <code>Little</code> and <code>Big</code> byte-order variants.</li>
 <li><code>BinaryRead[T]</code> exposes <code>read(endian: Endian) -&gt; Result[T, E]</code>.</li>

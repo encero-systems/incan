@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -4246,9 +4361,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#whats-planned" class="md-nav__link">
+  <a href="#related-commands" class="md-nav__link">
     <span class="md-ellipsis">
-      What's planned
+      Related commands
     </span>
   </a>
   
@@ -5660,9 +5775,9 @@
 </li>
       
         <li class="md-nav__item">
-  <a href="#whats-planned" class="md-nav__link">
+  <a href="#related-commands" class="md-nav__link">
     <span class="md-ellipsis">
-      What's planned
+      Related commands
     </span>
   </a>
   
@@ -5721,8 +5836,7 @@
 <li>It is safe to delete: <code>rm -rf target/incan/</code></li>
 <li>Manual edits inside <code>target/incan/&lt;name&gt;/</code> may be overwritten on the next build</li>
 </ul>
-<p>If an <code>incan.lock</code> exists, the embedded <code>Cargo.lock</code> payload is materialized into the generated project directory so
-Cargo resolves the same dependency versions every time.</p>
+<p>If an <code>incan.lock</code> exists, the embedded <code>Cargo.lock</code> payload is materialized into the generated project directory so Cargo resolves the same dependency versions every time.</p>
 <h2 id="dependencies">Dependencies<a class="headerlink" href="#dependencies" title="Permanent link">&para;</a></h2>
 <p>Rust crate dependencies are resolved through a three-tier system:</p>
 <ol>
@@ -5744,13 +5858,13 @@ Cargo resolves the same dependency versions every time.</p>
 </code></pre></div>
 <p>Create one with <code>incan init</code>. See: <a href="../../reference/project_configuration/">Project configuration reference</a>.</p>
 <h2 id="lock-files">Lock files<a class="headerlink" href="#lock-files" title="Permanent link">&para;</a></h2>
-<p><code>incan.lock</code> stores resolved dependency versions for reproducible builds. It is generated by
-<code>incan lock</code> (or automatically on first build) and should be committed to version control.</p>
+<p><code>incan.lock</code> stores resolved dependency versions for reproducible builds. It is generated by <code>incan lock</code> (or automatically on first build) and should be committed to version control.</p>
 <p>Use <code>--locked</code> or <code>--frozen</code> in CI to enforce that the lock is present and up to date. Use <code>--offline</code> or <code>--frozen</code> when Cargo must not use the network.</p>
 <p>See: <a href="../../how-to/dependencies/#locking-dependencies">Managing dependencies</a>.</p>
-<h2 id="whats-planned">What's planned<a class="headerlink" href="#whats-planned" title="Permanent link">&para;</a></h2>
+<h2 id="related-commands">Related commands<a class="headerlink" href="#related-commands" title="Permanent link">&para;</a></h2>
 <ul>
-<li>"Project lifecycle" commands (<code>incan new</code>, <code>incan doctor</code>): <a href="/dev/RFCs/closed/implemented/015_hatch_like_tooling">RFC 015</a></li>
+<li>Project lifecycle commands are available as <code>incan new</code>, <code>incan init</code>, <code>incan version</code>, and <code>incan env</code>.</li>
+<li>Tooling diagnostics are available under <code>incan tools doctor</code>.</li>
 </ul>
 <!-- THIS FILE IS AUTOGENERATED. DO NOT EDIT BY HAND. -->
 

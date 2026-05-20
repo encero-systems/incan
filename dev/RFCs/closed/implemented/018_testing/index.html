@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5992,15 +6107,13 @@
 <li><code>module tests:</code> inline test blocks</li>
 <li><code>std.testing</code>-gated resolution rules for test-only constructs</li>
 </ul>
-<p>Runner/CLI behavior (discovery, fixtures, parametrization, markers, parallelism, timeouts, reporting) is defined in
-<strong>RFC 019</strong>.</p>
+<p>Runner/CLI behavior (discovery, fixtures, parametrization, markers, parallelism, timeouts, reporting) is defined in <strong>RFC 019</strong>.</p>
 <p>If you are implementing this RFC, start with the conformance checklist near the end and the reference-level rules above, then implement in dependency order.</p>
 <h3 id="the-stdtesting-module">The <code>std.testing</code> module<a class="headerlink" href="#the-stdtesting-module" title="Permanent link">&para;</a></h3>
 <p>Testing utilities are normal functions/decorators imported from the <code>std.testing</code> module:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
 </code></pre></div>
-<p>This RFC only specifies how these names are <em>resolved</em> (gated behind <code>std.testing</code>) and how <code>assert</code> maps to the <code>std.testing.assert_*</code> surface. Execution semantics for fixtures, parametrization, markers, and CLI options are defined in
-RFC 019.</p>
+<p>This RFC only specifies how these names are <em>resolved</em> (gated behind <code>std.testing</code>) and how <code>assert</code> maps to the <code>std.testing.assert_*</code> surface. Execution semantics for fixtures, parametrization, markers, and CLI options are defined in RFC 019.</p>
 <h3 id="assertions-assert-keyword">Assertions: <code>assert ...</code> (keyword)<a class="headerlink" href="#assertions-assert-keyword" title="Permanent link">&para;</a></h3>
 <p>This RFC introduces an <code>assert</code> keyword that can be used <strong>anywhere</strong> (tests or production code) without importing anything:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">assert</span> <span class="mi">1</span> <span class="o">+</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">3</span>
@@ -6021,11 +6134,9 @@ RFC 019.</p>
 <li>Mitigation: avoid asserts in hot paths and prefer explicit <code>Result</code>/<code>Option</code>-based error handling for recoverable conditions. A future <code>debug_assert</code> can address performance-sensitive checks.</li>
 </ul>
 <p>The <code>std.testing</code> module remains available for explicit imports, and richer APIs.</p>
-<p>Note: this RFC specifies <strong>assertion messages</strong> (e.g. <code>assert x &gt; 0, "x must be positive"</code>) and requires the underlying <code>std.testing.assert_*</code> helpers to accept an optional <code>msg</code>. This is not fully supported in current Incan; it is a required
-part of implementing this RFC.</p>
+<p>Note: this RFC specifies <strong>assertion messages</strong> (e.g. <code>assert x &gt; 0, "x must be positive"</code>) and requires the underlying <code>std.testing.assert_*</code> helpers to accept an optional <code>msg</code>. This is not fully supported in current Incan; it is a required part of implementing this RFC.</p>
 <h4 id="common-assert-patterns-guide-level-python-inspired">Common <code>assert</code> patterns (guide-level, Python-inspired)<a class="headerlink" href="#common-assert-patterns-guide-level-python-inspired" title="Permanent link">&para;</a></h4>
-<p><code>assert</code> accepts any expression that type-checks to <code>bool</code>. In practice, users will write assertions across a handful of
-common shapes.</p>
+<p><code>assert</code> accepts any expression that type-checks to <code>bool</code>. In practice, users will write assertions across a handful of common shapes.</p>
 <p>Equality / inequality (special-cased to <code>assert_eq</code> / <code>assert_ne</code>):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">assert</span> <span class="n">a</span> <span class="o">==</span> <span class="n">b</span>
 <span class="k">assert</span> <span class="n">actual</span> <span class="o">!=</span> <span class="n">unexpected</span>
@@ -6085,15 +6196,13 @@ FAILED: AssertionError: values must match
 </code></pre></div>
 <p>Binding notes (important semantic commitment):</p>
 <ul>
-<li><code>assert x is Some(v)</code> may introduce a binding (here: <code>v</code>) for the <strong>remainder of the current block scope</strong>, as if the
-compiler had emitted <code>let v = ...</code> at that point.</li>
+<li><code>assert x is Some(v)</code> may introduce a binding (here: <code>v</code>) for the <strong>remainder of the current block scope</strong>, as if the compiler had emitted <code>let v = ...</code> at that point.</li>
 <li>In RFC 018, only the following binding patterns are supported in <code>assert</code>:<ul>
 <li><code>Some(name)</code> and <code>Ok(name)</code> / <code>Err(name)</code> where <code>name</code> is a single identifier, OR</li>
 <li>the wildcard <code>_</code> (no binding).</li>
 </ul>
 </li>
-<li>Nested patterns, multiple bindings, and guards are out of scope for this RFC (they may be added later if/when the
-general pattern-matching system is specified).</li>
+<li>Nested patterns, multiple bindings, and guards are out of scope for this RFC (they may be added later if/when the general pattern-matching system is specified).</li>
 </ul>
 <p>"Contains" / membership style checks:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">assert</span> <span class="n">name</span> <span class="o">!=</span> <span class="s2">&quot;&quot;</span>
@@ -6176,10 +6285,8 @@ general pattern-matching system is specified).</li>
 </ul>
 <p>Minimum diagnostics guarantee:</p>
 <ul>
-<li>On failure, assertion output must include the optional message (if provided) and enough detail to diagnose the failing
-condition.</li>
-<li>For equality/inequality assertions (<code>assert a == b</code> / <code>assert a != b</code>), the minimum guarantee is that the output
-identifies the failed comparison kind and includes the optional message when one is provided.</li>
+<li>On failure, assertion output must include the optional message (if provided) and enough detail to diagnose the failing condition.</li>
+<li>For equality/inequality assertions (<code>assert a == b</code> / <code>assert a != b</code>), the minimum guarantee is that the output identifies the failed comparison kind and includes the optional message when one is provided.</li>
 </ul>
 <p>Runtime error model:</p>
 <ul>
@@ -6188,8 +6295,7 @@ identifies the failed comparison kind and includes the optional message when one
 <li><code>ErrorType</code> in <code>assert ... raises ErrorType</code> must denote a runtime error type.</li>
 </ul>
 <h4 id="runtime-error-types-normative-scope-for-this-rfc">Runtime error types (normative; scope for this RFC)<a class="headerlink" href="#runtime-error-types-normative-scope-for-this-rfc" title="Permanent link">&para;</a></h4>
-<p>This RFC uses the term <strong>runtime error</strong> to mean a panic-style failure that aborts execution (in contrast to
-<code>Result</code>-returning errors that are explicitly handled with <code>?</code> and pattern matching).</p>
+<p>This RFC uses the term <strong>runtime error</strong> to mean a panic-style failure that aborts execution (in contrast to <code>Result</code>-returning errors that are explicitly handled with <code>?</code> and pattern matching).</p>
 <p>Rules:</p>
 <ul>
 <li>This RFC requires at minimum the built-in runtime error type <code>AssertionError</code>.</li>
@@ -6199,8 +6305,7 @@ identifies the failed comparison kind and includes the optional message when one
 </li>
 <li>Subtyping among runtime error types is <strong>optional</strong>:<ul>
 <li>If the implementation supports runtime error subtyping, <code>assert ... raises BaseType</code> must match subtypes.</li>
-<li>If not, implementations MUST - at minimum - match the exact runtime error type named by <code>ErrorType</code> (as already
-  specified in the raises rules below).</li>
+<li>If not, implementations MUST - at minimum - match the exact runtime error type named by <code>ErrorType</code> (as already specified in the raises rules below).</li>
 </ul>
 </li>
 </ul>
@@ -6293,13 +6398,10 @@ identifies the failed comparison kind and includes the optional message when one
 <li>If the assert statement is of the form <code>assert opt is None</code>, lower to <code>std.testing.assert_is_none(opt, msg?)</code></li>
 <li>If the assert statement is of the form <code>assert res is Ok(v)</code>, lower to <code>let v = std.testing.assert_is_ok(res, msg?)</code></li>
 <li>If the assert statement is of the form <code>assert res is Err(e)</code>, lower to <code>let e = std.testing.assert_is_err(res, msg?)</code></li>
-<li>If the assert statement is of the form <code>assert call() raises ErrorType</code>, lower to
-  <code>std.testing.assert_raises[ErrorType](lambda: call(), msg?)</code>.</li>
+<li>If the assert statement is of the form <code>assert call() raises ErrorType</code>, lower to <code>std.testing.assert_raises[ErrorType](lambda: call(), msg?)</code>.</li>
 <li>Otherwise, lower to <code>std.testing.assert(&lt;expr&gt;, msg?)</code></li>
 </ul>
-<p>Note: the "lowers to" wording describes the required behavior and message propagation. Implementations may choose to lower
-<code>assert</code> to a compiler intrinsic and have <code>std.testing.assert_*</code> call into that intrinsic, as long as the user-visible
-semantics match this mapping.</p>
+<p>Note: the "lowers to" wording describes the required behavior and message propagation. Implementations may choose to lower <code>assert</code> to a compiler intrinsic and have <code>std.testing.assert_*</code> call into that intrinsic, as long as the user-visible semantics match this mapping.</p>
 <p>The <code>std.testing</code> module is <strong>not</strong> required at runtime for <code>assert</code>; the mapping is semantic, and <code>std.testing.assert_*</code> must mirror the intrinsic behavior.</p>
 <p>The <code>assert_true</code> / <code>assert_false</code> helpers are aliases/conveniences in the <code>std.testing</code> API; the compiler does not need to emit them directly.</p>
 <p>On failure, assertions must produce the same failure semantics and (as much as possible) the same message formatting as the underlying <code>std.testing</code> assertion functions.</p>
@@ -6321,15 +6423,11 @@ semantics match this mapping.</p>
 <p>Restrictions:</p>
 <ul>
 <li>No nested patterns (e.g. <code>Some(Ok(x))</code>) and no multiple bindings in a single <code>assert</code>.</li>
-<li>The bound name is introduced in the <em>current</em> scope exactly as if the compiler had emitted <code>let &lt;ident&gt; = ...</code> at the
-assertion site; it is in scope for subsequent statements in the same block.</li>
-<li>The bound name has the inner type of the matched value (e.g. <code>T</code> for <code>Option[T]</code>, <code>T</code>/<code>E</code> for <code>Result[T, E]</code>), and the
-assertion does not otherwise narrow the type of the tested expression.</li>
-<li>Shadowing: if the bound identifier already exists in the current lexical block, the assertion is a compile-time error.
-Users should pick a new name or bind in an inner block to avoid ambiguity.</li>
+<li>The bound name is introduced in the <em>current</em> scope exactly as if the compiler had emitted <code>let &lt;ident&gt; = ...</code> at the assertion site; it is in scope for subsequent statements in the same block.</li>
+<li>The bound name has the inner type of the matched value (e.g. <code>T</code> for <code>Option[T]</code>, <code>T</code>/<code>E</code> for <code>Result[T, E]</code>), and the assertion does not otherwise narrow the type of the tested expression.</li>
+<li>Shadowing: if the bound identifier already exists in the current lexical block, the assertion is a compile-time error. Users should pick a new name or bind in an inner block to avoid ambiguity.</li>
 </ul>
-<p>Guidance (non-normative): avoid using <code>assert</code> as control flow in production code. Prefer explicit pattern matching or
-<code>assert_is_*</code> helpers when unwrapping <code>Option</code>/<code>Result</code> values.</p>
+<p>Guidance (non-normative): avoid using <code>assert</code> as control flow in production code. Prefer explicit pattern matching or <code>assert_is_*</code> helpers when unwrapping <code>Option</code>/<code>Result</code> values.</p>
 <h4 id="raises-semantics-reference-rules">Raises semantics (reference rules)<a class="headerlink" href="#raises-semantics-reference-rules" title="Permanent link">&para;</a></h4>
 <p>Syntax: <code>assert &lt;call-expr&gt; raises &lt;ErrorType&gt;[, msg]</code> where <code>&lt;call-expr&gt;</code> is a call expression.</p>
 <p>This is a convenience for asserting that a call fails by <em>raising</em> a runtime error.</p>
@@ -6337,13 +6435,11 @@ Users should pick a new name or bind in an inner block to avoid ambiguity.</li>
 <li>"Raises" refers to a runtime error/panic-style failure (the same category of failure used for failed assertions).</li>
 <li>It does <strong>not</strong> refer to <code>Result</code>-returning APIs; for results, use <code>assert res is Err(e)</code> / <code>assert_is_err</code>.</li>
 <li>Block-style "raises" assertions are out of scope; use <code>std.testing.assert_raises</code> for multi-statement checks.</li>
-<li>Matching: <code>ErrorType</code> matches that exact type or any of its subtypes.
-If an implementation lacks subtype information, it MUST at minimum match the exact type.</li>
+<li>Matching: <code>ErrorType</code> matches that exact type or any of its subtypes. If an implementation lacks subtype information, it MUST at minimum match the exact type.</li>
 <li>Async "raises" is out of scope for this RFC.</li>
 </ul>
 <h3 id="inline-test-module-context-reference-rules">Inline test module context (reference rules)<a class="headerlink" href="#inline-test-module-context-reference-rules" title="Permanent link">&para;</a></h3>
-<p><code>module tests:</code> introduces a test-only scope inside a production source file. The compiler must treat this block as
-strip-able in non-test compilation modes.</p>
+<p><code>module tests:</code> introduces a test-only scope inside a production source file. The compiler must treat this block as strip-able in non-test compilation modes.</p>
 <p>Rules:</p>
 <ul>
 <li>A file may contain at most one <code>module tests:</code> block. Additional <code>module tests:</code> blocks are a compile error.</li>
@@ -6390,11 +6486,9 @@ strip-able in non-test compilation modes.</p>
 <p>Visibility rules (normative):</p>
 <ul>
 <li>Names declared in the enclosing module (including private names not marked <code>pub</code>) are visible inside <code>module tests:</code>.</li>
-<li>This is <strong>lexical visibility</strong>, not an implicit import: the test block can reference any name that is in scope at
-the file level, as if the test block were nested code in the same file.</li>
+<li>This is <strong>lexical visibility</strong>, not an implicit import: the test block can reference any name that is in scope at the file level, as if the test block were nested code in the same file.</li>
 <li>Names declared inside <code>module tests:</code> (functions, imports, bindings) are <strong>not</strong> visible outside the test block.</li>
-<li>The test block does not introduce a separate module namespace for the purpose of <code>pub</code> visibility; it is purely a
-scoped block that can be stripped.</li>
+<li>The test block does not introduce a separate module namespace for the purpose of <code>pub</code> visibility; it is purely a scoped block that can be stripped.</li>
 </ul>
 <p>This RFC does <strong>not</strong> define a general-purpose module system beyond existing file/module semantics; <code>module tests:</code> inside a file is specifically a scoped block that can be stripped in non-test compilation modes.</p>
 <h2 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h2>
@@ -6405,8 +6499,7 @@ scoped block that can be stripped.</li>
 </ul>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Top-level <code>@test</code> next to production functions</strong>: rejected; it pollutes the production namespace and makes it hard
-to keep test-only imports/helpers contained.</li>
+<li><strong>Top-level <code>@test</code> next to production functions</strong>: rejected; it pollutes the production namespace and makes it hard to keep test-only imports/helpers contained.</li>
 <li><strong>Magic language keywords for tests/fixtures</strong>: rejected; harms tooling and contradicts the "stdlib-gated" principle.</li>
 <li><strong>Compile-time-only assertions</strong>: rejected; <code>assert</code> is intended for always-on runtime invariants.</li>
 </ul>

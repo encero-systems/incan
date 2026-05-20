@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3489,6 +3581,8 @@
       
         
       
+        
+      
     
     
       
@@ -3820,6 +3914,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3965,7 +4080,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3981,14 +4096,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6339,11 +6454,9 @@ So we can change the destination in one place if we move/rename sections.
 <h2 id="conflicts-precedence">Conflicts &amp; precedence<a class="headerlink" href="#conflicts-precedence" title="Permanent link">&para;</a></h2>
 <p>Rules that resolve “derive vs dunder” (these are intentional and strict):</p>
 <ul>
-<li><strong>Dunder overrides are explicit behavior</strong>: if you write a dunder (<code>__str__</code>, <code>__eq__</code>, <code>__lt__</code>, <code>__hash__</code>), that is
-  the behavior for that capability.</li>
+<li><strong>Dunder overrides are explicit behavior</strong>: if you write a dunder (<code>__str__</code>, <code>__eq__</code>, <code>__lt__</code>, <code>__hash__</code>), that is the behavior for that capability.</li>
 <li><strong>Conflicts are errors</strong>: you must not combine a dunder with the corresponding <code>@derive(...)</code>.</li>
-<li><strong>Auto-added traits are the exception</strong>: some traits are automatically added to <code>model</code> / <code>class</code> / <code>enum</code> / <code>newtype</code>
-  (see <a href="#automatic-derives">Automatic derives</a>). You don’t need to spell them out.</li>
+<li><strong>Auto-added traits are the exception</strong>: some traits are automatically added to <code>model</code> / <code>class</code> / <code>enum</code> / <code>newtype</code> (see <a href="#automatic-derives">Automatic derives</a>). You don’t need to spell them out.</li>
 </ul>
 <hr />
 <h2 id="automatic-derives">Automatic derives<a class="headerlink" href="#automatic-derives" title="Permanent link">&para;</a></h2>
@@ -6855,8 +6968,7 @@ So we can change the destination in one place if we move/rename sections.
 </code></pre></div>
 <p>Add method-level targets when both declarations are trait implementations, or use distinct method names when they are ordinary inherent methods. General call-site explicit qualification and aliasing are future language design work.</p>
 <h3 id="requires-adopter-contract"><code>@requires(...)</code> (adopter contract)<a class="headerlink" href="#requires-adopter-contract" title="Permanent link">&para;</a></h3>
-<p><code>@requires(...)</code> is a decorator you can put on a <code>trait</code> to declare <strong>which adopter fields must exist</strong> (and what types
-they must have).</p>
+<p><code>@requires(...)</code> is a decorator you can put on a <code>trait</code> to declare <strong>which adopter fields must exist</strong> (and what types they must have).</p>
 <p>Syntax:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@requires</span><span class="p">(</span><span class="n">field_a</span><span class="p">:</span> <span class="nc">TypeA</span><span class="p">,</span> <span class="n">field_b</span><span class="p">:</span> <span class="nc">TypeB</span><span class="p">)</span>
 <span class="k">trait</span> <span class="nc">MyTrait</span><span class="p">:</span>
@@ -7053,8 +7165,7 @@ they must have).</p>
 </ul>
 <p>Rule:</p>
 <ul>
-<li>If a <code>model</code> derives <code>Validate</code>, you must construct it via <code>TypeName.new(...)</code>.
-  Raw construction via <code>TypeName(...)</code> is a compile-time error.</li>
+<li>If a <code>model</code> derives <code>Validate</code>, you must construct it via <code>TypeName.new(...)</code>. Raw construction via <code>TypeName(...)</code> is a compile-time error.</li>
 </ul>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="kt">Validate</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">EmailUser</span><span class="p">:</span>
@@ -7097,8 +7208,7 @@ they must have).</p>
 </ul>
 <p>Note:</p>
 <ul>
-<li>Field metadata like <code>[alias="..."]</code> and <code>[description="..."]</code> is <strong>model-only</strong>. For <code>class</code>, <code>FieldInfo.alias</code>
-  and <code>FieldInfo.description</code> are always <code>None</code> and <code>FieldInfo.wire_name == FieldInfo.name</code>.</li>
+<li>Field metadata like <code>[alias="..."]</code> and <code>[description="..."]</code> is <strong>model-only</strong>. For <code>class</code>, <code>FieldInfo.alias</code> and <code>FieldInfo.description</code> are always <code>None</code> and <code>FieldInfo.wire_name == FieldInfo.name</code>.</li>
 <li><code>u.__fields__()</code> is typed as <code>FrozenList[FieldInfo]</code> directly by the compiler. Import <code>FieldInfo</code> only when you need to spell that type in an annotation.</li>
 </ul>
 <p>See <a href="../reflection/">Reflection (Reference)</a> for <code>FieldInfo</code> structure details.</p>

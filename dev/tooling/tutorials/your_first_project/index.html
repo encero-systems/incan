@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5766,15 +5881,13 @@ Test it:  incan test
 ├── .gitignore             # Ignores target/
 └── incan.toml             # Manifest with project metadata and [project.scripts] main set
 </code></pre></div>
-<p>The generated <code>incan.toml</code> can also carry <code>requires-incan</code> to document the minimum supported Incan toolchain version.
-Commit <code>incan.lock</code> once the project generates it so builds stay reproducible.</p>
+<p>The generated <code>incan.toml</code> can also carry <code>requires-incan</code> to document the minimum supported Incan toolchain version. Commit <code>incan.lock</code> once the project generates it so builds stay reproducible.</p>
 <p>Try it immediately:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run
 </code></pre></div>
 <div class="language-text highlight"><pre><span></span><code>Hello from greeter!
 </code></pre></div>
-<p>The generated <code>incan.toml</code> records the project metadata and already has <code>[project.scripts] main</code> pointing at
-<code>src/main.incn</code>, so commands like <code>incan lock</code> will work without a file argument later on:</p>
+<p>The generated <code>incan.toml</code> records the project metadata and already has <code>[project.scripts] main</code> pointing at <code>src/main.incn</code>, so commands like <code>incan lock</code> will work without a file argument later on:</p>
 <div class="language-toml highlight"><span class="filename">incan.toml</span><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;greeter&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
@@ -5796,8 +5909,7 @@ Commit <code>incan.lock</code> once the project generates it so builds stay repr
 <span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">greet</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;Hello, </span><span class="si">{</span><span class="n">name</span><span class="si">}</span><span class="s2">!&quot;</span>
 </code></pre></div>
-<p>Note the <code>pub</code> keyword — without it, <code>greet</code> would be private to its module and you couldn't
-import it.</p>
+<p>Note the <code>pub</code> keyword — without it, <code>greet</code> would be private to its module and you couldn't import it.</p>
 <p>Now update <code>src/main.incn</code> to use the <code>greet</code> function from the <code>greet.incn</code> module:</p>
 <div class="language-incan highlight"><span class="filename">src/main.incn</span><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">greet</span><span class="w"> </span><span class="kn">import</span> <span class="n">greet</span>
 
@@ -5834,8 +5946,7 @@ import it.</p>
 Goodbye, World!
 </code></pre></div>
 <h2 id="step-3-write-tests">Step 3: Write tests<a class="headerlink" href="#step-3-write-tests" title="Permanent link">&para;</a></h2>
-<p><code>incan new</code> already created a placeholder test. Let's replace it with real tests for our
-greeting module. Update <code>tests/test_main.incn</code>:</p>
+<p><code>incan new</code> already created a placeholder test. Let's replace it with real tests for our greeting module. Update <code>tests/test_main.incn</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">greet</span><span class="w"> </span><span class="kn">import</span> <span class="n">greet</span><span class="p">,</span> <span class="n">farewell</span>
 
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span>
@@ -5849,9 +5960,7 @@ greeting module. Update <code>tests/test_main.incn</code>:</p>
 <span class="k">def</span><span class="w"> </span><span class="nf">test_farewell</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="nf">assert_eq</span><span class="p">(</span><span class="n">farewell</span><span class="p">(</span><span class="s2">&quot;Alice&quot;</span><span class="p">),</span> <span class="s2">&quot;Goodbye, Alice!&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>Notice the import: <code>from greet import greet, farewell</code> — the exact same syntax as in
-<code>src/main.incn</code>. The test runner resolves imports against your project's source root
-(<code>src/</code>), so tests and source code share the same import paths.</p>
+<p>Notice the import: <code>from greet import greet, farewell</code> — the exact same syntax as in <code>src/main.incn</code>. The test runner resolves imports against your project's source root (<code>src/</code>), so tests and source code share the same import paths.</p>
 <p>Run the tests:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span><span class="nb">test</span>
 </code></pre></div>

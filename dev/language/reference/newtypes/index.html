@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5606,10 +5721,8 @@
             <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="kt">ValidationError</span><span class="p">(</span><span class="s2">&quot;attempts must be &gt;= 1&quot;</span><span class="p">))</span>
         <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">Attempts</span><span class="p">(</span><span class="n">n</span><span class="p">))</span>
 </code></pre></div>
-<p>The hook must be a static method with exactly one ordinary parameter whose type is the newtype's underlying type. Its
-return type must be <code>Result[T, ValidationError]</code> or <code>Result[Self, ValidationError]</code>.</p>
-<p><code>ValidationError("message")</code> creates the canonical validation error. Use <code>ValidationError(message="...", code="...")</code>
-when a stable error code is useful.</p>
+<p>The hook must be a static method with exactly one ordinary parameter whose type is the newtype's underlying type. Its return type must be <code>Result[T, ValidationError]</code> or <code>Result[Self, ValidationError]</code>.</p>
+<p><code>ValidationError("message")</code> creates the canonical validation error. Use <code>ValidationError(message="...", code="...")</code> when a stable error code is useful.</p>
 <h2 id="implicit-sites">Implicit Sites<a class="headerlink" href="#implicit-sites" title="Permanent link">&para;</a></h2>
 <p>The compiler inserts validated coercion only where the destination type is already explicit:</p>
 <ul>
@@ -5619,8 +5732,7 @@ when a stable error code is useful.</p>
 <li>Model and class constructor fields.</li>
 <li>Explicit <code>T(value)</code> construction.</li>
 </ul>
-<p>Implicit coercion does not parse unrelated primitive types. A <code>str</code> does not become an <code>int</code> on the way into an
-<code>int</code>-backed newtype.</p>
+<p>Implicit coercion does not parse unrelated primitive types. A <code>str</code> does not become an <code>int</code> on the way into an <code>int</code>-backed newtype.</p>
 <p>Reassignment is not an implicit coercion site:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">Attempts</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span>
 
@@ -5633,8 +5745,7 @@ when a stable error code is useful.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">PositiveInt</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">]</span>
 <span class="nb">type</span> <span class="nc">Percentage</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">100</span><span class="p">]</span>
 </code></pre></div>
-<p>Supported constraint keys are <code>gt</code>, <code>ge</code>, <code>lt</code>, and <code>le</code>. Generated constraint checks use the same validated
-construction sites as <code>from_underlying</code>.</p>
+<p>Supported constraint keys are <code>gt</code>, <code>ge</code>, <code>lt</code>, and <code>le</code>. Generated constraint checks use the same validated construction sites as <code>from_underlying</code>.</p>
 <h2 id="aggregate-validation">Aggregate Validation<a class="headerlink" href="#aggregate-validation" title="Permanent link">&para;</a></h2>
 <p>Model and class constructors aggregate validated field errors before raising:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nb">type</span> <span class="nc">PositiveInt</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nb">int</span><span class="p">[</span><span class="n">gt</span><span class="o">=</span><span class="mi">0</span><span class="p">]</span>
@@ -5646,8 +5757,7 @@ construction sites as <code>from_underlying</code>.</p>
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">bounds</span> <span class="o">=</span> <span class="nc">Bounds</span><span class="p">(</span><span class="n">low</span><span class="o">=</span><span class="mi">1</span><span class="p">,</span> <span class="n">high</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span>
 </code></pre></div>
-<p>If more than one validated field fails, the raised validation error includes the constructor target and each failed
-field.</p>
+<p>If more than one validated field fails, the raised validation error includes the constructor target and each failed field.</p>
 <h2 id="opting-out">Opting Out<a class="headerlink" href="#opting-out" title="Permanent link">&para;</a></h2>
 <p>Use <code>@no_implicit_coercion</code> when callers must construct the newtype explicitly:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@no_implicit_coercion</span>

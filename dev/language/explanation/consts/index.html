@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3071,6 +3163,8 @@
       
         
       
+        
+      
     
     
       
@@ -3556,6 +3650,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../derives_and_traits/" class="md-nav__link">
         
   
@@ -3701,7 +3816,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3717,14 +3832,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5789,8 +5904,7 @@
 
 
 <h1 id="const-bindings">Const bindings<a class="headerlink" href="#const-bindings" title="Permanent link">&para;</a></h1>
-<p><code>const</code> declares a <strong>compile-time constant</strong>: a name whose value is validated during compilation and can be baked into the
-output program.</p>
+<p><code>const</code> declares a <strong>compile-time constant</strong>: a name whose value is validated during compilation and can be baked into the output program.</p>
 <h2 id="why-is-const-a-thing">Why is <code>const</code> a thing?<a class="headerlink" href="#why-is-const-a-thing" title="Permanent link">&para;</a></h2>
 <p>In Incan, <code>const</code> exists to make intent explicit and to unlock compiler guarantees:</p>
 <ul>
@@ -5801,8 +5915,7 @@ output program.</p>
 </ul>
 <div class="admonition info">
 <p class="admonition-title">Coming from Python?</p>
-<p>In Python, “constants” are mostly a convention (e.g. <code>MAX_RETRIES = 5</code>) and can still be reassigned at runtime.
-In Incan, <code>const</code> is a language feature with compile-time validation and immutability guarantees.</p>
+<p>In Python, “constants” are mostly a convention (e.g. <code>MAX_RETRIES = 5</code>) and can still be reassigned at runtime. In Incan, <code>const</code> is a language feature with compile-time validation and immutability guarantees.</p>
 </div>
 <h2 id="how-do-i-use-it">How do I use it?<a class="headerlink" href="#how-do-i-use-it" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5813,8 +5926,7 @@ In Incan, <code>const</code> is a language feature with compile-time validation 
 </ul>
 <div class="admonition tip">
 <p class="admonition-title">Rule of thumb</p>
-<p>If you can’t evaluate the initializer without running the program (IO, time, function calls, loops), it doesn’t belong
-in a <code>const</code>.</p>
+<p>If you can’t evaluate the initializer without running the program (IO, time, function calls, loops), it doesn’t belong in a <code>const</code>.</p>
 </div>
 <h2 id="how-is-const-different-from-a-regular-variable">How is <code>const</code> different from a regular variable?<a class="headerlink" href="#how-is-const-different-from-a-regular-variable" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5833,10 +5945,8 @@ in a <code>const</code>.</p>
 </ul>
 <div class="admonition info">
 <p class="admonition-title">Coming from TS/JS?</p>
-<p>In TypeScript/JavaScript, <code>const</code> mostly means “this binding can’t be reassigned” (the value can still be mutable),
-and it can be computed at runtime.</p>
-<p>In Incan, <code>const</code> means “compile-time constant”: the initializer must be const-evaluable, and the result is exposed as
-a read-only (frozen) value.</p>
+<p>In TypeScript/JavaScript, <code>const</code> mostly means “this binding can’t be reassigned” (the value can still be mutable), and it can be computed at runtime.</p>
+<p>In Incan, <code>const</code> means “compile-time constant”: the initializer must be const-evaluable, and the result is exposed as a read-only (frozen) value.</p>
 </div>
 <h2 id="when-should-i-use-static-instead">When should I use <code>static</code> instead?<a class="headerlink" href="#when-should-i-use-static-instead" title="Permanent link">&para;</a></h2>
 <p>Use <code>static</code> when the module owns <strong>mutable runtime state</strong> that must live across calls:</p>
@@ -5874,8 +5984,7 @@ a read-only (frozen) value.</p>
 </ul>
 <p>If the initializer is not const-evaluable, the compiler emits an error at the binding site.</p>
 <h2 id="why-are-there-rust-native-vs-frozen-consts">Why are there “Rust-native” vs “Frozen” consts?<a class="headerlink" href="#why-are-there-rust-native-vs-frozen-consts" title="Permanent link">&para;</a></h2>
-<p>Incan supports two const “families” because Rust’s <code>const</code> rules are strict <em>and</em> because Incan wants <strong>deep immutability</strong>
-for baked data:</p>
+<p>Incan supports two const “families” because Rust’s <code>const</code> rules are strict <em>and</em> because Incan wants <strong>deep immutability</strong> for baked data:</p>
 <ul>
 <li><strong>Rust-native consts</strong>:<ul>
 <li>map directly to a Rust <code>const</code></li>
@@ -5885,18 +5994,15 @@ for baked data:</p>
 <li><strong>Frozen consts</strong>:<ul>
 <li>for data that should be baked into the program but exposed through a <strong>read-only API</strong></li>
 <li>includes strings/bytes and common containers (lists/dicts/sets)</li>
-<li>represented using frozen stdlib wrappers like <code>FrozenStr</code>, <code>FrozenBytes</code>, <code>FrozenList[T]</code>, <code>FrozenDict[K, V]</code>,
-  <code>FrozenSet[T]</code></li>
+<li>represented using frozen stdlib wrappers like <code>FrozenStr</code>, <code>FrozenBytes</code>, <code>FrozenList[T]</code>, <code>FrozenDict[K, V]</code>, <code>FrozenSet[T]</code></li>
 <li>the compiler emits baked <code>'static</code> backing data and constructs frozen wrappers from it</li>
 </ul>
 </li>
 </ul>
-<p>Important detail: in <code>const</code> context, Incan treats <code>str</code>/<code>bytes</code> and common containers as <strong>frozen</strong> to preserve deep
-immutability. In other words, <code>const</code> is not “just a <code>let</code> that runs earlier”.</p>
+<p>Important detail: in <code>const</code> context, Incan treats <code>str</code>/<code>bytes</code> and common containers as <strong>frozen</strong> to preserve deep immutability. In other words, <code>const</code> is not “just a <code>let</code> that runs earlier”.</p>
 <div class="admonition info">
 <p class="admonition-title">Coming from Rust?</p>
-<p>This is similar to Rust’s split between “things that can be <code>const</code>” and “things that need <code>'static</code> backing data and
-a safe API”.</p>
+<p>This is similar to Rust’s split between “things that can be <code>const</code>” and “things that need <code>'static</code> backing data and a safe API”.</p>
 </div>
 <h2 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h2>
 <h3 id="rust-native-consts">Rust-native consts<a class="headerlink" href="#rust-native-consts" title="Permanent link">&para;</a></h3>

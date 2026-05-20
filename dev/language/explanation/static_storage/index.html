@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3071,6 +3163,8 @@
       
         
       
+        
+      
     
     
       
@@ -3523,6 +3617,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../derives_and_traits/" class="md-nav__link">
         
   
@@ -3668,7 +3783,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3684,14 +3799,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5739,8 +5854,7 @@
 <li>initialized once in declaration order when the module is initialized</li>
 <li>read and written through compiler-managed access rules</li>
 </ul>
-<p>Every read observes the current contents of that storage cell.
-If another function mutates the static, later reads see the updated value.</p>
+<p>Every read observes the current contents of that storage cell. If another function mutates the static, later reads see the updated value.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">static</span> <span class="n">counter</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">next_id</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
@@ -5788,8 +5902,7 @@ If another function mutates the static, later reads see the updated value.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">const</span> <span class="nc">API_VERSION</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">&quot;v1&quot;</span>
 <span class="n">static</span> <span class="n">request_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>
 </code></pre></div>
-<p><code>API_VERSION</code> is fixed baked data.
-<code>request_count</code> changes as the program runs.</p>
+<p><code>API_VERSION</code> is fixed baked data. <code>request_count</code> changes as the program runs.</p>
 <p>See also: <a href="../consts/">Const bindings</a></p>
 <h2 id="aliases-are-still-live">Aliases are still live<a class="headerlink" href="#aliases-are-still-live" title="Permanent link">&para;</a></h2>
 <p>Direct aliases created from a static still refer to the live stored value.</p>
@@ -5824,8 +5937,7 @@ If another function mutates the static, later reads see the updated value.</p>
 <p>For the exact syntax, initialization, and error rules, see: <a href="../../reference/static_storage/">Static storage (reference)</a></p>
 <h2 id="design-intent">Design intent<a class="headerlink" href="#design-intent" title="Permanent link">&para;</a></h2>
 <p>Incan prefers explicit state ownership.</p>
-<p><code>static</code> exists for the cases where the owner really is the module itself.
-That makes module-level caches, counters, and registries possible without pretending they are compile-time constants.</p>
+<p><code>static</code> exists for the cases where the owner really is the module itself. That makes module-level caches, counters, and registries possible without pretending they are compile-time constants.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../consts/">Const bindings</a></li>

@@ -1167,6 +1167,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1393,6 +1401,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../generators/" class="md-nav__link">
         
   
@@ -1461,6 +1511,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1566,6 +1637,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3171,6 +3263,8 @@
       
         
       
+        
+      
     
     
       
@@ -3502,6 +3596,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3647,7 +3762,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3663,14 +3778,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5682,11 +5797,9 @@
 
 <h1 id="performance">Performance<a class="headerlink" href="#performance" title="Permanent link">&para;</a></h1>
 <p>This page is a practical guide to profiling and improving the performance of <strong>your Incan programs</strong>.</p>
-<p>Repository benchmark suite details (and profiling the compiler) live in
-<a href="../../../contributing/how-to/benchmarks_and_profiling/">Benchmarks &amp; profiling (repository)</a>.</p>
+<p>Repository benchmark suite details (and profiling the compiler) live in <a href="../../../contributing/how-to/benchmarks_and_profiling/">Benchmarks &amp; profiling (repository)</a>.</p>
 <h2 id="what-to-expect">What to expect<a class="headerlink" href="#what-to-expect" title="Permanent link">&para;</a></h2>
-<p>Incan compiles to Rust and then to a native binary. Runtime performance can be close to Rust for many workloads, but it
-depends on current codegen and library behavior.</p>
+<p>Incan compiles to Rust and then to a native binary. Runtime performance can be close to Rust for many workloads, but it depends on current codegen and library behavior.</p>
 <p>Two implications:</p>
 <ul>
 <li><strong>Builds can be slower</strong> than a single-step native compiler (Incan → Rust → binary).</li>
@@ -5707,8 +5820,7 @@ perf<span class="w"> </span>report
 <h2 id="optimization-tips-practical">Optimization tips (practical)<a class="headerlink" href="#optimization-tips-practical" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Prefer the canonical build</strong>: <code>incan build file.incn</code> (builds the generated Rust project in release mode today).</li>
-<li><strong>Avoid unnecessary clones</strong>: the code generator tries to avoid extra copying, but explicit <code>.clone()</code> in source
-  will be preserved.</li>
+<li><strong>Avoid unnecessary clones</strong>: the code generator tries to avoid extra copying, but explicit <code>.clone()</code> in source will be preserved.</li>
 <li><strong>Prefer iterator-style code</strong>: list comprehensions compile to iterator chains.</li>
 <li><strong>Inspect generated Rust</strong>: use <code>incan --emit-rust file.incn</code> when you’re not sure what the compiler is emitting.</li>
 </ul>

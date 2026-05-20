@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3203,6 +3295,8 @@
       
         
       
+        
+      
     
     
       
@@ -3534,6 +3628,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3679,7 +3794,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3695,14 +3810,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5779,17 +5894,7 @@
 <p><code>EncodingError.message()</code> returns user-facing text suitable for diagnostics. Position-aware implementations should include the offending byte or character offset when it can be reported deterministically.</p>
 <h2 id="strict-and-lenient-decoding">Strict and lenient decoding<a class="headerlink" href="#strict-and-lenient-decoding" title="Permanent link">&para;</a></h2>
 <p>Decode functions are strict unless the function name says otherwise.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="n">base64</span><span class="p">,</span> <span class="nb">hex</span>
-
-<span class="n">raw</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64decode</span><span class="p">(</span><span class="s2">&quot;aGVsbG8/&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="n">fingerprint</span> <span class="o">=</span> <span class="nb">hex</span><span class="o">.</span><span class="n">unhexlify</span><span class="p">(</span><span class="s2">&quot;68656c6c6f3f&quot;</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
 <p>Lenient decoding uses separate names instead of boolean flags. Lenient mode is only available where the format has a clear interoperability convention, such as ignoring ASCII whitespace in copied base64 or hex.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="n">base64</span><span class="p">,</span> <span class="nb">hex</span>
-
-<span class="n">raw</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64decode_lenient</span><span class="p">(</span><span class="s2">&quot;aGVs bG8/</span><span class="se">\n</span><span class="s2">&quot;</span><span class="p">)</span><span class="o">?</span>
-<span class="n">fingerprint</span> <span class="o">=</span> <span class="nb">hex</span><span class="o">.</span><span class="n">decode_lenient</span><span class="p">(</span><span class="s2">&quot;68 65 6c 6c 6f 3f&quot;</span><span class="p">)</span><span class="o">?</span>
-</code></pre></div>
 <p>Malformed alphabet characters, structurally impossible lengths, and bad checksums still fail in lenient mode.</p>
 <h2 id="hex">Hex<a class="headerlink" href="#hex" title="Permanent link">&para;</a></h2>
 <p><code>std.encoding.hex</code> provides base16 text for byte buffers.</p>
@@ -5819,12 +5924,6 @@
 </tr>
 </tbody>
 </table>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="nb">hex</span>
-
-<span class="n">text</span> <span class="o">=</span> <span class="nb">hex</span><span class="o">.</span><span class="n">hexlify</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;hello?&quot;</span><span class="p">)</span>
-<span class="k">assert</span> <span class="n">text</span> <span class="o">==</span> <span class="s2">&quot;68656c6c6f3f&quot;</span>
-<span class="k">assert</span> <span class="nb">hex</span><span class="o">.</span><span class="n">unhexlify</span><span class="p">(</span><span class="n">text</span><span class="p">)</span><span class="o">?</span> <span class="o">==</span> <span class="sa">b</span><span class="s2">&quot;hello?&quot;</span>
-</code></pre></div>
 <h2 id="base32">Base32<a class="headerlink" href="#base32" title="Permanent link">&para;</a></h2>
 <p><code>std.encoding.base32</code> provides RFC 4648 style base32 helpers. The standard alphabet is uppercase by default.</p>
 <table>
@@ -5947,15 +6046,6 @@
 </tr>
 </tbody>
 </table>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="n">base64</span>
-
-<span class="n">token</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64encode</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;hello?&quot;</span><span class="p">)</span>
-<span class="k">assert</span> <span class="n">token</span> <span class="o">==</span> <span class="s2">&quot;aGVsbG8/&quot;</span>
-<span class="k">assert</span> <span class="n">base64</span><span class="o">.</span><span class="n">b64decode</span><span class="p">(</span><span class="n">token</span><span class="p">)</span><span class="o">?</span> <span class="o">==</span> <span class="sa">b</span><span class="s2">&quot;hello?&quot;</span>
-
-<span class="n">url_token</span> <span class="o">=</span> <span class="n">base64</span><span class="o">.</span><span class="n">urlsafe_b64encode</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;hello?&quot;</span><span class="p">)</span>
-<span class="k">assert</span> <span class="n">url_token</span> <span class="o">==</span> <span class="s2">&quot;aGVsbG8_&quot;</span>
-</code></pre></div>
 <h2 id="base85">Base85<a class="headerlink" href="#base85" title="Permanent link">&para;</a></h2>
 <p><code>std.encoding.base85</code> keeps the major base85 variants separate.</p>
 <table>
@@ -6061,13 +6151,9 @@
 <td><code>Result[bytes, EncodingError]</code></td>
 <td>Strict Bitcoin Base58 from <code>str</code>, <code>BytesIO</code>, or <code>Path</code>.</td>
 </tr>
-<tr>
-<td>Base58 is not a checksum format by itself. Protocols that add checksums should expose separately named helpers rather than weakening plain <code>b58decode</code>.</td>
-<td></td>
-<td></td>
-</tr>
 </tbody>
 </table>
+<p>Base58 is not a checksum format by itself. Protocols that add checksums should expose separately named helpers rather than weakening plain <code>b58decode</code>.</p>
 <h2 id="bech32-and-bech32m">Bech32 and Bech32m<a class="headerlink" href="#bech32-and-bech32m" title="Permanent link">&para;</a></h2>
 <p><code>std.encoding.bech32</code> provides checksum-bearing Bech32 helpers for address-like text.</p>
 <table>
@@ -6101,22 +6187,9 @@
 </tr>
 </tbody>
 </table>
-<p>Bech32 and Bech32m are distinct variants. Use the helper that matches the external protocol. Use <code>convertbits</code> when
-converting byte-oriented payloads into five-bit data words.</p>
+<p>Bech32 and Bech32m are distinct variants. Use the helper that matches the external protocol. Use <code>convertbits</code> when converting byte-oriented payloads into five-bit data words.</p>
 <h2 id="sourcesink-io">Source/Sink I/O<a class="headerlink" href="#sourcesink-io" title="Permanent link">&para;</a></h2>
 <p>Canonical <code>encode</code> and <code>decode</code> functions compose with <code>std.io.BytesIO</code> and <code>std.fs.Path</code>. A <code>Path</code> is treated as a finite binary source or sink: the function opens it and uses the same source/sink transform path as in-memory streams. Hex, Base32, Base64, Base85, and Base58 expose source/sink helpers; Bech32 remains a word-oriented checksum API instead of a byte stream codec.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.encoding</span><span class="w"> </span><span class="kn">import</span> <span class="n">base64</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span>
-
-<span class="n">source</span> <span class="o">=</span> <span class="nc">BytesIO</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;hello?&quot;</span><span class="p">)</span>
-<span class="n">target</span> <span class="o">=</span> <span class="nc">BytesIO</span><span class="p">()</span>
-<span class="n">base64</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">chunk_size</span><span class="o">=</span><span class="mi">2</span><span class="p">)</span><span class="o">?</span>
-
-<span class="k">assert</span> <span class="n">target</span><span class="o">.</span><span class="n">into_bytes</span><span class="p">()</span> <span class="o">==</span> <span class="sa">b</span><span class="s2">&quot;aGVsbG8/&quot;</span>
-
-<span class="n">base64</span><span class="o">.</span><span class="n">encode</span><span class="p">(</span><span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;payload.bin&quot;</span><span class="p">),</span> <span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;payload.b64&quot;</span><span class="p">))</span><span class="o">?</span>
-</code></pre></div>
 <p>Source/sink functions do not insert line wrapping by default. MIME-style wrapped output must use a clearly named helper or option when that surface exists.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>

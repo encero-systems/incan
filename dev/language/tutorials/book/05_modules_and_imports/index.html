@@ -1296,6 +1296,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1522,6 +1530,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1590,6 +1640,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1695,6 +1766,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3200,6 +3292,8 @@
       
         
       
+        
+      
     
     
       
@@ -3531,6 +3625,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3676,7 +3791,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3692,14 +3807,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5758,12 +5873,10 @@
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>main.incn
 </code></pre></div>
 <h3 id="visibility-exporting-with-pub">Visibility: exporting with <code>pub</code><a class="headerlink" href="#visibility-exporting-with-pub" title="Permanent link">&para;</a></h3>
-<p>By default, definitions are <strong>module-private</strong> (only usable inside the same <code>.incn</code> file).
-Prefix a declaration with <code>pub</code> to <strong>export</strong> it so other modules can import it.</p>
+<p>By default, definitions are <strong>module-private</strong> (only usable inside the same <code>.incn</code> file). Prefix a declaration with <code>pub</code> to <strong>export</strong> it so other modules can import it.</p>
 <div class="admonition tip">
 <p class="admonition-title">Coming from Python?</p>
-<p>In Python, most top-level definitions are effectively importable.
-In Incan, you typically make the intended “public API” of a module explicit with <code>pub</code>.</p>
+<p>In Python, most top-level definitions are effectively importable. In Incan, you typically make the intended “public API” of a module explicit with <code>pub</code>.</p>
 </div>
 <p>For more detail on <code>pub</code> (including how it affects <code>model</code>/<code>class</code> fields), see: <a href="../../../explanation/models_and_classes/">Models &amp; Classes</a>.</p>
 <h3 id="exporting-an-alternate-name">Exporting an alternate name<a class="headerlink" href="#exporting-an-alternate-name" title="Permanent link">&para;</a></h3>
@@ -5797,8 +5910,7 @@ In Incan, you typically make the intended “public API” of a module explicit 
 </ul>
 <p>See: <a href="../../../reference/imports_and_modules/">Imports and modules (reference)</a>.</p>
 <h2 id="module-owned-state-with-static">Module-owned state with <code>static</code><a class="headerlink" href="#module-owned-state-with-static" title="Permanent link">&para;</a></h2>
-<p>Sometimes a module does not just export functions and types.<br />
-Sometimes it owns long-lived runtime state.</p>
+<p>Sometimes a module does not just export functions and types. Sometimes it owns long-lived runtime state.</p>
 <p>That is what <code>static</code> is for:</p>
 <p>This example shares live runtime state across module boundaries with <code>pub static</code>:</p>
 <div class="language-incan highlight"><span class="filename">counters.incn</span><pre><span></span><code><span class="k">pub</span> <span class="n">static</span> <span class="n">hits</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span>

@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3318,6 +3410,8 @@
       
         
       
+        
+      
     
     
       
@@ -3649,6 +3743,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3794,7 +3909,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3810,14 +3925,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5975,10 +6090,8 @@
 
 
 <h1 id="incan-code-style-guide">Incan Code Style Guide<a class="headerlink" href="#incan-code-style-guide" title="Permanent link">&para;</a></h1>
-<p>This page is the canonical style guide for human-written <code>.incn</code> source files.
-It describes how Incan code is laid out, what spacing is expected, and which readability gaps are allowed.</p>
-<p>Use <code>incan fmt</code> to apply these formatting rules to source files.
-For formatter command usage and limits, see <a href="../../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a>.</p>
+<p>This page is the canonical style guide for human-written <code>.incn</code> source files. It describes how Incan code is laid out, what spacing is expected, and which readability gaps are allowed.</p>
+<p>Use <code>incan fmt</code> to apply these formatting rules to source files. For formatter command usage and limits, see <a href="../../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a>.</p>
 <div class="admonition note">
 <p class="admonition-title">Historical note</p>
 <p>RFC 053 is the design record behind the current vertical-spacing model.</p>
@@ -6017,8 +6130,7 @@ For formatter command usage and limits, see <a href="../../../tooling/how-to/for
   › One obvious way             ─  conventions beat novelty,
                                    with escape hatches documented
 </code></pre></div>
-<p>This guide turns the Zen's style philosophy into concrete formatting and naming rules.<br />
-You can print it with <code>incan run -c "import this"</code>.</p>
+<p>This guide turns the Zen's style philosophy into concrete formatting and naming rules. You can print it with <code>incan run -c "import this"</code>.</p>
 </div>
 <h2 id="required-baseline">Required Baseline<a class="headerlink" href="#required-baseline" title="Permanent link">&para;</a></h2>
 <h3 id="indentation">Indentation<a class="headerlink" href="#indentation" title="Permanent link">&para;</a></h3>
@@ -6079,8 +6191,7 @@ You can print it with <code>incan run -c "import this"</code>.</p>
     <span class="nc">Finished</span>
 </code></pre></div>
 <h2 id="vertical-layout">Vertical Layout<a class="headerlink" href="#vertical-layout" title="Permanent link">&para;</a></h2>
-<p>Vertical spacing is the most opinionated part of the current contract.
-The rule is deliberately simple:</p>
+<p>Vertical spacing is the most opinionated part of the current contract. The rule is deliberately simple:</p>
 <ul>
 <li><code>2</code> blank lines are reserved for specific top-level declaration boundaries</li>
 <li><code>1</code> blank line is allowed for readability inside ordinary code</li>
@@ -6106,8 +6217,7 @@ The rule is deliberately simple:</p>
 <span class="k">def</span><span class="w"> </span><span class="nf">store_user</span><span class="p">(</span><span class="n">user</span><span class="p">:</span> <span class="nc">User</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="o">...</span>
 </code></pre></div>
-<p>This double-spacing is a root-level rule.
-It is not a general license to scatter double blank lines throughout the file.</p>
+<p>This double-spacing is a root-level rule. It is not a general license to scatter double blank lines throughout the file.</p>
 <h3 id="type-bodies">Type bodies<a class="headerlink" href="#type-bodies" title="Permanent link">&para;</a></h3>
 <p>Inside <code>model</code>, <code>class</code>, <code>trait</code>, <code>enum</code>, and similar type bodies:</p>
 <ul>
@@ -6127,8 +6237,7 @@ It is not a general license to scatter double blank lines throughout the file.</
 <li><code>1</code> authored blank line is allowed and is preserved</li>
 <li><code>2</code> or more consecutive blank lines are not allowed</li>
 </ul>
-<p>This is where "code prose" matters.
-A single readability gap between logic groups is valid Incan style and survives formatting.</p>
+<p>This is where "code prose" matters. A single readability gap between logic groups is valid Incan style and survives formatting.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">register_source</span><span class="p">(</span><span class="n">session</span><span class="p">:</span> <span class="nc">Session</span><span class="p">,</span> <span class="n">source</span><span class="p">:</span> <span class="nc">Source</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">SessionError</span><span class="p">]:</span>
     <span class="n">validate_source</span><span class="p">(</span><span class="n">source</span><span class="p">)</span><span class="o">?</span>
 
@@ -6151,8 +6260,7 @@ A single readability gap between logic groups is valid Incan style and survives 
 </code></pre></div>
 <h2 id="comments-and-docstrings">Comments And Docstrings<a class="headerlink" href="#comments-and-docstrings" title="Permanent link">&para;</a></h2>
 <h3 id="stand-alone-comments">Stand-alone comments<a class="headerlink" href="#stand-alone-comments" title="Permanent link">&para;</a></h3>
-<p>Stand-alone comments are attached by scope and structure.
-They do not create extra blank-line entitlement on their own.</p>
+<p>Stand-alone comments are attached by scope and structure. They do not create extra blank-line entitlement on their own.</p>
 <ul>
 <li>a comment with no blank line before the next construct is treated as a leading comment for that construct</li>
 <li>a comment separated from the next construct by a blank line stays with the previous construct instead</li>
@@ -6176,8 +6284,7 @@ They do not create extra blank-line entitlement on their own.</p>
 <span class="sd">This docstring may contain one intentional blank line.</span>
 <span class="sd">&quot;&quot;&quot;</span>
 </code></pre></div>
-<p>Literal text such as <code>\n</code> inside strings is still just text.
-Normalization applies to actual blank lines, not slash characters.</p>
+<p>Literal text such as <code>\n</code> inside strings is still just text. Normalization applies to actual blank lines, not slash characters.</p>
 <h2 id="horizontal-spacing">Horizontal Spacing<a class="headerlink" href="#horizontal-spacing" title="Permanent link">&para;</a></h2>
 <p>Use ordinary spaces to make expressions readable.</p>
 <ul>
@@ -6221,8 +6328,7 @@ Normalization applies to actual blank lines, not slash characters.</p>
 </code></pre></div>
 <p>Do not insert extra blank lines immediately after <code>=&gt;</code> or a suite header unless you genuinely intend one readability gap inside that block.</p>
 <h2 id="what-the-formatter-should-preserve">What The Formatter Should Preserve<a class="headerlink" href="#what-the-formatter-should-preserve" title="Permanent link">&para;</a></h2>
-<p><code>incan fmt</code> preserves legitimate authored structure rather than flattening everything into one style-less block.
-Today that specifically includes:</p>
+<p><code>incan fmt</code> preserves legitimate authored structure rather than flattening everything into one style-less block. Today that specifically includes:</p>
 <ul>
 <li>one blank line between logic groups inside indented code</li>
 <li>one blank line between sibling statements after nested suites</li>

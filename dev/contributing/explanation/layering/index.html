@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5687,8 +5802,7 @@
 
 
 <h1 id="layering-rules">Layering Rules<a class="headerlink" href="#layering-rules" title="Permanent link">&para;</a></h1>
-<p>This repository follows a strict dependency direction to keep semantics shared and prevent accidental drift between the
-compiler and the runtime:</p>
+<p>This repository follows a strict dependency direction to keep semantics shared and prevent accidental drift between the compiler and the runtime:</p>
 <ul>
 <li><code>incan</code> (compiler) may depend on <code>incan_core</code>.</li>
 <li><code>incan</code> may depend on <code>incan_syntax</code>, <code>incan_semantics_core</code>, <code>incan_semantics_stdlib</code>, and optional <code>rust_inspect</code> for compiler/toolchain work.</li>
@@ -5708,8 +5822,7 @@ compiler and the runtime:</p>
   generatedProgram["generated program"] --&gt; incanStdlib
   generatedProgram --&gt; incanDerive["incan_derive"]
   generatedProgram --&gt; incanWebMacros["incan_web_macros"]</code></pre>
-<p>CI/Test guardrails enforce that <code>incan</code> keeps <code>incan_stdlib</code> out of its normal dependencies. If you need runtime helpers
-inside tests, add them under <code>[dev-dependencies]</code> only.</p>
+<p>CI/Test guardrails enforce that <code>incan</code> keeps <code>incan_stdlib</code> out of its normal dependencies. If you need runtime helpers inside tests, add them under <code>[dev-dependencies]</code> only.</p>
 <h2 id="workspace-crate-categories">Workspace crate categories<a class="headerlink" href="#workspace-crate-categories" title="Permanent link">&para;</a></h2>
 <p>Use this policy when deciding where new code belongs:</p>
 <ul>
@@ -5721,10 +5834,8 @@ inside tests, add them under <code>[dev-dependencies]</code> only.</p>
 <h2 id="why-we-do-this">Why we do this<a class="headerlink" href="#why-we-do-this" title="Permanent link">&para;</a></h2>
 <p>We want one “source of truth” for language behavior so the compiler and runtime don’t drift:</p>
 <ul>
-<li><strong>Semantics must match</strong>: if const-eval validates something, runtime should do the same thing the same way (especially
-  for Unicode-sensitive string operations and numeric edge cases).</li>
-<li><strong>Diagnostics/panics must stay aligned</strong>: user-facing error messages should not diverge between compile-time and
-  runtime.</li>
+<li><strong>Semantics must match</strong>: if const-eval validates something, runtime should do the same thing the same way (especially for Unicode-sensitive string operations and numeric edge cases).</li>
+<li><strong>Diagnostics/panics must stay aligned</strong>: user-facing error messages should not diverge between compile-time and runtime.</li>
 <li><strong>Compiler stays lean</strong>: the compiler shouldn’t accidentally pull in runtime-only APIs or heavy dependencies.</li>
 </ul>
 <h2 id="what-goes-where-contracts-vs-implementations">What goes where (contracts vs implementations)<a class="headerlink" href="#what-goes-where-contracts-vs-implementations" title="Permanent link">&para;</a></h2>
@@ -5829,15 +5940,13 @@ inside tests, add them under <code>[dev-dependencies]</code> only.</p>
 <h2 id="guardrails-how-it-is-enforced">Guardrails (how it is enforced)<a class="headerlink" href="#guardrails-how-it-is-enforced" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Dependency gate</strong>: <code>tests/layering_guard.rs</code> fails if <code>incan_stdlib</code> appears in the compiler crate’s
-    <code>[dependencies]</code> section of the root <code>Cargo.toml</code>. (Keeping <code>incan_stdlib</code> in <code>[dev-dependencies]</code> for parity tests
-    is allowed.)</li>
+    <code>[dependencies]</code> section of the root <code>Cargo.toml</code>. (Keeping <code>incan_stdlib</code> in <code>[dev-dependencies]</code> for parity tests is allowed.)</li>
 </ul>
 <h2 id="how-to-add-shared-behavior-safely">How to add shared behavior safely<a class="headerlink" href="#how-to-add-shared-behavior-safely" title="Permanent link">&para;</a></h2>
 <p>When you notice drift risk (compiler vs runtime):</p>
 <ol>
 <li>Put the <em>policy</em> in <code>incan_core</code> (pure function + typed error or canonical message).</li>
-<li>Add a thin wrapper in <code>incan_stdlib</code> that calls semantics and performs runtime-only behavior (panic, allocation,
-   conversions).</li>
+<li>Add a thin wrapper in <code>incan_stdlib</code> that calls semantics and performs runtime-only behavior (panic, allocation, conversions).</li>
 <li>Update compiler const-eval / typechecking to use the semantics helper directly (never stdlib).</li>
 <li>Add a parity test in <code>tests/</code> that compares compiler/semantics/runtime behavior for the edge case.</li>
 </ol>

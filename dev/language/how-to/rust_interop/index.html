@@ -1167,6 +1167,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1393,6 +1401,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../generators/" class="md-nav__link">
         
   
@@ -1461,6 +1511,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1566,6 +1637,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3432,6 +3524,8 @@
       
         
       
+        
+      
     
     
       
@@ -3763,6 +3857,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3908,7 +4023,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3924,14 +4039,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6239,8 +6354,7 @@ supported. The compiler will tell you to use <code>rust::std::...</code> instead
 </code></pre></div>
 <p>The same rule applies to path segments after <code>rust::</code> (for example <code>rust::substrait::proto::type::Binary</code>).</p>
 <h2 id="dependency-management">Dependency Management<a class="headerlink" href="#dependency-management" title="Permanent link">&para;</a></h2>
-<p>When you use <code>import rust::crate_name</code>, Incan automatically adds the dependency to your generated <code>Cargo.toml</code>.
-Dependencies are resolved using a three-tier precedence system:</p>
+<p>When you use <code>import rust::crate_name</code>, Incan automatically adds the dependency to your generated <code>Cargo.toml</code>. Dependencies are resolved using a three-tier precedence system:</p>
 <ol>
 <li><strong><code>incan.toml</code></strong> (highest priority): If the crate is configured in your project manifest, that spec is used.</li>
 <li><strong>Inline annotations</strong>: If you write <code>import rust::foo @ "1.0"</code>, that version is used.</li>
@@ -6297,8 +6411,7 @@ Dependencies are resolved using a three-tier precedence system:</p>
 <li>Features are unioned automatically.</li>
 </ul>
 <h3 id="project-level-dependencies-incantoml">Project-level dependencies (<code>incan.toml</code>)<a class="headerlink" href="#project-level-dependencies-incantoml" title="Permanent link">&para;</a></h3>
-<p>For projects with multiple dependencies, use an <code>incan.toml</code> manifest instead of inline annotations.
-This is the recommended approach for anything beyond single-file scripts:</p>
+<p>For projects with multiple dependencies, use an <code>incan.toml</code> manifest instead of inline annotations. This is the recommended approach for anything beyond single-file scripts:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[project]</span>
 <span class="n">name</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;my_app&quot;</span>
 <span class="n">version</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.1.0&quot;</span>
@@ -6308,14 +6421,10 @@ This is the recommended approach for anything beyond single-file scripts:</p>
 <span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 <span class="n">my_crate</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;2.0&quot;</span><span class="w">  </span><span class="c1"># assuming this is a rust crate you are referencing</span>
 </code></pre></div>
-<p>When a crate is configured in <code>incan.toml</code>, inline version annotations for that crate are <strong>not allowed</strong> —
-the manifest is the single source of truth. Bare imports (without <code>@</code>) are fine.</p>
-<p>For the full manifest format, see:
-<a href="../../../tooling/reference/project_configuration/">Project configuration reference</a>.
-For a practical guide, see: <a href="../../../tooling/how-to/dependencies/">Managing dependencies</a>.</p>
+<p>When a crate is configured in <code>incan.toml</code>, inline version annotations for that crate are <strong>not allowed</strong> — the manifest is the single source of truth. Bare imports (without <code>@</code>) are fine.</p>
+<p>For the full manifest format, see: <a href="../../../tooling/reference/project_configuration/">Project configuration reference</a>. For a practical guide, see: <a href="../../../tooling/how-to/dependencies/">Managing dependencies</a>.</p>
 <h3 id="known-good-defaults">Known-good defaults<a class="headerlink" href="#known-good-defaults" title="Permanent link">&para;</a></h3>
-<p>The following crates have pre-configured versions with appropriate features. These defaults apply automatically when you
-import a crate without a version annotation and without an <code>incan.toml</code> entry:</p>
+<p>The following crates have pre-configured versions with appropriate features. These defaults apply automatically when you import a crate without a version annotation and without an <code>incan.toml</code> entry:</p>
 <table>
 <thead>
 <tr>
@@ -6475,12 +6584,8 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
         <span class="k">return</span> <span class="nc">UserId</span><span class="p">(</span><span class="bp">self</span><span class="mf">.0</span> <span class="o">+</span> <span class="n">rhs</span><span class="p">)</span>
 </code></pre></div>
 <p>Rust coherence rules still apply to generated implementations. Incan can implement a foreign Rust trait for an Incan-owned wrapper, but it cannot make arbitrary foreign-trait-for-foreign-type combinations legal.</p>
-<p>Body-less <code>rusttype</code> adoption is only accepted when Rust metadata proves that the backing type already implements the
-adopted Rust trait. In that case Incan treats the alias as already satisfying the contract and does not emit an invalid
-<code>impl ForeignTrait for Alias</code> block.</p>
-<p><code>rusttype ... with Awaitable[T]</code> is currently rejected with a focused diagnostic. The compiler keeps <code>Awaitable[T]</code> as
-the Incan-facing async contract, but Rust <code>Future</code> bridge emission still needs safe pin-projection and output-mapping
-metadata before it can replace handwritten Rust adapters.</p>
+<p>Body-less <code>rusttype</code> adoption is only accepted when Rust metadata proves that the backing type already implements the adopted Rust trait. In that case Incan treats the alias as already satisfying the contract and does not emit an invalid <code>impl ForeignTrait for Alias</code> block.</p>
+<p><code>rusttype ... with Awaitable[T]</code> is currently rejected with a focused diagnostic. The compiler keeps <code>Awaitable[T]</code> as the Incan-facing async contract, but Rust <code>Future</code> bridge emission still needs safe pin-projection and output-mapping metadata before it can replace handwritten Rust adapters.</p>
 <h2 id="published-libraries-and-shipped-abi-metadata">Published libraries and shipped ABI metadata<a class="headerlink" href="#published-libraries-and-shipped-abi-metadata" title="Permanent link">&para;</a></h2>
 <p>When a library exposes Rust-backed items, run <code>incan build --lib</code> before another project consumes it through <code>pub::</code>. The generated <code>.incnlib</code> embeds a versioned Rust ABI payload containing the canonical Rust item signatures captured during the producer build.</p>
 <p>Consumers load that shipped ABI metadata first for Rust-backed imported symbols. <code>rust_inspect</code> remains available for producer capture, local workspace imports, and explicit fallback/debug paths, but a packaged dependency should not require consumer-side workspace inspection for signatures that were already published in its <code>.incnlib</code>.</p>
@@ -6767,8 +6872,7 @@ metadata before it can replace handwritten Rust adapters.</p>
 <h3 id="string-arguments-and-borrowing">String arguments and borrowing<a class="headerlink" href="#string-arguments-and-borrowing" title="Permanent link">&para;</a></h3>
 <div class="admonition tip">
 <p class="admonition-title">Coming from Rust?</p>
-<p>You never write <code>&amp;str</code> or lifetimes in Incan. When you pass a <code>str</code> value to an external Rust function, the
-compiler automatically passes it as a borrowed <code>&amp;str</code> — the most common pattern in Rust APIs.</p>
+<p>You never write <code>&amp;str</code> or lifetimes in Incan. When you pass a <code>str</code> value to an external Rust function, the compiler automatically passes it as a borrowed <code>&amp;str</code> — the most common pattern in Rust APIs.</p>
 <p>If a Rust function requires an owned <code>String</code> instead, append <code>.to_string()</code> at the call site:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">fs</span> <span class="kn">import</span><span class="w"> </span><span class="nn">write</span>
 
@@ -6831,8 +6935,7 @@ compiler automatically passes it as a borrowed <code>&amp;str</code> — the mos
 <ol>
 <li>
 <p><strong>Use <code>incan fmt</code> to fix import style</strong>: the formatter always normalizes <code>rust::</code> imports to <code>::</code> notation.
-    If you (or a collaborator) wrote <code>from rust.serde_json import Value</code>, running <code>incan fmt</code> silently rewrites it
-    to <code>from rust::serde_json import Value</code>.</p>
+    If you (or a collaborator) wrote <code>from rust.serde_json import Value</code>, running <code>incan fmt</code> silently rewrites it to <code>from rust::serde_json import Value</code>.</p>
 </li>
 <li>
 <p><strong>Prefer Incan types</strong>: Use Incan's built-in types when possible. Use Rust types only when you need

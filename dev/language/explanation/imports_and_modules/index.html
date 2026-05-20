@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3071,6 +3163,8 @@
       
         
       
+        
+      
     
     
       
@@ -3402,6 +3496,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../derives_and_traits/" class="md-nav__link">
         
   
@@ -3638,7 +3753,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3654,14 +3769,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5676,16 +5791,14 @@
 <li>Directories can act as modules; use <code>mod.incn</code> as the “main file” for a directory module when needed.</li>
 <li>Common types and functions are available without imports via the prelude (see the reference page for the full list).</li>
 <li>The <strong>standard library</strong> lives under the <code>std</code> namespace (e.g. <code>from std.web import route</code>). The compiler activates features automatically based on which <code>std.*</code> modules you import.</li>
-<li>Some language keywords are <strong>import-activated</strong> (soft keywords), for example <code>async</code> / <code>await</code> after importing
-  <code>std.async</code> (details in the reference page).</li>
+<li>Some language keywords are <strong>import-activated</strong> (soft keywords), for example <code>async</code> / <code>await</code> after importing <code>std.async</code> (details in the reference page).</li>
 <li>Modules may also export <strong>shared runtime state</strong> via <code>pub static</code>, which importing modules access as the same live storage cell rather than as a copied value.</li>
 </ul>
 <!-- TODO: Add a link to the standard library sections once we create them -->
 
 <div class="admonition info">
 <p class="admonition-title">Coming from Python?</p>
-<p>In Python, packages are driven by directory structure and <code>__init__.py</code>.<br />
-In Incan, directories are recognized automatically; you can use <code>mod.incn</code> when you need a directory/module
+<p>In Python, packages are driven by directory structure and <code>__init__.py</code>. In Incan, directories are recognized automatically; you can use <code>mod.incn</code> when you need a directory/module
 entrypoint.</p>
 </div>
 <h2 id="how-module-discovery-works-conceptual">How module discovery works (conceptual)<a class="headerlink" href="#how-module-discovery-works-conceptual" title="Permanent link">&para;</a></h2>
@@ -5697,11 +5810,9 @@ entrypoint.</p>
 <li>Makes its types and functions available in the importing file</li>
 </ol>
 <h3 id="coming-from-rust">Coming from Rust<a class="headerlink" href="#coming-from-rust" title="Permanent link">&para;</a></h3>
-<p>In Rust, you typically need explicit module declarations before importing. In Incan, you generally “just import” and the
-compiler discovers modules automatically.</p>
+<p>In Rust, you typically need explicit module declarations before importing. In Incan, you generally “just import” and the compiler discovers modules automatically.</p>
 <h3 id="coming-from-python">Coming from Python<a class="headerlink" href="#coming-from-python" title="Permanent link">&para;</a></h3>
-<p>In Python, packages are driven by directory structure and <code>__init__.py</code>. In Incan, directories are recognized as modules
-without <code>__init__.py</code>; use <code>mod.incn</code> when you need a directory entrypoint.</p>
+<p>In Python, packages are driven by directory structure and <code>__init__.py</code>. In Incan, directories are recognized as modules without <code>__init__.py</code>; use <code>mod.incn</code> when you need a directory entrypoint.</p>
 <h2 id="where-to-go-next">Where to go next<a class="headerlink" href="#where-to-go-next" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Practical multi-file project layouts: <a href="../../how-to/imports_and_modules/">Imports and modules (how-to)</a></li>

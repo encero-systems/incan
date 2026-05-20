@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3272,6 +3364,8 @@
       
         
       
+        
+      
     
     
       
@@ -3603,6 +3697,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3748,7 +3863,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3764,14 +3879,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5885,23 +6000,15 @@
 <div class="admonition info">
 <p class="admonition-title">Related pages</p>
 <ul>
-<li>If you are looking for how to run tests (<code>incan test</code>, discovery rules, CLI flags), see:
-  <a href="../../../../tooling/how-to/testing/">Tooling → Testing</a>.</li>
+<li>If you are looking for how to run tests (<code>incan test</code>, discovery rules, CLI flags), see: <a href="../../../../tooling/how-to/testing/">Tooling → Testing</a>.</li>
 <li>If you want a guided walkthrough, see: <a href="../../../tutorials/book/13_unit_tests/">The Incan Book → Unit tests</a>.</li>
-<li>If you want the language model for writing tests, including inline <code>module tests:</code>, see:
-  <a href="../../../how-to/testing_stdlib/">Language → How-to → Testing in Incan</a>.</li>
+<li>If you want the language model for writing tests, including inline <code>module tests:</code>, see: <a href="../../../how-to/testing_stdlib/">Language → How-to → Testing in Incan</a>.</li>
 </ul>
 </div>
 <!-- References -->
 <h2 id="importing-the-testing-api">Importing the testing API<a class="headerlink" href="#importing-the-testing-api" title="Permanent link">&para;</a></h2>
-<p>The language <code>assert</code> statement is always available and does not require importing <code>std.testing</code>:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">assert</span> <span class="n">user</span><span class="o">.</span><span class="n">active</span>
-<span class="k">assert</span> <span class="nb">count</span> <span class="o">==</span> <span class="mi">3</span><span class="p">,</span> <span class="s2">&quot;unexpected row count&quot;</span>
-</code></pre></div>
-<p><code>std.testing</code> provides the helper functions and test decorators:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">testing</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_ne</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_false</span><span class="p">,</span> <span class="n">fail</span>
-</code></pre></div>
+<p>The language <code>assert</code> statement is always available and does not require importing <code>std.testing</code>.</p>
+<p><code>std.testing</code> provides the helper functions and test decorators.</p>
 <h2 id="assertion-functions">Assertion functions<a class="headerlink" href="#assertion-functions" title="Permanent link">&para;</a></h2>
 <p>All assertion helpers fail the current test when the assertion does not hold. The helper named <code>assert</code> is available as <code>testing.assert(condition, msg?)</code>; prefer the language statement for ordinary boolean assertions.</p>
 <table>
@@ -6030,16 +6137,7 @@
 <li><code>@fixture(scope="session")</code>: cached once per worker batch. With <code>--jobs 1</code>, one session fixture instance can be shared across compatible collected files; with <code>--jobs N</code>, each worker gets its own instance.</li>
 </ul>
 <p>Fixtures may use one top-level <code>yield</code> statement. Statements before <code>yield</code> are setup, the yielded value is injected, and statements after <code>yield</code> run as teardown at the fixture scope boundary. Teardown can reference setup locals and fixture parameters, runs after failing tests when the worker remains alive, and fails the run if teardown itself fails. Timeout-enforced worker termination can bypass teardown.</p>
-<p>Async fixtures use the same <code>@fixture</code> decorator:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep_ms</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">fixture</span>
-
-<span class="nd">@fixture</span>
-<span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">resource</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
-    <span class="k">yield</span> <span class="mi">42</span>
-    <span class="k">await</span> <span class="n">sleep_ms</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>
-</code></pre></div>
+<p>Async fixtures use the same <code>@fixture</code> decorator.</p>
 <p>Async fixture contract:</p>
 <ul>
 <li>Async fixtures are declared with <code>async def</code>; there is no separate async fixture decorator.</li>

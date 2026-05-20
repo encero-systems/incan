@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3071,6 +3163,8 @@
       
         
       
+        
+      
     
     
       
@@ -3402,6 +3496,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../derives_and_traits/" class="md-nav__link">
         
   
@@ -3549,7 +3664,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" checked>
         
           
           
@@ -3565,14 +3680,14 @@
             </a>
             
               
-              <label class="md-nav__link md-nav__link--active" for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link md-nav__link--active" for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5568,8 +5683,7 @@
 
 
 <h1 id="models-and-classes-in-incan">Models and Classes in Incan<a class="headerlink" href="#models-and-classes-in-incan" title="Permanent link">&para;</a></h1>
-<p>Incan provides two ways to define types with fields: <code>model</code> and <code>class</code>.
-Understanding when to use each is key to writing idiomatic Incan code.</p>
+<p>Incan provides two ways to define types with fields: <code>model</code> and <code>class</code>. Understanding when to use each is key to writing idiomatic Incan code.</p>
 <ul>
 <li><code>model</code>: data-first (DTOs, configs, payloads, wire formats)</li>
 <li><code>class</code>: behavior-first (services, stateful objects, inheritance/overrides)</li>
@@ -5650,8 +5764,7 @@ Understanding when to use each is key to writing idiomatic Incan code.</p>
 <h2 id="fundamental-differences">Fundamental differences<a class="headerlink" href="#fundamental-differences" title="Permanent link">&para;</a></h2>
 <p>A <code>model</code> and a <code>class</code> are not interchangeable. They compile to Rust structs, but they represent <strong>different language concepts</strong>:</p>
 <ul>
-<li><strong>Models define data shapes</strong>. They are the canonical representation for schema-like data and are the target for
-  schema-focused features like field metadata and aliases.</li>
+<li><strong>Models define data shapes</strong>. They are the canonical representation for schema-like data and are the target for schema-focused features like field metadata and aliases.</li>
 <li><strong>Classes define behavior</strong>. They can inherit, override methods, and model stateful objects and services.</li>
 <li><strong>Feature surface is intentionally different</strong>: field aliases/metadata are <strong>model-only</strong>, while inheritance is <strong>class-only</strong>.</li>
 </ul>
@@ -5704,10 +5817,8 @@ Understanding when to use each is key to writing idiomatic Incan code.</p>
 <li><code>model</code> = "this is data" (like a plain struct)</li>
 <li><code>class</code> = "this is an object with behavior" (can add inheritance + trait composition)</li>
 </ul>
-<p>The compiler resolves inheritance at compile time by generating fields/methods/trait impls.
-In practice, this is still "zero-cost": choose <code>model</code> vs <code>class</code> for clarity and API design, not performance.</p>
-<p><strong>Why no <code>struct</code> keyword?</strong><br />
-Incan uses <code>model</code> and <code>class</code> instead because:</p>
+<p>The compiler resolves inheritance at compile time by generating fields/methods/trait impls. In practice, this is still "zero-cost": choose <code>model</code> vs <code>class</code> for clarity and API design, not performance.</p>
+<p><strong>Why no <code>struct</code> keyword?</strong> Incan uses <code>model</code> and <code>class</code> instead because:</p>
 <ol>
 <li><strong>Python familiarity</strong> — Python developers know <code>class</code>, not <code>struct</code></li>
 <li><strong>Clearer semantics</strong> — <code>model</code> says "this is data", not "this is a memory layout"</li>

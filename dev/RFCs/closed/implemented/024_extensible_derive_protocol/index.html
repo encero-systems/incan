@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6139,12 +6254,9 @@
 </code></pre></div>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Implementing specific format libraries.</strong> This RFC uses YAML, Protobuf, Avro, SQL DDL, and others as illustrative
-examples of what the protocol <em>enables</em>. It does not propose adding those libraries to the stdlib. Each format would be introduced by its own RFC or feature issue (for example RFC 051 for <code>JsonValue</code>).</li>
-<li><strong>Migrating built-in derives</strong> (<code>Eq</code>, <code>Clone</code>, <code>Debug</code>, etc.) to the <code>__derives__</code> protocol. These remain compiler
-intrinsics handled by the <code>DeriveId</code> registry. See <a href="#interaction-with-existing-features">Interaction with existing features</a> for details.</li>
-<li><strong>Runtime reflection of field values.</strong> The protocol relies on existing <code>__fields__()</code> metadata reflection for schema
-generators. Dynamic field <em>value</em> access (needed to express <code>__eq__</code> or <code>__repr__</code> in pure Incan) is out of scope.</li>
+<li><strong>Implementing specific format libraries.</strong> This RFC uses YAML, Protobuf, Avro, SQL DDL, and others as illustrative examples of what the protocol <em>enables</em>. It does not propose adding those libraries to the stdlib. Each format would be introduced by its own RFC or feature issue (for example RFC 051 for <code>JsonValue</code>).</li>
+<li><strong>Migrating built-in derives</strong> (<code>Eq</code>, <code>Clone</code>, <code>Debug</code>, etc.) to the <code>__derives__</code> protocol. These remain compiler intrinsics handled by the <code>DeriveId</code> registry. See <a href="#interaction-with-existing-features">Interaction with existing features</a> for details.</li>
+<li><strong>Runtime reflection of field values.</strong> The protocol relies on existing <code>__fields__()</code> metadata reflection for schema generators. Dynamic field <em>value</em> access (needed to express <code>__eq__</code> or <code>__repr__</code> in pure Incan) is out of scope.</li>
 </ul>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <h3 id="deriving-a-format">Deriving a format<a class="headerlink" href="#deriving-a-format" title="Permanent link">&para;</a></h3>
@@ -6170,8 +6282,7 @@ generators. Dynamic field <em>value</em> access (needed to express <code>__eq__<
 <span class="n">json_str</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">to_json</span><span class="p">()</span>
 <span class="n">yaml_str</span> <span class="o">=</span> <span class="n">config</span><span class="o">.</span><span class="n">to_yaml</span><span class="p">()</span>
 </code></pre></div>
-<p>Both format modules define their own <code>Serialize</code> trait, each carrying <code>@rust.derive("serde::Serialize")</code>. The compiler deduplicates to a single Rust-level derive, while each module injects its own distinct methods (<code>.to_json()</code> vs
-<code>.to_yaml()</code>).</p>
+<p>Both format modules define their own <code>Serialize</code> trait, each carrying <code>@rust.derive("serde::Serialize")</code>. The compiler deduplicates to a single Rust-level derive, while each module injects its own distinct methods (<code>.to_json()</code> vs <code>.to_yaml()</code>).</p>
 <h3 id="partial-derives-serialize-only-deserialize-only">Partial derives (serialize-only, deserialize-only)<a class="headerlink" href="#partial-derives-serialize-only-deserialize-only" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde.json</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Serialize</span> <span class="k">as</span> <span class="n">json_write</span>
 
@@ -6184,8 +6295,7 @@ generators. Dynamic field <em>value</em> access (needed to express <code>__eq__<
 <span class="c1"># LogEntry has .to_json() but NOT .from_json()</span>
 </code></pre></div>
 <h3 id="schema-generation-pure-incan-no-rust-needed">Schema generation (pure Incan, no Rust needed)<a class="headerlink" href="#schema-generation-pure-incan-no-rust-needed" title="Permanent link">&para;</a></h3>
-<p>Not all derives involve serialization. Schema generators produce text artifacts from a model's field metadata using
-<code>__fields__()</code> reflection — no <code>rust::</code> imports required:</p>
+<p>Not all derives involve serialization. Schema generators produce text artifacts from a model's field metadata using <code>__fields__()</code> reflection — no <code>rust::</code> imports required:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.schema</span><span class="w"> </span><span class="kn">import</span> <span class="n">sql</span>
 
 <span class="nd">@derive</span><span class="p">(</span><span class="n">sql</span><span class="p">)</span>
@@ -6256,20 +6366,17 @@ generators. Dynamic field <em>value</em> access (needed to express <code>__eq__<
 <p>A module that defines a <code>__derives__</code> attribute at module level is a <strong>derivable module</strong>. The attribute lists which of the module's traits are adoptable via <code>@derive()</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="nc">Serialize</span><span class="p">,</span> <span class="nc">Deserialize</span><span class="p">]</span>
 </code></pre></div>
-<p>Here, <code>Serialize</code> and <code>Deserialize</code> refer to traits defined in the same module. When a type writes
-<code>@derive(module_name)</code>, the compiler:</p>
+<p>Here, <code>Serialize</code> and <code>Deserialize</code> refer to traits defined in the same module. When a type writes <code>@derive(module_name)</code>, the compiler:</p>
 <ol>
 <li>Resolves <code>module_name</code> to the imported module</li>
 <li>Reads <code>module_name.__derives__</code> to get the list of derivable traits</li>
 <li>Adopts those traits onto the type — their methods become available on instances of the type</li>
-<li>Determines the Rust-level <code>#[derive(...)]</code> attributes needed (an emission concern, derived from <code>@rust.derive</code>
-decorators on the adopted traits)</li>
+<li>Determines the Rust-level <code>#[derive(...)]</code> attributes needed (an emission concern, derived from <code>@rust.derive</code> decorators on the adopted traits)</li>
 </ol>
 <h3 id="trait-adoption-via-derive">Trait adoption via derive<a class="headerlink" href="#trait-adoption-via-derive" title="Permanent link">&para;</a></h3>
 <p>The traits listed in <code>__derives__</code> are adopted by any type that derives the module. This is equivalent to the type writing <code>with TraitName</code> for each listed trait, but driven by the <code>@derive()</code> decorator. Only traits explicitly listed in <code>__derives__</code> are adopted — other traits defined in the module are not automatically included.</p>
 <h3 id="rust-derive-binding-via-rustderive">Rust derive binding via <code>@rust.derive</code><a class="headerlink" href="#rust-derive-binding-via-rustderive" title="Permanent link">&para;</a></h3>
-<p>A trait in a derivable module may need the compiler to emit a Rust <code>#[derive(...)]</code> attribute on any struct that adopts it. This is distinct from <code>@rust.extern</code> (which delegates a <em>method call</em> to Rust) — <code>@rust.derive</code> declares that the
-<em>type itself</em> requires a Rust-level derive for the trait's methods to work.</p>
+<p>A trait in a derivable module may need the compiler to emit a Rust <code>#[derive(...)]</code> attribute on any struct that adopts it. This is distinct from <code>@rust.extern</code> (which delegates a <em>method call</em> to Rust) — <code>@rust.derive</code> declares that the <em>type itself</em> requires a Rust-level derive for the trait's methods to work.</p>
 <p>The <code>@rust.derive("path::to::Derive")</code> decorator on a trait declaration carries this binding:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="k">derive</span><span class="p">(</span><span class="s2">&quot;serde::Serialize&quot;</span><span class="p">)</span>
 <span class="k">trait</span> <span class="nc">Serialize</span><span class="p">:</span>
@@ -6295,12 +6402,10 @@ decorators on the adopted traits)</li>
 <p><strong>Module-level <code>__derives__</code> attribute</strong>: a list of derive names assigned at module scope.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="nc">Serialize</span><span class="p">,</span> <span class="nc">Deserialize</span><span class="p">]</span>
 </code></pre></div>
-<p>Parsed as a const assignment where the name is <code>__derives__</code> and the value is a list of identifiers. Each identifier
-must resolve to a trait defined in the same module.</p>
+<p>Parsed as a const assignment where the name is <code>__derives__</code> and the value is a list of identifiers. Each identifier must resolve to a trait defined in the same module.</p>
 </li>
 <li>
-<p><strong><code>@derive(module)</code> expansion</strong>: the existing <code>@derive(...)</code> syntax is extended to accept module names (not just
-derive names). When the argument resolves to a module with a <code>__derives__</code> attribute, it is expanded.</p>
+<p><strong><code>@derive(module)</code> expansion</strong>: the existing <code>@derive(...)</code> syntax is extended to accept module names (not just derive names). When the argument resolves to a module with a <code>__derives__</code> attribute, it is expanded.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
 <span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>          <span class="c1"># Module derive — expands via __derives__</span>
 <span class="nd">@derive</span><span class="p">(</span><span class="kt">Debug</span><span class="p">,</span> <span class="kt">Clone</span><span class="p">)</span>  <span class="c1"># DeriveId derives — unchanged</span>
@@ -6309,8 +6414,7 @@ derive names). When the argument resolves to a module with a <code>__derives__</
 </code></pre></div>
 </li>
 <li>
-<p><strong><code>@rust.derive</code> decorator on traits</strong>: declares the Rust <code>#[derive(...)]</code> attribute that must be emitted on any
-struct adopting this trait. This is the bridge between an Incan trait and the Rust code generation it requires.</p>
+<p><strong><code>@rust.derive</code> decorator on traits</strong>: declares the Rust <code>#[derive(...)]</code> attribute that must be emitted on any struct adopting this trait. This is the bridge between an Incan trait and the Rust code generation it requires.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="k">derive</span><span class="p">(</span><span class="s2">&quot;serde::Serialize&quot;</span><span class="p">)</span>
 <span class="k">trait</span> <span class="nc">Serialize</span><span class="p">:</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">to_json</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
@@ -6325,8 +6429,7 @@ struct adopting this trait. This is the bridge between an Incan trait and the Ru
 <ol>
 <li><strong>Resolve <code>name</code></strong>: check if it refers to a <code>DeriveId</code> (built-in derive) or an imported symbol.</li>
 <li><strong>If <code>DeriveId</code></strong>: existing behavior — emit the corresponding Rust <code>#[derive(...)]</code>.</li>
-<li><strong>If module with <code>__derives__</code></strong>: adopt the traits listed in <code>__derives__</code> onto the type. The compiler determines the
-necessary Rust-level derives from the adopted traits during emission.</li>
+<li><strong>If module with <code>__derives__</code></strong>: adopt the traits listed in <code>__derives__</code> onto the type. The compiler determines the necessary Rust-level derives from the adopted traits during emission.</li>
 <li><strong>If trait from a derivable module</strong>: adopt only that single trait onto the type.</li>
 <li><strong>Error</strong>: if <code>name</code> is neither a known derive, a derivable module, nor a trait from one — emit a diagnostic.</li>
 </ol>
@@ -6437,8 +6540,7 @@ necessary Rust-level derives from the adopted traits during emission.</li>
 </tr>
 </tbody>
 </table>
-<p>Schema generators with only one trait can still use <code>__derives__</code> to make the module derivable. Since the trait has no
-<code>@rust.derive</code> decorator, no Rust-level derive is emitted — the trait methods are pure Incan reflection:</p>
+<p>Schema generators with only one trait can still use <code>__derives__</code> to make the module derivable. Since the trait has no <code>@rust.derive</code> decorator, no Rust-level derive is emitted — the trait methods are pure Incan reflection:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># stdlib/schema/sql.incn</span>
 
 <span class="n">__derives__</span> <span class="o">=</span> <span class="p">[</span><span class="nc">SqlSchema</span><span class="p">]</span>
@@ -6521,9 +6623,7 @@ that is not in scope for this RFC.</p>
 </code></pre></div>
 <p>The <code>json</code> module sees <code>alias</code>, <code>description</code>, etc. The <code>protobuf</code> module reads <code>proto.tag</code> for stable field numbering. Each format consumes the metadata it understands and ignores the rest.</p>
 <h3 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h3>
-<p>This RFC is <strong>additive</strong> for the protocol itself — <code>__derives__</code>, <code>@rust.derive</code>, and module-based <code>@derive()</code> are new capabilities. However, it includes one <strong>deprecation</strong>: bare <code>@derive(Serialize, Deserialize)</code> will be removed from the
-<code>DeriveId</code> registry once the <code>std.serde.json</code> module is available (see design decision #4). Users migrate to the
-explicit module form:</p>
+<p>This RFC is <strong>additive</strong> for the protocol itself — <code>__derives__</code>, <code>@rust.derive</code>, and module-based <code>@derive()</code> are new capabilities. However, it includes one <strong>deprecation</strong>: bare <code>@derive(Serialize, Deserialize)</code> will be removed from the <code>DeriveId</code> registry once the <code>std.serde.json</code> module is available (see design decision #4). Users migrate to the explicit module form:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Before (deprecated — will be removed)</span>
 <span class="nd">@derive</span><span class="p">(</span><span class="nc">Serialize</span><span class="p">,</span> <span class="nc">Deserialize</span><span class="p">)</span>
 <span class="k">model</span> <span class="nc">Config</span><span class="p">:</span>
@@ -6552,12 +6652,9 @@ explicit module form:</p>
 <p>Migrate <code>Eq</code>, <code>Clone</code>, <code>Debug</code>, etc. to <code>__derives__</code>-based modules. Rejected because these are genuinely compiler intrinsics — their implementations are Rust proc macros that generate <code>impl</code> blocks, not callable functions. The protocol is for library-level functionality.</p>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Two derive systems</strong>: built-in compiler derives and module-based derives (<code>__derives__</code> protocol)
-coexist. This is intentional because they serve different purposes, but it does add conceptual surface area.</li>
-<li><strong>Naming collisions</strong>: if a module defines a <code>Serialize</code> trait and the user also imports <code>Serialize</code> from another
-module, the compiler must disambiguate. Normal trait resolution rules apply, but the error messages need to be clear.</li>
-<li><strong>Backend derive deduplication</strong>: the compiler must correctly deduplicate backend-level derive metadata gathered from
-multiple adopted traits. This is straightforward, but it does add another lowering step.</li>
+<li><strong>Two derive systems</strong>: built-in compiler derives and module-based derives (<code>__derives__</code> protocol) coexist. This is intentional because they serve different purposes, but it does add conceptual surface area.</li>
+<li><strong>Naming collisions</strong>: if a module defines a <code>Serialize</code> trait and the user also imports <code>Serialize</code> from another module, the compiler must disambiguate. Normal trait resolution rules apply, but the error messages need to be clear.</li>
+<li><strong>Backend derive deduplication</strong>: the compiler must correctly deduplicate backend-level derive metadata gathered from multiple adopted traits. This is straightforward, but it does add another lowering step.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
 <p><em>(Non-normative.)</em> A practical rollout has four broad steps:</p>

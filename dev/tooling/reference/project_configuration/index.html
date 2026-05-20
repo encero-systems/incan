@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6071,11 +6186,9 @@
 
 
 <h1 id="project-configuration-incantoml">Project configuration (<code>incan.toml</code>)<a class="headerlink" href="#project-configuration-incantoml" title="Permanent link">&para;</a></h1>
-<p>This is the reference for the <code>incan.toml</code> project manifest format. For a practical guide to managing dependencies, see:
-<a href="../../how-to/dependencies/">Managing dependencies</a>.</p>
+<p>This is the reference for the <code>incan.toml</code> project manifest format. For a practical guide to managing dependencies, see: <a href="../../how-to/dependencies/">Managing dependencies</a>.</p>
 <h2 id="overview">Overview<a class="headerlink" href="#overview" title="Permanent link">&para;</a></h2>
-<p><code>incan.toml</code> is an optional project manifest that lives at your project root. It declares project metadata, build configuration, Incan library dependencies, Rust crate dependencies, and optional vocab companion crate settings.
-Project-aware commands discover it by walking upward from the current working directory, and file-oriented commands may also resolve it from the provided source path.</p>
+<p><code>incan.toml</code> is an optional project manifest that lives at your project root. It declares project metadata, build configuration, Incan library dependencies, Rust crate dependencies, and optional vocab companion crate settings. Project-aware commands discover it by walking upward from the current working directory, and file-oriented commands may also resolve it from the provided source path.</p>
 <div class="language-text highlight"><pre><span></span><code>my_project/
 ├── src/
 │   └── main.incn
@@ -6353,8 +6466,7 @@ hint: Move the dependency to [rust-dependencies], or import it only from tests.
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span class="w"> </span>--cargo-features<span class="w"> </span>fancy_logging
 </code></pre></div>
 <h2 id="legacy-alias-tables">Legacy alias tables<a class="headerlink" href="#legacy-alias-tables" title="Permanent link">&para;</a></h2>
-<p><code>[rust.dependencies]</code> and <code>[rust.dev-dependencies]</code> remain supported as backward-compatible aliases for <code>[rust-dependencies]</code> and <code>[rust-dev-dependencies]</code>.
-Prefer the non-nested table names in new manifests.</p>
+<p><code>[rust.dependencies]</code> and <code>[rust.dev-dependencies]</code> remain supported as backward-compatible aliases for <code>[rust-dependencies]</code> and <code>[rust-dev-dependencies]</code>. Prefer the non-nested table names in new manifests.</p>
 <h2 id="dependency-sources">Dependency sources<a class="headerlink" href="#dependency-sources" title="Permanent link">&para;</a></h2>
 <h3 id="registry-default">Registry (default)<a class="headerlink" href="#registry-default" title="Permanent link">&para;</a></h3>
 <p>The default source is crates.io. Version is required:</p>

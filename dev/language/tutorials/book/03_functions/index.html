@@ -1356,6 +1356,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1582,6 +1590,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1650,6 +1700,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1755,6 +1826,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3260,6 +3352,8 @@
       
         
       
+        
+      
     
     
       
@@ -3591,6 +3685,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3736,7 +3851,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3752,14 +3867,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5922,9 +6037,7 @@
 <p class="admonition-title">Coming from Python?</p>
 <p>Incan's spelling is intentionally familiar, but the types are stricter. Python <code>*args</code> collects a tuple and <code>**kwargs</code> collects a dict. Incan <code>*values: int</code> collects a <code>List[int]</code>, and <code>**headers: str</code> collects a <code>Dict[str, str]</code>.</p>
 <p>Python often uses <code>**kwargs</code> as a flexible "anything goes" escape hatch. Incan does not: every captured keyword value must match the declared value type.</p>
-<p>Python also unpacks arbitrary iterables and mappings at runtime. Incan keeps the same surface spelling, but the
-compiler must know what the unpacked value can provide. A <code>List[int]</code> can feed a positional rest parameter, while an
-inline <code>[1, 2]</code> can also prove the two values needed by a fixed call like <code>point(*[1, 2])</code>.</p>
+<p>Python also unpacks arbitrary iterables and mappings at runtime. Incan keeps the same surface spelling, but the compiler must know what the unpacked value can provide. A <code>List[int]</code> can feed a positional rest parameter, while an inline <code>[1, 2]</code> can also prove the two values needed by a fixed call like <code>point(*[1, 2])</code>.</p>
 </div>
 <h3 id="combining-both-forms">Combining both forms<a class="headerlink" href="#combining-both-forms" title="Permanent link">&para;</a></h3>
 <p>You can combine <code>*args</code> and <code>**kwargs</code> when the API has both repeated positional data and open named metadata:</p>
@@ -5941,8 +6054,7 @@ inline <code>[1, 2]</code> can also prove the two values needed by a fixed call 
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;total=</span><span class="si">{</span><span class="n">total</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="unpacking-existing-values">Unpacking existing values<a class="headerlink" href="#unpacking-existing-values" title="Permanent link">&para;</a></h3>
-<p>If you already have a list, use <code>*extra</code> to feed it into a positional rest parameter. If you already have a dictionary,
-use <code>**labels</code> to feed it into a keyword rest parameter.</p>
+<p>If you already have a list, use <code>*extra</code> to feed it into a positional rest parameter. If you already have a dictionary, use <code>**labels</code> to feed it into a keyword rest parameter.</p>
 <ul>
 <li>For rest calls, <code>*extra</code> requires a callee with a <code>*</code> rest parameter and <code>extra</code> must be compatible with <code>List[T]</code>.</li>
 <li>For rest calls, <code>**labels</code> requires a callee with a <code>**</code> rest parameter and <code>labels</code> must be compatible with <code>Dict[str, T]</code>.</li>
@@ -5959,8 +6071,7 @@ use <code>**labels</code> to feed it into a keyword rest parameter.</p>
     <span class="nb">count</span> <span class="o">=</span> <span class="n">f</span><span class="p">(</span><span class="s2">&quot;event&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">*</span><span class="n">xs</span><span class="p">,</span> <span class="o">**</span><span class="n">labels</span><span class="p">)</span>
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;count=</span><span class="si">{</span><span class="nb">count</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>Unpacking is intentionally static. It can also bind ordinary fixed parameters when the compiler can prove the unpacked
-shape:</p>
+<p>Unpacking is intentionally static. It can also bind ordinary fixed parameters when the compiler can prove the unpacked shape:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">point</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">y</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">x</span> <span class="o">+</span> <span class="n">y</span>
 
@@ -5971,8 +6082,7 @@ shape:</p>
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;point=</span><span class="si">{</span><span class="n">point</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">2</span><span class="p">])</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
     <span class="nb">println</span><span class="p">(</span><span class="n">route</span><span class="p">(</span><span class="o">**</span><span class="p">{</span><span class="s2">&quot;path&quot;</span><span class="p">:</span> <span class="s2">&quot;/status&quot;</span><span class="p">,</span> <span class="s2">&quot;method&quot;</span><span class="p">:</span> <span class="s2">&quot;GET&quot;</span><span class="p">}))</span>
 </code></pre></div>
-<p>A plain <code>List[int]</code> variable does not prove a fixed length, and a plain <code>Dict[str, str]</code> variable does not prove that
-specific fixed keys exist. Use those values with rest parameters, or keep the fixed call explicit.</p>
+<p>A plain <code>List[int]</code> variable does not prove a fixed length, and a plain <code>Dict[str, str]</code> variable does not prove that specific fixed keys exist. Use those values with rest parameters, or keep the fixed call explicit.</p>
 <p>The same spelling works when building new collections. Use <code>*</code> in a list literal and <code>**</code> in a dictionary literal:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">middle</span> <span class="o">=</span> <span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
@@ -5983,8 +6093,7 @@ specific fixed keys exist. Use those values with rest parameters, or keep the fi
 
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;values=</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="nb">values</span><span class="p">)</span><span class="si">}</span><span class="s2"> headers=</span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">headers</span><span class="p">)</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p><code>[**labels]</code> is not valid because <code>**</code> is for mapping or keyword unpacking, not list expansion. <code>{*items}</code> is not valid
-as dictionary spread; dictionary spread uses <code>**items</code>.</p>
+<p><code>[**labels]</code> is not valid because <code>**</code> is for mapping or keyword unpacking, not list expansion. <code>{*items}</code> is not valid as dictionary spread; dictionary spread uses <code>**items</code>.</p>
 <h3 id="when-not-to-use-variadic-arguments">When not to use variadic arguments<a class="headerlink" href="#when-not-to-use-variadic-arguments" title="Permanent link">&para;</a></h3>
 <p>Prefer ordinary parameters when the function has a small, known contract:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">connect</span><span class="p">(</span><span class="n">host</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">port</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>

@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3158,6 +3250,8 @@
       
         
       
+        
+      
     
     
       
@@ -3489,6 +3583,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3634,7 +3749,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3650,14 +3765,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5689,15 +5804,6 @@
 </tr>
 </tbody>
 </table>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">IoError</span><span class="p">,</span> <span class="kt">Path</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NamedTemporaryFile</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">write_report</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Path</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
-    <span class="n">temp</span> <span class="o">=</span> <span class="nc">NamedTemporaryFile</span><span class="o">.</span><span class="n">try_new_with</span><span class="p">(</span><span class="s2">&quot;report-&quot;</span><span class="p">,</span> <span class="s2">&quot;.txt&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span><span class="o">?</span>
-    <span class="n">path</span> <span class="o">=</span> <span class="n">temp</span><span class="o">.</span><span class="n">path</span><span class="p">()</span>
-    <span class="n">path</span><span class="o">.</span><span class="n">write_text</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="s2">&quot;utf-8&quot;</span><span class="p">,</span> <span class="s2">&quot;strict&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">return</span> <span class="n">temp</span><span class="o">.</span><span class="n">persist</span><span class="p">()</span>
-</code></pre></div>
 <p>While the wrapper is live and not persisted, dropping it deletes the file. <code>path()</code> is useful for APIs that need a filename rather than an already-open handle.</p>
 <h2 id="temporarydirectory">TemporaryDirectory<a class="headerlink" href="#temporarydirectory" title="Permanent link">&para;</a></h2>
 <table>
@@ -5731,15 +5837,6 @@
 </tr>
 </tbody>
 </table>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">IoError</span><span class="p">,</span> <span class="kt">Path</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">TemporaryDirectory</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">stage_artifact</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Path</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
-    <span class="n">workspace</span> <span class="o">=</span> <span class="nc">TemporaryDirectory</span><span class="o">.</span><span class="n">try_new_with</span><span class="p">(</span><span class="s2">&quot;stage-&quot;</span><span class="p">,</span> <span class="s2">&quot;&quot;</span><span class="p">,</span> <span class="kc">None</span><span class="p">)</span><span class="o">?</span>
-    <span class="n">artifact</span> <span class="o">=</span> <span class="n">workspace</span><span class="o">.</span><span class="n">path</span><span class="p">()</span> <span class="o">/</span> <span class="n">name</span>
-    <span class="n">artifact</span><span class="o">.</span><span class="n">write_bytes</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">return</span> <span class="n">workspace</span><span class="o">.</span><span class="n">persist</span><span class="p">()</span>
-</code></pre></div>
 <p>Dropping an unpersisted <code>TemporaryDirectory</code> removes the whole temporary tree. Use <code>persist()</code> for outputs that intentionally survive the current scope.</p>
 <h2 id="spooledtemporaryfile">SpooledTemporaryFile<a class="headerlink" href="#spooledtemporaryfile" title="Permanent link">&para;</a></h2>
 <table>
@@ -5798,30 +5895,9 @@
 </tr>
 </tbody>
 </table>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">IoError</span><span class="p">,</span> <span class="kt">Path</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">SpooledTemporaryFile</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">collect_payload</span><span class="p">(</span><span class="n">chunks</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">bytes</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Path</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
-    <span class="n">spool</span> <span class="o">=</span> <span class="nc">SpooledTemporaryFile</span><span class="p">(</span><span class="n">max_size</span><span class="o">=</span><span class="mi">1024</span> <span class="o">*</span> <span class="mi">1024</span><span class="p">)</span>
-    <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">chunks</span><span class="p">:</span>
-        <span class="n">spool</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="n">chunk</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">return</span> <span class="n">spool</span><span class="o">.</span><span class="n">persist</span><span class="p">()</span>
-</code></pre></div>
-<p>Before rollover, data lives in <code>std.io.BytesIO</code> and <code>path()</code> returns <code>Err(IoError)</code> because there is no filesystem path.
-After rollover, the stream uses a <code>std.fs.File</code> handle and the <code>NamedTemporaryFile</code> cleanup contract. Dropping an
-unpersisted rolled spool deletes the temporary file; <code>persist()</code> keeps it and returns the ordinary <code>Path</code>.</p>
+<p>Before rollover, data lives in <code>std.io.BytesIO</code> and <code>path()</code> returns <code>Err(IoError)</code> because there is no filesystem path. After rollover, the stream uses a <code>std.fs.File</code> handle and the <code>NamedTemporaryFile</code> cleanup contract. Dropping an unpersisted rolled spool deletes the temporary file; <code>persist()</code> keeps it and returns the ordinary <code>Path</code>.</p>
 <h2 id="parent-directory">Parent Directory<a class="headerlink" href="#parent-directory" title="Permanent link">&para;</a></h2>
-<p>Pass <code>dir</code> when temporary locations must live under a specific parent:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">IoError</span><span class="p">,</span> <span class="kt">Path</span>
-<span class="kn">from</span><span class="w"> </span><span class="nn">std.tempfile</span><span class="w"> </span><span class="kn">import</span> <span class="nc">NamedTemporaryFile</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">scratch_under</span><span class="p">(</span><span class="n">root</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Path</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
-    <span class="n">temp</span> <span class="o">=</span> <span class="nc">NamedTemporaryFile</span><span class="o">.</span><span class="n">try_new_with</span><span class="p">(</span><span class="s2">&quot;scratch-&quot;</span><span class="p">,</span> <span class="s2">&quot;.bin&quot;</span><span class="p">,</span> <span class="nb">Some</span><span class="p">(</span><span class="n">root</span><span class="p">))</span><span class="o">?</span>
-    <span class="n">path</span> <span class="o">=</span> <span class="n">temp</span><span class="o">.</span><span class="n">path</span><span class="p">()</span>
-    <span class="n">path</span><span class="o">.</span><span class="n">write_bytes</span><span class="p">(</span><span class="sa">b</span><span class="s2">&quot;scratch&quot;</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">return</span> <span class="n">temp</span><span class="o">.</span><span class="n">persist</span><span class="p">()</span>
-</code></pre></div>
-<p>The <code>dir</code> argument accepts <code>Option[Path]</code>. Wrap string parents with <code>Path("...")</code> before passing them. Failure details are returned as <code>IoError</code> with the requested parent path when creation fails.</p>
+<p>The <code>dir</code> argument accepts <code>Option[Path]</code> when temporary locations must live under a specific parent. Wrap string parents with <code>Path("...")</code> before passing them. Failure details are returned as <code>IoError</code> with the requested parent path when creation fails.</p>
 <h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../fs/">std.fs reference</a></li>

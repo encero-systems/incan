@@ -1167,6 +1167,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1393,6 +1401,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../generators/" class="md-nav__link">
         
   
@@ -1461,6 +1511,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1566,6 +1637,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3156,6 +3248,8 @@
       
         
       
+        
+      
     
     
       
@@ -3487,6 +3581,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3632,7 +3747,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3648,14 +3763,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5651,8 +5766,7 @@
 
 
 <h1 id="understanding-rust-types-coming-from-python">Understanding Rust types (coming from Python)<a class="headerlink" href="#understanding-rust-types-coming-from-python" title="Permanent link">&para;</a></h1>
-<p>When you use Rust interop (<code>rust::...</code> imports), you’ll sometimes see Rust types in signatures and docs.
-This page explains the common ones and how they map to Incan.</p>
+<p>When you use Rust interop (<code>rust::...</code> imports), you’ll sometimes see Rust types in signatures and docs. This page explains the common ones and how they map to Incan.</p>
 <h2 id="quick-mapping">Quick mapping<a class="headerlink" href="#quick-mapping" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5757,8 +5871,7 @@ This page explains the common ones and how they map to Incan.</p>
 </table>
 <h2 id="option-and-result-unwrap-like-patterns">Option and Result: unwrap-like patterns<a class="headerlink" href="#option-and-result-unwrap-like-patterns" title="Permanent link">&para;</a></h2>
 <p>Rust APIs often return <code>Option</code>/<code>Result</code> instead of raising exceptions.</p>
-<p><code>unwrap()</code> is a “this must exist” assertion (it panics if missing), so prefer <code>unwrap_or(...)</code> or <code>match</code> when the value
-can be absent.</p>
+<p><code>unwrap()</code> is a “this must exist” assertion (it panics if missing), so prefer <code>unwrap_or(...)</code> or <code>match</code> when the value can be absent.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">value</span> <span class="o">=</span> <span class="n">my_dict</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;key&quot;</span><span class="p">)</span><span class="o">.</span><span class="nb">unwrap_or</span><span class="p">(</span><span class="mi">0</span><span class="p">)</span>
 
 <span class="k">match</span> <span class="n">my_dict</span><span class="o">.</span><span class="nb">get</span><span class="p">(</span><span class="s2">&quot;key&quot;</span><span class="p">):</span>

@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5771,10 +5886,8 @@
 
 
 <h1 id="formatting-with-incan-fmt">Formatting With <code>incan fmt</code><a class="headerlink" href="#formatting-with-incan-fmt" title="Permanent link">&para;</a></h1>
-<p><code>incan fmt</code> is the formatter for Incan source files.
-It is the reference implementation of the canonical <a href="../../../language/reference/code_style/">Incan Code Style Guide</a>.</p>
-<p>If you want the actual style rules, start with the style guide.
-This page is about the tool: how to run it, what it guarantees, and where its current limits are.</p>
+<p><code>incan fmt</code> is the formatter for Incan source files. It is the reference implementation of the canonical <a href="../../../language/reference/code_style/">Incan Code Style Guide</a>.</p>
+<p>If you want the actual style rules, start with the style guide. This page is about the tool: how to run it, what it guarantees, and where its current limits are.</p>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="admonition note">
 <p class="admonition-title">No-install fallback</p>
@@ -5818,8 +5931,7 @@ incan<span class="w"> </span>fmt<span class="w"> </span>--diff<span class="w"> <
 <ul>
 <li><a href="../../../language/reference/code_style/">Incan Code Style Guide</a></li>
 </ul>
-<p><code>incan fmt</code> should make valid source conform to that guide.
-In particular, the current formatter contract includes:</p>
+<p><code>incan fmt</code> should make valid source conform to that guide. In particular, the current formatter contract includes:</p>
 <ul>
 <li><code>4</code>-space indentation</li>
 <li>a <code>120</code>-character line-length target</li>
@@ -5880,8 +5992,7 @@ In particular, the current formatter contract includes:</p>
 <span class="w">  </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">incan fmt --check .</span>
 </code></pre></div>
 <h2 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h2>
-<p>Currently, formatting options use sensible defaults.
-Configuration file support (for example <code>incan.toml</code>) is planned for a future release.</p>
+<p>Currently, formatting options use sensible defaults. Configuration file support (for example <code>incan.toml</code>) is planned for a future release.</p>
 <p>Default settings:</p>
 <ul>
 <li>Indent: 4 spaces</li>
@@ -5889,8 +6000,7 @@ Configuration file support (for example <code>incan.toml</code>) is planned for 
 <li>Quote style: Double quotes</li>
 <li>Trailing commas: Yes (in multi-line)</li>
 </ul>
-<p>The same formatting behavior applies through both <code>incan fmt</code> and the library formatter API.
-<code>FormatConfig</code> controls ordinary options such as indentation, line length, quote style, and trailing commas, but it does not currently expose blank-line or comment-placement overrides.</p>
+<p>The same formatting behavior applies through both <code>incan fmt</code> and the library formatter API. <code>FormatConfig</code> controls ordinary options such as indentation, line length, quote style, and trailing commas, but it does not currently expose blank-line or comment-placement overrides.</p>
 <h2 id="logical-expression-chains">Logical Expression Chains<a class="headerlink" href="#logical-expression-chains" title="Permanent link">&para;</a></h2>
 <p>When a parenthesized logical expression chain exceeds the configured line-length target, <code>incan fmt</code> may split the chain onto multiple lines with the <code>and</code> / <code>or</code> operators leading each continuation line:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">return</span> <span class="p">(</span>
@@ -5902,16 +6012,13 @@ Configuration file support (for example <code>incan.toml</code>) is planned for 
 <p>Short parenthesized logical expressions remain inline.</p>
 <h2 id="limitations">Limitations<a class="headerlink" href="#limitations" title="Permanent link">&para;</a></h2>
 <h3 id="parse-required">Parse-required<a class="headerlink" href="#parse-required" title="Permanent link">&para;</a></h3>
-<p><strong>The formatter requires valid syntax.</strong>
-Unlike some formatters that can tolerate partial or broken code, <code>incan fmt</code> works on parsed syntax and cannot format files with syntax errors.</p>
+<p><strong>The formatter requires valid syntax.</strong> Unlike some formatters that can tolerate partial or broken code, <code>incan fmt</code> works on parsed syntax and cannot format files with syntax errors.</p>
 <p>If a file has errors, you'll see:</p>
 <div class="language-bash highlight"><pre><span></span><code>Error<span class="w"> </span>formatting<span class="w"> </span>myfile.incn:<span class="w"> </span>Parser<span class="w"> </span>error:<span class="w"> </span><span class="o">[</span>...<span class="o">]</span>
 </code></pre></div>
 <p>Fix syntax errors before formatting.</p>
 <h3 id="line-length-is-best-effort">Line length is best-effort<a class="headerlink" href="#line-length-is-best-effort" title="Permanent link">&para;</a></h3>
-<p>The <code>120</code>-character line length is a target, not a strict hard limit.
-The formatter does not yet rewrite every possible overflowing construct.
-Very long strings, fluent call chains, and some nested expressions may still require manual judgment.</p>
+<p>The <code>120</code>-character line length is a target, not a strict hard limit. The formatter does not yet rewrite every possible overflowing construct. Very long strings, fluent call chains, and some nested expressions may still require manual judgment.</p>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../../language/reference/code_style/">Incan Code Style Guide</a></li>

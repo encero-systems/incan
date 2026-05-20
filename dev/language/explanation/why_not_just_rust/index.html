@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3071,6 +3163,8 @@
       
         
       
+        
+      
     
     
       
@@ -3469,6 +3563,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../derives_and_traits/" class="md-nav__link">
         
   
@@ -3614,7 +3729,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3630,14 +3745,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5616,11 +5731,8 @@
 
 <h1 id="why-not-just-rust">Why not just Rust?<a class="headerlink" href="#why-not-just-rust" title="Permanent link">&para;</a></h1>
 <p>Rust is an excellent systems language. Many projects should use Rust directly.</p>
-<p>Incan is a different tradeoff: it lets you write <strong>Python-shaped application code</strong> while still producing a <strong>typed, compiled</strong>
-result. Rust is the target and escape hatch, not the primary authoring experience.</p>
-<p>A practical observation behind Incan is that many “Python projects” already depend on Rust/C backends for performance
-(especially in AI/data tooling). Incan makes that bridge a first-class experience instead of an ad-hoc stack of bindings,
-glue code, and deployment workarounds.</p>
+<p>Incan is a different tradeoff: it lets you write <strong>Python-shaped application code</strong> while still producing a <strong>typed, compiled</strong> result. Rust is the target and escape hatch, not the primary authoring experience.</p>
+<p>A practical observation behind Incan is that many “Python projects” already depend on Rust/C backends for performance (especially in AI/data tooling). Incan makes that bridge a first-class experience instead of an ad-hoc stack of bindings, glue code, and deployment workarounds.</p>
 <h2 id="when-rust-is-the-better-choice">When Rust is the better choice<a class="headerlink" href="#when-rust-is-the-better-choice" title="Permanent link">&para;</a></h2>
 <p>Choose Rust when you want:</p>
 <ul>
@@ -5635,16 +5747,13 @@ glue code, and deployment workarounds.</p>
 <li>a simpler authoring experience (Python-like syntax) with strong, explicit types</li>
 <li>strong structure for “application code” without writing Rust everywhere</li>
 <li>Cargo + Rust crates as the implementation target and escape hatch, not the primary authoring language</li>
-<li>less time spent on ownership/lifetime “plumbing” for everyday app code
-  (Incan uses safe ownership defaults and emits Rust that satisfies the borrow checker)</li>
+<li>less time spent on ownership/lifetime “plumbing” for everyday app code (Incan uses safe ownership defaults and emits Rust that satisfies the borrow checker)</li>
 </ul>
 <h2 id="tradeoffs-and-boundaries-to-keep-in-mind">Tradeoffs and boundaries to keep in mind<a class="headerlink" href="#tradeoffs-and-boundaries-to-keep-in-mind" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Incan is in Beta; expect evolution, especially in tooling and ecosystem interop.</li>
-<li>The compiler pipeline is effectively “two-step” (Incan → Rust → machine code).
-  In practice, that usually means <strong>seconds</strong>, not minutes, but it is still a tradeoff.</li>
-<li>Rust interop is powerful but comes with contracts (dependency policy, type mapping).
-  Today, interop prefers <strong>owned</strong> types; borrowing/lifetime-heavy Rust APIs may not map cleanly yet.</li>
+<li>The compiler pipeline is effectively “two-step” (Incan → Rust → machine code). In practice, that usually means <strong>seconds</strong>, not minutes, but it is still a tradeoff.</li>
+<li>Rust interop is powerful but comes with contracts (dependency policy, type mapping). Today, interop prefers <strong>owned</strong> types; borrowing/lifetime-heavy Rust APIs may not map cleanly yet.</li>
 </ul>
 <p>See also:</p>
 <ul>

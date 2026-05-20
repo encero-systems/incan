@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5763,8 +5878,7 @@
 <li>common ownership/borrow friction (especially <code>str</code> vs <code>&amp;str</code>) is handled without Rust syntax in user code</li>
 <li>limitations are stated up front (interop is powerful but not “everything in crates.io just works”)</li>
 </ul>
-<p>Dependency pinning and lockfiles are specified by <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>.<br />
-Cargo policy enforcement (<code>--offline/--locked/--frozen</code>) and generated-project persistence are specified by <a href="/dev/RFCs/closed/implemented/020_offline_locked_reproducible_builds">RFC 020</a>.</p>
+<p>Dependency pinning and lockfiles are specified by <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>. Cargo policy enforcement (<code>--offline/--locked/--frozen</code>) and generated-project persistence are specified by <a href="/dev/RFCs/closed/implemented/020_offline_locked_reproducible_builds">RFC 020</a>.</p>
 <p>Prime directive: interop must not force users to learn Rust borrowing/lifetimes/traits at the surface level!</p>
 <h2 id="goals">Goals<a class="headerlink" href="#goals" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5776,8 +5890,7 @@ Cargo policy enforcement (<code>--offline/--locked/--frozen</code>) and generate
 </ul>
 <h2 id="non-goals">Non-Goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>A promise that “any Rust crate works”. Interop is scoped; outside that scope, failures are expected but must be
-  diagnosable.</li>
+<li>A promise that “any Rust crate works”. Interop is scoped; outside that scope, failures are expected but must be diagnosable.</li>
 <li>Exposing Rust surface syntax in Incan (<code>&amp;</code>, <code>&amp;mut</code>, lifetimes, turbofish <code>::&lt;T&gt;</code>).</li>
 <li>Arbitrary proc-macros. (Incan may support a curated derive surface via <code>@derive</code>; see below.)</li>
 <li>Calling <code>unsafe</code> Rust items without an explicit Incan opt-in (out of scope for this RFC).</li>
@@ -5853,8 +5966,7 @@ suggesting the correct <code>::</code> form. The import still resolves correctly
 </ul>
 <p>Reserved (out of scope for this RFC):</p>
 <ul>
-<li>If <code>crate_name</code> is <code>core</code> or <code>alloc</code>, the compiler must emit a compile-time error instructing the user to use
-  <code>rust::std::...</code> instead (or wait for future <code>no_std</code> / target support).</li>
+<li>If <code>crate_name</code> is <code>core</code> or <code>alloc</code>, the compiler must emit a compile-time error instructing the user to use <code>rust::std::...</code> instead (or wait for future <code>no_std</code> / target support).</li>
 </ul>
 <h3 id="crate-naming-limitations-normative">Crate naming limitations (normative)<a class="headerlink" href="#crate-naming-limitations-normative" title="Permanent link">&para;</a></h3>
 <p>Incan spells the <code>crate_name</code> segment as a Rust identifier (letters/digits/underscore).</p>
@@ -5869,12 +5981,9 @@ suggesting the correct <code>::</code> form. The import still resolves correctly
 </code></pre></div>
 <p>Note:</p>
 <ul>
-<li>Cargo/crates.io normalize <code>-</code> and <code>_</code> in crate names, so <code>wasm-bindgen</code> is correctly resolved when referenced as
-  <code>wasm_bindgen</code> in generated Rust code and dependency keys.</li>
-<li>The generated Cargo dependency key uses the exact <code>crate_name</code> spelling from the <code>rust::</code> import (the underscore/Rust-
-  identifier form).</li>
-<li>Explicit package↔crate mapping is only needed for non-trivial mismatches (e.g. <code>package = "..."</code> with a different crate
-  name), and should live in RFC 013’s <code>incan.toml</code> dependency specification rather than in the <code>rust::</code> import syntax.</li>
+<li>Cargo/crates.io normalize <code>-</code> and <code>_</code> in crate names, so <code>wasm-bindgen</code> is correctly resolved when referenced as <code>wasm_bindgen</code> in generated Rust code and dependency keys.</li>
+<li>The generated Cargo dependency key uses the exact <code>crate_name</code> spelling from the <code>rust::</code> import (the underscore/Rust- identifier form).</li>
+<li>Explicit package↔crate mapping is only needed for non-trivial mismatches (e.g. <code>package = "..."</code> with a different crate name), and should live in RFC 013’s <code>incan.toml</code> dependency specification rather than in the <code>rust::</code> import syntax.</li>
 </ul>
 <h3 id="type-mapping-normative">Type mapping (normative)<a class="headerlink" href="#type-mapping-normative" title="Permanent link">&para;</a></h3>
 <p>Interop uses deterministic core type mapping:</p>
@@ -5890,25 +5999,17 @@ suggesting the correct <code>::</code> form. The import still resolves correctly
 </ul>
 <p>Numeric note:</p>
 <ul>
-<li>Rust integer widths other than <code>i64</code> (e.g. <code>usize</code>, <code>u128</code>) are not implicitly mapped to <code>int</code>.
-  Conversions must be explicit (e.g. via a builtin like <code>int(...)</code>) or handled by a dedicated adapter.</li>
+<li>Rust integer widths other than <code>i64</code> (e.g. <code>usize</code>, <code>u128</code>) are not implicitly mapped to <code>int</code>. Conversions must be explicit (e.g. via a builtin like <code>int(...)</code>) or handled by a dedicated adapter.</li>
 </ul>
 <h3 id="borrowing-and-string-conversion-rules-normative">Borrowing and string conversion rules (normative)<a class="headerlink" href="#borrowing-and-string-conversion-rules-normative" title="Permanent link">&para;</a></h3>
 <p>Incan does not expose Rust borrowing syntax.</p>
 <p>To make common Rust APIs usable (especially those taking <code>&amp;str</code>), the compiler applies:</p>
 <ul>
 <li>string literals used where an owned string is required are lowered with <code>.to_string()</code></li>
-<li>when calling an <strong>external Rust function</strong> (imported via <code>rust::...</code>), an argument expression of Incan type <code>str</code> is
-  lowered as a <strong>borrowed string view</strong> (<code>&amp;str</code>) by default (implemented by borrowing the underlying <code>String</code>, e.g.
-  <code>value.as_str()</code> / <code>&amp;value</code> on the Rust side). This makes the common Rust API pattern “takes <code>&amp;str</code>” ergonomic without
-  exposing Rust syntax in user code.</li>
-<li><strong>Forcing an owned string</strong>: if user code syntactically constructs an owned string expression via <code>.to_string()</code> (e.g.
-  <code>value.to_string()</code>), the compiler must treat that argument as <strong>owned</strong> and pass it by value (a clone), rather than
-  applying the default borrow lowering.</li>
-<li>This RFC does not require Rust signature inspection to choose between <code>&amp;str</code> vs <code>String</code>. The rule is purely based on
-  the Incan argument expression shape (default: borrowed view; explicit <code>.to_string()</code>: owned clone).</li>
-<li>if a Rust interop call fails due to a <code>String</code>/<code>&amp;str</code> mismatch for an argument originating from an Incan <code>str</code>,
-  the compiler must emit a targeted diagnostic pointing at the argument expression and suggesting either:<ul>
+<li>when calling an <strong>external Rust function</strong> (imported via <code>rust::...</code>), an argument expression of Incan type <code>str</code> is lowered as a <strong>borrowed string view</strong> (<code>&amp;str</code>) by default (implemented by borrowing the underlying <code>String</code>, e.g. <code>value.as_str()</code> / <code>&amp;value</code> on the Rust side). This makes the common Rust API pattern “takes <code>&amp;str</code>” ergonomic without exposing Rust syntax in user code.</li>
+<li><strong>Forcing an owned string</strong>: if user code syntactically constructs an owned string expression via <code>.to_string()</code> (e.g. <code>value.to_string()</code>), the compiler must treat that argument as <strong>owned</strong> and pass it by value (a clone), rather than applying the default borrow lowering.</li>
+<li>This RFC does not require Rust signature inspection to choose between <code>&amp;str</code> vs <code>String</code>. The rule is purely based on the Incan argument expression shape (default: borrowed view; explicit <code>.to_string()</code>: owned clone).</li>
+<li>if a Rust interop call fails due to a <code>String</code>/<code>&amp;str</code> mismatch for an argument originating from an Incan <code>str</code>, the compiler must emit a targeted diagnostic pointing at the argument expression and suggesting either:<ul>
 <li>add <code>.to_string()</code> to force passing an owned <code>String</code> (clone), or</li>
 <li>remove <code>.to_string()</code> / pass the value directly so the compiler can pass a borrowed view (<code>&amp;str</code>) (default).</li>
 </ul>
@@ -5918,22 +6019,18 @@ suggesting the correct <code>::</code> form. The import still resolves correctly
 <ul>
 <li>this RFC requires borrow/ownership adaptation for <strong>strings</strong> (the most common interop mismatch)</li>
 <li>general borrow inference for arbitrary Rust types is out of scope</li>
-<li>rust signature inspection (e.g. via rustdoc/rust-analyzer metadata) and compile‑retry ‘guessing’ strategies to auto-fix
-  borrow/ownership mismatches are out of scope for this RFC.</li>
+<li>rust signature inspection (e.g. via rustdoc/rust-analyzer metadata) and compile‑retry ‘guessing’ strategies to auto-fix borrow/ownership mismatches are out of scope for this RFC.</li>
 </ul>
 <h3 id="calling-model-methods-vs-associated-functions-normative">Calling model: methods vs associated functions (normative)<a class="headerlink" href="#calling-model-methods-vs-associated-functions-normative" title="Permanent link">&para;</a></h3>
 <p>Incan uses a single dot-call syntax at the surface for both methods and associated functions.</p>
 <p>Lowering rules:</p>
 <ul>
 <li>If the receiver is a <strong>value</strong>, <code>value.method(args...)</code> lowers to a Rust method call: <code>value.method(args...)</code>.</li>
-<li>If the receiver resolves to a <strong>type-like identifier</strong> (an Incan type name or an imported Rust type), then
-  <code>Type.method(args...)</code> lowers to a Rust associated function call: <code>Type::method(args...)</code>.</li>
+<li>If the receiver resolves to a <strong>type-like identifier</strong> (an Incan type name or an imported Rust type), then <code>Type.method(args...)</code> lowers to a Rust associated function call: <code>Type::method(args...)</code>.</li>
 </ul>
-<p>This is why the examples below use <code>Instant.now()</code> and <code>Uuid.new_v4()</code> even though the corresponding Rust spelling is
-<code>Instant::now()</code> / <code>Uuid::new_v4()</code>.</p>
+<p>This is why the examples below use <code>Instant.now()</code> and <code>Uuid.new_v4()</code> even though the corresponding Rust spelling is <code>Instant::now()</code> / <code>Uuid::new_v4()</code>.</p>
 <h3 id="derives-traits-and-serde-normative-direction">Derives, traits, and serde (normative direction)<a class="headerlink" href="#derives-traits-and-serde-normative-direction" title="Permanent link">&para;</a></h3>
-<p>Many Rust APIs require trait bounds (e.g. <code>HashMap</code> keys require <code>Eq + Hash</code>; <code>serde_json</code> requires <code>Serialize</code> /
-<code>Deserialize</code>).</p>
+<p>Many Rust APIs require trait bounds (e.g. <code>HashMap</code> keys require <code>Eq + Hash</code>; <code>serde_json</code> requires <code>Serialize</code> / <code>Deserialize</code>).</p>
 <p>Incan’s user-facing mechanism for this is the <code>@derive(...)</code> decorator (not Rust proc-macro syntax).</p>
 <p>Derive identifiers are <strong>language vocabulary</strong>: they do not need importing and are validated against a curated registry.</p>
 <p>Requirement:</p>
@@ -5944,26 +6041,21 @@ suggesting the correct <code>::</code> form. The import still resolves correctly
 </ul>
 </li>
 </ul>
-<p>This is intentionally <strong>not</strong> “arbitrary proc-macros”: the derive set is curated and wired into the compiler/runtime
-contract.</p>
+<p>This is intentionally <strong>not</strong> “arbitrary proc-macros”: the derive set is curated and wired into the compiler/runtime contract.</p>
 <p>Implementation model note (important for determinism):</p>
 <ul>
-<li>Even with a curated <code>@derive(...)</code> list, the implementation may emit Rust <code>#[derive(...)]</code> for those traits and thus
-  execute Rust proc-macros at build time (e.g. serde derives).</li>
-<li>This is acceptable only in combination with locked/pinned dependency resolution (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>) and reproducible/offline
-  build policy controls (<a href="/dev/RFCs/closed/implemented/020_offline_locked_reproducible_builds">RFC 020</a>).</li>
+<li>Even with a curated <code>@derive(...)</code> list, the implementation may emit Rust <code>#[derive(...)]</code> for those traits and thus execute Rust proc-macros at build time (e.g. serde derives).</li>
+<li>This is acceptable only in combination with locked/pinned dependency resolution (<a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>) and reproducible/offline build policy controls (<a href="/dev/RFCs/closed/implemented/020_offline_locked_reproducible_builds">RFC 020</a>).</li>
 <li>The curated derive list is part of Incan’s compatibility contract (versioned, documented, and stable-by-default).</li>
 </ul>
 <h3 id="panicunwind-and-error-policy-normative">Panic/unwind and error policy (normative)<a class="headerlink" href="#panicunwind-and-error-policy-normative" title="Permanent link">&para;</a></h3>
-<p>Rust interop compiles into a single Rust program (generated code + dependencies). This is <strong>not</strong> an <code>extern "C"</code> <sup id="fnref:extern-c"><a class="footnote-ref" href="#fn:extern-c">1</a></sup>
-FFI (Foreign Function Interface) boundary.</p>
+<p>Rust interop compiles into a single Rust program (generated code + dependencies). This is <strong>not</strong> an <code>extern "C"</code> <sup id="fnref:extern-c"><a class="footnote-ref" href="#fn:extern-c">1</a></sup> FFI (Foreign Function Interface) boundary.</p>
 <p><strong>Policy</strong>:</p>
 <ul>
 <li>Rust <code>Result</code>/<code>Option</code> values map to Incan <code>Result</code>/<code>Option</code> and work with <code>?</code>/pattern matching as usual.</li>
 <li>Rust panics behave like panics in generated Rust code:<ul>
 <li>by default they terminate the program/test (panic semantics are Rust-defined)</li>
-<li>implementations should ensure the error output clearly indicates “this was a Rust panic” and includes enough context
-  (crate/function if available) to debug</li>
+<li>implementations should ensure the error output clearly indicates “this was a Rust panic” and includes enough context (crate/function if available) to debug</li>
 <li>catching panics and converting them into Incan runtime errors is a possible future extension, but out of scope here</li>
 </ul>
 </li>
@@ -5972,8 +6064,7 @@ FFI (Foreign Function Interface) boundary.</p>
 <p>Calling <code>unsafe</code> Rust items is out of scope for this RFC.</p>
 <ul>
 <li>The compiler must not generate Rust <code>unsafe { ... }</code> on behalf of user code.</li>
-<li>Therefore, Rust APIs that require <code>unsafe</code> are unsupported and should produce a clear, targeted diagnostic explaining
-  that “unsafe interop is out of scope” (even if the underlying trigger originates from Rust compilation).</li>
+<li>Therefore, Rust APIs that require <code>unsafe</code> are unsupported and should produce a clear, targeted diagnostic explaining that “unsafe interop is out of scope” (even if the underlying trigger originates from Rust compilation).</li>
 <li>A future RFC may introduce an explicit <code>unsafe</code> block/marker in Incan (and an associated safety policy).</li>
 </ul>
 <h3 id="diagnostics-expectations-normative">Diagnostics expectations (normative)<a class="headerlink" href="#diagnostics-expectations-normative" title="Permanent link">&para;</a></h3>
@@ -6019,46 +6110,34 @@ FFI (Foreign Function Interface) boundary.</p>
 </ul>
 <p>Rationale (why these limits exist):</p>
 <ul>
-<li>Arbitrary proc-macros are effectively “run arbitrary Rust at build time”; they undermine determinism, portability,
-  and the “Incan stays Incan” surface. A curated <code>@derive(...)</code> set keeps the interop contract explicit and reviewable.</li>
-<li>Trait-heavy and lifetime-heavy Rust APIs often require expressing trait bounds and borrowing/lifetimes at call
-  sites; trait bound inference and explicit annotation syntax are addressed by RFC 023 (Compilable Stdlib &amp; Rust Module
-  Binding). Lifetime/borrow surface beyond strings is deferred to a future RFC.</li>
-<li>Incan’s goal is to remove Rust’s borrow-checker ergonomics from user code. The compiler may adapt borrows internally
-  (currently scoped mainly to strings), but users should not be forced to write Rust-like lifetime/borrow annotations.</li>
+<li>Arbitrary proc-macros are effectively “run arbitrary Rust at build time”; they undermine determinism, portability, and the “Incan stays Incan” surface. A curated <code>@derive(...)</code> set keeps the interop contract explicit and reviewable.</li>
+<li>Trait-heavy and lifetime-heavy Rust APIs often require expressing trait bounds and borrowing/lifetimes at call sites; trait bound inference and explicit annotation syntax are addressed by RFC 023 (Compilable Stdlib &amp; Rust Module Binding). Lifetime/borrow surface beyond strings is deferred to a future RFC.</li>
+<li>Incan’s goal is to remove Rust’s borrow-checker ergonomics from user code. The compiler may adapt borrows internally (currently scoped mainly to strings), but users should not be forced to write Rust-like lifetime/borrow annotations.</li>
 </ul>
 <h2 id="design-decisions">Design decisions<a class="headerlink" href="#design-decisions" title="Permanent link">&para;</a></h2>
 <ol>
 <li><strong>Non-trivial package↔crate mapping</strong></li>
 </ol>
-<p>Decision: keep <code>rust::</code> imports crate-identifier-only; represent non-trivial package renames in <code>incan.toml</code>
-  (<code>package = "..."</code> / dependency aliasing), not in import syntax.</p>
-<p>Reason: this preserves a simple and deterministic language surface while aligning with RFC 013 ownership of Cargo
-  dependency modeling.</p>
+<p>Decision: keep <code>rust::</code> imports crate-identifier-only; represent non-trivial package renames in <code>incan.toml</code> (<code>package = "..."</code> / dependency aliasing), not in import syntax.</p>
+<p>Reason: this preserves a simple and deterministic language surface while aligning with RFC 013 ownership of Cargo dependency modeling.</p>
 <ol>
 <li><strong>Borrow adaptation scope beyond strings</strong></li>
 </ol>
-<p>Decision: RFC 005 stays string-focused (<code>str</code> ergonomics only). No general non-string borrow inference and no Rust
-  signature inspection in this RFC.</p>
-<p>Reason: broader adaptation requires high-complexity type/signature analysis and risks unpredictable behavior;
-  string-only adaptation captures the dominant interop friction at low complexity.</p>
+<p>Decision: RFC 005 stays string-focused (<code>str</code> ergonomics only). No general non-string borrow inference and no Rust signature inspection in this RFC.</p>
+<p>Reason: broader adaptation requires high-complexity type/signature analysis and risks unpredictable behavior; string-only adaptation captures the dominant interop friction at low complexity.</p>
 <p>Follow-up tracking: incremental non-string ownership/borrow improvements are tracked by issue #121.</p>
 <ol>
 <li><strong>Panic handling policy for Rust interop</strong></li>
 </ol>
 <p>Decision: preserve Rust panic semantics in RFC 005 (no catch-and-convert runtime boundary in this RFC).</p>
-<p>Reason: generated programs are Rust-to-Rust call paths, and preserving native panic behavior avoids hidden control-flow
-  changes. Future opt-in conversion can be introduced in a dedicated RFC.</p>
+<p>Reason: generated programs are Rust-to-Rust call paths, and preserving native panic behavior avoids hidden control-flow changes. Future opt-in conversion can be introduced in a dedicated RFC.</p>
 <ol>
 <li><strong>Non-native target behavior (<code>wasm32</code>, etc.)</strong></li>
 </ol>
-<p>Decision: target-specific interop constraints are out of RFC 005 scope and must be specified in target/toolchain RFCs
-  (e.g., <a href="../../../092_interactive_runtime_stdlib_contracts/">RFC 092</a> or a dedicated target-constraints RFC).</p>
-<p>Reason: interop validity is target-dependent (runtime availability, crate support, panic model), so policy belongs in
-  the target model rather than the base Rust interop contract.</p>
+<p>Decision: target-specific interop constraints are out of RFC 005 scope and must be specified in target/toolchain RFCs (e.g., <a href="../../../092_interactive_runtime_stdlib_contracts/">RFC 092</a> or a dedicated target-constraints RFC).</p>
+<p>Reason: interop validity is target-dependent (runtime availability, crate support, panic model), so policy belongs in the target model rather than the base Rust interop contract.</p>
 <h2 id="appendix-crate-absolute-module-paths-for-incan-modules-normative">Appendix: <code>crate::...</code> absolute module paths for Incan modules (normative)<a class="headerlink" href="#appendix-crate-absolute-module-paths-for-incan-modules-normative" title="Permanent link">&para;</a></h2>
-<p><code>crate::...</code> is a Rust-style spelling for <strong>Incan module paths</strong> (project-root absolute imports). It is <strong>not</strong> related
-to <code>rust::...</code> (Rust crate imports).</p>
+<p><code>crate::...</code> is a Rust-style spelling for <strong>Incan module paths</strong> (project-root absolute imports). It is <strong>not</strong> related to <code>rust::...</code> (Rust crate imports).</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">crate</span><span class="p">::</span><span class="n">config</span> <span class="k">as</span> <span class="n">cfg</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">crate</span><span class="p">::</span><span class="n">utils</span> <span class="kn">import</span><span class="w"> </span><span class="nn">format_date</span>
 </code></pre></div>
@@ -6084,8 +6163,7 @@ to <code>rust::...</code> (Rust crate imports).</p>
 <ol>
 <li id="fn:extern-c">
 <p><code>extern "C"</code> selects the C ABI/calling convention for interop with C. It matters because unwinding (panics)
-across a real <code>extern "C"</code> boundary is not allowed; in Incan interop we generate one Rust program, so this is a normal
-Rust-to-Rust call path, not an FFI boundary.&#160;<a class="footnote-backref" href="#fnref:extern-c" title="Jump back to footnote 1 in the text">&#8617;</a></p>
+across a real <code>extern "C"</code> boundary is not allowed; in Incan interop we generate one Rust program, so this is a normal Rust-to-Rust call path, not an FFI boundary.&#160;<a class="footnote-backref" href="#fnref:extern-c" title="Jump back to footnote 1 in the text">&#8617;</a></p>
 </li>
 </ol>
 </div>

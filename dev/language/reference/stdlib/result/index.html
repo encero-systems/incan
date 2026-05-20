@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3140,6 +3232,8 @@
       
         
       
+        
+      
     
     
       
@@ -3471,6 +3565,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3616,7 +3731,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3632,14 +3747,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5618,19 +5733,7 @@
 
 <h1 id="stdresult-reference">std.result (reference)<a class="headerlink" href="#stdresult-reference" title="Permanent link">&para;</a></h1>
 <p><code>std.result</code> exposes Incan-authored helper functions for the <code>Result[T, E]</code> combinator surface.</p>
-<p>Each helper has the same branch behavior as the corresponding <code>Result</code> method. The method form is usually the clearest spelling for pipelines:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="k">return</span> <span class="n">read_config</span><span class="p">(</span><span class="n">path</span><span class="p">)</span><span class="o">.</span><span class="nb">and_then</span><span class="p">(</span><span class="n">validate_config</span><span class="p">)</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">ConfigError</span><span class="o">.</span><span class="nc">Parse</span><span class="p">)</span>
-</code></pre></div>
-<p>Direct helper imports are available when a function-shaped API is clearer:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.result</span><span class="w"> </span><span class="kn">import</span> <span class="nb">map</span> <span class="k">as</span> <span class="n">result_map</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">double</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="k">return</span> <span class="n">value</span> <span class="o">*</span> <span class="mi">2</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">value</span><span class="p">:</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">Ok</span><span class="p">(</span><span class="mi">21</span><span class="p">)</span>
-    <span class="n">doubled</span> <span class="o">=</span> <span class="n">result_map</span><span class="p">(</span><span class="n">value</span><span class="p">,</span> <span class="kt">double</span><span class="p">)</span>
-</code></pre></div>
+<p>Each helper has the same branch behavior as the corresponding <code>Result</code> method. The method form is usually the clearest spelling for pipelines; direct helper imports are available when a function-shaped API is clearer.</p>
 <h2 id="functions">Functions<a class="headerlink" href="#functions" title="Permanent link">&para;</a></h2>
 <table>
 <thead>

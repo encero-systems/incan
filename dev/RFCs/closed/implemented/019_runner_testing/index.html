@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6460,12 +6575,10 @@
 <h3 id="differences-from-pytest-cargo-test-jest-important">Differences from pytest / cargo test / jest (important)<a class="headerlink" href="#differences-from-pytest-cargo-test-jest-important" title="Permanent link">&para;</a></h3>
 <p>This RFC is pytest-inspired, but there are a few deliberate differences that are easy to miss if you bring strong pytest/Rust/Jest muscle memory:</p>
 <ul>
-<li><strong><code>@slow</code> is excluded by default</strong>: you must opt in via <code>incan test --slow</code> (closer to Rust’s ignored tests than pytest
-markers).</li>
+<li><strong><code>@slow</code> is excluded by default</strong>: you must opt in via <code>incan test --slow</code> (closer to Rust’s ignored tests than pytest markers).</li>
 <li><strong><code>skipif</code> / <code>xfailif</code> conditions must be collection-time evaluatable</strong> (const-evaluable + explicit <code>testing</code> probes).</li>
 <li><strong><code>conftest.incn</code> is only auto-discovered under <code>tests/</code></strong> (it does not apply to inline <code>module tests:</code> in <code>src/</code>).</li>
-<li><strong>Parallel execution (<code>--jobs</code>) uses worker processes</strong>, so process-global state (like <code>tmp_workdir</code> and <code>env</code>) remains
-isolated.</li>
+<li><strong>Parallel execution (<code>--jobs</code>) uses worker processes</strong>, so process-global state (like <code>tmp_workdir</code> and <code>env</code>) remains isolated.</li>
 <li><strong><code>assert</code> can bind names via limited patterns</strong> (e.g. <code>assert opt is Some(v)</code>), defined in RFC 018.</li>
 </ul>
 <p>Quick CLI anchoring:</p>
@@ -6824,8 +6937,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 </ul>
 <p>Static constructors (explicit exceptions):</p>
 <ul>
-<li>The following call-like forms are treated as <strong>compile-time data constructors</strong> and are allowed at collection time,
-as long as their arguments are themselves collection-time evaluatable:<ul>
+<li>The following call-like forms are treated as <strong>compile-time data constructors</strong> and are allowed at collection time, as long as their arguments are themselves collection-time evaluatable:<ul>
 <li><code>param_case(...)</code></li>
 <li><code>mark("name")</code></li>
 <li><code>skip("reason")</code></li>
@@ -7026,8 +7138,7 @@ as long as their arguments are themselves collection-time evaluatable:<ul>
 <li>In sequential runs (<code>--jobs 1</code>), the runner stops executing further tests immediately after the first failure is recorded.</li>
 <li>With worker processes (<code>--jobs &gt; 1</code>):<ul>
 <li>the runner stops scheduling new tests after the first failure is recorded</li>
-<li>in-flight tests may complete and be reported (implementations may choose to terminate workers early, but should
-  prefer graceful shutdown to preserve fixture teardown)</li>
+<li>in-flight tests may complete and be reported (implementations may choose to terminate workers early, but should prefer graceful shutdown to preserve fixture teardown)</li>
 </ul>
 </li>
 </ul>
@@ -7089,8 +7200,7 @@ as long as their arguments are themselves collection-time evaluatable:<ul>
 <p>Restrictions:</p>
 <ul>
 <li><code>TEST_MARKERS</code> must be collection-time evaluatable.</li>
-<li>Marker names must match <code>^[a-z][a-z0-9_]*$</code> (snake_case). If this is violated, it is a <strong>test collection error</strong>
-(<code>TestCollectionError</code>).</li>
+<li>Marker names must match <code>^[a-z][a-z0-9_]*$</code> (snake_case). If this is violated, it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
 </ul>
 <h4 id="marker-selection-expression">Marker selection expression<a class="headerlink" href="#marker-selection-expression" title="Permanent link">&para;</a></h4>
 <p><code>incan test -m &lt;expr&gt;</code> filters collected tests by marker expression, where <code>&lt;expr&gt;</code> supports:</p>
@@ -7257,8 +7367,7 @@ as long as their arguments are themselves collection-time evaluatable:<ul>
 </ul>
 <p>Rules:</p>
 <ul>
-<li>The condition is evaluated at collection time using the same “const-evaluable subset” used for other compile-time
-evaluation, plus a small set of explicit <code>testing</code> probes (see below).</li>
+<li>The condition is evaluated at collection time using the same “const-evaluable subset” used for other compile-time evaluation, plus a small set of explicit <code>testing</code> probes (see below).</li>
 <li>If the condition is not evaluatable at collection time, it is a <strong>test collection error</strong> (<code>TestCollectionError</code>).</li>
 </ul>
 <h4 id="collection-time-probes-testing">Collection-time probes (testing)<a class="headerlink" href="#collection-time-probes-testing" title="Permanent link">&para;</a></h4>
@@ -7370,8 +7479,7 @@ evaluation, plus a small set of explicit <code>testing</code> probes (see below)
 <p>Default marks (<code>TEST_MARKS</code>):</p>
 <ul>
 <li><code>conftest.incn</code> may define <code>const TEST_MARKS: List[str]</code>.</li>
-<li>All applicable <code>TEST_MARKS</code> values from conftest files on the path to a test file are <strong>merged</strong> (union), from
-outer-to-inner directories.</li>
+<li>All applicable <code>TEST_MARKS</code> values from conftest files on the path to a test file are <strong>merged</strong> (union), from outer-to-inner directories.</li>
 <li>The test file’s own <code>TEST_MARKS</code> (if present) is also merged.</li>
 <li>Per-test and per-case marks are merged on top.</li>
 </ul>
@@ -7456,8 +7564,7 @@ outer-to-inner directories.</li>
 <p>Future direction:</p>
 <ul>
 <li>Async fixtures and async tests should compose with the same discovery model.</li>
-<li>See RFC 004 for Tokio integration; followup RFCs must specify runtime selection, timeout/cancellation interaction, and
-teardown guarantees.</li>
+<li>See RFC 004 for Tokio integration; followup RFCs must specify runtime selection, timeout/cancellation interaction, and teardown guarantees.</li>
 </ul>
 <h2 id="compatibility-migration">Compatibility / migration<a class="headerlink" href="#compatibility-migration" title="Permanent link">&para;</a></h2>
 <ul>

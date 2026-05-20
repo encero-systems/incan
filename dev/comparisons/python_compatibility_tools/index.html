@@ -1241,6 +1241,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1467,6 +1475,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1535,6 +1585,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1640,6 +1711,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3145,6 +3237,8 @@
       
         
       
+        
+      
     
     
       
@@ -3476,6 +3570,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3621,7 +3736,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3637,14 +3752,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5632,8 +5747,7 @@
 
 <h1 id="incan-vs-python-compatibility-tools">Incan vs Python Compatibility Tools<a class="headerlink" href="#incan-vs-python-compatibility-tools" title="Permanent link">&para;</a></h1>
 <p>RustPython, Codon, Nuitka, and Cython are valuable projects. They are also the wrong category for Incan.</p>
-<p>Those tools preserve, accelerate, compile, or extend Python. Incan is for new typed application code with Python-like
-ergonomics and Rust-native output. If the goal is to keep existing Python code and packages, use the Python tool.</p>
+<p>Those tools preserve, accelerate, compile, or extend Python. Incan is for new typed application code with Python-like ergonomics and Rust-native output. If the goal is to keep existing Python code and packages, use the Python tool.</p>
 <h2 id="the-comparison">The comparison<a class="headerlink" href="#the-comparison" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5681,8 +5795,7 @@ ergonomics and Rust-native output. If the goal is to keep existing Python code a
 <li>the deployment target is Rust-native output;</li>
 <li>AI-generated code has a smaller, more auditable surface.</li>
 </ul>
-<p>That makes Incan higher-risk than compatibility tools. It also makes the upside different. The point is not to run old
-Python faster. The point is to make new application code easier to trust and ship.</p>
+<p>That makes Incan higher-risk than compatibility tools. It also makes the upside different. The point is not to run old Python faster. The point is to make new application code easier to trust and ship.</p>
 <h2 id="when-these-tools-are-better">When these tools are better<a class="headerlink" href="#when-these-tools-are-better" title="Permanent link">&para;</a></h2>
 <p>Use a Python compatibility tool when:</p>
 <ul>
@@ -5702,16 +5815,11 @@ Python faster. The point is to make new application code easier to trust and shi
 </ul>
 <h2 id="source-notes">Source notes<a class="headerlink" href="#source-notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>RustPython describes itself as a Python interpreter written in Rust:
-  <a href="https://rustpython.github.io/">RustPython</a>.</li>
-<li>Codon describes itself as a Python implementation that "compiles to native machine code":
-  <a href="https://codon.dev/">Codon documentation</a>.</li>
-<li>Nuitka describes itself as a Python compiler that is "fully compatible" with Python 2 and Python 3:
-  <a href="https://nuitka.net/pages/overview.html">Nuitka overview</a>.</li>
-<li>Cython describes itself as an "optimising static compiler" for Python and the extended Cython language:
-  <a href="https://cython.org/">Cython</a>.</li>
-<li>Nim is not a Python compatibility tool, but it is mature prior art for Python-influenced compiled language design:
-  <a href="https://nim-lang.org/">Nim</a>.</li>
+<li>RustPython describes itself as a Python interpreter written in Rust: <a href="https://rustpython.github.io/">RustPython</a>.</li>
+<li>Codon describes itself as a Python implementation that "compiles to native machine code": <a href="https://codon.dev/">Codon documentation</a>.</li>
+<li>Nuitka describes itself as a Python compiler that is "fully compatible" with Python 2 and Python 3: <a href="https://nuitka.net/pages/overview.html">Nuitka overview</a>.</li>
+<li>Cython describes itself as an "optimising static compiler" for Python and the extended Cython language: <a href="https://cython.org/">Cython</a>.</li>
+<li>Nim is not a Python compatibility tool, but it is mature prior art for Python-influenced compiled language design: <a href="https://nim-lang.org/">Nim</a>.</li>
 </ul>
 
 

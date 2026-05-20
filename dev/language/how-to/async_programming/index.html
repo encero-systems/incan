@@ -1167,6 +1167,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1853,6 +1861,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../generators/" class="md-nav__link">
         
   
@@ -1921,6 +1971,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -2026,6 +2097,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3531,6 +3623,8 @@
       
         
       
+        
+      
     
     
       
@@ -3862,6 +3956,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -4007,7 +4122,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -4023,14 +4138,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6401,19 +6516,15 @@
 
 
 <h1 id="async-programming-in-incan">Async Programming in Incan<a class="headerlink" href="#async-programming-in-incan" title="Permanent link">&para;</a></h1>
-<p>Incan provides full async/await support powered by the Tokio runtime.
-This guide covers all async features available in Incan.</p>
+<p>Incan provides full async/await support powered by the Tokio runtime. This guide covers all async features available in Incan.</p>
 <div class="admonition important">
 <p class="admonition-title">Async is import-activated</p>
-<p><code>async</code> and <code>await</code> are <strong>soft keywords</strong>: they become reserved keywords only after importing <code>std.async</code>
-(for example <code>import std.async</code> or <code>from std.async.time import sleep</code>).</p>
+<p><code>async</code> and <code>await</code> are <strong>soft keywords</strong>: they become reserved keywords only after importing <code>std.async</code> (for example <code>import std.async</code> or <code>from std.async.time import sleep</code>).</p>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Coming from Python?</p>
-<p>Incan's async model mirrors Python's <code>asyncio</code> — you'll find <code>async def</code>, <code>await</code>, task spawning, and timeouts all
-work the same way.</p>
-<p>The key difference is under the hood: Incan compiles to Rust and uses Tokio, giving you the familiar Python syntax
-with Rust-level async performance.</p>
+<p>Incan's async model mirrors Python's <code>asyncio</code> — you'll find <code>async def</code>, <code>await</code>, task spawning, and timeouts all work the same way.</p>
+<p>The key difference is under the hood: Incan compiles to Rust and uses Tokio, giving you the familiar Python syntax with Rust-level async performance.</p>
 </div>
 <h2 id="quick-start">Quick Start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.async.time</span><span class="w"> </span><span class="kn">import</span> <span class="n">sleep</span>
@@ -6484,8 +6595,7 @@ with Rust-level async performance.</p>
 <span class="k">async</span> <span class="k">def</span><span class="w"> </span><span class="nf">wait_for</span><span class="p">[</span><span class="nc">T</span><span class="p">,</span> <span class="nc">F</span> <span class="k">with</span> <span class="nc">Awaitable</span><span class="p">[</span><span class="nc">T</span><span class="p">]](</span><span class="n">task</span><span class="p">:</span> <span class="nc">F</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">T</span><span class="p">:</span>
     <span class="k">return</span> <span class="k">await</span> <span class="n">task</span>
 </code></pre></div>
-<p>The compiler recognizes direct async calls, Rust-backed futures, <code>JoinHandle[T]</code>, and checked wrapper types. Awaiting a
-<code>JoinHandle[T]</code> produces <code>Result[T, TaskJoinError]</code>, not <code>T</code>, because the spawned task can fail to join.</p>
+<p>The compiler recognizes direct async calls, Rust-backed futures, <code>JoinHandle[T]</code>, and checked wrapper types. Awaiting a <code>JoinHandle[T]</code> produces <code>Result[T, TaskJoinError]</code>, not <code>T</code>, because the spawned task can fail to join.</p>
 <p>Wrapper types can adopt <code>Awaitable[T]</code> only when they contain a compatible awaitable field:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.async</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.async.task</span><span class="w"> </span><span class="kn">import</span> <span class="kt">JoinHandle</span><span class="p">,</span> <span class="kt">TaskJoinError</span>
@@ -6549,8 +6659,7 @@ with Rust-level async performance.</p>
     <span class="kt">result</span> <span class="o">=</span> <span class="k">await</span> <span class="n">race</span><span class="p">(</span><span class="n">arm</span><span class="p">(</span><span class="n">slow</span><span class="p">(),</span> <span class="n">label</span><span class="p">),</span> <span class="n">arm</span><span class="p">(</span><span class="n">fast</span><span class="p">(),</span> <span class="n">label</span><span class="p">))</span>
     <span class="nb">println</span><span class="p">(</span><span class="kt">result</span><span class="p">)</span>
 </code></pre></div>
-<p><code>arm(awaitable, on_win)</code> packages one branch and its callback. <code>race(*arms)</code> polls all arms concurrently, returns the
-winning callback result, and drops losing arms. If multiple arms are ready in the same poll, source order breaks the tie.</p>
+<p><code>arm(awaitable, on_win)</code> packages one branch and its callback. <code>race(*arms)</code> polls all arms concurrently, returns the winning callback result, and drops losing arms. If multiple arms are ready in the same poll, source order breaks the tie.</p>
 <h2 id="task-spawning">Task Spawning<a class="headerlink" href="#task-spawning" title="Permanent link">&para;</a></h2>
 <h3 id="spawn">spawn<a class="headerlink" href="#spawn" title="Permanent link">&para;</a></h3>
 <p>Run a task concurrently:</p>
@@ -6597,8 +6706,7 @@ winning callback result, and drops losing arms. If multiple arms are ready in th
             <span class="k">await</span> <span class="nb">yield_now</span><span class="p">()</span>  <span class="c1"># Let other tasks run</span>
 </code></pre></div>
 <h2 id="channels">Channels<a class="headerlink" href="#channels" title="Permanent link">&para;</a></h2>
-<p>Channels enable safe message passing between concurrent tasks.
-They're the primary way to communicate between async tasks without shared mutable state.</p>
+<p>Channels enable safe message passing between concurrent tasks. They're the primary way to communicate between async tasks without shared mutable state.</p>
 <h3 id="mpsc-channel-multi-producer-single-consumer">MPSC Channel (Multi-Producer, Single-Consumer)<a class="headerlink" href="#mpsc-channel-multi-producer-single-consumer" title="Permanent link">&para;</a></h3>
 <p><strong>MPSC</strong> stands for <strong>M</strong>ulti-<strong>P</strong>roducer, <strong>S</strong>ingle-<strong>C</strong>onsumer:</p>
 <ul>
@@ -6698,8 +6806,7 @@ They're the primary way to communicate between async tasks without shared mutabl
 <li><strong>Ownership semantics</strong>: When all senders are dropped, the channel closes and <code>recv()</code> returns <code>None</code></li>
 <li><strong>No shared queue</strong>: Unlike <code>asyncio.Queue</code>, you can't just pass the queue around — you pass senders or the receiver</li>
 </ul>
-<p>The Python equivalent would use <code>asyncio.Queue</code> with <code>put()</code>/<code>get()</code>, but lacks the automatic "channel closed" signal
-when producers finish.</p>
+<p>The Python equivalent would use <code>asyncio.Queue</code> with <code>put()</code>/<code>get()</code>, but lacks the automatic "channel closed" signal when producers finish.</p>
 </div>
 <p><strong>Bounded vs Unbounded:</strong></p>
 <table>
@@ -6750,9 +6857,7 @@ when producers finish.</p>
 <li>Prototyping (switch to bounded before production)</li>
 </ul>
 <h3 id="one-shot-channel">One-Shot Channel<a class="headerlink" href="#one-shot-channel" title="Permanent link">&para;</a></h3>
-<p>A <strong>oneshot channel</strong> sends exactly one value.
-After sending, the sender is consumed and can't be used again.
-This is perfect for "request-response" patterns where you spawn a task and wait for its result.</p>
+<p>A <strong>oneshot channel</strong> sends exactly one value. After sending, the sender is consumed and can't be used again. This is perfect for "request-response" patterns where you spawn a task and wait for its result.</p>
 <p><strong>When to use oneshot vs regular channel:</strong></p>
 <table>
 <thead>
@@ -6827,8 +6932,7 @@ This is perfect for "request-response" patterns where you spawn a task and wait 
 <li><code>recv()</code> returns <code>Err</code> if sender was dropped without sending</li>
 </ul>
 <h2 id="synchronization-primitives">Synchronization Primitives<a class="headerlink" href="#synchronization-primitives" title="Permanent link">&para;</a></h2>
-<p>Incan provides low-level synchronization primitives inspired by Rust's tokio runtime.
-These give you fine-grained control over shared state and task coordination.</p>
+<p>Incan provides low-level synchronization primitives inspired by Rust's tokio runtime. These give you fine-grained control over shared state and task coordination.</p>
 <div class="admonition note">
 <p class="admonition-title">Coming from Python?</p>
 <p>Python's <code>asyncio</code> has some equivalents, but Incan's primitives work differently.</p>
@@ -6864,8 +6968,7 @@ These give you fine-grained control over shared state and task coordination.</p>
 </tr>
 </tbody>
 </table>
-<p>The key difference: Incan's <code>Mutex[T]</code> and <code>RwLock[T]</code> <strong>wrap a value</strong> (like Rust),
-while Python's Lock is just a lock you use alongside your data.</p>
+<p>The key difference: Incan's <code>Mutex[T]</code> and <code>RwLock[T]</code> <strong>wrap a value</strong> (like Rust), while Python's Lock is just a lock you use alongside your data.</p>
 <h3 id="mutex">Mutex<a class="headerlink" href="#mutex" title="Permanent link">&para;</a></h3>
 <p>Mutual exclusion — ensures only <strong>one task</strong> can access the wrapped value at a time.</p>
 <p><strong>When to use:</strong> Multiple tasks need to both read AND write shared state.</p>
@@ -6910,8 +7013,7 @@ while Python's Lock is just a lock you use alongside your data.</p>
     <span class="n">guard</span><span class="o">.</span><span class="kt">set</span><span class="p">(</span><span class="n">guard</span><span class="o">.</span><span class="nb">get</span><span class="p">()</span> <span class="o">+</span> <span class="mi">1</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="rwlock">RwLock<a class="headerlink" href="#rwlock" title="Permanent link">&para;</a></h3>
-<p>Reader-writer lock — allows <strong>multiple readers</strong> OR a <strong>single writer</strong>, but not both simultaneously.
-More efficient than Mutex when reads are frequent.</p>
+<p>Reader-writer lock — allows <strong>multiple readers</strong> OR a <strong>single writer</strong>, but not both simultaneously. More efficient than Mutex when reads are frequent.</p>
 <p><strong>When to use:</strong> Many tasks read, few tasks write (e.g., configuration, caches).</p>
 <p><strong>API:</strong></p>
 <ul>
@@ -6990,8 +7092,7 @@ More efficient than Mutex when reads are frequent.</p>
 <p><code>asyncio.Barrier(n)</code> (added in Python 3.11) works the same way.</p>
 </div>
 <h3 id="complete-example">Complete Example<a class="headerlink" href="#complete-example" title="Permanent link">&para;</a></h3>
-<p>See <a href="https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_sync.incn">examples/advanced/async_sync.incn</a>
-for a runnable demo of all four primitives.</p>
+<p>See <a href="https://github.com/dannys-code-corner/incan/blob/main/examples/advanced/async_sync.incn">examples/advanced/async_sync.incn</a> for a runnable demo of all four primitives.</p>
 <h2 id="race-and-timeout-helpers">Race and Timeout Helpers<a class="headerlink" href="#race-and-timeout-helpers" title="Permanent link">&para;</a></h2>
 <h3 id="race_timeout">race_timeout<a class="headerlink" href="#race_timeout" title="Permanent link">&para;</a></h3>
 <p>Simplified timeout returning Option:</p>
@@ -7016,9 +7117,9 @@ for a runnable demo of all four primitives.</p>
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Result: </span><span class="si">{</span><span class="kt">result</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="generated-dependencies">Generated Dependencies<a class="headerlink" href="#generated-dependencies" title="Permanent link">&para;</a></h3>
-<p>The compiler automatically adds tokio to your Cargo.toml:</p>
+<p>Generated projects enable Tokio through the <code>incan_stdlib</code> async feature rather than adding a direct Tokio dependency for ordinary async stdlib use:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
-<span class="n">tokio</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;rt-multi-thread&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;macros&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;time&quot;</span><span class="p">,</span><span class="w"> </span><span class="s2">&quot;sync&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
+<span class="n">incan_stdlib</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;...&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;async&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <h2 id="best-practices">Best Practices<a class="headerlink" href="#best-practices" title="Permanent link">&para;</a></h2>
 <h3 id="1-dont-block-the-runtime">1. Don't Block the Runtime<a class="headerlink" href="#1-dont-block-the-runtime" title="Permanent link">&para;</a></h3>
@@ -7091,8 +7192,7 @@ for a runnable demo of all four primitives.</p>
             <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;Channel closed, saving for retry: </span><span class="si">{</span><span class="n">e</span><span class="o">.</span><span class="n">value</span><span class="si">:</span><span class="s2">?</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
             <span class="n">save_for_later</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
 </code></pre></div>
-<p>This pattern is important for reliability.
-If a channel closes unexpectedly, you can recover and handle the data that failed to send.</p>
+<p>This pattern is important for reliability. If a channel closes unexpectedly, you can recover and handle the data that failed to send.</p>
 <h2 id="see-also">See Also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../explanation/error_handling/">Error handling</a> - Concepts: <code>Result</code>, <code>Option</code>, <code>?</code>, <code>match</code></li>

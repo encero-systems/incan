@@ -1167,6 +1167,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1505,6 +1513,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../generators/" class="md-nav__link">
         
   
@@ -1573,6 +1623,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1678,6 +1749,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3183,6 +3275,8 @@
       
         
       
+        
+      
     
     
       
@@ -3514,6 +3608,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3659,7 +3774,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3675,14 +3790,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5705,17 +5820,13 @@
 
 
 <h1 id="compress-and-decompress-data">Compress and Decompress Data<a class="headerlink" href="#compress-and-decompress-data" title="Permanent link">&para;</a></h1>
-<p>Use <code>std.compression</code> when a program needs to read or write compressed byte payloads, compressed files, or codec-framed
-data from another system.</p>
+<p>Use <code>std.compression</code> when a program needs to read or write compressed byte payloads, compressed files, or codec-framed data from another system.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.compression</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Codec</span><span class="p">,</span> <span class="nc">CompressionError</span><span class="p">,</span> <span class="n">decompress_auto</span><span class="p">,</span> <span class="n">gzip</span><span class="p">,</span> <span class="n">zstd</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span>
 </code></pre></div>
-<p>Compression is not archive handling. Use <code>std.compression</code> for byte streams such as gzip, zstd, bzip2, XZ/LZMA, or
-Snappy. Archive containers such as ZIP and TAR have entry names, permissions, directory traversal risks, and extraction
-rules that belong in archive-specific APIs.</p>
+<p>Compression is not archive handling. Use <code>std.compression</code> for byte streams such as gzip, zstd, bzip2, XZ/LZMA, or Snappy. Archive containers such as ZIP and TAR have entry names, permissions, directory traversal risks, and extraction rules that belong in archive-specific APIs.</p>
 <h2 id="choose-the-codec-at-the-boundary">Choose the Codec at the Boundary<a class="headerlink" href="#choose-the-codec-at-the-boundary" title="Permanent link">&para;</a></h2>
-<p>Prefer an explicit codec whenever the format is known from a protocol, file extension, header, configuration value, or
-caller contract.</p>
+<p>Prefer an explicit codec whenever the format is known from a protocol, file extension, header, configuration value, or caller contract.</p>
 <table>
 <thead>
 <tr>
@@ -5758,8 +5869,7 @@ caller contract.</p>
 </tr>
 </tbody>
 </table>
-<p>Do not silently try codecs in a loop. If the format is ambiguous, use the explicit autodetection helpers so the policy is
-visible at the call site.</p>
+<p>Do not silently try codecs in a loop. If the format is ambiguous, use the explicit autodetection helpers so the policy is visible at the call site.</p>
 <h2 id="compress-bytes-already-in-memory">Compress Bytes Already in Memory<a class="headerlink" href="#compress-bytes-already-in-memory" title="Permanent link">&para;</a></h2>
 <p>Use one-shot helpers when the payload is already in memory and small enough to keep there.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.compression</span><span class="w"> </span><span class="kn">import</span> <span class="nc">CompressionError</span><span class="p">,</span> <span class="n">gzip</span>
@@ -5770,18 +5880,15 @@ visible at the call site.</p>
 <span class="k">def</span><span class="w"> </span><span class="nf">decode_payload</span><span class="p">(</span><span class="n">payload</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">bytes</span><span class="p">,</span> <span class="nc">CompressionError</span><span class="p">]:</span>
     <span class="k">return</span> <span class="n">gzip</span><span class="o">.</span><span class="n">decompress</span><span class="p">(</span><span class="n">payload</span><span class="p">)</span>
 </code></pre></div>
-<p><code>level=None</code> uses the codec default. Pass a level only when the caller has a reason to trade compression speed for output
-size.</p>
+<p><code>level=None</code> uses the codec default. Pass a level only when the caller has a reason to trade compression speed for output size.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.compression</span><span class="w"> </span><span class="kn">import</span> <span class="nc">CompressionError</span><span class="p">,</span> <span class="n">zstd</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">archive_payload</span><span class="p">(</span><span class="n">payload</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">bytes</span><span class="p">,</span> <span class="nc">CompressionError</span><span class="p">]:</span>
     <span class="k">return</span> <span class="n">zstd</span><span class="o">.</span><span class="n">compress</span><span class="p">(</span><span class="n">payload</span><span class="p">,</span> <span class="n">level</span><span class="o">=</span><span class="nb">Some</span><span class="p">(</span><span class="mi">10</span><span class="p">))</span>
 </code></pre></div>
-<p>Keep the compressed value typed as <code>bytes</code>. If it needs to cross a text-only boundary, encode it afterwards with
-<code>std.encoding</code>.</p>
+<p>Keep the compressed value typed as <code>bytes</code>. If it needs to cross a text-only boundary, encode it afterwards with <code>std.encoding</code>.</p>
 <h2 id="stream-files-instead-of-loading-them">Stream Files Instead of Loading Them<a class="headerlink" href="#stream-files-instead-of-loading-them" title="Permanent link">&para;</a></h2>
-<p>Use stream helpers for files and pipeline stages. They move bytes between <code>std.fs.File</code> and <code>std.io.BytesIO</code> without
-requiring the complete input to be materialized first.</p>
+<p>Use stream helpers for files and pipeline stages. They move bytes between <code>std.fs.File</code> and <code>std.io.BytesIO</code> without requiring the complete input to be materialized first.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.compression</span><span class="w"> </span><span class="kn">import</span> <span class="n">zstd</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="kt">Path</span>
 
@@ -5799,8 +5906,7 @@ requiring the complete input to be materialized first.</p>
 <span class="n">zstd</span><span class="o">.</span><span class="n">decompress_stream</span><span class="p">(</span><span class="n">source</span><span class="p">,</span> <span class="n">target</span><span class="p">,</span> <span class="n">chunk_size</span><span class="o">=</span><span class="mi">65536</span><span class="p">)</span><span class="o">?</span>
 <span class="n">target</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span><span class="o">?</span>
 </code></pre></div>
-<p>Choose a positive <code>chunk_size</code>. The default works for normal file workflows. Smaller chunks are useful in tests and
-latency-sensitive pipelines; larger chunks may reduce overhead for large local files.</p>
+<p>Choose a positive <code>chunk_size</code>. The default works for normal file workflows. Smaller chunks are useful in tests and latency-sensitive pipelines; larger chunks may reduce overhead for large local files.</p>
 <h2 id="use-bytesio-for-in-memory-pipelines">Use BytesIO for In-Memory Pipelines<a class="headerlink" href="#use-bytesio-for-in-memory-pipelines" title="Permanent link">&para;</a></h2>
 <p><code>BytesIO</code> is useful when a pipeline step expects a stream but the caller starts with bytes.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.compression</span><span class="w"> </span><span class="kn">import</span> <span class="nc">CompressionError</span><span class="p">,</span> <span class="n">gzip</span>
@@ -5813,8 +5919,7 @@ latency-sensitive pipelines; larger chunks may reduce overhead for large local f
 </code></pre></div>
 <p>This keeps code shaped like the file-streaming path while still returning a byte payload to the caller.</p>
 <h2 id="autodetect-only-when-the-input-is-genuinely-mixed">Autodetect Only When the Input Is Genuinely Mixed<a class="headerlink" href="#autodetect-only-when-the-input-is-genuinely-mixed" title="Permanent link">&para;</a></h2>
-<p>Use <code>decompress_auto</code> when a boundary may receive several framed compression formats and the caller cannot know which one
-ahead of time.</p>
+<p>Use <code>decompress_auto</code> when a boundary may receive several framed compression formats and the caller cannot know which one ahead of time.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.compression</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Codec</span><span class="p">,</span> <span class="nc">CompressionError</span><span class="p">,</span> <span class="n">decompress_auto</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">decode_upload</span><span class="p">(</span><span class="n">payload</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">bytes</span><span class="p">,</span> <span class="nc">CompressionError</span><span class="p">]:</span>
@@ -5832,24 +5937,20 @@ ahead of time.</p>
 <span class="n">target</span><span class="o">.</span><span class="n">flush</span><span class="p">()</span><span class="o">?</span>
 <span class="nb">println</span><span class="p">(</span><span class="n">codec</span><span class="p">)</span>
 </code></pre></div>
-<p>Autodetection uses signatures and framing bytes. It does not inspect file extensions, paths, or MIME types. Raw deflate
-and raw Snappy are not guessed because they do not have reliable frame signatures.</p>
+<p>Autodetection uses signatures and framing bytes. It does not inspect file extensions, paths, or MIME types. Raw deflate and raw Snappy are not guessed because they do not have reliable frame signatures.</p>
 <h2 id="handle-compression-errors-at-the-same-boundary">Handle Compression Errors at the Same Boundary<a class="headerlink" href="#handle-compression-errors-at-the-same-boundary" title="Permanent link">&para;</a></h2>
-<p>Compression helpers return <code>Result[..., CompressionError]</code>. Match the error when the caller can recover or report a
-specific category.</p>
+<p>Compression helpers return <code>Result[..., CompressionError]</code>. Match the error when the caller can recover or report a specific category.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.compression</span><span class="w"> </span><span class="kn">import</span> <span class="n">gzip</span>
 
 <span class="k">match</span> <span class="n">gzip</span><span class="o">.</span><span class="n">decompress</span><span class="p">(</span><span class="n">payload</span><span class="p">):</span>
     <span class="nb">Ok</span><span class="p">(</span><span class="n">plain</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="nb">len</span><span class="p">(</span><span class="n">plain</span><span class="p">))</span>
     <span class="nb">Err</span><span class="p">(</span><span class="n">err</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="nb">println</span><span class="p">(</span><span class="n">err</span><span class="o">.</span><span class="n">kind</span><span class="p">)</span>
 </code></pre></div>
-<p>Common categories include <code>invalid_data</code>, <code>truncated_input</code>, <code>unsupported_codec</code>, <code>unsupported_option</code>, <code>invalid_level</code>,
-<code>invalid_chunk_size</code>, <code>io</code>, and <code>backend</code>.</p>
+<p>Common categories include <code>invalid_data</code>, <code>truncated_input</code>, <code>unsupported_codec</code>, <code>unsupported_option</code>, <code>invalid_level</code>, <code>invalid_chunk_size</code>, <code>io</code>, and <code>backend</code>.</p>
 <h2 id="keep-compression-separate-from-related-work">Keep Compression Separate from Related Work<a class="headerlink" href="#keep-compression-separate-from-related-work" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Use <code>std.encoding</code> after compression when bytes need a text-safe representation.</li>
-<li>Use hashing after compression only when the digest must cover the compressed bytes. Hash before compression when the
-  digest must cover the original payload.</li>
+<li>Use hashing after compression only when the digest must cover the compressed bytes. Hash before compression when the digest must cover the original payload.</li>
 <li>Keep password hashing and encryption separate from compression. They have different security contracts.</li>
 <li>Do not use raw Snappy unless another format specifically requires block-level Snappy behavior.</li>
 </ul>

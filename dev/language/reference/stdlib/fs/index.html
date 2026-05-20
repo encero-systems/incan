@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3194,6 +3286,8 @@
       
         
       
+        
+      
     
     
       
@@ -3525,6 +3619,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3670,7 +3785,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3686,14 +3801,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5910,12 +6025,7 @@
 </table>
 <p><code>glob()</code> and <code>rglob()</code> support <code>*</code>, <code>?</code>, and bracket character classes such as <code>[abc]</code>, <code>[!abc]</code>, and <code>[a-z]</code>. <code>remove_tree()</code> is deliberately not "delete anything"; use <code>unlink()</code> for files.</p>
 <h2 id="glob-patterns">Glob Patterns<a class="headerlink" href="#glob-patterns" title="Permanent link">&para;</a></h2>
-<p>Use <code>std.fs.glob</code> when you need the same pattern rules for strings that are not filesystem paths:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs.glob</span><span class="w"> </span><span class="kn">import</span> <span class="n">filter_matches</span><span class="p">,</span> <span class="n">matches</span>
-
-<span class="nb">println</span><span class="p">(</span><span class="n">matches</span><span class="p">(</span><span class="s2">&quot;routes/users.incn&quot;</span><span class="p">,</span> <span class="s2">&quot;routes/*.incn&quot;</span><span class="p">))</span>
-<span class="n">api_routes</span> <span class="o">=</span> <span class="n">filter_matches</span><span class="p">([</span><span class="s2">&quot;api/users&quot;</span><span class="p">,</span> <span class="s2">&quot;docs/readme&quot;</span><span class="p">,</span> <span class="s2">&quot;api/orders&quot;</span><span class="p">],</span> <span class="s2">&quot;api/*&quot;</span><span class="p">)</span>
-</code></pre></div>
+<p>Use <code>std.fs.glob</code> when you need the same pattern rules for strings that are not filesystem paths.</p>
 <table>
 <thead>
 <tr>
@@ -6114,12 +6224,7 @@
 </table>
 <p>Successful writes do not imply crash-safe persistence. Call <code>sync()</code> or <code>sync_data()</code> when durability matters.</p>
 <h2 id="openoptions">OpenOptions<a class="headerlink" href="#openoptions" title="Permanent link">&para;</a></h2>
-<p><code>OpenOptions</code> provides explicit open flags:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.fs</span><span class="w"> </span><span class="kn">import</span> <span class="nc">OpenOptions</span><span class="p">,</span> <span class="kt">Path</span>
-
-<span class="n">file</span> <span class="o">=</span> <span class="nc">OpenOptions</span><span class="p">()</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="k">true</span><span class="p">)</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="k">true</span><span class="p">)</span><span class="o">.</span><span class="n">create</span><span class="p">(</span><span class="k">true</span><span class="p">)</span><span class="o">.</span><span class="n">open</span><span class="p">(</span><span class="kt">Path</span><span class="p">(</span><span class="s2">&quot;data.bin&quot;</span><span class="p">))</span><span class="o">?</span>
-</code></pre></div>
-<p>Builder methods are <code>read</code>, <code>write</code>, <code>append</code>, <code>truncate</code>, <code>create</code>, and <code>create_new</code>.</p>
+<p><code>OpenOptions</code> provides explicit open flags. Builder methods are <code>read</code>, <code>write</code>, <code>append</code>, <code>truncate</code>, <code>create</code>, and <code>create_new</code>; <code>open(path)</code> returns <code>Result[File, IoError]</code>.</p>
 <h2 id="temporary-files">Temporary Files<a class="headerlink" href="#temporary-files" title="Permanent link">&para;</a></h2>
 <p><code>std.tempfile</code> owns temporary location creation and cleanup. Once a temporary path exists, use <code>std.fs</code> for path joins, reads, writes, opens, metadata, copy/move, and cleanup.</p>
 <p>See <a href="../tempfile/">std.tempfile</a> for <code>NamedTemporaryFile.try_new()</code>, <code>TemporaryDirectory.try_new()</code>, configured <code>try_new_with(...)</code> creation, spooled temporary streams, path access, and persistence.</p>

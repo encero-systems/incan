@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3071,6 +3163,8 @@
       
         
       
+        
+      
     
     
       
@@ -3402,6 +3496,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../derives_and_traits/" class="md-nav__link">
         
   
@@ -3632,7 +3747,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3648,14 +3763,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5671,8 +5786,7 @@
 <p><em>Caller side</em>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">rows</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">read_csv</span><span class="p">[</span><span class="nc">Order</span><span class="p">](</span><span class="s2">&quot;orders.csv&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p><code>read_csv[T]</code> defines a generic contract: “for any <code>T</code>, return <code>List[T]</code>”.
-<code>read_csv[Order](...)</code> specializes that contract at the call site, so <code>rows</code> is typed as <code>List[Order]</code>.</p>
+<p><code>read_csv[T]</code> defines a generic contract: “for any <code>T</code>, return <code>List[T]</code>”. <code>read_csv[Order](...)</code> specializes that contract at the call site, so <code>rows</code> is typed as <code>List[Order]</code>.</p>
 <p>This keeps normal signature typing intact while letting callers pin ambiguous generic slots at API boundaries.</p>
 <h2 id="why-_-exists">Why <code>_</code> exists<a class="headerlink" href="#why-_-exists" title="Permanent link">&para;</a></h2>
 <p>Sometimes you only care about one slot and want the rest inferred.</p>
@@ -5684,8 +5798,7 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="n">a</span> <span class="o">=</span> <span class="n">validate_rows</span><span class="p">[</span><span class="nc">Order</span><span class="p">,</span> <span class="n">_</span><span class="p">](</span><span class="n">rows</span><span class="p">)</span>         <span class="c1"># pin T, infer E</span>
 <span class="n">b</span> <span class="o">=</span> <span class="n">validate_rows</span><span class="p">(</span><span class="n">_</span><span class="p">,</span> <span class="ne">RuntimeError</span><span class="p">)(</span><span class="n">rows</span><span class="p">)</span>  <span class="c1"># pin E, infer T</span>
 </code></pre></div>
-<p>Here <code>T</code> is fixed to <code>Order</code>, while <code>E</code> is left as <code>_</code> and inferred.
-This avoids forcing callers to spell every type argument when only one slot needs pinning.</p>
+<p>Here <code>T</code> is fixed to <code>Order</code>, while <code>E</code> is left as <code>_</code> and inferred. This avoids forcing callers to spell every type argument when only one slot needs pinning.</p>
 <p><code>_</code> keeps partial explicitness concise while preserving arity checks.</p>
 <h2 id="what-this-feature-is-not">What this feature is not<a class="headerlink" href="#what-this-feature-is-not" title="Permanent link">&para;</a></h2>
 <ul>

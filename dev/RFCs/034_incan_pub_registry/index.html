@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6282,8 +6397,7 @@ Body: { &quot;name&quot;: &quot;mylib&quot;, &quot;version&quot;: &quot;0.1.0&qu
 </ol>
 <p>If verification fails, <code>incan build</code> refuses to use the package and emits a clear diagnostic.</p>
 <p><strong>Sigstore is optional in Phase 1</strong> — the <code>signatures</code> field in the index is nullable. Unsigned packages are accepted but display a warning during <code>incan build</code>. The goal is to make signing the default from early on, then make it mandatory once the tooling is proven.</p>
-<p><strong>Implementation note:</strong> the service can rely on existing Sigstore client
-libraries rather than inventing its own signing stack. The registry still verifies signatures on publish so invalid artifacts are rejected early.</p>
+<p><strong>Implementation note:</strong> the service can rely on existing Sigstore client libraries rather than inventing its own signing stack. The registry still verifies signatures on publish so invalid artifacts are rejected early.</p>
 <h3 id="security-properties">Security properties<a class="headerlink" href="#security-properties" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -6576,8 +6690,7 @@ $<span class="w"> </span>incan<span class="w"> </span>add<span class="w"> </span
 <ol>
 <li>the service must be able to run on EU-hosted infrastructure with hard cost caps;</li>
 <li>object storage and CDN choices should remain replaceable;</li>
-<li>the registry protocol must not depend on whether the service is implemented
-in Incan or in a temporary bootstrap implementation.</li>
+<li>the registry protocol must not depend on whether the service is implemented in Incan or in a temporary bootstrap implementation.</li>
 </ol>
 <h2 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h2>
 <ul>
@@ -6601,8 +6714,7 @@ in Incan or in a temporary bootstrap implementation.</li>
 <li><strong>Complexity.</strong> A package registry is a significant piece of infrastructure to build and maintain, even a simple one.</li>
 <li><strong>Dependency on Scaleway/Bunny.net.</strong> The architecture is provider-portable (S3 API + HTTP CDN), but the initial deployment is tied to these specific providers.</li>
 <li><strong>Sigstore learning curve.</strong> Keyless signing via OIDC is unfamiliar to many developers. Clear documentation and good CLI UX can mitigate this.</li>
-<li><strong>Bootstrap dependency.</strong> A first-class Incan implementation depends on the
-relevant web/runtime capabilities shipping in time. A temporary bootstrap implementation may be needed if ecosystem timing forces the registry to arrive earlier.</li>
+<li><strong>Bootstrap dependency.</strong> A first-class Incan implementation depends on the relevant web/runtime capabilities shipping in time. A temporary bootstrap implementation may be needed if ecosystem timing forces the registry to arrive earlier.</li>
 </ul>
 <h2 id="implementation-architecture">Implementation architecture<a class="headerlink" href="#implementation-architecture" title="Permanent link">&para;</a></h2>
 <h3 id="phase-1-mvp-registry-alongside-rfc-031-implementation">Phase 1: MVP registry (alongside RFC 031 implementation)<a class="headerlink" href="#phase-1-mvp-registry-alongside-rfc-031-implementation" title="Permanent link">&para;</a></h3>

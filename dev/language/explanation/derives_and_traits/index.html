@@ -11,7 +11,7 @@
       
       
       
-        <link rel="prev" href="../ordinal_map/">
+        <link rel="prev" href="../graph_model/">
       
       
         <link rel="next" href="../call_site_type_arguments/">
@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3071,6 +3163,8 @@
       
         
       
+        
+      
     
     
       
@@ -3399,6 +3493,27 @@
                 
   
   
+  
+  
+    <li class="md-nav__item">
+      <a href="../graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
     
   
   
@@ -3674,7 +3789,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3690,14 +3805,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5735,8 +5850,7 @@
 
 
 <h1 id="derives-and-traits-explanation">Derives and traits (Explanation)<a class="headerlink" href="#derives-and-traits-explanation" title="Permanent link">&para;</a></h1>
-<p>This page explains the mental model behind <strong>derives</strong>, <strong>dunder overrides</strong>, and <strong>traits</strong> in Incan. For the exact
-catalog of supported derives and signatures, see the Reference:</p>
+<p>This page explains the mental model behind <strong>derives</strong>, <strong>dunder overrides</strong>, and <strong>traits</strong> in Incan. For the exact catalog of supported derives and signatures, see the Reference:</p>
 <ul>
 <li><a href="../../reference/derives_and_traits/">Derives &amp; traits (Reference)</a></li>
 </ul>
@@ -5763,8 +5877,7 @@ catalog of supported derives and signatures, see the Reference:</p>
 <li><code>__lt__</code>: custom ordering</li>
 <li><code>__hash__</code>: custom hashing</li>
 </ul>
-<p>Incan treats “derive + corresponding dunder” as a <strong>conflict</strong>. The idea is to avoid ambiguity and keep the mental model
-simple: “either it’s the default behavior, or it’s my behavior.”</p>
+<p>Incan treats “derive + corresponding dunder” as a <strong>conflict</strong>. The idea is to avoid ambiguity and keep the mental model simple: “either it’s the default behavior, or it’s my behavior.”</p>
 <p>Read more about <a href="../../how-to/customize_derived_behavior/">dunder methods: custom behavior</a>.</p>
 <h3 id="traits-domain-capabilities">Traits (domain capabilities)<a class="headerlink" href="#traits-domain-capabilities" title="Permanent link">&para;</a></h3>
 <p>Use traits for reusable, domain-specific capabilities:</p>
@@ -5775,8 +5888,7 @@ simple: “either it’s the default behavior, or it’s my behavior.”</p>
 <li>Traits are always abstract, so the trait name itself can be used directly in annotations</li>
 <li>Traits can build capability hierarchies with <code>trait Sub with Base:</code></li>
 </ul>
-<p>Traits are not “the derive system.” Derives are a convenience for a small set of <strong>built-in capabilities</strong>; traits are a
-general language feature for authoring reusable behavior.</p>
+<p>Traits are not “the derive system.” Derives are a convenience for a small set of <strong>built-in capabilities</strong>; traits are a general language feature for authoring reusable behavior.</p>
 <p>That gives Incan a simple mental model: a trait is both a capability declaration and an abstract accepted type. If a function says it accepts <code>Collection[Order]</code>, that means “any concrete adopter of <code>Collection[Order]</code>”, not “rewrite this API as a hidden generic bound first”.</p>
 <p>Read more about <a href="../../tutorials/book/11_traits_and_derives/">traits: domain capabilities</a>.</p>
 <p>Enums use the same adoption model when a closed set of variants should satisfy a protocol. The required behavior lives in the enum body, next to the variants it interprets:</p>
@@ -5824,19 +5936,16 @@ general language feature for authoring reusable behavior.</p>
 <li><strong>Debug</strong> (<code>{:?}</code>): developer-facing, structured, and not user-overridable</li>
 <li><strong>Display</strong> (<code>{}</code>): user-facing output; you can override via <code>__str__</code></li>
 </ul>
-<p>This mirrors the common “logs vs user output” split: Debug is stable and structural; Display is designed for
-human-friendly formatting.</p>
+<p>This mirrors the common “logs vs user output” split: Debug is stable and structural; Display is designed for human-friendly formatting.</p>
 <h2 id="rustextern-rust-backed-functions"><code>@rust.extern</code> (Rust-backed functions)<a class="headerlink" href="#rustextern-rust-backed-functions" title="Permanent link">&para;</a></h2>
-<p>You may see <code>@rust.extern</code> used in stdlib sources and Rust-backed libraries. It marks functions whose body are provided
-by a Rust module (declared via <code>rust.module()</code>).</p>
+<p>You may see <code>@rust.extern</code> used in stdlib sources and Rust-backed libraries. It marks functions whose body are provided by a Rust module (declared via <code>rust.module()</code>).</p>
 <p>The intended meaning is:</p>
 <ul>
 <li>the function's signature is defined in Incan (<code>.incn</code> source)</li>
 <li>the function's implementation lives in a Rust crate, mapped via <code>rust.module()</code></li>
 <li>the compiler emits a call to the Rust implementation instead of compiling the <code>...</code> body</li>
 </ul>
-<p>This lets the stdlib (and third-party libraries) wrap Rust crates with Incan-shaped APIs while keeping most logic in
-pure Incan.</p>
+<p>This lets the stdlib (and third-party libraries) wrap Rust crates with Incan-shaped APIs while keeping most logic in pure Incan.</p>
 <p>See also:</p>
 <ul>
 <li><a href="../how_derives_work/">How derives work</a></li>
@@ -5847,8 +5956,7 @@ pure Incan.</p>
 <li>If you omit a field and it has a default, the default is used</li>
 <li>If a field has no default, you must provide it at construction time</li>
 </ul>
-<p>Separately, <code>@derive(Default)</code> provides <code>Type.default()</code> as a baseline constructor. It uses field defaults when present,
-and otherwise falls back to type defaults.</p>
+<p>Separately, <code>@derive(Default)</code> provides <code>Type.default()</code> as a baseline constructor. It uses field defaults when present, and otherwise falls back to type defaults.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../models_and_classes/">Models and classes</a></li>

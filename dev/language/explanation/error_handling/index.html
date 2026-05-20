@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3071,6 +3163,8 @@
       
         
       
+        
+      
     
     
       
@@ -3402,6 +3496,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../derives_and_traits/" class="md-nav__link">
         
   
@@ -3704,7 +3819,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3720,14 +3835,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5795,8 +5910,7 @@
 
 
 <h1 id="error-handling">Error handling<a class="headerlink" href="#error-handling" title="Permanent link">&para;</a></h1>
-<p>Incan treats errors as <strong>values</strong>: functions that can fail return a <code>Result[T, E]</code>, and callers handle success/error
-<strong>explicitly</strong>. This makes failure modes visible in APIs, encourages structured error types, and keeps control flow clear.</p>
+<p>Incan treats errors as <strong>values</strong>: functions that can fail return a <code>Result[T, E]</code>, and callers handle success/error <strong>explicitly</strong>. This makes failure modes visible in APIs, encourages structured error types, and keeps control flow clear.</p>
 <h2 id="quick-start">Quick start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load_config</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="kt">Path</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Config</span><span class="p">,</span> <span class="nc">AppError</span><span class="p">]:</span>
     <span class="nb">bytes</span> <span class="o">=</span> <span class="n">path</span><span class="o">.</span><span class="n">read_bytes</span><span class="p">()</span><span class="o">.</span><span class="nb">map_err</span><span class="p">(</span><span class="nc">AppError</span><span class="o">.</span><span class="nc">Io</span><span class="p">)</span><span class="o">?</span>
@@ -5811,8 +5925,7 @@
 </ul>
 <details class="info">
 <summary>Coming from Python?</summary>
-<p>Python uses exceptions, which can introduce hidden control flow (“anything can throw from anywhere”).
-Python 3.10+ has <code>match</code>/<code>case</code>, but it still won’t enforce exhaustiveness the way Incan does.</p>
+<p>Python uses exceptions, which can introduce hidden control flow (“anything can throw from anywhere”). Python 3.10+ has <code>match</code>/<code>case</code>, but it still won’t enforce exhaustiveness the way Incan does.</p>
 <p>A rough translation is:</p>
 <ul>
 <li>Python: exceptions propagate implicitly</li>
@@ -5872,8 +5985,7 @@ Python 3.10+ has <code>match</code>/<code>case</code>, but it still won’t enfo
 </details>
 <details class="info">
 <summary>Coming from TS/JS?</summary>
-<p>In JS/TS, <code>try/catch</code> works, but failures are often effectively “untyped” at the boundary (anything can be thrown, and
-caught values are frequently <code>unknown</code>).</p>
+<p>In JS/TS, <code>try/catch</code> works, but failures are often effectively “untyped” at the boundary (anything can be thrown, and caught values are frequently <code>unknown</code>).</p>
 <p>In Incan, fallibility is explicit in the return type, and you handle it with <code>Result</code> + <code>match</code> (or propagate it with
 <code>?</code>).</p>
 <p><strong>JS/TS <code>try/catch</code> → Incan <code>Result</code></strong>:</p>
@@ -5929,12 +6041,10 @@ caught values are frequently <code>unknown</code>).</p>
 </code></pre></div>
 <div class="admonition info">
 <p class="admonition-title">Coming from Python?</p>
-<p>In Python, <code>Optional[T]</code> is a type hint that indicates the value may be <code>None</code>.<br />
-In Incan, <code>Option[T]</code> is an explicit enum that the compiler can reason about and enforce.</p>
+<p>In Python, <code>Optional[T]</code> is a type hint that indicates the value may be <code>None</code>. In Incan, <code>Option[T]</code> is an explicit enum that the compiler can reason about and enforce.</p>
 </div>
 <h2 id="the-operator-propagation">The <code>?</code> operator (propagation)<a class="headerlink" href="#the-operator-propagation" title="Permanent link">&para;</a></h2>
-<p>The <code>?</code> operator provides concise error propagation: if the left-hand side is <code>Err(e)</code>, return early with that error;
-otherwise unwrap the <code>Ok(...)</code> value.</p>
+<p>The <code>?</code> operator provides concise error propagation: if the left-hand side is <code>Err(e)</code>, return early with that error; otherwise unwrap the <code>Ok(...)</code> value.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">process</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nc">Data</span><span class="p">,</span> <span class="nc">Error</span><span class="p">]:</span>
     <span class="n">data</span> <span class="o">=</span> <span class="n">fetch_data</span><span class="p">()</span><span class="o">?</span>
     <span class="n">valid</span> <span class="o">=</span> <span class="n">validate</span><span class="p">(</span><span class="n">data</span><span class="p">)</span><span class="o">?</span>
@@ -5980,8 +6090,7 @@ otherwise unwrap the <code>Ok(...)</code> value.</p>
 </code></pre></div>
 <h2 id="unwrap-and-panic"><code>unwrap()</code> and <code>panic()</code><a class="headerlink" href="#unwrap-and-panic" title="Permanent link">&para;</a></h2>
 <p><code>unwrap()</code> extracts a value from <code>Option</code>/<code>Result</code>, and <strong>panics</strong> if it is <code>None</code>/<code>Err(...)</code>.</p>
-<p>Panics are appropriate for programmer errors and “should never happen” states, but not for expected failures (like user
-input or network calls).</p>
+<p>Panics are appropriate for programmer errors and “should never happen” states, but not for expected failures (like user input or network calls).</p>
 <p>Prefer:</p>
 <ul>
 <li><code>match</code> for explicit handling</li>

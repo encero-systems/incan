@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6153,9 +6268,7 @@
     <span class="k">def</span><span class="w"> </span><span class="nf">abort</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="o">...</span>
 </code></pre></div>
-<p>The Rust backend owns this mapping, but the first implementation explicitly gates it until the compiler has enough
-metadata to prove safe <code>Pin</code> projection and output conversion. Without backend-managed bridging, the same adapter still
-requires handwritten Rust with <code>Pin</code>, <code>Context</code>, <code>Poll</code>, and manual error mapping.</p>
+<p>The Rust backend owns this mapping, but the first implementation explicitly gates it until the compiler has enough metadata to prove safe <code>Pin</code> projection and output conversion. Without backend-managed bridging, the same adapter still requires handwritten Rust with <code>Pin</code>, <code>Context</code>, <code>Poll</code>, and manual error mapping.</p>
 <h3 id="forwarding-rust-derive-macros">Forwarding Rust derive macros<a class="headerlink" href="#forwarding-rust-derive-macros" title="Permanent link">&para;</a></h3>
 <p>For Incan models that need to participate in Rust derive workflows:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">serde</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Serialize</span><span class="o">,</span><span class="w"> </span><span class="nn">Deserialize</span>
@@ -6243,8 +6356,7 @@ requires handwritten Rust with <code>Pin</code>, <code>Context</code>, <code>Pol
 <h3 id="rustderive-decorator"><code>@rust.derive</code> decorator<a class="headerlink" href="#rustderive-decorator" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>@rust.derive(Name1, Name2, ...)</code> is valid on <code>model</code>, <code>class</code>, <code>enum</code>, and <code>newtype</code> declarations.</li>
-<li><code>@rust.derive(...)</code> on <code>rusttype</code> declarations is parsed but rejected until <code>rusttype</code> lowers to an owned Rust item;
-  the current alias-based lowering cannot carry Rust derive attributes.</li>
+<li><code>@rust.derive(...)</code> on <code>rusttype</code> declarations is parsed but rejected until <code>rusttype</code> lowers to an owned Rust item; the current alias-based lowering cannot carry Rust derive attributes.</li>
 <li>Each third-party derive macro must resolve through an imported Rust macro path and must be backed by a declared Rust dependency in <code>incan.toml</code>.</li>
 <li>The compiler may whitelist built-in Rust derives such as <code>Clone</code>, <code>Copy</code>, <code>Debug</code>, <code>Default</code>, <code>Eq</code>, <code>Hash</code>, <code>Ord</code>, <code>PartialEq</code>, and <code>PartialOrd</code> without requiring a dependency declaration.</li>
 <li>The implementation emits <code>#[derive(path::Name1, path::Name2, ...)]</code> on the generated Rust struct or enum.</li>
@@ -6254,12 +6366,10 @@ requires handwritten Rust with <code>Pin</code>, <code>Context</code>, <code>Pol
 <h3 id="awaitablet-bridging-rules"><code>Awaitable[T]</code> bridging rules<a class="headerlink" href="#awaitablet-bridging-rules" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>Awaitable[T]</code> is the user-facing async protocol, following RFC 039.</li>
-<li>When a <code>rusttype</code> declaration adopts <code>Awaitable[T]</code>, the Rust backend may generate <code>impl Future&lt;Output = T&gt; for Type</code>
-  only after it can prove the backing future projection and output mapping are safe.</li>
+<li>When a <code>rusttype</code> declaration adopts <code>Awaitable[T]</code>, the Rust backend may generate <code>impl Future&lt;Output = T&gt; for Type</code> only after it can prove the backing future projection and output mapping are safe.</li>
 <li>The generated <code>poll</code> method must handle <code>Pin</code> projection correctly, preserving Rust pinning guarantees. The implementation must maintain the invariant that <code>Pin&lt;&amp;mut Type&gt;</code> corresponds to a safe projection into <code>Pin&lt;&amp;mut backing_type&gt;</code>.</li>
 <li>Output type mapping must use declared Incan/Rust conversion edges when the backing type's future output differs from the adopted <code>Awaitable[T]</code> result type.</li>
-<li>The first implementation rejects <code>rusttype ... with Awaitable[T]</code> with a dedicated diagnostic instead of emitting an
-  unsound or unverifiable <code>Future</code> bridge.</li>
+<li>The first implementation rejects <code>rusttype ... with Awaitable[T]</code> with a dedicated diagnostic instead of emitting an unsound or unverifiable <code>Future</code> bridge.</li>
 </ul>
 <h3 id="expected-diagnostics">Expected diagnostics<a class="headerlink" href="#expected-diagnostics" title="Permanent link">&para;</a></h3>
 <ul>
@@ -6429,16 +6539,14 @@ requires handwritten Rust with <code>Pin</code>, <code>Context</code>, <code>Pol
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Emit Rust trait impls from <code>with</code> adoption for newtype/rusttype declarations.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Emit custom targeted methods into Rust trait impls.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Emit associated type items into non-local Rust trait impls.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Synthesize whole-trait forwarding for valid body-less rusttype adoption by accepting metadata-proven backing impls
-  and skipping invalid alias impl emission.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Synthesize whole-trait forwarding for valid body-less rusttype adoption by accepting metadata-proven backing impls and skipping invalid alias impl emission.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Explicitly gate <code>Awaitable[T]</code> to <code>Future</code> bridging until safe pin projection and output mapping metadata exist.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Tests: codegen snapshot coverage for targeted newtype impls.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Tests: integration coverage for imported Rust trait associated types, forwarding, and async bridge gating.</li>
 </ul>
 <h3 id="stdlib-docs-release">Stdlib / docs / release<a class="headerlink" href="#stdlib-docs-release" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Evaluate stdlib Rust adapter migration; no safe adapter migrates yet because <code>rusttype</code> derive and <code>Awaitable</code>
-  bridges are explicitly gated on alias/pinning constraints.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Evaluate stdlib Rust adapter migration; no safe adapter migrates yet because <code>rusttype</code> derive and <code>Awaitable</code> bridges are explicitly gated on alias/pinning constraints.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update trait authoring reference docs.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update newtype reference docs.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Update Rust interop docs.</li>

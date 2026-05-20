@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3071,6 +3163,8 @@
       
         
       
+        
+      
     
     
       
@@ -3402,6 +3496,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../derives_and_traits/" class="md-nav__link">
         
   
@@ -3549,7 +3664,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" checked>
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" checked>
         
           
           
@@ -3565,14 +3680,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="true">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5809,10 +5924,8 @@
 
 
 <h1 id="models">Models<a class="headerlink" href="#models" title="Permanent link">&para;</a></h1>
-<p>A <code>model</code> is Incan's <strong>data-first</strong> type: you declare typed fields, and you get a predictable data shape that works well
-for configs, DTOs, and serialization.</p>
-<p>If you're deciding between <code>model</code> and <code>class</code>, start with the <a href="../">Models &amp; classes overview</a>. This page focuses
-on how models behave once you've chosen them.</p>
+<p>A <code>model</code> is Incan's <strong>data-first</strong> type: you declare typed fields, and you get a predictable data shape that works well for configs, DTOs, and serialization.</p>
+<p>If you're deciding between <code>model</code> and <code>class</code>, start with the <a href="../">Models &amp; classes overview</a>. This page focuses on how models behave once you've chosen them.</p>
 <h2 id="quick-start">Quick start<a class="headerlink" href="#quick-start" title="Permanent link">&para;</a></h2>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
 
@@ -5853,8 +5966,7 @@ on how models behave once you've chosen them.</p>
 </div>
 <details class="info">
 <summary>Coming from Rust?</summary>
-<p>Both <code>model</code> and <code>class</code> compile to Rust <code>struct</code>s + <code>impl</code>s. A <code>model</code> is semantically "this is data";
-a <code>class</code> is "this is an object with behavior".</p>
+<p>Both <code>model</code> and <code>class</code> compile to Rust <code>struct</code>s + <code>impl</code>s. A <code>model</code> is semantically "this is data"; a <code>class</code> is "this is an object with behavior".</p>
 <ul>
 <li><code>def m(self)</code> corresponds to an immutable receiver (roughly like <code>&amp;self</code>)</li>
 <li><code>def m(mut self)</code> corresponds to a mutable receiver (roughly like <code>&amp;mut self</code>)</li>
@@ -5922,19 +6034,16 @@ a <code>class</code> is "this is an object with behavior".</p>
 <li>constructor keys: <code>Account(type="premium")</code></li>
 <li>destructuring patterns: <code>Account(type="premium") =&gt; ...</code></li>
 </ul>
-<p>This lets you keep a safe canonical identifier (<code>type_</code>) while still matching external schemas (<code>"type"</code>). Only aliases
-that are identifier/keyword-shaped can be used in code.</p>
+<p>This lets you keep a safe canonical identifier (<code>type_</code>) while still matching external schemas (<code>"type"</code>). Only aliases that are identifier/keyword-shaped can be used in code.</p>
 <h3 id="aliases-are-strings-not-identifiers">Aliases are strings, not identifiers<a class="headerlink" href="#aliases-are-strings-not-identifiers" title="Permanent link">&para;</a></h3>
-<p>Aliases are <strong>wire keys</strong>, so they can be any string (including non-identifier values like <code>"1"</code>). Aliases participate in
-wire mapping (e.g. JSON) and reflection.</p>
+<p>Aliases are <strong>wire keys</strong>, so they can be any string (including non-identifier values like <code>"1"</code>). Aliases participate in wire mapping (e.g. JSON) and reflection.</p>
 <p>In <strong>code</strong>, only identifier/keyword tokens are accepted in these three positions:</p>
 <ul>
 <li>member access: <code>obj.&lt;name&gt;</code></li>
 <li>constructor named arguments: <code>Type(&lt;name&gt;=...)</code></li>
 <li>destructuring pattern keys: <code>Type(&lt;name&gt;=pat)</code></li>
 </ul>
-<p>So non-identifier aliases can't be written in code. In those cases, use the <strong>canonical field name</strong> in code and keep the
-alias for wire mapping and reflection.</p>
+<p>So non-identifier aliases can't be written in code. In those cases, use the <strong>canonical field name</strong> in code and keep the alias for wire mapping and reflection.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.serde</span><span class="w"> </span><span class="kn">import</span> <span class="n">json</span>
 
 <span class="nd">@derive</span><span class="p">(</span><span class="n">json</span><span class="p">)</span>
@@ -5950,10 +6059,8 @@ alias for wire mapping and reflection.</p>
 </code></pre></div>
 <details class="info">
 <summary>What counts as a code-spellable alias?</summary>
-<p>A code-spellable alias is one you can write in the three code positions above because it <em>looks like</em> an identifier
-(e.g. <code>"todays_date"</code>) or a keyword that Incan allows in those positions (e.g. <code>"type"</code>).</p>
-<p>Other aliases are valid wire keys but not valid code names (e.g. <code>"1"</code>, <code>"created at"</code>). Use the canonical field name
-in code; the alias is used for wire mapping and reflection.</p>
+<p>A code-spellable alias is one you can write in the three code positions above because it <em>looks like</em> an identifier (e.g. <code>"todays_date"</code>) or a keyword that Incan allows in those positions (e.g. <code>"type"</code>).</p>
+<p>Other aliases are valid wire keys but not valid code names (e.g. <code>"1"</code>, <code>"created at"</code>). Use the canonical field name in code; the alias is used for wire mapping and reflection.</p>
 </details>
 <h3 id="alias-constraints-to-avoid-ambiguity">Alias constraints (to avoid ambiguity)<a class="headerlink" href="#alias-constraints-to-avoid-ambiguity" title="Permanent link">&para;</a></h3>
 <p>Within a model:</p>
@@ -5961,8 +6068,7 @@ in code; the alias is used for wire mapping and reflection.</p>
 <li>aliases must be <strong>non-empty</strong> and contain at least one non-whitespace character</li>
 <li>aliases must be <strong>unique</strong></li>
 <li>aliases must not collide with any canonical field name</li>
-<li>aliases must not collide with any <strong>visible member name</strong> on the model (fields/methods, including built-in helpers and
-  members introduced by derives/traits)</li>
+<li>aliases must not collide with any <strong>visible member name</strong> on the model (fields/methods, including built-in helpers and members introduced by derives/traits)</li>
 <li>aliases are matched by <strong>exact string equality</strong> (no Unicode normalization, no case-folding)</li>
 <li>leading/trailing whitespace is allowed and <strong>significant</strong> (so <code>"id"</code> and <code>" id "</code> are different wire keys)</li>
 </ul>
@@ -5987,8 +6093,7 @@ in code; the alias is used for wire mapping and reflection.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">area</span><span class="p">(</span><span class="n">p</span><span class="p">:</span> <span class="nc">Point</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">p</span><span class="o">.</span><span class="n">x</span> <span class="o">*</span> <span class="n">p</span><span class="o">.</span><span class="n">y</span>
 </code></pre></div>
-<p>If a field has an alias, you may use either the canonical name or the alias for member access (when the alias is
-identifier/keyword-shaped). The canonical name always works.</p>
+<p>If a field has an alias, you may use either the canonical name or the alias for member access (when the alias is identifier/keyword-shaped). The canonical name always works.</p>
 <p>If you need behavior, you can still define methods on a model (often pure helpers):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Point</span><span class="p">:</span>
     <span class="n">x</span><span class="p">:</span> <span class="nb">int</span>
@@ -6021,8 +6126,7 @@ identifier/keyword-shaped). The canonical name always works.</p>
 <p>See: <a href="../classes/#static-methods-staticmethod">Classes: Static methods</a> for full details.</p>
 <h2 id="serialization">Serialization<a class="headerlink" href="#serialization" title="Permanent link">&para;</a></h2>
 <p>With <code>@derive(json)</code>, a model serializes/deserializes as a JSON object.</p>
-<p>If a field has an alias, that alias is used as the JSON key (wire name). This lets you keep schema-safe canonical field
-names in code while still matching external payloads.</p>
+<p>If a field has an alias, that alias is used as the JSON key (wire name). This lets you keep schema-safe canonical field names in code while still matching external payloads.</p>
 <p>See: <a href="../../../reference/derives/serialization/">Derives: Serialization (Reference)</a>.</p>
 <h2 id="validation-derivevalidate">Validation (<code>@derive(Validate)</code>)<a class="headerlink" href="#validation-derivevalidate" title="Permanent link">&para;</a></h2>
 <p>If you derive <code>Validate</code> on a model, you opt into validated construction:</p>
@@ -6031,8 +6135,7 @@ names in code while still matching external payloads.</p>
 <li>you construct via <code>TypeName.new(...) -&gt; Result[TypeName, E]</code></li>
 <li>raw construction via <code>TypeName(...)</code> is a compile-time error</li>
 </ul>
-<p>This is the "data shape + invariant" pattern: the type stays easy to pass around, but construction becomes explicit and
-fallible so invariants can't be bypassed by accident.</p>
+<p>This is the "data shape + invariant" pattern: the type stays easy to pass around, but construction becomes explicit and fallible so invariants can't be bypassed by accident.</p>
 <p>See: <a href="../../../reference/derives/validation/">Derives: Validation (Reference)</a>.</p>
 <h2 id="pattern-matching-and-destructuring">Pattern matching and destructuring<a class="headerlink" href="#pattern-matching-and-destructuring" title="Permanent link">&para;</a></h2>
 <p>Models can be destructured by field name in <code>match</code> patterns:</p>
@@ -6055,8 +6158,7 @@ fallible so invariants can't be bypassed by accident.</p>
 <ul>
 <li><strong>Expecting positional construction</strong>: model constructors are keyword-only.</li>
 <li><strong>Using <code>class</code> for schema mapping</strong>: field metadata/aliases are model-only.</li>
-<li><strong>Expecting aliases to rename fields everywhere</strong>: aliases are for specific key positions and wire mapping; the
-  canonical name remains the stable identifier in code.</li>
+<li><strong>Expecting aliases to rename fields everywhere</strong>: aliases are for specific key positions and wire mapping; the canonical name remains the stable identifier in code.</li>
 </ul>
 
 

@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3155,6 +3247,8 @@
       
         
       
+        
+      
     
     
       
@@ -3486,6 +3580,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3631,7 +3746,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3647,14 +3762,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5647,8 +5762,7 @@
 
 
 <h1 id="stdreflection-reference">std.reflection (reference)<a class="headerlink" href="#stdreflection-reference" title="Permanent link">&para;</a></h1>
-<p>This page documents the <code>std.reflection</code> surface exposed by the standard library.
-Use it when you want to inspect field metadata produced by models and classes.</p>
+<p>This page documents the <code>std.reflection</code> surface exposed by the standard library. Use it when you want to inspect field metadata produced by models and classes.</p>
 <div class="admonition info">
 <p class="admonition-title">Related pages</p>
 <ul>
@@ -5660,8 +5774,7 @@ Use it when you want to inspect field metadata produced by models and classes.</
 <p>Import with:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.reflection</span><span class="w"> </span><span class="kn">import</span> <span class="kt">FieldInfo</span>
 </code></pre></div>
-<p>You only need to import <code>FieldInfo</code> when you want to spell the type explicitly in an annotation.
-Calling <code>obj.__fields__()</code> and inspecting the returned records does not require an explicit import.</p>
+<p>You only need to import <code>FieldInfo</code> when you want to spell the type explicitly in an annotation. Calling <code>obj.__fields__()</code> and inspecting the returned records does not require an explicit import.</p>
 <h2 id="types">Types<a class="headerlink" href="#types" title="Permanent link">&para;</a></h2>
 <h3 id="fieldinfo"><code>FieldInfo</code><a class="headerlink" href="#fieldinfo" title="Permanent link">&para;</a></h3>
 <p>Field metadata returned by <code>__fields__()</code>.</p>

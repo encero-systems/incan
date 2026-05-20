@@ -1250,6 +1250,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1476,6 +1484,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1544,6 +1594,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1649,6 +1720,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3154,6 +3246,8 @@
       
         
       
+        
+      
     
     
       
@@ -3485,6 +3579,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3630,7 +3745,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3646,14 +3761,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5649,9 +5764,7 @@
 
 
 <h1 id="incan-vs-rust">Incan vs Rust<a class="headerlink" href="#incan-vs-rust" title="Permanent link">&para;</a></h1>
-<p>Rust is the right answer when low-level control, performance predictability, and ecosystem maturity matter more than
-authoring speed. Incan does not replace Rust. It compiles to Rust so that high-level application code can land on the
-Rust toolchain and ecosystem.</p>
+<p>Rust is the right answer when low-level control, performance predictability, and ecosystem maturity matter more than authoring speed. Incan does not replace Rust. It compiles to Rust so that high-level application code can land on the Rust toolchain and ecosystem.</p>
 <p>Choose Incan when the code is mostly application logic and the Rust version would be more ceremony than signal.</p>
 <h2 id="where-rust-wins">Where Rust wins<a class="headerlink" href="#where-rust-wins" title="Permanent link">&para;</a></h2>
 <ul>
@@ -5670,10 +5783,8 @@ Rust toolchain and ecosystem.</p>
 <li>Faster iteration for teams that like Rust's guarantees but not Rust's surface area for everyday code.</li>
 </ul>
 <h2 id="the-honest-tradeoff">The honest tradeoff<a class="headerlink" href="#the-honest-tradeoff" title="Permanent link">&para;</a></h2>
-<p>Rust is more mature, more explicit, and more powerful. Incan deliberately gives up some low-level control to make
-high-level code smaller and easier to scan.</p>
-<p>That tradeoff is only worth it when the output is application-shaped. If the code is a runtime, database engine,
-kernel, allocator, compiler backend, or heavily optimized crate, write Rust.</p>
+<p>Rust is more mature, more explicit, and more powerful. Incan deliberately gives up some low-level control to make high-level code smaller and easier to scan.</p>
+<p>That tradeoff is only worth it when the output is application-shaped. If the code is a runtime, database engine, kernel, allocator, compiler backend, or heavily optimized crate, write Rust.</p>
 <h2 id="decision-guide">Decision guide<a class="headerlink" href="#decision-guide" title="Permanent link">&para;</a></h2>
 <table>
 <thead>
@@ -5703,8 +5814,7 @@ kernel, allocator, compiler backend, or heavily optimized crate, write Rust.</p>
 </table>
 <h2 id="source-notes">Source notes<a class="headerlink" href="#source-notes" title="Permanent link">&para;</a></h2>
 <ul>
-<li>Stack Overflow's 2025 Developer Survey calls Rust the "most admired programming language (72%)":
-  <a href="https://survey.stackoverflow.co/2025/technology/">Technology | 2025 Stack Overflow Developer Survey</a>.</li>
+<li>Stack Overflow's 2025 Developer Survey calls Rust the "most admired programming language (72%)": <a href="https://survey.stackoverflow.co/2025/technology/">Technology | 2025 Stack Overflow Developer Survey</a>.</li>
 </ul>
 
 

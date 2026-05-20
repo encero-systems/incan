@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3255,6 +3347,8 @@
       
         
       
+        
+      
     
     
       
@@ -3586,6 +3680,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3731,7 +3846,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3747,14 +3862,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5901,10 +6016,8 @@
 <li>Python <code>*args</code> collects a tuple; Incan <code>*args: T</code> collects <code>List[T]</code>.</li>
 <li>Python <code>**kwargs</code> collects a dict; Incan <code>**kwargs: T</code> collects <code>Dict[str, T]</code>.</li>
 <li>Python <code>**kwargs</code> is often used as an untyped escape hatch; Incan keyword captures are typed.</li>
-<li>Python can unpack any iterable or mapping at runtime; Incan only unpacks into fixed parameters when the compiler
-  can prove the length or key set statically.</li>
-<li><code>*expr</code> means "positional expansion" and is valid in calls and list literals. <code>**expr</code> means "mapping expansion"
-  and is valid in calls and dictionary literals.</li>
+<li>Python can unpack any iterable or mapping at runtime; Incan only unpacks into fixed parameters when the compiler can prove the length or key set statically.</li>
+<li><code>*expr</code> means "positional expansion" and is valid in calls and list literals. <code>**expr</code> means "mapping expansion" and is valid in calls and dictionary literals.</li>
 </ul>
 </div>
 <h2 id="when-to-use-rest-parameters">When to Use Rest Parameters<a class="headerlink" href="#when-to-use-rest-parameters" title="Permanent link">&para;</a></h2>
@@ -6042,9 +6155,7 @@
     <span class="n">ok_rest</span> <span class="o">=</span> <span class="n">needs_rest</span><span class="p">(</span><span class="o">*</span><span class="p">[</span><span class="mi">3</span><span class="p">,</span> <span class="mi">4</span><span class="p">])</span>
     <span class="k">return</span> <span class="n">ok_fixed</span> <span class="o">+</span> <span class="n">ok_rest</span>
 </code></pre></div>
-<p>For fixed positional parameters, the minimum shaped values are tuple expressions and inline list literals. A variable with
-type <code>List[T]</code> is still a homogeneous list whose length is not part of the type, so it can feed a <code>*args</code> rest parameter
-but cannot silently satisfy a fixed pair such as <code>fixed(x: int, y: int)</code>.</p>
+<p>For fixed positional parameters, the minimum shaped values are tuple expressions and inline list literals. A variable with type <code>List[T]</code> is still a homogeneous list whose length is not part of the type, so it can feed a <code>*args</code> rest parameter but cannot silently satisfy a fixed pair such as <code>fixed(x: int, y: int)</code>.</p>
 <p>For fixed keyword parameters, the minimum shaped value is an inline dictionary literal with string literal keys:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">route</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">method</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">method</span><span class="si">}</span><span class="s2"> </span><span class="si">{</span><span class="n">path</span><span class="si">}</span><span class="s2">&quot;</span>
@@ -6059,15 +6170,13 @@ but cannot silently satisfy a fixed pair such as <code>fixed(x: int, y: int)</co
     <span class="n">middle</span> <span class="o">=</span> <span class="p">[</span><span class="mi">2</span><span class="p">,</span> <span class="mi">3</span><span class="p">]</span>
     <span class="k">return</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="o">*</span><span class="n">middle</span><span class="p">,</span> <span class="mi">4</span><span class="p">]</span>
 </code></pre></div>
-<p>List spread preserves source order. Direct elements and spread elements must all be compatible with the resulting list
-element type.</p>
+<p>List spread preserves source order. Direct elements and spread elements must all be compatible with the resulting list element type.</p>
 <p>Use <code>**expr</code> inside a dictionary literal to expand an existing dictionary-like value into a new dictionary:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kt">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span>
     <span class="n">defaults</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;trace&quot;</span><span class="p">:</span> <span class="s2">&quot;off&quot;</span><span class="p">}</span>
     <span class="k">return</span> <span class="p">{</span><span class="o">**</span><span class="n">defaults</span><span class="p">,</span> <span class="s2">&quot;trace&quot;</span><span class="p">:</span> <span class="s2">&quot;enabled&quot;</span><span class="p">}</span>
 </code></pre></div>
-<p>Dictionary spread preserves source order, and later keys overwrite earlier keys just like ordinary dictionary insertion.
-That example returns a dictionary whose <code>"trace"</code> value is <code>"enabled"</code>.</p>
+<p>Dictionary spread preserves source order, and later keys overwrite earlier keys just like ordinary dictionary insertion. That example returns a dictionary whose <code>"trace"</code> value is <code>"enabled"</code>.</p>
 <p>The destination decides the valid marker:</p>
 <ul>
 <li><code>[*xs]</code> is valid because <code>*</code> expands positional values into a sequence destination.</li>
@@ -6082,9 +6191,7 @@ That example returns a dictionary whose <code>"trace"</code> value is <code>"ena
 <p>builds a rest list equivalent to:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="p">[</span><span class="mi">1</span><span class="p">]</span> <span class="o">+</span> <span class="n">extra</span> <span class="o">+</span> <span class="p">[</span><span class="mi">4</span><span class="p">]</span>
 </code></pre></div>
-<p>Keyword rest values and dictionary spread entries are inserted into a dictionary in source order. Duplicate direct named
-arguments are rejected, but a duplicate key that arrives through <code>**dict_value</code> follows ordinary dictionary insertion
-behavior: later entries replace earlier entries.</p>
+<p>Keyword rest values and dictionary spread entries are inserted into a dictionary in source order. Duplicate direct named arguments are rejected, but a duplicate key that arrives through <code>**dict_value</code> follows ordinary dictionary insertion behavior: later entries replace earlier entries.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">request</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">headers</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">headers</span><span class="p">)</span>
 
@@ -6136,8 +6243,7 @@ behavior: later entries replace earlier entries.</p>
 <p>lowers conceptually to a call with explicit rest containers:</p>
 <div class="language-text highlight"><pre><span></span><code>collect(&quot;event&quot;, [1] + xs, &lt;dict containing &quot;kind&quot;: &quot;demo&quot; plus labels inserted in source order&gt;)
 </code></pre></div>
-<p>The emitted Rust uses ordinary <code>Vec</code> and <code>HashMap</code> construction; it does not use runtime reflection or Rust variadics.
-Collection literal spread is for runtime list and dictionary expressions; const frozen collection initializers still require direct entries.</p>
+<p>The emitted Rust uses ordinary <code>Vec</code> and <code>HashMap</code> construction; it does not use runtime reflection or Rust variadics. Collection literal spread is for runtime list and dictionary expressions; const frozen collection initializers still require direct entries.</p>
 <h2 id="type-errors">Type Errors<a class="headerlink" href="#type-errors" title="Permanent link">&para;</a></h2>
 <p>The compiler reports errors for these cases:</p>
 <ul>

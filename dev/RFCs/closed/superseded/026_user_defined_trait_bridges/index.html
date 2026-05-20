@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6256,11 +6371,8 @@
 </code></pre></div>
 <p><strong>Parameters</strong>:</p>
 <ul>
-<li><strong><code>trait</code></strong> - The Rust trait to delegate (must be an imported symbol, not a string). The compiler generates
-  <code>impl sqlx::Executor for Pool</code> that forwards the specified methods to the wrapped <code>PgPool</code>.</li>
-<li><strong><code>methods</code></strong> - List of method names to delegate. If omitted, delegates <strong>all</strong> trait methods
-  (see <a href="#2-default-delegation-strategy">Design Decisions: Default Delegation Strategy</a>).
-  Use explicit lists when you only need a subset of the trait's methods.</li>
+<li><strong><code>trait</code></strong> - The Rust trait to delegate (must be an imported symbol, not a string). The compiler generates <code>impl sqlx::Executor for Pool</code> that forwards the specified methods to the wrapped <code>PgPool</code>.</li>
+<li><strong><code>methods</code></strong> - List of method names to delegate. If omitted, delegates <strong>all</strong> trait methods (see <a href="#2-default-delegation-strategy">Design Decisions: Default Delegation Strategy</a>). Use explicit lists when you only need a subset of the trait's methods.</li>
 </ul>
 <h4 id="multiple-traits">Multiple Traits<a class="headerlink" href="#multiple-traits" title="Permanent link">&para;</a></h4>
 <p>When your newtype needs to implement multiple traits, use the <code>traits</code> parameter (<em>note: plural</em>):</p>
@@ -6291,8 +6403,7 @@
 </code></pre></div>
 <p><strong>Parameter</strong>:</p>
 <ul>
-<li><strong><code>methods</code> (dict form)</strong> - Maps Incan method names (keys) to Rust method names (values).
-  The compiler generates methods with the Incan names that delegate to the Rust names.</li>
+<li><strong><code>methods</code> (dict form)</strong> - Maps Incan method names (keys) to Rust method names (values). The compiler generates methods with the Incan names that delegate to the Rust names.</li>
 </ul>
 <p><strong>When to use</strong>: The Rust trait uses naming conventions that conflict with Incan style or when avoiding reserved keywords.</p>
 <blockquote>
@@ -6387,8 +6498,7 @@ original method names.</p>
 </code></pre></div>
 <p><strong>Rule of thumb</strong>: Try omitting <code>associated_types</code> first. If the compiler errors with "missing associated type", add explicit specification.</p>
 <p><strong>Why symbols instead of strings:</strong></p>
-<p>Like <code>trait=</code> parameters, type values are <strong>symbolic references</strong> (they must exist in the namespace).
-Built-in types like <code>int</code>, <code>str</code>, <code>bool</code> work without imports. The LSP autocompletes available types as you type.</p>
+<p>Like <code>trait=</code> parameters, type values are <strong>symbolic references</strong> (they must exist in the namespace). Built-in types like <code>int</code>, <code>str</code>, <code>bool</code> work without imports. The LSP autocompletes available types as you type.</p>
 <p>For example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># ✅ Symbols - validated, refactoring-safe</span>
 <span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span> <span class="kn">import</span><span class="w"> </span><span class="nn">JoinHandle</span>
@@ -6509,16 +6619,14 @@ Built-in types like <code>int</code>, <code>str</code>, <code>bool</code> work w
 <span class="k">pub</span> <span class="nb">type</span> <span class="kt">Response</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">AxumRawResponse</span><span class="p">:</span>
 <span class="w">    </span><span class="sd">&quot;&quot;&quot;HTTP response wrapper (see std.web.response in the stdlib).&quot;&quot;&quot;</span>
 </code></pre></div>
-<p><strong>Pros:</strong> Integrates with Rust's derive model for the curated trait set; minimal syntax at use sites.<br />
-<strong>Cons:</strong> Each new trait requires stdlib metadata and a proc macro (or shared generator); user crates cannot add arbitrary traits through this path alone.</p>
+<p><strong>Pros:</strong> Integrates with Rust's derive model for the curated trait set; minimal syntax at use sites. <strong>Cons:</strong> Each new trait requires stdlib metadata and a proc macro (or shared generator); user crates cannot add arbitrary traits through this path alone.</p>
 <h3 id="user-defined-this-rfc">User-defined (this RFC)<a class="headerlink" href="#user-defined-this-rfc" title="Permanent link">&para;</a></h3>
 <p><strong>Mechanism:</strong> Authors attach <code>@rust.delegate</code> with symbolic trait references and optional method maps; the compiler generates the corresponding <code>impl</code> without requiring a new stdlib derive entry for every trait.</p>
 <p><strong>Example:</strong></p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">delegate</span><span class="p">(</span><span class="k">trait</span><span class="o">=</span><span class="n">sqlx</span><span class="p">::</span><span class="nc">Executor</span><span class="p">,</span> <span class="n">methods</span><span class="o">=</span><span class="p">[</span><span class="s2">&quot;execute&quot;</span><span class="p">])</span>
 <span class="nb">type</span> <span class="nc">Pool</span> <span class="o">=</span> <span class="k">newtype</span> <span class="nc">PgPool</span>
 </code></pre></div>
-<p><strong>Pros:</strong> User-extensible, explicit, grep-able; same surface for stdlib migration targets.<br />
-<strong>Cons:</strong> More surface area and compiler responsibility than a fixed derive allowlist.</p>
+<p><strong>Pros:</strong> User-extensible, explicit, grep-able; same surface for stdlib migration targets. <strong>Cons:</strong> More surface area and compiler responsibility than a fixed derive allowlist.</p>
 <h2 id="lsp-support">LSP Support<a class="headerlink" href="#lsp-support" title="Permanent link">&para;</a></h2>
 <p>Language Server Protocol integration is critical for usability and provides the following behaviors:</p>
 <h3 id="autocomplete">Autocomplete<a class="headerlink" href="#autocomplete" title="Permanent link">&para;</a></h3>
@@ -6774,8 +6882,7 @@ like <code>reqwest</code> provide structs (not traits), so delegation would appl
 </code></pre></div>
 <h3 id="3-limitations-auto-traits">3. Limitations: Auto Traits<a class="headerlink" href="#3-limitations-auto-traits" title="Permanent link">&para;</a></h3>
 <p><strong>Auto traits (<code>Send</code>, <code>Sync</code>, <code>Unpin</code>, <code>UnwindSafe</code>, <code>RefUnwindSafe</code>) are not supported by <code>@rust.delegate</code>.</strong></p>
-<p>These traits are automatically inferred by Rust's compiler based on type composition and cannot be implemented manually.
-The newtype automatically inherits these traits if the wrapped type has them—no delegation needed.</p>
+<p>These traits are automatically inferred by Rust's compiler based on type composition and cannot be implemented manually. The newtype automatically inherits these traits if the wrapped type has them—no delegation needed.</p>
 <p><strong>What happens automatically:</strong></p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">std</span><span class="p">::</span><span class="n">sync</span> <span class="kn">import</span><span class="w"> </span><span class="nn">Arc</span>
 
@@ -6865,8 +6972,7 @@ The newtype automatically inherits these traits if the wrapped type has them—n
 </ol>
 <p>This ensures Incan works in all environments while preferring rich metadata when available.</p>
 <p><strong>Introspection capabilities comparison:</strong></p>
-<p>We considered using <code>syn</code> for this parsing model, but unfortunately it lacks the features to make that a viable option.
-This table shows <code>syn</code> compared to the <code>rust-analyzer</code> approach:</p>
+<p>We considered using <code>syn</code> for this parsing model, but unfortunately it lacks the features to make that a viable option. This table shows <code>syn</code> compared to the <code>rust-analyzer</code> approach:</p>
 <table>
 <thead>
 <tr>

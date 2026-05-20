@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3131,6 +3223,8 @@
       
         
       
+        
+      
     
     
       
@@ -3462,6 +3556,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3607,7 +3722,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3623,14 +3738,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5695,19 +5810,8 @@
 </tr>
 </tbody>
 </table>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span><span class="p">,</span> <span class="nc">Endian</span><span class="p">,</span> <span class="nc">IoError</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">read_header</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
-    <span class="n">buf</span> <span class="o">=</span> <span class="nc">BytesIO</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
-    <span class="n">magic</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read_exact</span><span class="p">(</span><span class="mi">4</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">magic</span><span class="p">)</span> <span class="o">!=</span> <span class="mi">4</span><span class="p">:</span>
-        <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="nc">IoError</span><span class="p">(</span><span class="n">operation</span><span class="o">=</span><span class="s2">&quot;read_header&quot;</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;invalid_input&quot;</span><span class="p">,</span> <span class="n">detail</span><span class="o">=</span><span class="s2">&quot;bad magic&quot;</span><span class="p">,</span> <span class="n">position</span><span class="o">=</span><span class="n">buf</span><span class="o">.</span><span class="n">tell</span><span class="p">()))</span>
-    <span class="n">version</span><span class="p">:</span> <span class="kt">u32</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="nc">Endian</span><span class="o">.</span><span class="nc">Little</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">int</span><span class="p">(</span><span class="n">version</span><span class="p">))</span>
-</code></pre></div>
 <h2 id="binary-numeric-io">Binary Numeric I/O<a class="headerlink" href="#binary-numeric-io" title="Permanent link">&para;</a></h2>
-<p><code>BytesIO</code> uses trait-backed overloads for exact-width numeric reads and writes. Callers use
-<code>read(endian)</code> and <code>write(value, endian)</code> directly on the stream.</p>
+<p><code>BytesIO</code> uses trait-backed overloads for exact-width numeric reads and writes. Callers use <code>read(endian)</code> and <code>write(value, endian)</code> directly on the stream.</p>
 <p>Reads are selected by the expected result type, so provide static type context. Writes are selected by the value type.</p>
 <table>
 <thead>
@@ -5735,20 +5839,7 @@
 </tr>
 </tbody>
 </table>
-<p>Supported <code>T</code> values are <code>u8</code>, <code>i8</code>, <code>u16</code>, <code>i16</code>, <code>u32</code>, <code>i32</code>, <code>u64</code>, <code>i64</code>, <code>u128</code>, <code>i128</code>, <code>f32</code>, and <code>f64</code>.
-Endianness is ignored for one-byte values.</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.io</span><span class="w"> </span><span class="kn">import</span> <span class="nc">BytesIO</span><span class="p">,</span> <span class="nc">Endian</span><span class="p">,</span> <span class="nc">IoError</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">encode_count</span><span class="p">(</span><span class="nb">count</span><span class="p">:</span> <span class="kt">u32</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">bytes</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
-    <span class="n">out</span> <span class="o">=</span> <span class="nc">BytesIO</span><span class="p">()</span>
-    <span class="n">out</span><span class="o">.</span><span class="n">write</span><span class="p">(</span><span class="nb">count</span><span class="p">,</span> <span class="nc">Endian</span><span class="o">.</span><span class="nc">Little</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">out</span><span class="o">.</span><span class="n">into_bytes</span><span class="p">())</span>
-
-<span class="k">def</span><span class="w"> </span><span class="nf">decode_count</span><span class="p">(</span><span class="n">data</span><span class="p">:</span> <span class="nb">bytes</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">u32</span><span class="p">,</span> <span class="nc">IoError</span><span class="p">]:</span>
-    <span class="n">buf</span> <span class="o">=</span> <span class="nc">BytesIO</span><span class="p">(</span><span class="n">data</span><span class="p">)</span>
-    <span class="nb">count</span><span class="p">:</span> <span class="kt">u32</span> <span class="o">=</span> <span class="n">buf</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="nc">Endian</span><span class="o">.</span><span class="nc">Little</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nb">count</span><span class="p">)</span>
-</code></pre></div>
+<p>Supported <code>T</code> values are <code>u8</code>, <code>i8</code>, <code>u16</code>, <code>i16</code>, <code>u32</code>, <code>i32</code>, <code>u64</code>, <code>i64</code>, <code>u128</code>, <code>i128</code>, <code>f32</code>, and <code>f64</code>. Endianness is ignored for one-byte values.</p>
 <p><code>BytesIO</code> is in-memory only. Use <code>std.tempfile.SpooledTemporaryFile</code> when a stream should start in memory and roll over to a temporary file after a size threshold.</p>
 
 

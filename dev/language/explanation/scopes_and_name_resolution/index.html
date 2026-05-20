@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3071,6 +3163,8 @@
       
         
       
+        
+      
     
     
       
@@ -3402,6 +3496,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../derives_and_traits/" class="md-nav__link">
         
   
@@ -3547,7 +3662,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3563,14 +3678,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5795,9 +5910,7 @@
 </ul>
 <p>This page explains how those rules interact, and how to write clear, predictable code.</p>
 <h2 id="mental-model">Mental model<a class="headerlink" href="#mental-model" title="Permanent link">&para;</a></h2>
-<p>Think of the compiler keeping a <strong>stack of scopes</strong>. When you enter a new syntactic region (module, function, block, …)
-it pushes a scope; when you leave it pops the scope. Name lookup walks from the top of the stack outward until it finds
-a match.</p>
+<p>Think of the compiler keeping a <strong>stack of scopes</strong>. When you enter a new syntactic region (module, function, block, …) it pushes a scope; when you leave it pops the scope. Name lookup walks from the top of the stack outward until it finds a match.</p>
 <p>This diagram shows how the compiler resolves a name:</p>
 <pre class="mermaid"><code>flowchart TB
     Enter["Enter region (module / function / block)"] --&gt; Push["Push new scope on the stack"]
@@ -5808,27 +5921,21 @@ a match.</p>
     Outer --&gt; Found
     Use --&gt; Exit["Exit region"]
     Exit --&gt; Pop["Pop scope from the stack"]</code></pre>
-<p>Internally this is implemented by the compiler’s symbol table (<code>lookup()</code> searches outward; <code>lookup_local()</code> checks only
-the current scope).</p>
+<p>Internally this is implemented by the compiler’s symbol table (<code>lookup()</code> searches outward; <code>lookup_local()</code> checks only the current scope).</p>
 <div class="admonition note">
 <p class="admonition-title">Coming from Python?</p>
 <p>Two differences tend to surprise people:</p>
 <ul>
 <li>In Python, <code>if</code>/<code>for</code>/<code>while</code> blocks <strong>don’t</strong> create a new scope (so names can “leak” out of blocks).</li>
-<li>Python resolves names with <strong>LEGB</strong> (Local → Enclosing → Global → Builtins), and has a key rule:
-  <strong>any assignment in a function makes that name local to the entire function</strong>, unless you declare it
-  <code>global</code>/<code>nonlocal</code>. In Incan, blocks are scopes and <code>x = ...</code> is inferred as “new vs reassign” by looking
-  outward for an existing binding.</li>
+<li>Python resolves names with <strong>LEGB</strong> (Local → Enclosing → Global → Builtins), and has a key rule: <strong>any assignment in a function makes that name local to the entire function</strong>, unless you declare it <code>global</code>/<code>nonlocal</code>. In Incan, blocks are scopes and <code>x = ...</code> is inferred as “new vs reassign” by looking outward for an existing binding.</li>
 </ul>
 </div>
 <div class="admonition note">
 <p class="admonition-title">Coming from Rust?</p>
 <p>The spirit is similar (lexical scopes, <code>mut</code> for reassignment), but the surface syntax differs:</p>
 <ul>
-<li>Incan’s <code>let x = ...</code> is the explicit way to introduce a <strong>new binding</strong> in the current scope (often used for
-  shadowing).</li>
-<li>Plain <code>x = ...</code> is context-sensitive: it either <strong>reassigns</strong> an existing <code>mut</code> binding, or introduces a new
-  immutable binding if <code>x</code> doesn’t exist yet.</li>
+<li>Incan’s <code>let x = ...</code> is the explicit way to introduce a <strong>new binding</strong> in the current scope (often used for shadowing).</li>
+<li>Plain <code>x = ...</code> is context-sensitive: it either <strong>reassigns</strong> an existing <code>mut</code> binding, or introduces a new immutable binding if <code>x</code> doesn’t exist yet.</li>
 </ul>
 </div>
 <h2 id="what-counts-as-a-scope-in-incan">What counts as a scope in Incan?<a class="headerlink" href="#what-counts-as-a-scope-in-incan" title="Permanent link">&para;</a></h2>
@@ -5873,8 +5980,7 @@ the current scope).</p>
 <p>Methods also have a function-like scope and define receiver names for the method body:</p>
 <ul>
 <li>Instance methods define <code>self</code> or <code>mut self</code>.</li>
-<li>Class methods define their explicit first parameter, conventionally <code>cls</code>. Inside a <code>@classmethod</code>, calling
-  <code>cls(...)</code> constructs the declaring type.</li>
+<li>Class methods define their explicit first parameter, conventionally <code>cls</code>. Inside a <code>@classmethod</code>, calling <code>cls(...)</code> constructs the declaring type.</li>
 </ul>
 <p>For example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">const</span> <span class="nc">PI</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">3.14159</span>  <span class="c1"># module scope</span>
@@ -5952,10 +6058,8 @@ the current scope).</p>
 <p>Notes on <code>let</code>:</p>
 <ul>
 <li><code>let x = ...</code> is the explicit form for “<strong>introduce a new binding</strong> in the current scope”.</li>
-<li>It’s <strong>optional</strong> when introducing a name for the first time (plain <code>x = ...</code> will do that if <code>x</code> doesn’t exist yet),
-  but <code>let</code> is how you make <strong>shadowing</strong> unambiguous and readable in nested scopes.</li>
-<li><code>mut x = ...</code> introduces a <strong>new mutable</strong> binding. Reassigning later uses plain <code>x = ...</code> (and requires that <code>x</code> was
-  introduced with <code>mut</code>).</li>
+<li>It’s <strong>optional</strong> when introducing a name for the first time (plain <code>x = ...</code> will do that if <code>x</code> doesn’t exist yet), but <code>let</code> is how you make <strong>shadowing</strong> unambiguous and readable in nested scopes.</li>
+<li><code>mut x = ...</code> introduces a <strong>new mutable</strong> binding. Reassigning later uses plain <code>x = ...</code> (and requires that <code>x</code> was introduced with <code>mut</code>).</li>
 </ul>
 <p>You get an error if you write this:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">errors_without_mut</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Unit</span><span class="p">:</span>
@@ -5965,8 +6069,7 @@ the current scope).</p>
 </code></pre></div>
 <p>That’s because plain <code>x = 2</code> is treated as a reassignment (since <code>x</code> already exists), and the outer <code>x</code> is immutable.</p>
 <h3 id="prefer-explicit-let-mut">Prefer explicit <code>let</code> / <code>mut</code><a class="headerlink" href="#prefer-explicit-let-mut" title="Permanent link">&para;</a></h3>
-<p>Use <code>let</code>/<code>mut</code> when you care about whether you’re shadowing or reassigning; it avoids surprises and matches what you
-intended.</p>
+<p>Use <code>let</code>/<code>mut</code> when you care about whether you’re shadowing or reassigning; it avoids surprises and matches what you intended.</p>
 <p>Example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">shadow_vs_reassign</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">mut</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">10</span>
@@ -5982,10 +6085,8 @@ intended.</p>
 <p>Incan closures use arrow syntax:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">add1</span> <span class="o">=</span> <span class="p">(</span><span class="n">x</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">x</span> <span class="o">+</span> <span class="mi">1</span>
 </code></pre></div>
-<p>Closures introduce their own function scope (parameters are local to the closure body). Names from outer scopes can be
-<strong>read</strong> by normal lexical lookup.</p>
-<p>Plain assignment inside a closure behaves the same as elsewhere: if the name exists already, it’s treated as a reassignment
-(so it requires the outer binding to be <code>mut</code>). Shadow with <code>let</code> if you want a closure-local name.</p>
+<p>Closures introduce their own function scope (parameters are local to the closure body). Names from outer scopes can be <strong>read</strong> by normal lexical lookup.</p>
+<p>Plain assignment inside a closure behaves the same as elsewhere: if the name exists already, it’s treated as a reassignment (so it requires the outer binding to be <code>mut</code>). Shadow with <code>let</code> if you want a closure-local name.</p>
 <p>Example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">closure_capture</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">mut</span> <span class="n">x</span> <span class="o">=</span> <span class="mi">1</span>
@@ -6008,15 +6109,13 @@ intended.</p>
 <li>
 <p><strong>“Why does <code>x = ...</code> sometimes require <code>mut</code>?”</strong></p>
 <ul>
-<li>Only <em>reassignment</em> requires <code>mut</code>. Plain assignment is inferred: it reassigns if <code>x</code> already exists; otherwise it
-creates a new immutable binding.</li>
+<li>Only <em>reassignment</em> requires <code>mut</code>. Plain assignment is inferred: it reassigns if <code>x</code> already exists; otherwise it creates a new immutable binding.</li>
 </ul>
 </li>
 <li>
 <p><strong>“Where do imported names live?”</strong></p>
 <ul>
-<li>Imports add names to the <strong>module scope</strong> (file scope). Inside functions, you can refer to them like any
-other outer binding.</li>
+<li>Imports add names to the <strong>module scope</strong> (file scope). Inside functions, you can refer to them like any other outer binding.</li>
 </ul>
 </li>
 </ul>

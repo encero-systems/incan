@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5994,8 +6109,7 @@
 <p>That ordering matters. Last-use moves should win over defensive cloning. Borrowed materialization should win over passing <code>&amp;T</code> into an owned Incan sink. Rust interop should preserve the shape the Rust API expects instead of forcing Incan-owned values everywhere.</p>
 <h2 id="core-policies">Core policies<a class="headerlink" href="#core-policies" title="Permanent link">&para;</a></h2>
 <h3 id="owned-incan-sinks">Owned Incan sinks<a class="headerlink" href="#owned-incan-sinks" title="Permanent link">&para;</a></h3>
-<p>Incan function arguments, struct fields, collection elements, assignments, returns, and match scrutinees are owned value sinks unless the specific sink says otherwise.
-At these boundaries:</p>
+<p>Incan function arguments, struct fields, collection elements, assignments, returns, and match scrutinees are owned value sinks unless the specific sink says otherwise. At these boundaries:</p>
 <ul>
 <li>String literals and static strings materialize to owned <code>String</code> when the target is <code>str</code>, generic, or otherwise inferred as owned Incan storage.</li>
 <li>Non-<code>Copy</code> variables move when lowering marks them as <code>VarAccess::Move</code>.</li>
@@ -6026,8 +6140,7 @@ At these boundaries:</p>
 <h3 id="match-scrutinees">Match scrutinees<a class="headerlink" href="#match-scrutinees" title="Permanent link">&para;</a></h3>
 <p>Generated Rust <code>match</code> consumes the scrutinee shape. The planner treats match scrutinees like owned-result materialization so borrowed or shared non-<code>Copy</code> values are cloned before matching when needed.</p>
 <h3 id="generic-clone-bounds">Generic clone bounds<a class="headerlink" href="#generic-clone-bounds" title="Permanent link">&para;</a></h3>
-<p>Backend-inserted <code>.clone()</code> calls are invisible to source-level trait-bound inference unless the backend mirrors them.
-When ownership planning can clone a generic value, <code>src/backend/ir/trait_bound_inference.rs</code> must add the corresponding <code>Clone</code> bound. Otherwise the generated Rust may fail only after codegen.</p>
+<p>Backend-inserted <code>.clone()</code> calls are invisible to source-level trait-bound inference unless the backend mirrors them. When ownership planning can clone a generic value, <code>src/backend/ir/trait_bound_inference.rs</code> must add the corresponding <code>Clone</code> bound. Otherwise the generated Rust may fail only after codegen.</p>
 <h2 id="contributor-rules">Contributor rules<a class="headerlink" href="#contributor-rules" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Do not fix ownership bugs by adding local <code>.clone()</code>, <code>&amp;</code>, <code>&amp;mut</code>, <code>.as_ref()</code>, <code>.to_string()</code>, or <code>.into()</code> in an emitter unless the operation is truly local to a Rust helper API.</li>

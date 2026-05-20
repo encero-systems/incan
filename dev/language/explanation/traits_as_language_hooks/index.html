@@ -1165,6 +1165,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1391,6 +1399,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../how-to/generators/" class="md-nav__link">
         
   
@@ -1459,6 +1509,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1564,6 +1635,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3071,6 +3163,8 @@
       
         
       
+        
+      
     
     
       
@@ -3402,6 +3496,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../derives_and_traits/" class="md-nav__link">
         
   
@@ -3547,7 +3662,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3563,14 +3678,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5670,8 +5785,7 @@
 
 <h1 id="traits-as-language-hooks-and-overloading">Traits as language hooks (and overloading)<a class="headerlink" href="#traits-as-language-hooks-and-overloading" title="Permanent link">&para;</a></h1>
 <p>Traits let you describe <strong>behavior contracts</strong>: “a type supports X”.</p>
-<p>Some common language features are easiest to understand as <strong>desugaring</strong> into trait methods. This is similar in spirit
-to Rust using traits like <code>IntoIterator</code>, <code>Index</code>, and <code>Add</code> to power <code>for</code>, indexing, and operators.</p>
+<p>Some common language features are easiest to understand as <strong>desugaring</strong> into trait methods. This is similar in spirit to Rust using traits like <code>IntoIterator</code>, <code>Index</code>, and <code>Add</code> to power <code>for</code>, indexing, and operators.</p>
 <p>This page explains the idea with one concrete example. For the authoritative reference pages, see:</p>
 <ul>
 <li><a href="../../reference/derives_and_traits/">Derives &amp; traits (Reference)</a></li>
@@ -5706,8 +5820,7 @@ to Rust using traits like <code>IntoIterator</code>, <code>Index</code>, and <co
 <p>Think:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">value</span> <span class="o">=</span> <span class="n">xs</span><span class="o">.</span><span class="fm">__getitem__</span><span class="p">(</span><span class="n">i</span><span class="p">)</span>
 </code></pre></div>
-<p>So if you want a custom type to support <code>[]</code>, you implement the indexing hook method (and the corresponding trait
-requirements as defined in the stdlib trait docs):</p>
+<p>So if you want a custom type to support <code>[]</code>, you implement the indexing hook method (and the corresponding trait requirements as defined in the stdlib trait docs):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Grid</span><span class="p">:</span>
     <span class="n">data</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>
 
@@ -5754,8 +5867,7 @@ requirements as defined in the stdlib trait docs):</p>
 <p>In Incan, most extensibility is intended to flow through traits and explicit, checkable contracts.</p>
 <h2 id="a-concrete-mental-model">A concrete mental model<a class="headerlink" href="#a-concrete-mental-model" title="Permanent link">&para;</a></h2>
 <p>You can think of hook traits as giving user-defined types the same “surface ergonomics” that built-in types have.</p>
-<p>For example, if a type can be indexed, you should be able to write <code>x[i]</code> without caring whether <code>x</code> is a built-in list
-or a custom collection type.</p>
+<p>For example, if a type can be indexed, you should be able to write <code>x[i]</code> without caring whether <code>x</code> is a built-in list or a custom collection type.</p>
 <p>That’s why the stdlib defines traits for:</p>
 <ul>
 <li>collection protocols (<code>len</code>, iteration, membership, truthiness)</li>

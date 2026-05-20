@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5958,14 +6073,12 @@
 
 <h1 id="managing-dependencies">Managing dependencies<a class="headerlink" href="#managing-dependencies" title="Permanent link">&para;</a></h1>
 <p>This guide covers how to add, configure, and lock Rust crate dependencies in Incan projects.</p>
-<p>For the full manifest format, see: <a href="../../reference/project_configuration/">Project configuration reference</a>.<br />
-For inline import syntax, see: <a href="../../../language/how-to/rust_interop/">Rust interop</a>.</p>
+<p>For the full manifest format, see: <a href="../../reference/project_configuration/">Project configuration reference</a>. For inline import syntax, see: <a href="../../../language/how-to/rust_interop/">Rust interop</a>.</p>
 <h2 id="adding-a-rust-crate-quick-start">Adding a Rust crate (quick start)<a class="headerlink" href="#adding-a-rust-crate-quick-start" title="Permanent link">&para;</a></h2>
 <p>The simplest way to use a Rust crate is with an inline version annotation:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">my_crate</span> <span class="o">@</span> <span class="s2">&quot;1.0&quot;</span>
 </code></pre></div>
-<p>This works in any <code>.incn</code> file, no configuration files needed. The compiler adds the dependency to the generated
-<code>Cargo.toml</code> automatically.</p>
+<p>This works in any <code>.incn</code> file, no configuration files needed. The compiler adds the dependency to the generated <code>Cargo.toml</code> automatically.</p>
 <p>For common crates (serde, tokio, reqwest, etc.), you don't even need a version — the compiler has tested defaults:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">serde_json</span> <span class="k">as</span> <span class="n">json</span>    <span class="c1"># Uses known-good default: serde_json 1.0</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span>                 <span class="c1"># Uses known-good default: tokio 1 with common features</span>
@@ -5983,8 +6096,7 @@ For inline import syntax, see: <a href="../../../language/how-to/rust_interop/">
 <span class="n">serde</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;derive&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 <span class="n">serde_json</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span>
 </code></pre></div>
-<p>Once a crate is in <code>incan.toml</code>, the manifest is the single source of truth. Inline <code>@ "version"</code>
-annotations for that crate are not allowed — use bare imports instead:</p>
+<p>Once a crate is in <code>incan.toml</code>, the manifest is the single source of truth. Inline <code>@ "version"</code> annotations for that crate are not allowed — use bare imports instead:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># Good: bare import, version comes from incan.toml</span>
 <span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">tokio</span>
 
@@ -6012,8 +6124,7 @@ annotations for that crate are not allowed — use bare imports instead:</p>
 <span class="n">criterion</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;0.5&quot;</span>
 <span class="n">test_helpers</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">path</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;../test-helpers&quot;</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
-<p>Dev dependencies are only available in test contexts (files under <code>tests/</code>). Importing a dev-only crate from production
-code produces a compile-time error.</p>
+<p>Dev dependencies are only available in test contexts (files under <code>tests/</code>). Importing a dev-only crate from production code produces a compile-time error.</p>
 <h2 id="locking-dependencies">Locking dependencies<a class="headerlink" href="#locking-dependencies" title="Permanent link">&para;</a></h2>
 <h3 id="generating-the-lock-file">Generating the lock file<a class="headerlink" href="#generating-the-lock-file" title="Permanent link">&para;</a></h3>
 <p>Run <code>incan lock</code> to resolve all dependencies and create <code>incan.lock</code>:</p>
@@ -6022,11 +6133,9 @@ code produces a compile-time error.</p>
 <p>Or, if your <code>incan.toml</code> has <code>[project.scripts].main</code> set:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>lock
 </code></pre></div>
-<p><code>incan.lock</code> embeds the resolved <code>Cargo.lock</code> and a fingerprint of your dependency inputs. <strong>Commit it to version control</strong>
-for reproducible builds.</p>
+<p><code>incan.lock</code> embeds the resolved <code>Cargo.lock</code> and a fingerprint of your dependency inputs. <strong>Commit it to version control</strong> for reproducible builds.</p>
 <h3 id="default-buildtest-behavior">Default build/test behavior<a class="headerlink" href="#default-buildtest-behavior" title="Permanent link">&para;</a></h3>
-<p>If <code>incan.lock</code> doesn't exist and you run <code>incan build</code> or <code>incan test</code> without strict flags, the lock file is created
-automatically on first build.</p>
+<p>If <code>incan.lock</code> doesn't exist and you run <code>incan build</code> or <code>incan test</code> without strict flags, the lock file is created automatically on first build.</p>
 <p>If <code>incan.lock</code> already exists but is stale, default <code>incan build</code> and <code>incan test</code> warn and reuse the existing embedded <code>Cargo.lock</code> payload without rewriting <code>incan.lock</code>. Run <code>incan lock</code> when you intentionally want to refresh the committed lock file.</p>
 <p>For <code>incan test</code>, a generated or changed lock can make the generated Rust harness stale. The runner preheats stale harnesses before executing tests so later test commands can reuse the compiled Cargo state. When lock generation sees Rust dependency inputs or stdlib feature requirements, it also preheats those dependencies with <code>cargo test --no-run</code> into the generated test target domain before writing <code>incan.lock</code>; unchanged relocks reuse a dependency preheat fingerprint.</p>
 <h3 id="strict-mode-for-ci">Strict mode for CI<a class="headerlink" href="#strict-mode-for-ci" title="Permanent link">&para;</a></h3>
@@ -6051,8 +6160,7 @@ incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span cla
 <div class="language-bash highlight"><pre><span></span><code><span class="nv">INCAN_LOCKED</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>incan<span class="w"> </span>build<span class="w"> </span>src/main.incn
 <span class="nv">INCAN_FROZEN</span><span class="o">=</span><span class="m">1</span><span class="w"> </span>incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span>tests/
 </code></pre></div>
-<p><code>INCAN_FROZEN=1</code> implies both offline and locked policy.
-Use <code>--no-offline</code>, <code>--no-locked</code>, or <code>--no-frozen</code> to disable matching environment defaults for a single command.</p>
+<p><code>INCAN_FROZEN=1</code> implies both offline and locked policy. Use <code>--no-offline</code>, <code>--no-locked</code>, or <code>--no-frozen</code> to disable matching environment defaults for a single command.</p>
 <h2 id="resolution-rules">Resolution rules<a class="headerlink" href="#resolution-rules" title="Permanent link">&para;</a></h2>
 <p>When the compiler resolves a dependency, it follows this precedence:</p>
 <table>

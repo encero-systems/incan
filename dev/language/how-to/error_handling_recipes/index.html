@@ -1167,6 +1167,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1514,6 +1522,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../generators/" class="md-nav__link">
         
   
@@ -1582,6 +1632,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1687,6 +1758,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3192,6 +3284,8 @@
       
         
       
+        
+      
     
     
       
@@ -3523,6 +3617,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3668,7 +3783,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3684,14 +3799,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5723,8 +5838,7 @@
 
 
 <h1 id="error-handling-recipes">Error handling recipes<a class="headerlink" href="#error-handling-recipes" title="Permanent link">&para;</a></h1>
-<p>This page is a practical companion to <a href="../../explanation/error_handling/">Error handling</a>. It focuses on common patterns
-and “what to do when…”.</p>
+<p>This page is a practical companion to <a href="../../explanation/error_handling/">Error handling</a>. It focuses on common patterns and “what to do when…”.</p>
 <div class="admonition tip">
 <p class="admonition-title">Coming from Python?</p>
 <p>In Python, many failures surface as <strong>exceptions</strong> (<code>try</code>/<code>except</code>) and “propagation” is implicit.</p>
@@ -5802,8 +5916,7 @@ and “what to do when…”.</p>
         <span class="n">save_for_retry</span><span class="p">(</span><span class="n">e</span><span class="o">.</span><span class="n">value</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="dont-do-this-unwrap-on-user-input">“Don’t do this”: <code>unwrap()</code> on user input<a class="headerlink" href="#dont-do-this-unwrap-on-user-input" title="Permanent link">&para;</a></h2>
-<p><code>unwrap()</code> and <code>panic()</code> are for “should never happen” paths (tests, invariants, internal compiler bugs), not expected
-failures.</p>
+<p><code>unwrap()</code> and <code>panic()</code> are for “should never happen” paths (tests, invariants, internal compiler bugs), not expected failures.</p>
 <p>Prefer <code>Result</code> and handle the error where you can recover.</p>
 <h2 id="see-also">See also<a class="headerlink" href="#see-also" title="Permanent link">&para;</a></h2>
 <ul>

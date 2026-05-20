@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6170,28 +6285,22 @@ while_let_test ::= &quot;let&quot; pattern &quot;=&quot; expr
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ol>
 <li>
-<p>Keep using full <code>match</code> everywhere.
-This preserves one construct but keeps the repetitive <code>None =&gt; pass</code> / <code>Err(_) =&gt; pass</code> boilerplate that motivated this RFC.</p>
+<p>Keep using full <code>match</code> everywhere. This preserves one construct but keeps the repetitive <code>None =&gt; pass</code> / <code>Err(_) =&gt; pass</code> boilerplate that motivated this RFC.</p>
 </li>
 <li>
-<p><code>PATTERN match VALUE</code>.
-This is explicit, but it introduces a new dedicated control-flow spelling where a well-understood construct already exists.</p>
+<p><code>PATTERN match VALUE</code>. This is explicit, but it introduces a new dedicated control-flow spelling where a well-understood construct already exists.</p>
 </li>
 <li>
-<p>Extend <code>is</code>, as in <code>if value is Some(child):</code>.
-This is plausible, especially given RFC 018, but it frames the feature more as a boolean pattern test than as a single-arm destructuring branch.</p>
+<p>Extend <code>is</code>, as in <code>if value is Some(child):</code>. This is plausible, especially given RFC 018, but it frames the feature more as a boolean pattern test than as a single-arm destructuring branch.</p>
 </li>
 <li>
-<p>Walrus-style binding.
-This is awkward for pattern-matching constructs, especially around <code>Some(...)</code>, <code>Ok(...)</code>, and other constructors. It obscures the fact that the operation is a pattern match rather than assignment.</p>
+<p>Walrus-style binding. This is awkward for pattern-matching constructs, especially around <code>Some(...)</code>, <code>Ok(...)</code>, and other constructors. It obscures the fact that the operation is a pattern match rather than assignment.</p>
 </li>
 <li>
-<p>General Rust passthrough for <code>let</code> inside <code>if</code> / <code>while</code>.
-This was rejected because it weakens Incan's ownership of its own syntax and semantics.</p>
+<p>General Rust passthrough for <code>let</code> inside <code>if</code> / <code>while</code>. This was rejected because it weakens Incan's ownership of its own syntax and semantics.</p>
 </li>
 <li>
-<p>Ship only <code>if let</code> now and defer <code>while let</code>.
-This was rejected because the two constructs share the same mental model, pattern semantics, and implementation machinery. Deferring <code>while let</code> would force users back into <code>while true</code> plus <code>match</code> / <code>break</code> boilerplate for the looping form of the exact same problem.</p>
+<p>Ship only <code>if let</code> now and defer <code>while let</code>. This was rejected because the two constructs share the same mental model, pattern semantics, and implementation machinery. Deferring <code>while let</code> would force users back into <code>while true</code> plus <code>match</code> / <code>break</code> boilerplate for the looping form of the exact same problem.</p>
 </li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>

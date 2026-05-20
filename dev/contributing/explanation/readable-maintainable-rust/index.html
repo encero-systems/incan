@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6131,9 +6246,7 @@
 
 
 <h1 id="readable-maintainable-rust-a-practical-guide">Readable &amp; Maintainable Rust: A Practical Guide<a class="headerlink" href="#readable-maintainable-rust-a-practical-guide" title="Permanent link">&para;</a></h1>
-<p>This document contains a pragmatic set of principles, patterns, and guardrails for writing Rust that's easy to understand
-and safe to evolve. It draws from <a href="https://doc.rust-lang.org/book/">The Rust Book</a> and the
-<a href="https://rust-lang.github.io/api-guidelines/about.html">Rust API Guidelines</a>.</p>
+<p>This document contains a pragmatic set of principles, patterns, and guardrails for writing Rust that's easy to understand and safe to evolve. It draws from <a href="https://doc.rust-lang.org/book/">The Rust Book</a> and the <a href="https://rust-lang.github.io/api-guidelines/about.html">Rust API Guidelines</a>.</p>
 <p>Incan contributors are expected to follow these principles and patterns when writing Rust code.</p>
 <h2 id="table-of-contents">Table of Contents<a class="headerlink" href="#table-of-contents" title="Permanent link">&para;</a></h2>
 <ul>
@@ -6159,8 +6272,7 @@ and safe to evolve. It draws from <a href="https://doc.rust-lang.org/book/">The 
 </ul>
 <hr />
 <h2 id="what-readable-means-in-rust">What "Readable" Means in Rust<a class="headerlink" href="#what-readable-means-in-rust" title="Permanent link">&para;</a></h2>
-<p>Readable Rust is code that a competent Rustacean can <strong>scan and understand quickly</strong>, without excessive file-hopping or
-ownership gymnastics.</p>
+<p>Readable Rust is code that a competent Rustacean can <strong>scan and understand quickly</strong>, without excessive file-hopping or ownership gymnastics.</p>
 <ol>
 <li><strong>Idiomatic ownership &amp; borrowing</strong></li>
 <li>Prefer borrowing (<code>&amp;T</code>, <code>&amp;mut T</code>) over cloning; clone only at clear boundaries.</li>
@@ -6204,8 +6316,7 @@ ownership gymnastics.</p>
 </ol>
 <hr />
 <h2 id="what-maintainable-means-in-rust">What "Maintainable" Means in Rust<a class="headerlink" href="#what-maintainable-means-in-rust" title="Permanent link">&para;</a></h2>
-<p>Maintainable Rust withstands change with <strong>minimal risk and effort</strong>—thanks to stable seams, guardrails, and predictable
-behavior.</p>
+<p>Maintainable Rust withstands change with <strong>minimal risk and effort</strong>—thanks to stable seams, guardrails, and predictable behavior.</p>
 <ol>
 <li><strong>Stable, minimal public API</strong></li>
 <li>Public types/traits are small and composable; prefer <strong>capability-oriented traits</strong> over "god traits."</li>
@@ -6262,8 +6373,7 @@ behavior.</p>
 <h2 id="pragmatic-checklist">Pragmatic Checklist<a class="headerlink" href="#pragmatic-checklist" title="Permanent link">&para;</a></h2>
 <p><strong>If these are true, your Rust is both readable and maintainable:</strong></p>
 <ul>
-<li>✅ <strong>Formatting &amp; lints</strong>: <code>cargo +nightly fmt --all -- --check</code> and <code>cargo clippy --deny warnings</code> pass; lint level tuned
-  to project.</li>
+<li>✅ <strong>Formatting &amp; lints</strong>: <code>cargo +nightly fmt --all -- --check</code> and <code>cargo clippy --deny warnings</code> pass; lint level tuned to project.</li>
 <li>✅ <strong>Boundaries</strong>: Modules align with responsibilities; public surface area small and documented.</li>
 <li>✅ <strong>Errors</strong>: Clear <code>Result&lt;T, E&gt;</code> with actionable messages; categorized <code>E</code>.</li>
 <li>✅ <strong>Ownership</strong>: Minimal clones; predictable lifetimes; borrowing favored.</li>
@@ -6453,8 +6563,7 @@ cargo<span class="w"> </span>+nightly<span class="w"> </span>udeps<span class="w
 <span class="w">    </span><span class="p">.</span><span class="n">map_err</span><span class="p">(</span><span class="o">|</span><span class="n">e</span><span class="o">|</span><span class="w"> </span><span class="n">anyhow</span><span class="o">!</span><span class="p">(</span><span class="s">&quot;failed to open {}: {e}&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">path</span><span class="p">.</span><span class="n">display</span><span class="p">()))</span><span class="o">?</span><span class="p">;</span>
 </code></pre></div>
 <h4 id="cloning-question-every-clone">Cloning — question every <code>.clone()</code><a class="headerlink" href="#cloning-question-every-clone" title="Permanent link">&para;</a></h4>
-<p>A <code>.clone()</code> is sometimes the right answer (crossing an API boundary, shared ownership), but treat every occurrence
-as a review signal. Ask: <em>can I borrow instead? Can I restructure to remove the simultaneous borrow?</em></p>
+<p>A <code>.clone()</code> is sometimes the right answer (crossing an API boundary, shared ownership), but treat every occurrence as a review signal. Ask: <em>can I borrow instead? Can I restructure to remove the simultaneous borrow?</em></p>
 <h4 id="stringly-typed-apis">Stringly-typed APIs<a class="headerlink" href="#stringly-typed-apis" title="Permanent link">&para;</a></h4>
 <p>Use enums or newtypes instead of raw strings for fixed sets of values:</p>
 <div class="language-rust highlight"><pre><span></span><code><span class="c1">// Bad — typo-prone, no exhaustiveness checking</span>
@@ -6474,8 +6583,7 @@ as a review signal. Ask: <em>can I borrow instead? Can I restructure to remove t
 <span class="k">fn</span><span class="w"> </span><span class="nf">filter</span><span class="p">(</span><span class="n">items</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="p">[</span><span class="n">Item</span><span class="p">])</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="cm">/* ... */</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <h4 id="type-casting-prefer-safe-conversions">Type casting — prefer safe conversions<a class="headerlink" href="#type-casting-prefer-safe-conversions" title="Permanent link">&para;</a></h4>
-<p><code>as</code> silently truncates or wraps. Prefer <code>TryFrom</code>/<code>TryInto</code> for fallible conversions and <code>From</code>/<code>Into</code> for
-infallible ones:</p>
+<p><code>as</code> silently truncates or wraps. Prefer <code>TryFrom</code>/<code>TryInto</code> for fallible conversions and <code>From</code>/<code>Into</code> for infallible ones:</p>
 <div class="language-rust highlight"><pre><span></span><code><span class="c1">// Bad — silently wraps on overflow</span>
 <span class="kd">let</span><span class="w"> </span><span class="n">small</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="n">big_number</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="kt">u16</span><span class="p">;</span>
 
@@ -6493,8 +6601,7 @@ infallible ones:</p>
 <span class="p">}</span>
 </code></pre></div>
 <h4 id="visibility-start-private-widen-deliberately">Visibility — start private, widen deliberately<a class="headerlink" href="#visibility-start-private-widen-deliberately" title="Permanent link">&para;</a></h4>
-<p>Default to private. Use <code>pub(crate)</code> for crate-internal sharing. Only use <code>pub</code> for your actual public API. This
-keeps refactoring safe and communicates intent to future readers.</p>
+<p>Default to private. Use <code>pub(crate)</code> for crate-internal sharing. Only use <code>pub</code> for your actual public API. This keeps refactoring safe and communicates intent to future readers.</p>
 <h4 id="match-arms-factor-out-shared-logic">Match arms — factor out shared logic<a class="headerlink" href="#match-arms-factor-out-shared-logic" title="Permanent link">&para;</a></h4>
 <div class="language-rust highlight"><pre><span></span><code><span class="c1">// Bad — duplicated setup/cleanup in every arm</span>
 <span class="k">match</span><span class="w"> </span><span class="n">kind</span><span class="w"> </span><span class="p">{</span>
@@ -6511,8 +6618,7 @@ keeps refactoring safe and communicates intent to future readers.</p>
 <span class="n">cleanup</span><span class="p">();</span>
 </code></pre></div>
 <h4 id="must_use-on-important-return-values"><code>#[must_use]</code> on important return values<a class="headerlink" href="#must_use-on-important-return-values" title="Permanent link">&para;</a></h4>
-<p>If a function returns a value that callers should never silently discard (validation results, builders, etc.), mark
-it <code>#[must_use]</code>. Rust already enforces this for <code>Result</code>, but custom types often miss it.</p>
+<p>If a function returns a value that callers should never silently discard (validation results, builders, etc.), mark it <code>#[must_use]</code>. Rust already enforces this for <code>Result</code>, but custom types often miss it.</p>
 <h3 id="architecture-level-pitfalls">Architecture-level pitfalls<a class="headerlink" href="#architecture-level-pitfalls" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Overusing generics</strong>: Complex bounds and many type params — prefer trait objects or smaller traits.</li>

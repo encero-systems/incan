@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6097,12 +6212,8 @@
     <span class="n">basic_config</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="nc">Level</span><span class="o">.</span><span class="nc">INFO</span><span class="p">)</span>
     <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;Starting session&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>Ambient <code>log</code> is a soft surface: if user code has no local <code>log</code> binding, <code>log.info(...)</code> behaves like calling
-<code>get_logger()</code> for the current module and then invoking the method. A local variable, parameter, import, or explicit
-<code>log = get_logger("...")</code> binding shadows the ambient surface.</p>
-<p><code>get_logger()</code> without a name returns a logger whose name is inferred from the current module when the compiler can
-provide that metadata. When module-name inference is not available, the fallback name is <code>"root"</code>. Package and
-executable identity are telemetry/provider integration concerns rather than ordinary logging defaults.</p>
+<p>Ambient <code>log</code> is a soft surface: if user code has no local <code>log</code> binding, <code>log.info(...)</code> behaves like calling <code>get_logger()</code> for the current module and then invoking the method. A local variable, parameter, import, or explicit <code>log = get_logger("...")</code> binding shadows the ambient surface.</p>
+<p><code>get_logger()</code> without a name returns a logger whose name is inferred from the current module when the compiler can provide that metadata. When module-name inference is not available, the fallback name is <code>"root"</code>. Package and executable identity are telemetry/provider integration concerns rather than ordinary logging defaults.</p>
 <h3 id="named-loggers">Named loggers<a class="headerlink" href="#named-loggers" title="Permanent link">&para;</a></h3>
 <p>Libraries and larger applications should use hierarchical names:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.logging</span><span class="w"> </span><span class="kn">import</span> <span class="n">get_logger</span>
@@ -6143,8 +6254,7 @@ executable identity are telemetry/provider integration concerns rather than ordi
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">basic_config</span><span class="p">(</span><span class="n">level</span><span class="o">=</span><span class="nc">Level</span><span class="o">.</span><span class="nc">DEBUG</span><span class="p">,</span> <span class="nb">format</span><span class="o">=</span><span class="nc">LogFormat</span><span class="o">.</span><span class="nc">JSON</span><span class="p">,</span> <span class="n">target</span><span class="o">=</span><span class="s2">&quot;stdout&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>Project defaults, environment overrides, and CLI flags are out of scope until Incan has a source-owned host
-configuration boundary that can feed stdlib state without introducing a Rust logging helper module.</p>
+<p>Project defaults, environment overrides, and CLI flags are out of scope until Incan has a source-owned host configuration boundary that can feed stdlib state without introducing a Rust logging helper module.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
 <h3 id="module-scope">Module scope<a class="headerlink" href="#module-scope" title="Permanent link">&para;</a></h3>
 <p><code>std.logging</code> must provide:</p>
@@ -6180,8 +6290,7 @@ configuration boundary that can feed stdlib state without introducing a Rust log
 <li><code>ERROR</code></li>
 <li><code>FATAL</code></li>
 </ul>
-<p><code>WARN</code> and <code>FATAL</code> are canonical because they match OpenTelemetry's normalized severity range names. <code>WARNING</code> aliases
-<code>WARN</code>, and <code>CRITICAL</code> aliases <code>FATAL</code> for source readability and Python-style familiarity.</p>
+<p><code>WARN</code> and <code>FATAL</code> are canonical because they match OpenTelemetry's normalized severity range names. <code>WARNING</code> aliases <code>WARN</code>, and <code>CRITICAL</code> aliases <code>FATAL</code> for source readability and Python-style familiarity.</p>
 <p>The ordering is <code>TRACE &lt; DEBUG &lt; INFO &lt; WARN &lt; ERROR &lt; FATAL</code>. A runtime threshold includes events at that level or above.</p>
 <h3 id="logger-acquisition">Logger acquisition<a class="headerlink" href="#logger-acquisition" title="Permanent link">&para;</a></h3>
 <p><code>get_logger(name: Option[str] = None) -&gt; Logger</code> returns a logger value.</p>
@@ -6203,8 +6312,7 @@ configuration boundary that can feed stdlib state without introducing a Rust log
     <span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;etl.loader&quot;</span><span class="p">)</span>
     <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;ready&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>An implementation must not freeze ambient <code>log</code> to the implementation module <code>std.logging</code>, because that would make the
-shortcut less correct than the explicit <code>get_logger()</code> form.</p>
+<p>An implementation must not freeze ambient <code>log</code> to the implementation module <code>std.logging</code>, because that would make the shortcut less correct than the explicit <code>get_logger()</code> form.</p>
 <h3 id="logger-api">Logger API<a class="headerlink" href="#logger-api" title="Permanent link">&para;</a></h3>
 <p><code>Logger</code> must expose:</p>
 <ul>
@@ -6235,10 +6343,7 @@ shortcut less correct than the explicit <code>get_logger()</code> form.</p>
 <p>Model values may be accepted if the implementation has a stable structured representation for them. If a value cannot be preserved structurally, the runtime must either reject it with a typed logging configuration or emission error before rendering, or preserve a clearly marked debug string fallback. It must not silently pretend lossy stringification is the same as structured preservation in JSON output.</p>
 <p>Field keys must be strings. Field keys should be valid identifier-like names for maximum backend portability, but this RFC only requires that keys are non-empty and do not contain control characters.</p>
 <p>Reserved runtime keys include <code>timestamp</code>, <code>level</code>, <code>message</code>, <code>logger</code>, <code>target</code>, <code>module</code>, <code>file</code>, <code>line</code>, and <code>thread</code>. User-provided fields with reserved names are allowed only inside the user field map and must not overwrite the top-level runtime metadata fields.</p>
-<p>Field keys may use dotted semantic-convention names such as <code>http.request.method</code>, <code>db.system.name</code>,
-<code>gen_ai.request.model</code>, <code>mcp.method.name</code>, or provider-specific keys. <code>std.logging</code> must preserve those keys as
-ordinary structured fields. It must not normalize, split, or reserve external telemetry namespaces in the base logging
-API.</p>
+<p>Field keys may use dotted semantic-convention names such as <code>http.request.method</code>, <code>db.system.name</code>, <code>gen_ai.request.model</code>, <code>mcp.method.name</code>, or provider-specific keys. <code>std.logging</code> must preserve those keys as ordinary structured fields. It must not normalize, split, or reserve external telemetry namespaces in the base logging API.</p>
 <h3 id="event-records">Event records<a class="headerlink" href="#event-records" title="Permanent link">&para;</a></h3>
 <p>Each emitted event produces a <code>LogRecord</code> internally. <code>LogRecord</code> is the Incan source-level projection of the OpenTelemetry Logs Data Model. It must use idiomatic Incan field names while preserving the official OpenTelemetry field spellings as field aliases:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">model</span> <span class="nc">LogRecord</span><span class="p">:</span>
@@ -6265,9 +6370,7 @@ API.</p>
 <li><code>ERROR</code> -&gt; <code>severity_text="ERROR"</code>, <code>severity_number=17</code></li>
 <li><code>FATAL</code> -&gt; <code>severity_text="FATAL"</code>, <code>severity_number=21</code></li>
 </ul>
-<p><code>WARNING</code> and <code>CRITICAL</code> are aliases for the canonical <code>WARN</code> and <code>FATAL</code> variants, so JSON output can use
-<code>level.value()</code> directly for <code>SeverityText</code>. Human renderers may still display <code>WARNING</code> and <code>CRITICAL</code> if that is the
-configured Incan presentation policy.</p>
+<p><code>WARNING</code> and <code>CRITICAL</code> are aliases for the canonical <code>WARN</code> and <code>FATAL</code> variants, so JSON output can use <code>level.value()</code> directly for <code>SeverityText</code>. Human renderers may still display <code>WARNING</code> and <code>CRITICAL</code> if that is the configured Incan presentation policy.</p>
 <p>Human output is a projection of this record. JSON output must preserve the record as structured data. OTel-oriented JSON output should honor the field aliases above so downstream tools see the official OpenTelemetry field spellings, while human-oriented projections may use Incan names or compact labels.</p>
 <h3 id="configuration">Configuration<a class="headerlink" href="#configuration" title="Permanent link">&para;</a></h3>
 <p><code>basic_config(...)</code> configures the source-level logging policy for the current generated program. It is an application entrypoint API, not a library API.</p>
@@ -6297,13 +6400,10 @@ configured Incan presentation policy.</p>
 <li><code>ALWAYS</code></li>
 <li><code>NEVER</code></li>
 </ul>
-<p><code>OutputTarget</code> is a validated newtype over <code>str</code>. It accepts at least <code>"stderr"</code> and <code>"stdout"</code> and owns routing emitted
-lines to the selected standard stream. <code>basic_config(...)</code> may continue to accept a string argument at the call boundary,
-but the stored configuration should use the nominal target type instead of carrying an unchecked string.</p>
+<p><code>OutputTarget</code> is a validated newtype over <code>str</code>. It accepts at least <code>"stderr"</code> and <code>"stdout"</code> and owns routing emitted lines to the selected standard stream. <code>basic_config(...)</code> may continue to accept a string argument at the call boundary, but the stored configuration should use the nominal target type instead of carrying an unchecked string.</p>
 <p>Calling <code>basic_config(...)</code> more than once is deterministic. A second call replaces the previous source-level policy.</p>
 <h3 id="project-and-runtime-configuration">Project and runtime configuration<a class="headerlink" href="#project-and-runtime-configuration" title="Permanent link">&para;</a></h3>
-<p><code>incan.toml</code>, CLI flags, and environment overrides are not part of the implementable baseline in this RFC. They should
-be specified once Incan has a source-owned configuration/import boundary for host-provided settings.</p>
+<p><code>incan.toml</code>, CLI flags, and environment overrides are not part of the implementable baseline in this RFC. They should be specified once Incan has a source-owned configuration/import boundary for host-provided settings.</p>
 <p>A project configuration surface may look like:</p>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[logging]</span>
 <span class="n">level</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">&quot;warning&quot;</span>
@@ -6333,8 +6433,7 @@ be specified once Incan has a source-owned configuration/import boundary for hos
 <li><code>short</code> renders a compact time-of-day timestamp.</li>
 <li><code>complete</code> renders a full datetime timestamp.</li>
 <li><code>verbose</code> may render additional metadata and fields, but it must keep the first line message-first and readable.</li>
-<li>When a record carries active span context, human renderers should be able to expose that hierarchy with lightweight
-  span guides rather than long repeated logger prefixes.</li>
+<li>When a record carries active span context, human renderers should be able to expose that hierarchy with lightweight span guides rather than long repeated logger prefixes.</li>
 </ul>
 <p>Illustrative shapes:</p>
 <div class="language-text highlight"><pre><span></span><code>[INFO] starting query
@@ -6358,9 +6457,7 @@ be specified once Incan has a source-owned configuration/import boundary for hos
 2026-04-23T21:18:04.228Z └─ [INFO] lowering plan
   logger=query.engine.lowering trace=7f9c span=02 parent=01
 </code></pre></div>
-<p>The exact spacing and glyph topology are renderer policy. The level, message, selected metadata, and span relationship
-must be visible without requiring a JSON consumer. Span guides are a human projection of trace/span context supplied by
-the telemetry layer; this RFC does not make <code>std.logging</code> responsible for starting or ending spans.</p>
+<p>The exact spacing and glyph topology are renderer policy. The level, message, selected metadata, and span relationship must be visible without requiring a JSON consumer. Span guides are a human projection of trace/span context supplied by the telemetry layer; this RFC does not make <code>std.logging</code> responsible for starting or ending spans.</p>
 <h3 id="json-rendering">JSON rendering<a class="headerlink" href="#json-rendering" title="Permanent link">&para;</a></h3>
 <p>JSON output is selected with <code>format=LogFormat.JSON</code>.</p>
 <p>Each event should render as one JSON object per line. The object must separate named OpenTelemetry top-level fields from user/event attributes. A representative OTel-oriented shape is:</p>
@@ -6374,9 +6471,7 @@ the telemetry layer; this RFC does not make <code>std.logging</code> responsible
 <p>Libraries may call <code>get_logger(...)</code>, <code>Logger.bind(...)</code>, and event methods. Libraries must not call <code>basic_config(...)</code> as part of import-time or normal helper execution.</p>
 <p>Application entrypoints, command runners, tests, and embedding hosts may call <code>basic_config(...)</code>. Documentation should teach this boundary explicitly.</p>
 <h3 id="source-implementation-boundary">Source implementation boundary<a class="headerlink" href="#source-implementation-boundary" title="Permanent link">&para;</a></h3>
-<p>The reference implementation is authored in <code>crates/incan_stdlib/stdlib/logging.incn</code>. It may import from <code>rust::std</code>
-for platform primitives such as <code>SystemTime</code>, but it must not use a Rust backing module or <code>@rust.extern</code> logging
-helpers.</p>
+<p>The reference implementation is authored in <code>crates/incan_stdlib/stdlib/logging.incn</code>. It may import from <code>rust::std</code> for platform primitives such as <code>SystemTime</code>, but it must not use a Rust backing module or <code>@rust.extern</code> logging helpers.</p>
 <p>The source implementation must preserve:</p>
 <ul>
 <li>logger name</li>
@@ -6385,12 +6480,10 @@ helpers.</p>
 <li>structured field values</li>
 <li>bound context</li>
 </ul>
-<p>Logger-name source metadata uses module identity where the compiler can provide it. File and line metadata are outside
-this RFC and belong with the broader telemetry source-location policy.</p>
+<p>Logger-name source metadata uses module identity where the compiler can provide it. File and line metadata are outside this RFC and belong with the broader telemetry source-location policy.</p>
 <h3 id="opentelemetry-compatibility">OpenTelemetry compatibility<a class="headerlink" href="#opentelemetry-compatibility" title="Permanent link">&para;</a></h3>
 <p>This RFC does not standardize the full OpenTelemetry model. <code>std.telemetry</code> owns provider configuration, tracing decorators, explicit span handles, metric instruments, baggage/context propagation, OpenTelemetry export, semantic-convention helpers, and stdlib instrumentation policy. The event payload defined here must remain usable as the log/event component inside that observability model.</p>
-<p>The absence of span, metric, resource, and propagation APIs is intentional. It keeps RFC 072 implementable as a
-standard-library/runtime surface without adding parser support or a new ambient language binding.</p>
+<p>The absence of span, metric, resource, and propagation APIs is intentional. It keeps RFC 072 implementable as a standard-library/runtime surface without adding parser support or a new ambient language binding.</p>
 <p>Incan should become OpenTelemetry-compatible as a language and stdlib ecosystem, not merely GenAI-compatible. That means observability RFCs should account for OpenTelemetry's traces, metrics, logs/events, resources, profiles, and context propagation concepts, and should use semantic conventions where Incan stdlib surfaces correspond to common operations. <code>std.logging</code> contributes by adopting the OpenTelemetry log record shape now and preserving structured attributes and a stable named-fields/attributes boundary.</p>
 <p>The preferred tracing surface is decorator-first because decorators can own span lifetime for whole functions:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.telemetry</span><span class="w"> </span><span class="kn">import</span> <span class="n">trace</span>
@@ -6411,24 +6504,16 @@ standard-library/runtime surface without adding parser support or a new ambient 
 <span class="n">span</span><span class="o">.</span><span class="n">end</span><span class="p">()</span>
 </code></pre></div>
 <p>Scoped span blocks are owned by the telemetry/context-manager RFCs rather than by <code>std.logging</code>.</p>
-<p>OpenTelemetry's GenAI semantic conventions define GenAI, MCP, and provider-specific telemetry vocabulary outside
-Incan's standard library. They are one convention family under the broader OpenTelemetry compatibility goal, not the
-whole target. RFC 072 should align with that direction by preserving arbitrary structured field names, but it should not
-copy any convention registry into <code>std.logging</code>. <code>std.telemetry</code> should define opt-in mapping profiles for OpenTelemetry
-logs/events/spans/metrics.</p>
+<p>OpenTelemetry's GenAI semantic conventions define GenAI, MCP, and provider-specific telemetry vocabulary outside Incan's standard library. They are one convention family under the broader OpenTelemetry compatibility goal, not the whole target. RFC 072 should align with that direction by preserving arbitrary structured field names, but it should not copy any convention registry into <code>std.logging</code>. <code>std.telemetry</code> should define opt-in mapping profiles for OpenTelemetry logs/events/spans/metrics.</p>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="why-ambient-log-lowers-into-stdlogging">Why ambient <code>log</code> lowers into <code>std.logging</code><a class="headerlink" href="#why-ambient-log-lowers-into-stdlogging" title="Permanent link">&para;</a></h3>
-<p>Ambient <code>log</code> is worth the language commitment because logging is part of the everyday program surface. Requiring every
-module to spell <code>log = get_logger()</code> adds ceremony without adding useful information in the common case.</p>
-<p>The important constraint is that ambient <code>log</code> is soft and shadowable. It should behave like an unresolved identifier
-fallback, not like an unshadowable keyword. This keeps explicit logger values available for libraries, tests, and code
-that wants a deliberate hierarchy:</p>
+<p>Ambient <code>log</code> is worth the language commitment because logging is part of the everyday program surface. Requiring every module to spell <code>log = get_logger()</code> adds ceremony without adding useful information in the common case.</p>
+<p>The important constraint is that ambient <code>log</code> is soft and shadowable. It should behave like an unresolved identifier fallback, not like an unshadowable keyword. This keeps explicit logger values available for libraries, tests, and code that wants a deliberate hierarchy:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">load</span><span class="p">(</span><span class="n">path</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="n">log</span> <span class="o">=</span> <span class="n">get_logger</span><span class="p">(</span><span class="s2">&quot;etl.loader&quot;</span><span class="p">)</span>
     <span class="n">log</span><span class="o">.</span><span class="n">info</span><span class="p">(</span><span class="s2">&quot;ready&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>The ambient form lowers into <code>std.logging.get_logger(&lt;current module&gt;)</code> and then uses the same source-defined <code>Logger</code>
-implementation as explicit logger values.</p>
+<p>The ambient form lowers into <code>std.logging.get_logger(&lt;current module&gt;)</code> and then uses the same source-defined <code>Logger</code> implementation as explicit logger values.</p>
 <h3 id="why-not-copy-python-logging-wholesale">Why not copy Python logging wholesale<a class="headerlink" href="#why-not-copy-python-logging-wholesale" title="Permanent link">&para;</a></h3>
 <p>Python's logging module has useful concepts, especially named loggers and application-owned configuration, but its handler, formatter, filter, propagation, and adapter graph is too much surface for this RFC. Incan should preserve the parts that matter for ordinary code while avoiding a compatibility-shaped clone that would be hard to implement and harder to teach.</p>
 <h3 id="why-fields-is-the-structured-field-syntax">Why <code>fields={...}</code> is the structured field syntax<a class="headerlink" href="#why-fields-is-the-structured-field-syntax" title="Permanent link">&para;</a></h3>
@@ -6477,9 +6562,7 @@ implementation as explicit logger values.</p>
 <li>
 <p><strong>Bake OpenTelemetry attribute types directly into <code>std.logging</code></strong></p>
 </li>
-<li>Rejected because OpenTelemetry semantic conventions evolve independently and cover more than ordinary log events.
-     The logging API should preserve namespaced structured fields now and let dedicated observability/export RFCs own
-     the mapping contract.</li>
+<li>Rejected because OpenTelemetry semantic conventions evolve independently and cover more than ordinary log events. The logging API should preserve namespaced structured fields now and let dedicated observability/export RFCs own the mapping contract.</li>
 </ol>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
@@ -6604,17 +6687,13 @@ implementation as explicit logger values.</p>
 <li><code>short</code> is the default human style.</li>
 <li>JSON is a <code>LogFormat</code>, not a <code>LogStyle</code>, and OTel-oriented JSON uses the official <code>LogRecord</code> field aliases.</li>
 <li>Color policy is human-renderer-only and never affects JSON output.</li>
-<li>Colorized terminal behavior remains tied to a source-owned CLI/terminal capability surface instead of a Rust
-  logging helper.</li>
+<li>Colorized terminal behavior remains tied to a source-owned CLI/terminal capability surface instead of a Rust logging helper.</li>
 <li>The filter contract requires a global threshold; per-logger filtering may be added compatibly.</li>
 <li>The implemented reference surface is source Incan and may only use ordinary <code>rust::std</code> imports for host primitives.</li>
 <li>Rust <code>tracing</code> integration is deferred until it can be introduced without replacing the source-owned logging surface.</li>
 <li>Span, context propagation, and external export APIs are deferred to follow-up RFCs.</li>
-<li>OpenTelemetry compatibility is an Incan-wide observability goal. RFC 072 adopts the OpenTelemetry log record model,
-  while full provider/exporter behavior, semantic convention helpers, tracing decorators, baggage/context propagation,
-  and metrics are deferred to dedicated observability RFCs.</li>
-<li>RFC 093 owns the full <code>std.telemetry</code> provider/exporter direction; RFC 094 and RFC 095 record the context-manager and
-  <code>span</code> vocabulary foundations needed for ambient but controlled spans.</li>
+<li>OpenTelemetry compatibility is an Incan-wide observability goal. RFC 072 adopts the OpenTelemetry log record model, while full provider/exporter behavior, semantic convention helpers, tracing decorators, baggage/context propagation, and metrics are deferred to dedicated observability RFCs.</li>
+<li>RFC 093 owns the full <code>std.telemetry</code> provider/exporter direction; RFC 094 and RFC 095 record the context-manager and <code>span</code> vocabulary foundations needed for ambient but controlled spans.</li>
 </ul>
 
 

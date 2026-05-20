@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5495,15 +5610,6 @@
     <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
       
         <li class="md-nav__item">
-  <a href="#status" class="md-nav__link">
-    <span class="md-ellipsis">
-      Status
-    </span>
-  </a>
-  
-</li>
-      
-        <li class="md-nav__item">
   <a href="#summary" class="md-nav__link">
     <span class="md-ellipsis">
       Summary
@@ -5840,11 +5946,20 @@
 
 
 <h1 id="rfc-021-model-field-metadata-and-schema-safe-aliases">RFC 021: Model field metadata and schema-safe aliases<a class="headerlink" href="#rfc-021-model-field-metadata-and-schema-safe-aliases" title="Permanent link">&para;</a></h1>
-<h2 id="status">Status<a class="headerlink" href="#status" title="Permanent link">&para;</a></h2>
-<p><strong>Status:</strong> Implemented<br />
-<strong>Author(s):</strong> Danny Meijer (@danny-meijer)<br />
-<strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/94">#94</a>
-<strong>Related:</strong> RFC 005 (Rust interop), RFC 017 (constrained types)</p>
+<ul>
+<li><strong>Status:</strong> Implemented</li>
+<li><strong>Created:</strong> —</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 005 (Rust interop)</li>
+<li>RFC 017 (constrained types)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/94">#94</a></li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> v0.1</li>
+</ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Expands <code>model</code> field declarations to support <strong>field metadata</strong> (pydantic-style).</p>
 <p>Specifically, this RFC introduces:</p>
@@ -5853,8 +5968,7 @@
 <li><strong>Alias sugar</strong>: <code>name as "wire": T</code></li>
 <li><strong>Alias-aware name resolution</strong>: member access (<code>obj.type</code>) and constructor arguments (<code>Type(type=...)</code>)</li>
 <li><strong>Alias-aware destructuring</strong>: pattern field names resolve via aliases (same rules as constructor arguments)</li>
-<li><strong>Keyword compatibility</strong>: keywords (e.g. <code>type</code>, <code>class</code>, <code>from</code>) are permitted after <code>.</code>, in named arguments, and in
-  destructuring pattern field names; elsewhere they remain reserved.</li>
+<li><strong>Keyword compatibility</strong>: keywords (e.g. <code>type</code>, <code>class</code>, <code>from</code>) are permitted after <code>.</code>, in named arguments, and in destructuring pattern field names; elsewhere they remain reserved.</li>
 </ul>
 <p>Syntax summary:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">PseudoModel</span><span class="p">:</span>
@@ -5876,19 +5990,13 @@
 <span class="hll">    <span class="n">type_</span> <span class="p">[</span><span class="n">description</span><span class="o">=</span><span class="s2">&quot;Account tier&quot;</span><span class="p">]</span> <span class="k">as</span> <span class="s2">&quot;type&quot;</span><span class="p">:</span> <span class="nb">str</span>
 </span></code></pre></div>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>External schemas often use names that are reserved keywords in Incan (e.g. <code>type</code>, <code>class</code>, <code>from</code>). This makes it awkward
-to model wire formats without either renaming fields (sacrificing fidelity) or adopting non-idiomatic workarounds.</p>
-<p>We want to preserve <strong>schema fidelity</strong> (the wire name stays <code>type</code>), keep <strong>safe internal identifiers</strong> (<code>type_</code>), and
-support <strong>idiomatic access</strong> in Incan (<code>obj.type</code>, <code>Type(type=...)</code>) even when the wire name is a keyword.</p>
-<p>Beyond aliases, production models benefit from lightweight, self-describing <strong>field metadata</strong>. Following Python’s
-<code>pydantic.Field(...)</code> and <code>dataclasses.field(...)</code>, this RFC standardizes <code>description="..."</code> as a first-class metadata
-key so tools can surface documentation (IDE hover, generated docs) without changing compilation semantics.</p>
-<p>To keep the surface coherent and extensible, this RFC defines the <strong>syntax and storage</strong> for field metadata and
-standardizes only two keys in this RFC: <code>alias</code> and <code>description</code>.</p>
+<p>External schemas often use names that are reserved keywords in Incan (e.g. <code>type</code>, <code>class</code>, <code>from</code>). This makes it awkward to model wire formats without either renaming fields (sacrificing fidelity) or adopting non-idiomatic workarounds.</p>
+<p>We want to preserve <strong>schema fidelity</strong> (the wire name stays <code>type</code>), keep <strong>safe internal identifiers</strong> (<code>type_</code>), and support <strong>idiomatic access</strong> in Incan (<code>obj.type</code>, <code>Type(type=...)</code>) even when the wire name is a keyword.</p>
+<p>Beyond aliases, production models benefit from lightweight, self-describing <strong>field metadata</strong>. Following Python’s <code>pydantic.Field(...)</code> and <code>dataclasses.field(...)</code>, this RFC standardizes <code>description="..."</code> as a first-class metadata key so tools can surface documentation (IDE hover, generated docs) without changing compilation semantics.</p>
+<p>To keep the surface coherent and extensible, this RFC defines the <strong>syntax and storage</strong> for field metadata and standardizes only two keys in this RFC: <code>alias</code> and <code>description</code>.</p>
 <h2 id="non-goals">Non-goals<a class="headerlink" href="#non-goals" title="Permanent link">&para;</a></h2>
 <ul>
-<li>This RFC does not introduce a general-purpose <code>schema:</code> block for bulk mappings (out of scope for this RFC). This RFC
-  is limited to standardizing per-field metadata on field declarations.</li>
+<li>This RFC does not introduce a general-purpose <code>schema:</code> block for bulk mappings (out of scope for this RFC). This RFC is limited to standardizing per-field metadata on field declarations.</li>
 </ul>
 <p>Example of a possible future <code>schema:</code> block (non-normative; exact syntax/semantics are out of scope for this RFC):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Account</span><span class="p">:</span>
@@ -5903,35 +6011,24 @@ standardizes only two keys in this RFC: <code>alias</code> and <code>description
         <span class="n">from_</span><span class="p">:</span>  <span class="n">alias</span><span class="o">=</span><span class="s2">&quot;from&quot;</span><span class="p">,</span>  <span class="n">description</span><span class="o">=</span><span class="s2">&quot;Source system&quot;</span>
 </code></pre></div>
 <ul>
-<li>This RFC does not define a full pydantic-like “Field(...)" feature surface (constraints, validation semantics, examples,
-  etc.). It does create a <strong>slot</strong> for field metadata and standardizes <code>alias</code> and <code>description</code> with the possibility to
-  expand this in the future.</li>
-<li>This RFC does not introduce <strong>arbitrary</strong> field metadata keys for adapter ecosystems (e.g. <code>spark.*</code>, <code>sql.*</code>,
-  proprietary namespaces). Only <code>alias="..."</code> and <code>description="..."</code> are standardized here; broader, namespaced metadata
-  is not part of the scope of this RFC.</li>
-<li>This RFC does not move type constraints into field metadata. Type-level constraints belong to constrained types/newtypes
-  (see RFC 017).</li>
-<li>This RFC does not apply field aliases/metadata to <code>class</code> declarations. Extending the feature to <code>class</code> (especially with
-  inheritance) is out-of-scope for this RFC and can be revisited if user demand emerges.</li>
-<li>This RFC does not define protobuf schema/tag rules. Protobuf as a long-term primary interface is captured as a future
-  direction below, but the details are out of scope for this RFC.</li>
+<li>This RFC does not define a full pydantic-like “Field(...)" feature surface (constraints, validation semantics, examples, etc.). It does create a <strong>slot</strong> for field metadata and standardizes <code>alias</code> and <code>description</code> with the possibility to expand this in the future.</li>
+<li>This RFC does not introduce <strong>arbitrary</strong> field metadata keys for adapter ecosystems (e.g. <code>spark.*</code>, <code>sql.*</code>, proprietary namespaces). Only <code>alias="..."</code> and <code>description="..."</code> are standardized here; broader, namespaced metadata is not part of the scope of this RFC.</li>
+<li>This RFC does not move type constraints into field metadata. Type-level constraints belong to constrained types/newtypes (see RFC 017).</li>
+<li>This RFC does not apply field aliases/metadata to <code>class</code> declarations. Extending the feature to <code>class</code> (especially with inheritance) is out-of-scope for this RFC and can be revisited if user demand emerges.</li>
+<li>This RFC does not define protobuf schema/tag rules. Protobuf as a long-term primary interface is captured as a future direction below, but the details are out of scope for this RFC.</li>
 </ul>
 <h2 id="future-direction-out-of-scope-for-this-rfc-protobuf-first-model-schema-proposal">Future direction (out of scope for this RFC): protobuf-first model schema (proposal)<a class="headerlink" href="#future-direction-out-of-scope-for-this-rfc-protobuf-first-model-schema-proposal" title="Permanent link">&para;</a></h2>
 <p>Long-term, Incan intends to treat <strong>protobuf</strong> as a primary interface for typed APIs and service boundaries.</p>
-<p>This RFC’s goal is to ensure field aliasing/metadata is compatible with a proto-first future without committing to the full
-protobuf surface yet.</p>
+<p>This RFC’s goal is to ensure field aliasing/metadata is compatible with a proto-first future without committing to the full protobuf surface yet.</p>
 <p>Non-normative requirements (out of scope for this RFC):</p>
 <ul>
-<li><strong>Stable field identity</strong>: protobuf field numbers (“tags”) are the wire identity; they must be explicit and stable.
-  This avoids accidental breaking changes from field reordering.</li>
+<li><strong>Stable field identity</strong>: protobuf field numbers (“tags”) are the wire identity; they must be explicit and stable. This avoids accidental breaking changes from field reordering.</li>
 <li><strong>Nested models</strong>: nested <code>model</code> types should map to nested <code>message</code> types.</li>
 <li><strong>Presence semantics</strong>: define how <code>Option[T]</code> maps to proto3 <code>optional</code> / wrapper semantics.</li>
-<li><strong>Naming + JSON mapping</strong>: define the relationship between canonical names, aliases, proto field names, and ProtoJSON
-  field names (including casing defaults and migration knobs like “accept by name”).</li>
+<li><strong>Naming + JSON mapping</strong>: define the relationship between canonical names, aliases, proto field names, and ProtoJSON field names (including casing defaults and migration knobs like “accept by name”).</li>
 <li><strong>Compatibility rules</strong>: reserved tag ranges, rename-vs-retag rules, and diagnostics for collisions.</li>
 </ul>
-<p>This RFC does not define whether <code>alias</code> is treated as a universal “wire name” by default across formats
-(JSON/YAML/TOON/TOML/proto JSON), nor does it define format-scoped overrides.</p>
+<p>This RFC does not define whether <code>alias</code> is treated as a universal “wire name” by default across formats (JSON/YAML/TOON/TOML/proto JSON), nor does it define format-scoped overrides.</p>
 <h2 id="guide-level-explanation-how-users-think-about-it">Guide-level explanation (how users think about it)<a class="headerlink" href="#guide-level-explanation-how-users-think-about-it" title="Permanent link">&para;</a></h2>
 <p>When modeling external data, you typically define a <code>model</code> and derive <code>Deserialize</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@derive</span><span class="p">(</span><span class="nc">Deserialize</span><span class="p">)</span>
@@ -5940,8 +6037,7 @@ protobuf surface yet.</p>
     <span class="n">class_</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;class&quot;</span><span class="p">]:</span> <span class="nb">str</span>
     <span class="n">from_</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;from&quot;</span><span class="p">]:</span> <span class="nb">str</span>
 </code></pre></div>
-<p>You can then construct the type using the <em>wire names</em> (requires the parser changes described in "Keyword compatibility"
-below):</p>
+<p>You can then construct the type using the <em>wire names</em> (requires the parser changes described in "Keyword compatibility" below):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">f</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Account</span><span class="p">:</span>
     <span class="k">return</span> <span class="nc">Account</span><span class="p">(</span><span class="nb">type</span><span class="o">=</span><span class="s2">&quot;premium&quot;</span><span class="p">,</span> <span class="k">class</span><span class="o">=</span><span class="s2">&quot;gold&quot;</span><span class="p">,</span> <span class="k">from</span><span class="o">=</span><span class="s2">&quot;billing-service&quot;</span><span class="p">)</span>
 </code></pre></div>
@@ -5983,9 +6079,7 @@ below):</p>
 <h2 id="reference-level-explanation-precise-rules">Reference-level explanation (precise rules)<a class="headerlink" href="#reference-level-explanation-precise-rules" title="Permanent link">&para;</a></h2>
 <h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
 <h4 id="syntax-position-rationale-why-metadata-is-on-the-name">Syntax position rationale (why metadata is on the name)<a class="headerlink" href="#syntax-position-rationale-why-metadata-is-on-the-name" title="Permanent link">&para;</a></h4>
-<p>This RFC intentionally attaches both the metadata block and <code>as</code> sugar to the <strong>field name</strong>, not to the type, so it
-remains compatible with type-level bracket syntax (e.g. constrained primitives / generics) and stays unambiguous as the
-type system evolves (see RFC 017).</p>
+<p>This RFC intentionally attaches both the metadata block and <code>as</code> sugar to the <strong>field name</strong>, not to the type, so it remains compatible with type-level bracket syntax (e.g. constrained primitives / generics) and stays unambiguous as the type system evolves (see RFC 017).</p>
 <p>Preferred forms:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Limits</span><span class="p">:</span>
     <span class="n">max_retries</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;maxRetries&quot;</span><span class="p">]:</span> <span class="nb">int</span><span class="p">[</span><span class="n">ge</span><span class="o">=</span><span class="mi">0</span><span class="p">,</span> <span class="n">le</span><span class="o">=</span><span class="mi">10</span><span class="p">]</span>
@@ -6014,8 +6108,7 @@ field_meta_value = STRING | INT | FLOAT | BOOL ;
 <p>Rules (this RFC):</p>
 <ul>
 <li>Duplicate metadata keys are compile-time errors (e.g. <code>name [alias="a", alias="b"]: T</code> is invalid).</li>
-<li>For the standardized keys in this RFC (<code>alias</code>, <code>description</code>), values must be <strong>string literals</strong>; non-string values
-  are compile-time errors.</li>
+<li>For the standardized keys in this RFC (<code>alias</code>, <code>description</code>), values must be <strong>string literals</strong>; non-string values are compile-time errors.</li>
 <li>Any other keys are compile-time errors in this RFC.</li>
 </ul>
 <h4 id="alias-sugar-as">Alias sugar (<code>as "..."</code>)<a class="headerlink" href="#alias-sugar-as" title="Permanent link">&para;</a></h4>
@@ -6040,26 +6133,16 @@ field_meta_value = STRING | INT | FLOAT | BOOL ;
 <ul>
 <li>Each field has a <strong>canonical name</strong> (the identifier written before metadata).</li>
 <li>A field may additionally declare an <strong>alias</strong> via <code>alias="..."</code> (or <code>as "..."</code> sugar).</li>
-<li>Within a single type, aliases must be unique and must not collide with <strong>any</strong> canonical field name in the model
-  (not just the same field). For example, if a model has fields <code>type_</code> and <code>foo</code>, an alias of <code>"foo"</code> on <code>type_</code> is
-  an error because it collides with the canonical name of another field.</li>
-<li>Aliases must not collide with any <strong>method name</strong> declared in the same <code>model</code>. This avoids ambiguous member access
-  (e.g. <code>obj.type</code> should never have to choose between a field and a method).</li>
-<li>Collision checks apply to the full <strong>visible member surface</strong> of the model type (fields + methods) to ensure unambiguous
-  access.<ul>
-<li>At minimum, this includes all user-declared methods plus any compiler-provided/builtin members and any
-  derive-introduced members that are part of Incan’s curated derive contract (RFC 005). Implementations must perform
-  this check at typecheck time based on the members that are known to exist in the current compilation configuration.</li>
+<li>Within a single type, aliases must be unique and must not collide with <strong>any</strong> canonical field name in the model (not just the same field). For example, if a model has fields <code>type_</code> and <code>foo</code>, an alias of <code>"foo"</code> on <code>type_</code> is an error because it collides with the canonical name of another field.</li>
+<li>Aliases must not collide with any <strong>method name</strong> declared in the same <code>model</code>. This avoids ambiguous member access (e.g. <code>obj.type</code> should never have to choose between a field and a method).</li>
+<li>Collision checks apply to the full <strong>visible member surface</strong> of the model type (fields + methods) to ensure unambiguous access.<ul>
+<li>At minimum, this includes all user-declared methods plus any compiler-provided/builtin members and any derive-introduced members that are part of Incan’s curated derive contract (RFC 005). Implementations must perform this check at typecheck time based on the members that are known to exist in the current compilation configuration.</li>
 </ul>
 </li>
 <li>If both <code>alias="..."</code> and <code>as "..."</code> are specified for the same field, it is a compile-time error.</li>
 <li>Aliases must be non-empty string literals that contain at least one non-whitespace code point.</li>
-<li>Aliases are <strong>wire/schema keys</strong>, not identifiers. Aliases may contain characters that are not legal in Incan identifiers
-  (e.g. <code>alias="1"</code>). Such aliases still work for wire mapping (serde/codegen) and reflection, but they cannot be used in
-  member access (<code>obj.&lt;name&gt;</code>), constructor named args (<code>Type(&lt;name&gt;=...)</code>), or destructuring pattern keys, because those
-  syntactic positions accept only <code>IDENT | KEYWORD</code> tokens. In those cases, users must use the canonical field name.</li>
-<li>Alias matching uses exact string equality; no Unicode normalization or case-folding is performed. This keeps wire names
-  as byte-level identifiers and avoids silent behavior changes.</li>
+<li>Aliases are <strong>wire/schema keys</strong>, not identifiers. Aliases may contain characters that are not legal in Incan identifiers (e.g. <code>alias="1"</code>). Such aliases still work for wire mapping (serde/codegen) and reflection, but they cannot be used in member access (<code>obj.&lt;name&gt;</code>), constructor named args (<code>Type(&lt;name&gt;=...)</code>), or destructuring pattern keys, because those syntactic positions accept only <code>IDENT | KEYWORD</code> tokens. In those cases, users must use the canonical field name.</li>
+<li>Alias matching uses exact string equality; no Unicode normalization or case-folding is performed. This keeps wire names as byte-level identifiers and avoids silent behavior changes.</li>
 </ul>
 <h4 id="alias-aware-field-key-resolution-objx-typex-typexpat">Alias-aware field key resolution (<code>obj.x</code>, <code>Type(x=...)</code>, <code>Type(x=pat)</code>)<a class="headerlink" href="#alias-aware-field-key-resolution-objx-typex-typexpat" title="Permanent link">&para;</a></h4>
 <p>The same alias-aware field key resolution is used in three places:</p>
@@ -6073,23 +6156,18 @@ field_meta_value = STRING | INT | FLOAT | BOOL ;
 <li>If <code>x</code> matches a declared <strong>canonical field name</strong>, resolve/bind to that field.</li>
 <li>Otherwise, if <code>x</code> matches a declared <strong>alias</strong>, resolve/bind to that field.</li>
 <li>Otherwise:</li>
-<li>for member access (<code>obj.x</code>): continue with normal member lookup (e.g. methods); if no member matches, report
-     “unknown member”.</li>
+<li>for member access (<code>obj.x</code>): continue with normal member lookup (e.g. methods); if no member matches, report “unknown member”.</li>
 <li>for constructor calls / patterns: report “unknown field”.</li>
 </ol>
 <p>Diagnostics note:</p>
 <ul>
-<li>When reporting “unknown field” for constructor calls / patterns, implementations should include the set of valid keys
-  (canonical field names + aliases that are usable as <code>IDENT | KEYWORD</code>) and, where feasible, a “did you mean …” suggestion
-  for close matches.</li>
+<li>When reporting “unknown field” for constructor calls / patterns, implementations should include the set of valid keys (canonical field names + aliases that are usable as <code>IDENT | KEYWORD</code>) and, where feasible, a “did you mean …” suggestion for close matches.</li>
 </ul>
-<p>Within a single constructor call or destructuring pattern, it is a compile-time error to provide both the canonical name
-and its alias for the same field (duplicate field assignment).</p>
+<p>Within a single constructor call or destructuring pattern, it is a compile-time error to provide both the canonical name and its alias for the same field (duplicate field assignment).</p>
 <p>Example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="nc">Account</span><span class="p">(</span><span class="nb">type</span><span class="o">=</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="n">type_</span><span class="o">=</span><span class="s2">&quot;y&quot;</span><span class="p">)</span>  <span class="c1"># error: same field provided twice</span>
 </code></pre></div>
-<p>Because alias/canonical collisions are rejected at definition time, this resolution is deterministic (a name cannot validly
-refer to multiple fields).</p>
+<p>Because alias/canonical collisions are rejected at definition time, this resolution is deterministic (a name cannot validly refer to multiple fields).</p>
 <p>Example (member access fallback):</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">Example</span><span class="p">:</span>
     <span class="n">size</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;len&quot;</span><span class="p">]:</span> <span class="nb">int</span>
@@ -6099,8 +6177,7 @@ refer to multiple fields).</p>
 
 <span class="c1"># error at definition time: alias &quot;len&quot; collides with method name &quot;len&quot;</span>
 </code></pre></div>
-<p>Without such a collision, <code>obj.&lt;name&gt;</code> resolves to a field (canonical/alias) first; only if no field matches does it
-fall back to normal member lookup (e.g. methods).</p>
+<p>Without such a collision, <code>obj.&lt;name&gt;</code> resolves to a field (canonical/alias) first; only if no field matches does it fall back to normal member lookup (e.g. methods).</p>
 <h4 id="keyword-compatibility">Keyword compatibility<a class="headerlink" href="#keyword-compatibility" title="Permanent link">&para;</a></h4>
 <p>Because aliases may be keywords (e.g. <code>type</code>), the parser must allow <strong>all</strong> keyword tokens in three specific positions:</p>
 <ul>
@@ -6108,8 +6185,7 @@ fall back to normal member lookup (e.g. methods).</p>
 <li>as the name of a named argument (<code>Type(type=...)</code>, <code>Foo(if=...)</code>, etc.)</li>
 <li>as the name of a named field in destructuring patterns (see “Alias-aware field key resolution” above)</li>
 </ul>
-<p>This is the simpler grammar approach: rather than enumerating a subset of "safe" keywords, we allow any keyword in these
-positions. Resolution then follows the normal alias lookup rules—if there's no alias matching the keyword, it's an error.</p>
+<p>This is the simpler grammar approach: rather than enumerating a subset of "safe" keywords, we allow any keyword in these positions. Resolution then follows the normal alias lookup rules—if there's no alias matching the keyword, it's an error.</p>
 <p>EBNF (Extended Backus–Naur Form) helper productions:</p>
 <div class="language-text highlight"><pre><span></span><code>member_name       = IDENT | KEYWORD ;
 named_arg_key     = IDENT | KEYWORD ;
@@ -6117,35 +6193,24 @@ pattern_field_key = IDENT | KEYWORD ;
 </code></pre></div>
 <p>Outside these three positions, keywords remain reserved.</p>
 <p>This RFC does <strong>not</strong> propose making keywords generally usable as identifiers elsewhere (e.g. <code>let type = 1</code> remains illegal).</p>
-<p>This RFC also does <strong>not</strong> add a "string key" syntax for model field access or constructor arguments. As a result, aliases
-like <code>alias="1"</code> are valid wire names, but cannot be used in <code>obj.1</code> / <code>Type(1=...)</code> syntax (they are not valid tokens in
-those positions).</p>
+<p>This RFC also does <strong>not</strong> add a "string key" syntax for model field access or constructor arguments. As a result, aliases like <code>alias="1"</code> are valid wire names, but cannot be used in <code>obj.1</code> / <code>Type(1=...)</code> syntax (they are not valid tokens in those positions).</p>
 <h4 id="serde-integration">Serde integration<a class="headerlink" href="#serde-integration" title="Permanent link">&para;</a></h4>
 <p>If a <code>model</code> derives <code>Serialize</code> and/or <code>Deserialize</code> (RFC 005), codegen must emit:</p>
 <ul>
 <li>Rust field name = canonical Incan name (e.g. <code>type_</code>)</li>
 <li><code>#[serde(rename = "wire")]</code> for fields with <code>alias="wire"</code></li>
 </ul>
-<p>If neither <code>Serialize</code> nor <code>Deserialize</code> is derived, aliases still participate in frontend name resolution (member access
-and named arguments), but do not affect Rust emission.</p>
-<p>This RFC does not define any model-level casing/rename policy (e.g. <code>rename_all</code>). Where serde attributes are emitted,
-field-level <code>alias</code> is the source of truth for the wire name.</p>
+<p>If neither <code>Serialize</code> nor <code>Deserialize</code> is derived, aliases still participate in frontend name resolution (member access and named arguments), but do not affect Rust emission.</p>
+<p>This RFC does not define any model-level casing/rename policy (e.g. <code>rename_all</code>). Where serde attributes are emitted, field-level <code>alias</code> is the source of truth for the wire name.</p>
 <h3 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Keywords</strong>: keywords remain reserved in general; aliases can reuse them via the limited parsing + resolution rules above.</li>
-<li><strong>Type constraints</strong>: numeric/string constraints should use type-level constrained types / newtypes (RFC 017), not field
-  metadata keys like <code>gt=</code>. This keeps constraints in the “type” family and keeps field metadata focused on schema/wire
-  mapping and other future non-type metadata.</li>
-<li><strong>Descriptions</strong>: <code>description="..."</code> is inert (no semantic effect) and is exposed via reflection (<code>FieldInfo.description</code>).
-  IDEs and doc tooling may surface it (hover, completion details, generated docs), but compilation must not depend on it.
-  This RFC does not define schema-generation derives (e.g. JSON Schema / OpenAPI / proto docs).</li>
-<li><strong>Pattern matching</strong>: aliases participate in destructuring patterns, using the same name resolution rules as constructor
-  calls (canonical first, then alias).</li>
-<li><strong>Spread/rest patterns</strong>: if a feature exists that captures remaining fields into a dict (e.g. <code>**kwargs</code>), the captured
-  keys are canonical field names (not aliases).</li>
+<li><strong>Type constraints</strong>: numeric/string constraints should use type-level constrained types / newtypes (RFC 017), not field metadata keys like <code>gt=</code>. This keeps constraints in the “type” family and keeps field metadata focused on schema/wire mapping and other future non-type metadata.</li>
+<li><strong>Descriptions</strong>: <code>description="..."</code> is inert (no semantic effect) and is exposed via reflection (<code>FieldInfo.description</code>). IDEs and doc tooling may surface it (hover, completion details, generated docs), but compilation must not depend on it. This RFC does not define schema-generation derives (e.g. JSON Schema / OpenAPI / proto docs).</li>
+<li><strong>Pattern matching</strong>: aliases participate in destructuring patterns, using the same name resolution rules as constructor calls (canonical first, then alias).</li>
+<li><strong>Spread/rest patterns</strong>: if a feature exists that captures remaining fields into a dict (e.g. <code>**kwargs</code>), the captured keys are canonical field names (not aliases).</li>
 <li><strong>Reflection</strong>:<ul>
-<li><code>__fields__()</code> returns <code>List[FieldInfo]</code> (rich field info), instead of <code>List[str]</code> (just names). This is a
-  <strong>breaking change</strong>.</li>
+<li><code>__fields__()</code> returns <code>List[FieldInfo]</code> (rich field info), instead of <code>List[str]</code> (just names). This is a <strong>breaking change</strong>.</li>
 <li>Migration for the previous behavior: <code>[f.name for f in Model.__fields__()]</code></li>
 </ul>
 </li>
@@ -6153,15 +6218,10 @@ field-level <code>alias</code> is the source of truth for the wire name.</p>
 <h4 id="fieldinfo"><code>FieldInfo</code><a class="headerlink" href="#fieldinfo" title="Permanent link">&para;</a></h4>
 <p><code>FieldInfo</code> is a frozen <code>class</code> in the <strong>language core</strong> (not a <code>model</code>) that describes a single model field.</p>
 <p>Implementation notes (Rust):</p>
-<p><strong>Things that were changed while implementing</strong>: the generated Rust <code>__fields__()</code> returns a <code>FrozenList[FieldInfo]</code> backed
-by static data, the runtime <code>FieldInfo</code> value type uses frozen containers (<code>FrozenStr</code>, <code>FrozenDict</code>) for zero-allocation
-backing, and the reflection trait was renamed to <code>HasFieldInfo</code> to avoid a name collision with the value type.
-These implementation details were captured in docs and PRs.</p>
+<p><strong>Things that were changed while implementing</strong>: the generated Rust <code>__fields__()</code> returns a <code>FrozenList[FieldInfo]</code> backed by static data, the runtime <code>FieldInfo</code> value type uses frozen containers (<code>FrozenStr</code>, <code>FrozenDict</code>) for zero-allocation backing, and the reflection trait was renamed to <code>HasFieldInfo</code> to avoid a name collision with the value type. These implementation details were captured in docs and PRs.</p>
 <ul>
-<li>Today, generated Rust uses a reflection trait named <code>incan_stdlib::reflection::FieldInfo</code> and derives it via
-  <code>incan_derive::FieldInfo</code>.</li>
-<li>This RFC introduces a <strong>value type</strong> named <code>FieldInfo</code> (returned by <code>__fields__()</code>), which is distinct from the existing
-  Rust reflection trait. The implementation must avoid name collisions on the Rust side by either:<ul>
+<li>Today, generated Rust uses a reflection trait named <code>incan_stdlib::reflection::FieldInfo</code> and derives it via <code>incan_derive::FieldInfo</code>.</li>
+<li>This RFC introduces a <strong>value type</strong> named <code>FieldInfo</code> (returned by <code>__fields__()</code>), which is distinct from the existing Rust reflection trait. The implementation must avoid name collisions on the Rust side by either:<ul>
 <li>renaming the existing Rust trait/derive (e.g. <code>FieldInfo</code> → <code>FieldInfoTrait</code> / <code>DeriveFieldInfo</code>), or</li>
 <li>introducing the new value type under a different Rust name/module path and mapping it to the Incan <code>FieldInfo</code> class.</li>
 </ul>
@@ -6182,12 +6242,9 @@ These implementation details were captured in docs and PRs.</p>
 <ul>
 <li><code>FieldInfo</code> is a core built-in and is immutable (frozen) by definition; user code cannot mutate its fields.</li>
 <li><code>wire_name</code> is derived as <code>alias</code> if present, otherwise <code>name</code>, and is stored as a field populated by the compiler/runtime.</li>
-<li><code>type_name</code> is the canonical display string produced by the typechecker (fully-resolved and stable); it is not required
-  to preserve the source spelling. Type aliases are expanded, and constraints are included where applicable
-  (e.g. <code>int[ge=0]</code>).</li>
+<li><code>type_name</code> is the canonical display string produced by the typechecker (fully-resolved and stable); it is not required to preserve the source spelling. Type aliases are expanded, and constraints are included where applicable (e.g. <code>int[ge=0]</code>).</li>
 <li>In this RFC, <code>extra</code> is always populated as an empty dict by the compiler/runtime.</li>
-<li><code>extra</code> is reserved for future adapter-specific annotations; its keys/meaning are not specified here, but the field name
-  and type are stable. Consumers should treat it as opaque until a future RFC defines concrete keys.</li>
+<li><code>extra</code> is reserved for future adapter-specific annotations; its keys/meaning are not specified here, but the field name and type are stable. Consumers should treat it as opaque until a future RFC defines concrete keys.</li>
 <li>Supporting richer metadata value types (e.g. lists/objects) is not part of the scope of this RFC.</li>
 </ul>
 <h3 id="errors-diagnostics">Errors / diagnostics<a class="headerlink" href="#errors-diagnostics" title="Permanent link">&para;</a></h3>
@@ -6226,36 +6283,27 @@ error: alias must be a non-empty string literal
 </code></pre></div>
 <p>Diagnostics expectations:</p>
 <ul>
-<li>The typechecker should surface these as normal type errors with precise spans pointing at the offending metadata key/value
-  (or alias sugar) so editors can underline them immediately.</li>
-<li>The LSP should report these diagnostics without requiring a full build/codegen step (same behavior as other syntax/type
-  errors today).</li>
+<li>The typechecker should surface these as normal type errors with precise spans pointing at the offending metadata key/value (or alias sugar) so editors can underline them immediately.</li>
+<li>The LSP should report these diagnostics without requiring a full build/codegen step (same behavior as other syntax/type errors today).</li>
 </ul>
 <p>LSP completion expectations:</p>
 <ul>
 <li>Member completion after <code>.</code> should include both canonical field names and aliases.</li>
-<li>If a field has an alias, the alias should be ranked above the canonical name (preferred insertion) to keep access
-  ergonomic (e.g. <code>obj.type</code> instead of <code>obj.type_</code>).</li>
-<li>Completion item details should clarify the mapping (e.g. show <code>type → type_</code>) so users can discover the canonical name
-  when needed.</li>
-<li>Completion items should be de-duplicated and linked so selecting one suggestion inserts a single identifier (not both
-  the alias and the canonical name).</li>
+<li>If a field has an alias, the alias should be ranked above the canonical name (preferred insertion) to keep access ergonomic (e.g. <code>obj.type</code> instead of <code>obj.type_</code>).</li>
+<li>Completion item details should clarify the mapping (e.g. show <code>type → type_</code>) so users can discover the canonical name when needed.</li>
+<li>Completion items should be de-duplicated and linked so selecting one suggestion inserts a single identifier (not both the alias and the canonical name).</li>
 </ul>
 <h2 id="impact-compatibility">Impact / compatibility<a class="headerlink" href="#impact-compatibility" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Additive syntax</strong>: Field metadata (<code>name [alias="..."]: T</code>, <code>name [description="..."]: T</code>) and alias sugar
-  (<code>name as "wire": T</code>) are new syntax forms. Existing valid programs are unaffected; some previously-invalid programs
-  will now parse (notably keyword member access, named args, and destructuring keys).</li>
+<li><strong>Additive syntax</strong>: Field metadata (<code>name [alias="..."]: T</code>, <code>name [description="..."]: T</code>) and alias sugar (<code>name as "wire": T</code>) are new syntax forms. Existing valid programs are unaffected; some previously-invalid programs will now parse (notably keyword member access, named args, and destructuring keys).</li>
 <li><strong>Keyword compatibility is deliberately narrow</strong>: keywords are permitted only<ul>
 <li>after <code>.</code></li>
 <li>as constructor named-argument keys</li>
-<li>as destructuring pattern field keys
-  Elsewhere, keywords remain reserved.</li>
+<li>as destructuring pattern field keys Elsewhere, keywords remain reserved.</li>
 </ul>
 </li>
 <li><strong>Behavioral</strong>: Name resolution for model fields becomes alias-aware:<ul>
-<li>Member access consults canonical field names first, then aliases; if no field matches, it falls back to normal member
-  lookup (methods).</li>
+<li>Member access consults canonical field names first, then aliases; if no field matches, it falls back to normal member lookup (methods).</li>
 <li>Constructor named args and destructuring keys consult canonical first, then alias; if no field matches, it is an error.</li>
 </ul>
 </li>
@@ -6267,22 +6315,16 @@ error: alias must be a non-empty string literal
 </ul>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Allow keywords as identifiers globally</strong> (raw identifiers / quoted identifiers): broad surface area; impacts many
-  language contexts and does not directly address schema mapping needs (aliases, multiple names, etc.).</li>
-<li><strong><code>schema:</code> block</strong>: useful for very large mappings, but disjoint from the declaration site; not part of the scope of
-  this RFC.</li>
+<li><strong>Allow keywords as identifiers globally</strong> (raw identifiers / quoted identifiers): broad surface area; impacts many language contexts and does not directly address schema mapping needs (aliases, multiple names, etc.).</li>
+<li><strong><code>schema:</code> block</strong>: useful for very large mappings, but disjoint from the declaration site; not part of the scope of this RFC.</li>
 <li><strong>Decorator-based field attributes</strong>: not Pythonic for fields; creates noisy inline decorator stacks.</li>
-<li><strong>Pydantic-like metadata wrapper values</strong> (e.g. <code>name: T = Meta(alias="wire")</code>): expressive, but overloads the meaning
-  of default values and risks turning “field metadata” into a runtime value story rather than a static schema/type story.</li>
-<li><strong>Separate <code>__field_info__()</code> method</strong>: keep <code>__fields__() -&gt; List[str]</code> and add a new <code>__field_info__() -&gt; List[FieldInfo]</code>
-  for rich metadata. Rejected because it fragments the API; since we're pre-1.0, enriching <code>__fields__()</code> directly is cleaner
-  and more future-proof.</li>
+<li><strong>Pydantic-like metadata wrapper values</strong> (e.g. <code>name: T = Meta(alias="wire")</code>): expressive, but overloads the meaning of default values and risks turning “field metadata” into a runtime value story rather than a static schema/type story.</li>
+<li><strong>Separate <code>__field_info__()</code> method</strong>: keep <code>__fields__() -&gt; List[str]</code> and add a new <code>__field_info__() -&gt; List[FieldInfo]</code> for rich metadata. Rejected because it fragments the API; since we're pre-1.0, enriching <code>__fields__()</code> directly is cleaner and more future-proof.</li>
 </ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Adds syntax surface (field metadata brackets + <code>as</code> sugar).</li>
-<li>Requires consistent behavior across parsing, typechecking, and codegen, especially around keywords in member/named-arg
-  positions.</li>
+<li>Requires consistent behavior across parsing, typechecking, and codegen, especially around keywords in member/named-arg positions.</li>
 </ul>
 <h2 id="implementation-plan">Implementation plan<a class="headerlink" href="#implementation-plan" title="Permanent link">&para;</a></h2>
 <ul>
@@ -6295,8 +6337,7 @@ error: alias must be a non-empty string literal
 <li>destructuring pattern field keys</li>
 </ul>
 </li>
-<li>Ensure non-identifier aliases (e.g. <code>alias="1"</code>) remain valid as wire names but do not become usable in those syntax
-  positions (no <code>obj.1</code> / <code>Type(1=...)</code>).</li>
+<li>Ensure non-identifier aliases (e.g. <code>alias="1"</code>) remain valid as wire names but do not become usable in those syntax positions (no <code>obj.1</code> / <code>Type(1=...)</code>).</li>
 </ul>
 </li>
 <li><strong>Typechecker / name resolution (<code>src/frontend/typechecker</code>)</strong>:<ul>
@@ -6387,8 +6428,7 @@ error: alias must be a non-empty string literal
 </li>
 </ul>
 <p><strong>IDE rename behavior:</strong></p>
-<p>When an IDE performs a “rename symbol” on the <strong>canonical field identifier</strong>, it should rename only the identifier, not
-any alias string literals. The alias represents the external wire/schema name and usually must stay stable for compatibility.</p>
+<p>When an IDE performs a “rename symbol” on the <strong>canonical field identifier</strong>, it should rename only the identifier, not any alias string literals. The alias represents the external wire/schema name and usually must stay stable for compatibility.</p>
 <p>Example:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="c1"># before (canonical name = type_, wire name = &quot;type&quot;)</span>
 <span class="n">type_</span> <span class="p">[</span><span class="n">alias</span><span class="o">=</span><span class="s2">&quot;type&quot;</span><span class="p">]:</span> <span class="nb">str</span>
@@ -6423,8 +6463,7 @@ any alias string literals. The alias represents the external wire/schema name an
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Parser (<code>crates/incan_syntax</code>): support alias sugar <code>name as "wire": T</code> as sugar for <code>alias="wire"</code>.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Parser: error if both <code>alias="..."</code> and <code>as "..."</code> are present for the same field.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Parser (<code>crates/incan_syntax</code>): allow keyword tokens after <code>.</code>, as named-arg keys, and as destructuring field keys.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> AST (<code>crates/incan_syntax</code>): represent field metadata (alias/description) explicitly on model field declarations
-  (not as ad-hoc strings).</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> AST (<code>crates/incan_syntax</code>): represent field metadata (alias/description) explicitly on model field declarations (not as ad-hoc strings).</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Formatter (<code>src/format</code>): produce and preserve stable formatting for both bracket metadata and <code>as</code> sugar.</li>
 </ul>
 <h3 id="frontend-typechecker">Frontend (typechecker)<a class="headerlink" href="#frontend-typechecker" title="Permanent link">&para;</a></h3>
@@ -6469,8 +6508,7 @@ any alias string literals. The alias represents the external wire/schema name an
 <ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Define the Incan <code>FieldInfo</code> as a frozen core <code>class</code> (always available; no imports).</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Rust runtime: introduce a <code>FieldInfo</code> <strong>value type</strong> backing the class (<code>crates/incan_stdlib</code>).</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Rust runtime: resolve naming conflict with the existing <code>incan_stdlib::reflection::FieldInfo</code> trait (rename or
-  namespace) and update <code>incan_derive</code>/codegen imports accordingly.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Rust runtime: resolve naming conflict with the existing <code>incan_stdlib::reflection::FieldInfo</code> trait (rename or namespace) and update <code>incan_derive</code>/codegen imports accordingly.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Update <code>__fields__()</code> to return <code>List[FieldInfo]</code> with:<ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>name</code>, <code>alias</code>, <code>description</code>, <code>wire_name</code>, <code>type_name</code>, <code>has_default</code></li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>wire_name</code> derived as alias-or-name</li>
@@ -6512,8 +6550,7 @@ any alias string literals. The alias represents the external wire/schema name an
 </li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Reflection tests:<ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> <code>__fields__()</code> returns <code>FieldInfo</code> objects with correct <code>wire_name</code>/<code>alias</code>/<code>description</code>/<code>has_default</code></li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Rust snapshots updated to reflect any rename/namespace changes for the existing Rust <code>FieldInfo</code> derive/trait
-  (if changed as part of implementing this RFC)</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Rust snapshots updated to reflect any rename/namespace changes for the existing Rust <code>FieldInfo</code> derive/trait (if changed as part of implementing this RFC)</li>
 </ul>
 </li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled/><span class="task-list-indicator"></span></label> Edge cases:<ul class="task-list">

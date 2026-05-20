@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6192,11 +6307,9 @@
 </code></pre></div>
 <p>Notes:</p>
 <ul>
-<li><strong>Debugging individual stages</strong>: Use CLI stage flags (<code>--lex</code>, <code>--parse</code>, <code>--check</code>, <code>--emit-rust</code>) to inspect
-  intermediate outputs (see <a href="../../../tooling/tutorials/getting_started/">Getting Started</a>).</li>
+<li><strong>Debugging individual stages</strong>: Use CLI stage flags (<code>--lex</code>, <code>--parse</code>, <code>--check</code>, <code>--emit-rust</code>) to inspect intermediate outputs (see <a href="../../../tooling/tutorials/getting_started/">Getting Started</a>).</li>
 <li><strong>Multi-file projects</strong>: Import resolution rules and module layout are described in <a href="../../../language/explanation/imports_and_modules/">Imports &amp; Modules</a>.</li>
-<li><strong>Rust interop dependencies</strong>: <code>rust::</code> imports trigger Cargo dependency injection with a strict policy
-  (see <a href="../../../language/how-to/rust_interop/">Rust Interop</a> and <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
+<li><strong>Rust interop dependencies</strong>: <code>rust::</code> imports trigger Cargo dependency injection with a strict policy (see <a href="../../../language/how-to/rust_interop/">Rust Interop</a> and <a href="/dev/RFCs/closed/implemented/013_rust_crate_dependencies">RFC 013</a>).</li>
 <li><strong>Runtime boundary</strong>: Generated programs depend on <code>incan_stdlib</code> and <code>incan_derive</code>, but the compiler does not (see <code>crates/</code>).</li>
 </ul>
 <h2 id="module-layout">Module Layout<a class="headerlink" href="#module-layout" title="Permanent link">&para;</a></h2>
@@ -6270,27 +6383,21 @@ Runtime<span class="w"> </span>crates<span class="w"> </span><span class="o">(</
 <li>If a type looks stdlib-owned (<code>Mutex</code>, <code>JoinHandle</code>, <code>App</code>, <code>Response</code>, etc.), do not add more core-owned surface metadata without an explicit rationale. Prefer library-defined ownership when the current manifest and semantics-pack machinery can express it.</li>
 </ul>
 <h2 id="semantic-core">Semantic Core<a class="headerlink" href="#semantic-core" title="Permanent link">&para;</a></h2>
-<p>Incan has a <strong>semantic core</strong> crate (<code>incan_core</code>) that holds pure, deterministic helpers shared by the compiler and
-runtime, without creating dependency cycles.</p>
+<p>Incan has a <strong>semantic core</strong> crate (<code>incan_core</code>) that holds pure, deterministic helpers shared by the compiler and runtime, without creating dependency cycles.</p>
 <ul>
 <li><strong>Location</strong>: <code>crates/incan_core</code></li>
 <li><strong>Purpose</strong>: centralize semantic policy and pure helpers so compile-time behavior and runtime behavior cannot drift.</li>
 <li><strong>Used by</strong>: compiler (typechecker, const-eval, lowering/codegen decisions) and stdlib/runtime helpers.</li>
 <li><strong>Constraints</strong>: pure/deterministic (no IO, no global state) and no dependencies on compiler crates.</li>
-<li><strong>Stdlib registry</strong>: <code>incan_core::lang::stdlib::STDLIB_NAMESPACES</code> drives stdlib import validation, stub path resolution,
-  unknown-module hints, and import-activated language features (soft keywords like <code>async</code>/<code>await</code>).</li>
+<li><strong>Stdlib registry</strong>: <code>incan_core::lang::stdlib::STDLIB_NAMESPACES</code> drives stdlib import validation, stub path resolution, unknown-module hints, and import-activated language features (soft keywords like <code>async</code>/<code>await</code>).</li>
 </ul>
 <p><code>incan_core</code> should own language-wide policy, not runtime implementations. Existing stdlib-facing surface type metadata is a compatibility boundary; new work should either justify why the metadata is truly language-core policy or push ownership toward library-defined declarations/semantics packs.</p>
-<p>See crate-level documentation in <code>crates/incan_core</code> for the contract, extension checklist,
-and drift-prevention expectations; tests in <code>tests/semantic_core_*</code> serve as the source of truth
-for covered domains.</p>
+<p>See crate-level documentation in <code>crates/incan_core</code> for the contract, extension checklist, and drift-prevention expectations; tests in <code>tests/semantic_core_*</code> serve as the source of truth for covered domains.</p>
 <h2 id="syntax-frontend">Syntax Frontend<a class="headerlink" href="#syntax-frontend" title="Permanent link">&para;</a></h2>
-<p>Incan has a shared <strong>syntax frontend</strong> crate (<code>incan_syntax</code>) that centralizes lexer/parser/AST/diagnostics in a
-dependency-light crate suitable for reuse across compiler and tooling.</p>
+<p>Incan has a shared <strong>syntax frontend</strong> crate (<code>incan_syntax</code>) that centralizes lexer/parser/AST/diagnostics in a dependency-light crate suitable for reuse across compiler and tooling.</p>
 <ul>
 <li><strong>Location</strong>: <code>crates/incan_syntax</code></li>
-<li><strong>Purpose</strong>: provide a single, shared syntax layer (lexing, parsing, AST, diagnostics) to prevent drift between
-  compiler, formatter, LSP, and future interactive tooling.</li>
+<li><strong>Purpose</strong>: provide a single, shared syntax layer (lexing, parsing, AST, diagnostics) to prevent drift between compiler, formatter, LSP, and future interactive tooling.</li>
 <li><strong>Used by</strong>: compiler frontend and tooling (formatter/LSP); depends on <code>incan_core::lang</code> registries for vocabulary ids.</li>
 <li><strong>Constraints</strong>: syntax-only (no name resolution/type checking/IR); no dependencies on compiler crates.</li>
 </ul>
@@ -6377,10 +6484,7 @@ dependency-light crate suitable for reuse across compiler and tooling.</p>
 </tbody>
 </table>
 <h2 id="surface-semantics-engine">Surface Semantics Engine<a class="headerlink" href="#surface-semantics-engine" title="Permanent link">&para;</a></h2>
-<p>Surface syntax features (soft keywords, decorator semantics) are fully driven by a <strong>semantics registry</strong>. Every
-compiler stage — parser, typechecker, lowering, and scanning — consults the registry instead of hardcoding keyword
-identities. The design separates <em>feature knowledge</em> (which keyword does what) from <em>execution knowledge</em> (how the
-compiler performs each action):</p>
+<p>Surface syntax features (soft keywords, decorator semantics) are fully driven by a <strong>semantics registry</strong>. Every compiler stage — parser, typechecker, lowering, and scanning — consults the registry instead of hardcoding keyword identities. The design separates <em>feature knowledge</em> (which keyword does what) from <em>execution knowledge</em> (how the compiler performs each action):</p>
 <pre class="mermaid"><code>flowchart LR
     imports --&gt; SC[SurfaceContext]
     SC --&gt; REG[semantics registry]
@@ -6393,8 +6497,7 @@ compiler performs each action):</p>
     TC --&gt; TV[Type validation]
     LO --&gt; IR[IR / runtime detection]</code></pre>
 <h3 id="action-descriptors">Action descriptors<a class="headerlink" href="#action-descriptors" title="Permanent link">&para;</a></h3>
-<p>Packs don't execute compiler logic directly (that would create circular dependencies). Instead, they return small
-<strong>action descriptor</strong> enums that tell the compiler <em>what to do</em>:</p>
+<p>Packs don't execute compiler logic directly (that would create circular dependencies). Instead, they return small <strong>action descriptor</strong> enums that tell the compiler <em>what to do</em>:</p>
 <table>
 <thead>
 <tr>
@@ -6437,9 +6540,7 @@ compiler performs each action):</p>
 </tr>
 </tbody>
 </table>
-<p>Multiple keywords can share the same action descriptor (e.g., a hypothetical <code>ensure</code> keyword could reuse
-<code>AssertCall</code>). Adding a keyword that fits an existing action pattern is a <strong>pack-only change</strong> — zero touches to the
-main compiler crate.</p>
+<p>Multiple keywords can share the same action descriptor (e.g., a hypothetical <code>ensure</code> keyword could reuse <code>AssertCall</code>). Adding a keyword that fits an existing action pattern is a <strong>pack-only change</strong> — zero touches to the main compiler crate.</p>
 <h3 id="core-pieces">Core pieces<a class="headerlink" href="#core-pieces" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>crates/incan_semantics_core</code><ul>
@@ -6460,18 +6561,15 @@ main compiler crate.</p>
 </ul>
 </li>
 <li><code>src/frontend/typechecker/check_stmt.rs</code> / <code>check_expr/mod.rs</code><ul>
-<li><code>check_surface_stmt()</code> and <code>check_surface_expr()</code> query the registry for typecheck action descriptors and
-  dispatch on the returned action — no <code>KeywordId</code> matching.</li>
+<li><code>check_surface_stmt()</code> and <code>check_surface_expr()</code> query the registry for typecheck action descriptors and dispatch on the returned action — no <code>KeywordId</code> matching.</li>
 </ul>
 </li>
 <li><code>src/backend/ir/lower/stmt.rs</code> / <code>lower/expr/mod.rs</code><ul>
-<li><code>lower_surface_statement()</code> and the <code>Expr::Surface</code> arm of <code>lower_expr()</code> query the registry for lowering
-  action descriptors and dispatch on the returned action — no <code>KeywordId</code> matching.</li>
+<li><code>lower_surface_statement()</code> and the <code>Expr::Surface</code> arm of <code>lower_expr()</code> query the registry for lowering action descriptors and dispatch on the returned action — no <code>KeywordId</code> matching.</li>
 </ul>
 </li>
 <li><code>src/backend/ir/scanners/async_.rs</code><ul>
-<li>Detects async runtime requirement by asking the registry about each import and each surface modifier —
-  no hardcoded module names or keyword checks.</li>
+<li>Detects async runtime requirement by asking the registry about each import and each surface modifier — no hardcoded module names or keyword checks.</li>
 </ul>
 </li>
 <li><code>src/backend/ir/surface_semantics.rs</code><ul>
@@ -6494,18 +6592,13 @@ main compiler crate.</p>
 <p>If the new keyword fits an existing action pattern, only steps 1–3 require code changes:</p>
 <ol>
 <li>Add activation metadata in <code>incan_core::lang</code> registry tables (<code>KeywordId</code> + <code>info_soft()</code>).</li>
-<li>Implement the relevant <code>SurfaceSemanticsPack</code> methods in <code>incan_semantics_stdlib</code> (or another pack crate):
-   parser routing, typecheck action, lowering action, runtime requirements, and call targets as needed.</li>
-<li>Ensure parser emits generic surface payload with <code>SurfaceFeatureKey</code> handoff (usually automatic via existing
-   parser helpers).</li>
-<li><strong>Typechecker / Lowering / Scanning</strong>: no changes needed — the registry returns the action descriptor and the
-   existing dispatch handles it.</li>
+<li>Implement the relevant <code>SurfaceSemanticsPack</code> methods in <code>incan_semantics_stdlib</code> (or another pack crate): parser routing, typecheck action, lowering action, runtime requirements, and call targets as needed.</li>
+<li>Ensure parser emits generic surface payload with <code>SurfaceFeatureKey</code> handoff (usually automatic via existing parser helpers).</li>
+<li><strong>Typechecker / Lowering / Scanning</strong>: no changes needed — the registry returns the action descriptor and the existing dispatch handles it.</li>
 <li>Handle the new surface node in the <strong>formatter</strong> (usually a one-liner).</li>
 <li>Add parser/typechecker/codegen tests and update snapshots.</li>
 </ol>
-<p>If the keyword needs a <em>new</em> compiler behavior pattern, add a variant to the relevant action descriptor enum in
-<code>incan_semantics_core</code> and a handler arm in the corresponding compiler module. This is deliberately rare — action
-descriptors represent compiler behavior patterns, not individual keywords.</p>
+<p>If the keyword needs a <em>new</em> compiler behavior pattern, add a variant to the relevant action descriptor enum in <code>incan_semantics_core</code> and a handler arm in the corresponding compiler module. This is deliberately rare — action descriptors represent compiler behavior patterns, not individual keywords.</p>
 <h3 id="backend-srcbackend">Backend (<code>src/backend/</code>)<a class="headerlink" href="#backend-srcbackend" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -6638,10 +6731,7 @@ descriptors represent compiler behavior patterns, not individual keywords.</p>
 </tr>
 </tbody>
 </table>
-<p><strong>Enum-based dispatch</strong>: Built-in functions and known methods use enum types (<code>BuiltinFn</code>, <code>MethodKind</code>)
-instead of string matching.
-This provides compile-time exhaustiveness checking and makes it easier to add new builtins/methods
-(see <a href="../../how-to/extending_language/">Extending Incan</a>).</p>
+<p><strong>Enum-based dispatch</strong>: Built-in functions and known methods use enum types (<code>BuiltinFn</code>, <code>MethodKind</code>) instead of string matching. This provides compile-time exhaustiveness checking and makes it easier to add new builtins/methods (see <a href="../../how-to/extending_language/">Extending Incan</a>).</p>
 <h3 id="cli-srccli">CLI (<code>src/cli/</code>)<a class="headerlink" href="#cli-srccli" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -6712,8 +6802,7 @@ ast::Type          ──►  IrType               ──►  (syn Type)
 <li><strong>LSP</strong>: <code>src/bin/lsp.rs</code></li>
 </ul>
 <h2 id="extending-the-language">Extending the Language<a class="headerlink" href="#extending-the-language" title="Permanent link">&para;</a></h2>
-<p>Incan’s compiler is intentionally staged (Lexer → Parser/AST → Typechecker → IR → Rust). This makes the system easier
-to reason about, but it also means “language changes” can touch multiple layers.</p>
+<p>Incan’s compiler is intentionally staged (Lexer → Parser/AST → Typechecker → IR → Rust). This makes the system easier to reason about, but it also means “language changes” can touch multiple layers.</p>
 <p>For contributor guidance on <strong>when to add a builtin vs when to add new syntax</strong>, plus end-to-end checklists, see:</p>
 <ul>
 <li><a href="../../how-to/extending_language/">Extending Incan: Builtins vs New Syntax</a></li>

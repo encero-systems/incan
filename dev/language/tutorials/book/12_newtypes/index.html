@@ -1281,6 +1281,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1507,6 +1515,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1575,6 +1625,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1680,6 +1751,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3185,6 +3277,8 @@
       
         
       
+        
+      
     
     
       
@@ -3516,6 +3610,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3661,7 +3776,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3677,14 +3792,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5707,8 +5822,7 @@
 
 
 <h1 id="12-newtypes-stronger-types">12. Newtypes (stronger types)<a class="headerlink" href="#12-newtypes-stronger-types" title="Permanent link">&para;</a></h1>
-<p>A <strong>newtype</strong> is a “zero-cost wrapper” around another type. It lets you create <strong>distinct types</strong> that the compiler won’t
-let you accidentally mix up.</p>
+<p>A <strong>newtype</strong> is a “zero-cost wrapper” around another type. It lets you create <strong>distinct types</strong> that the compiler won’t let you accidentally mix up.</p>
 <h2 id="why-newtypes">Why newtypes?<a class="headerlink" href="#why-newtypes" title="Permanent link">&para;</a></h2>
 <p>If two values share the same underlying type (like <code>int</code>), it’s easy to mix them up by accident.</p>
 <p>With newtypes, the compiler helps you keep them straight:</p>
@@ -5733,8 +5847,7 @@ let you accidentally mix up.</p>
 </code></pre></div>
 <div class="admonition tip">
 <p class="admonition-title">Coming from Python?</p>
-<p>This is similar to creating a tiny wrapper class just to avoid mixing up values, but with less runtime overhead and
-better static checking.</p>
+<p>This is similar to creating a tiny wrapper class just to avoid mixing up values, but with less runtime overhead and better static checking.</p>
 </div>
 <h2 id="constructing-and-unwrapping">Constructing and unwrapping<a class="headerlink" href="#constructing-and-unwrapping" title="Permanent link">&para;</a></h2>
 <p>You construct a newtype by calling it like a function: <code>UserId(42)</code>.</p>
@@ -5746,8 +5859,7 @@ better static checking.</p>
             <span class="k">return</span> <span class="nb">Err</span><span class="p">(</span><span class="kt">ValidationError</span><span class="p">(</span><span class="s2">&quot;attempts must be &gt;= 1&quot;</span><span class="p">))</span>
         <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="nc">Attempts</span><span class="p">(</span><span class="n">n</span><span class="p">))</span>
 </code></pre></div>
-<p>If a newtype defines <code>from_underlying</code>, then calling it like <code>Attempts(5)</code> performs <strong>checked construction</strong>
-(it calls <code>Attempts.from_underlying(5)</code> and raises a validation error if it returns <code>Err(...)</code>).</p>
+<p>If a newtype defines <code>from_underlying</code>, then calling it like <code>Attempts(5)</code> performs <strong>checked construction</strong> (it calls <code>Attempts.from_underlying(5)</code> and raises a validation error if it returns <code>Err(...)</code>).</p>
 <p>The compiler also applies that checked construction at typed boundary sites where the destination type is already known:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">retry</span><span class="p">(</span><span class="n">attempts</span><span class="p">:</span> <span class="nc">Attempts</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;attempts=</span><span class="si">{</span><span class="n">attempts</span><span class="mf">.0</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>

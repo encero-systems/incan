@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5891,25 +6006,31 @@
 
 
 <h1 id="rfc-022-namespaced-stdlib-modules-and-compilerstdlib-handoff">RFC 022: Namespaced stdlib modules and compiler→stdlib handoff<a class="headerlink" href="#rfc-022-namespaced-stdlib-modules-and-compilerstdlib-handoff" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Implemented<br />
-<strong>Created:</strong> 2026-02-06<br />
-<strong>Author(s):</strong> Danny Meijer (@dannymeijer)<br />
-<strong>Related:</strong> RFC 000 (core imports/modules), RFC 005 (Rust interop), RFC 051 (<code>JsonValue</code>),<br />
-RFC 013 (Rust crate dependencies), RFC 020 (offline/locked policy)
-<strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/120">#120</a></p>
+<ul>
+<li><strong>Status:</strong> Implemented</li>
+<li><strong>Created:</strong> 2026-02-06</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 000 (core imports/modules)</li>
+<li>RFC 005 (Rust interop)</li>
+<li>RFC 013 (Rust crate dependencies)</li>
+<li>RFC 020 (offline/locked policy)</li>
+<li>RFC 051 (<code>JsonValue</code>)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/120">#120</a></li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> v0.2</li>
+</ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>This RFC proposes three related changes to reduce global-namespace pollution and decouple language evolution from
-compiler internals:</p>
+<p>This RFC proposes three related changes to reduce global-namespace pollution and decouple language evolution from compiler internals:</p>
 <ol>
-<li><strong>A canonical Incan stdlib root</strong>: stdlib modules live under <code>std</code> (e.g. <code>std.web</code>, <code>std.http</code>, <code>std.datetime</code>,
-  <code>std.foo</code>, etc).</li>
-<li><strong>Namespaced decorators</strong>: decorators are resolved by path (e.g. <code>@std.web.route</code>),
-   rather than by a global string like <code>@route</code>.</li>
-<li><strong>A minimal compiler→stdlib handoff boundary</strong>: when a feature needs compile-time metadata (e.g. route tables), the
-   compiler extracts <em>only that metadata</em> and hands it off to <code>incan_stdlib</code> for framework/runtime-specific lowering.</li>
+<li><strong>A canonical Incan stdlib root</strong>: stdlib modules live under <code>std</code> (e.g. <code>std.web</code>, <code>std.http</code>, <code>std.datetime</code>, <code>std.foo</code>, etc).</li>
+<li><strong>Namespaced decorators</strong>: decorators are resolved by path (e.g. <code>@std.web.route</code>), rather than by a global string like <code>@route</code>.</li>
+<li><strong>A minimal compiler→stdlib handoff boundary</strong>: when a feature needs compile-time metadata (e.g. route tables), the compiler extracts <em>only that metadata</em> and hands it off to <code>incan_stdlib</code> for framework/runtime-specific lowering.</li>
 </ol>
-<p>Goal: the compiler knows less about “web/http/async/etc”, while the stdlib can grow into multiple modules without
-colliding in a single global vocabulary.</p>
+<p>Goal: the compiler knows less about “web/http/async/etc”, while the stdlib can grow into multiple modules without colliding in a single global vocabulary.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
 <p>Incan v0.1 already shows pressure on the <strong>global namespace</strong> and on the compiler’s “special cases”:</p>
 <ul>
@@ -5919,10 +6040,8 @@ colliding in a single global vocabulary.</p>
 <li>backend emission glue (route wrapper generation, import rewriting)</li>
 </ul>
 </li>
-<li>As stdlib expands (e.g. <code>http</code>, <code>datetime</code>, <code>frozen</code>), global names will collide or become confusing (<code>Json</code> in web vs
-  <code>Json</code> in http, etc).</li>
-<li>Adding new stdlib modules today often requires touching multiple compiler layers (typechecker, lowering, emitter,
-  cargo generation), increasing both implementation cost and long-term maintenance.</li>
+<li>As stdlib expands (e.g. <code>http</code>, <code>datetime</code>, <code>frozen</code>), global names will collide or become confusing (<code>Json</code> in web vs <code>Json</code> in http, etc).</li>
+<li>Adding new stdlib modules today often requires touching multiple compiler layers (typechecker, lowering, emitter, cargo generation), increasing both implementation cost and long-term maintenance.</li>
 </ul>
 <p>We want:</p>
 <ul>
@@ -5979,25 +6098,20 @@ colliding in a single global vocabulary.</p>
 <ul>
 <li><code>std</code> is the root namespace for <strong>Incan stdlib modules</strong>.</li>
 <li><code>rust::std</code> is Rust’s standard library per RFC 005.</li>
-<li>The language does not require a single monolithic “global stdlib”; instead, it grows via submodules under <code>std</code>
-  (for example <code>std.web</code>, <code>std.http</code>).</li>
+<li>The language does not require a single monolithic “global stdlib”; instead, it grows via submodules under <code>std</code> (for example <code>std.web</code>, <code>std.http</code>).</li>
 </ul>
-<p>This RFC does not require any specific list of stdlib modules to exist immediately, but establishes the canonical shape
-so that new modules can be added without global collisions.</p>
+<p>This RFC does not require any specific list of stdlib modules to exist immediately, but establishes the canonical shape so that new modules can be added without global collisions.</p>
 <h3 id="2-decorator-paths-syntax">2) Decorator paths (syntax)<a class="headerlink" href="#2-decorator-paths-syntax" title="Permanent link">&para;</a></h3>
 <p>Decorators are extended to accept a module path, not only a single identifier.</p>
 <p>Proposed grammar change (building on RFC 000):</p>
 <div class="language-ebnf highlight"><pre><span></span><code><span class="k">decorator      </span><span class="o">=</span> <span class="s2">&quot;@&quot;</span> <span class="k">decorator_path </span><span class="p">[</span> <span class="s2">&quot;(&quot;</span> <span class="k">decorator_args </span><span class="s2">&quot;)&quot;</span> <span class="p">]</span> <span class="p">;</span>
 <span class="k">decorator_path </span><span class="o">=</span> <span class="k">module_path </span><span class="p">;</span>
 </code></pre></div>
-<p>Where <code>module_path</code> is the same path grammar used by imports (RFC 000): segments separated by <code>::</code> or <code>.</code> with support
-for absolute <code>crate::...</code> paths and parent-navigation via <code>super</code>/<code>..</code>.</p>
-<p>Decorator arguments (<code>decorator_args</code>) are unchanged: namespacing affects only how the decorator is identified and resolved,
-not how its arguments are parsed or type-checked.</p>
+<p>Where <code>module_path</code> is the same path grammar used by imports (RFC 000): segments separated by <code>::</code> or <code>.</code> with support for absolute <code>crate::...</code> paths and parent-navigation via <code>super</code>/<code>..</code>.</p>
+<p>Decorator arguments (<code>decorator_args</code>) are unchanged: namespacing affects only how the decorator is identified and resolved, not how its arguments are parsed or type-checked.</p>
 <p>Notes:</p>
 <ul>
-<li>Decorator paths use the same <code>module_path</code> rules as imports (RFC 000): both <code>.</code> and <code>::</code> separators are supported.
-  This RFC <strong>recommends dot-style</strong> for decorators because it reads  more like a “qualified annotation” than a Rust path.</li>
+<li>Decorator paths use the same <code>module_path</code> rules as imports (RFC 000): both <code>.</code> and <code>::</code> separators are supported. This RFC <strong>recommends dot-style</strong> for decorators because it reads more like a “qualified annotation” than a Rust path.</li>
 <li>The last segment is the decorator name; preceding segments form its namespace path.</li>
 </ul>
 <h3 id="3-decorator-resolution-semantics">3) Decorator resolution (semantics)<a class="headerlink" href="#3-decorator-resolution-semantics" title="Permanent link">&para;</a></h3>
@@ -6034,8 +6148,7 @@ not how its arguments are parsed or type-checked.</p>
 </li>
 <li>Framework/runtime details must live in <code>incan_stdlib</code>, not in compiler emission code.</li>
 </ul>
-<p>This is a constraint on implementation style:
-it prevents reintroducing “web scattered everywhere” as new stdlib modules arrive.</p>
+<p>This is a constraint on implementation style: it prevents reintroducing “web scattered everywhere” as new stdlib modules arrive.</p>
 <h4 id="example-web-routing-handoff">Example: web routing handoff<a class="headerlink" href="#example-web-routing-handoff" title="Permanent link">&para;</a></h4>
 <p>Normative contract (shape; exact API is implementation-defined):</p>
 <ul>
@@ -6058,28 +6171,19 @@ it prevents reintroducing “web scattered everywhere” as new stdlib modules a
 </ul>
 <p>Important note (implementation reality):</p>
 <ul>
-<li>The handoff must be expressive enough to support <strong>type-safe extraction</strong> (e.g. <code>Json[T]</code> / <code>Query[T]</code>) and
-  <strong>response conversion</strong> without reintroducing framework logic into the compiler.</li>
+<li>The handoff must be expressive enough to support <strong>type-safe extraction</strong> (e.g. <code>Json[T]</code> / <code>Query[T]</code>) and <strong>response conversion</strong> without reintroducing framework logic into the compiler.</li>
 <li>Two acceptable implementation strategies are:<ul>
-<li><strong>Stdlib-driven typing</strong>: make <code>std.web</code> wrapper types implement the underlying framework traits
-  (e.g. Axum extractors / <code>IntoResponse</code>) so the route macro needs only <code>(method, path, handler)</code>
-  and Rust’s typechecker enforces correctness.</li>
-<li><strong>Richer metadata</strong>: have the compiler emit a richer route definition (handler signature/shape) and have the stdlib
-  macro generate wrappers internally. The stdlib-driven typing approach is preferred when feasible, as it minimizes
-  compiler responsibility per this RFC's design principle.</li>
+<li><strong>Stdlib-driven typing</strong>: make <code>std.web</code> wrapper types implement the underlying framework traits (e.g. Axum extractors / <code>IntoResponse</code>) so the route macro needs only <code>(method, path, handler)</code> and Rust’s typechecker enforces correctness.</li>
+<li><strong>Richer metadata</strong>: have the compiler emit a richer route definition (handler signature/shape) and have the stdlib macro generate wrappers internally. The stdlib-driven typing approach is preferred when feasible, as it minimizes compiler responsibility per this RFC's design principle.</li>
 </ul>
 </li>
 </ul>
-<p>This RFC intentionally does not standardize the exact metadata shape; it standardizes the <em>boundary</em>:
-framework glue belongs in <code>incan_stdlib</code>.</p>
+<p>This RFC intentionally does not standardize the exact metadata shape; it standardizes the <em>boundary</em>: framework glue belongs in <code>incan_stdlib</code>.</p>
 <h3 id="interaction-with-existing-rfcs-features">Interaction with existing RFCs / features<a class="headerlink" href="#interaction-with-existing-rfcs-features" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>RFC 005 (Rust interop)</strong>: reinforces the separation: <code>std</code> (Incan stdlib) vs <code>rust::...</code> (Rust interop).</li>
-<li><strong>RFC 013 / RFC 020 (dependency policy)</strong>: stdlib handoff should reduce generated-project dependency sprawl by making
-  the generated project depend primarily on <code>incan_stdlib</code> (with features), while user <code>rust::...</code> imports continue to
-  be governed by <code>incan.toml</code> and lock policy.</li>
-<li><strong>RFC 051 (<code>JsonValue</code>)</strong>: a dedicated <code>std.json</code> module provides a natural home for a future dynamic JSON value
-  type and JSON parsing/serialization APIs, while keeping web wrappers (<code>std.web.Json[T]</code>) separate.</li>
+<li><strong>RFC 013 / RFC 020 (dependency policy)</strong>: stdlib handoff should reduce generated-project dependency sprawl by making the generated project depend primarily on <code>incan_stdlib</code> (with features), while user <code>rust::...</code> imports continue to be governed by <code>incan.toml</code> and lock policy.</li>
+<li><strong>RFC 051 (<code>JsonValue</code>)</strong>: a dedicated <code>std.json</code> module provides a natural home for a future dynamic JSON value type and JSON parsing/serialization APIs, while keeping web wrappers (<code>std.web.Json[T]</code>) separate.</li>
 <li><strong>Testing RFCs (018/019)</strong>: namespaced <code>@std.testing.fixture</code> etc can follow the same pattern as web routing.</li>
 </ul>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
@@ -6093,15 +6197,11 @@ framework glue belongs in <code>incan_stdlib</code>.</p>
 </ul>
 </li>
 </ul>
-<p>This mapping should live in a shared, versioned registry (likely <code>incan_core</code>) so the frontend/backend and tooling don’t
-drift. Feature activation is driven by import resolution: when the compiler resolves an import from a std.* module, it
-activates the corresponding <code>incan_stdlib</code> Cargo feature.</p>
+<p>This mapping should live in a shared, versioned registry (likely <code>incan_core</code>) so the frontend/backend and tooling don’t drift. Feature activation is driven by import resolution: when the compiler resolves an import from a std.* module, it activates the corresponding <code>incan_stdlib</code> Cargo feature.</p>
 <p>Dependency model (normative direction):</p>
 <ul>
-<li>Generated Rust projects should depend on <code>incan_stdlib</code> (with features) rather than depending directly on framework
-  crates like <code>axum</code>, <code>tokio</code>, or <code>serde_json</code> when those are purely implementation details of stdlib modules.</li>
-<li>User-specified Rust dependencies via <code>rust::...</code> imports and <code>incan.toml</code> remain separate and explicit
-  (RFC 005 /RFC 013).</li>
+<li>Generated Rust projects should depend on <code>incan_stdlib</code> (with features) rather than depending directly on framework crates like <code>axum</code>, <code>tokio</code>, or <code>serde_json</code> when those are purely implementation details of stdlib modules.</li>
+<li>User-specified Rust dependencies via <code>rust::...</code> imports and <code>incan.toml</code> remain separate and explicit (RFC 005 /RFC 013).</li>
 </ul>
 <h3 id="stdlib-stub-discovery-and-wiring">Stdlib stub discovery and wiring<a class="headerlink" href="#stdlib-stub-discovery-and-wiring" title="Permanent link">&para;</a></h3>
 <p>This RFC’s goal is that adding a new stdlib module should require touching <strong>as little compiler code as possible</strong>.</p>
@@ -6114,43 +6214,30 @@ activates the corresponding <code>incan_stdlib</code> Cargo feature.</p>
 </ul>
 </li>
 </ul>
-<p>This keeps the compiler deterministic and avoids requiring it to parse stdlib sources at compile-time, while still making
-the stdlib “Incan-first” for developer experience.</p>
-<p>Future direction (non-normative): the compiler/LSP may optionally use a well-known stdlib source location to improve
-go-to-definition and hover text, but that should not be required for correctness.</p>
+<p>This keeps the compiler deterministic and avoids requiring it to parse stdlib sources at compile-time, while still making the stdlib “Incan-first” for developer experience.</p>
+<p>Future direction (non-normative): the compiler/LSP may optionally use a well-known stdlib source location to improve go-to-definition and hover text, but that should not be required for correctness.</p>
 <h3 id="multi-module-projects-and-route-collection">Multi-module projects and route collection<a class="headerlink" href="#multi-module-projects-and-route-collection" title="Permanent link">&para;</a></h3>
-<p>In multi-file projects, decorators are resolved in their <strong>local module scope</strong> (aliases are per-module), but web routing
-is a <strong>whole-program concern</strong>:</p>
+<p>In multi-file projects, decorators are resolved in their <strong>local module scope</strong> (aliases are per-module), but web routing is a <strong>whole-program concern</strong>:</p>
 <ul>
-<li>The compiler collects all resolved <code>@std.web.route(...)</code> entries across the compilation unit (entry module + dependency
-  modules) into a single route table.</li>
-<li>Each route entry references the handler by its fully qualified symbol path so the stdlib handoff can build a single
-  router regardless of where the handler is declared.</li>
+<li>The compiler collects all resolved <code>@std.web.route(...)</code> entries across the compilation unit (entry module + dependency modules) into a single route table.</li>
+<li>Each route entry references the handler by its fully qualified symbol path so the stdlib handoff can build a single router regardless of where the handler is declared.</li>
 </ul>
 <h3 id="rustextern-rust-backed-function-marker"><code>@rust.extern</code> — Rust-backed function marker<a class="headerlink" href="#rustextern-rust-backed-function-marker" title="Permanent link">&para;</a></h3>
 <blockquote>
 <p><strong>Note:</strong> This section originally introduced <code>@std.builtin</code>. RFC 023 renamed it to <code>@rust.extern</code>
 and removed the stdlib-only restriction. All references below use the current name.</p>
 </blockquote>
-<p>Stdlib modules are <strong>Incan-first at the surface</strong>:
-every stdlib module should have an Incan source file that declares its public vocabulary (types, signatures, docs).
-Where the implementation is provided by a Rust module rather than written in Incan, the source marks those
-items with <code>@rust.extern</code> (this replaces the <code>@compiler_expand</code> marker).</p>
+<p>Stdlib modules are <strong>Incan-first at the surface</strong>: every stdlib module should have an Incan source file that declares its public vocabulary (types, signatures, docs). Where the implementation is provided by a Rust module rather than written in Incan, the source marks those items with <code>@rust.extern</code> (this replaces the <code>@compiler_expand</code> marker).</p>
 <p>Definition:</p>
 <ul>
-<li><code>@rust.extern</code> means <strong>the function's body is provided by a Rust module</strong> (declared via <code>rust.module()</code>).
-  It does <em>not</em> mean "globally available language builtin" (e.g. <code>print</code>, <code>len</code>). The two concepts are unrelated!</li>
+<li><code>@rust.extern</code> means <strong>the function's body is provided by a Rust module</strong> (declared via <code>rust.module()</code>). It does <em>not</em> mean "globally available language builtin" (e.g. <code>print</code>, <code>len</code>). The two concepts are unrelated!</li>
 <li><code>@rust.extern</code> is allowed in <strong>all Incan source categories</strong> (stdlib, library, application).</li>
-<li>Apply <code>@rust.extern</code> at the <strong>smallest granularity possible</strong> — individual functions or methods, not entire modules or
-  types. Type definitions (<code>model</code>, <code>enum</code>, <code>class</code> in the example below) are compiled normally from their Incan
-  source; only the items whose <em>bodies</em> are Rust-provided carry the marker.</li>
+<li>Apply <code>@rust.extern</code> at the <strong>smallest granularity possible</strong> — individual functions or methods, not entire modules or types. Type definitions (<code>model</code>, <code>enum</code>, <code>class</code> in the example below) are compiled normally from their Incan source; only the items whose <em>bodies</em> are Rust-provided carry the marker.</li>
 </ul>
 <p>This serves two purposes:</p>
 <ul>
-<li><strong>Tooling/UX</strong>: users can Cmd-click into stdlib items and read the intended API and docs in Incan, even when the
-  implementation is compiled from Rust.</li>
-<li><strong>Clean compiler boundary</strong>: the handoff points are explicit and greppable, rather than scattered as special cases
-  across the compiler pipeline.</li>
+<li><strong>Tooling/UX</strong>: users can Cmd-click into stdlib items and read the intended API and docs in Incan, even when the implementation is compiled from Rust.</li>
+<li><strong>Clean compiler boundary</strong>: the handoff points are explicit and greppable, rather than scattered as special cases across the compiler pipeline.</li>
 </ul>
 <p>Example (non-normative): a future <code>std.http</code> surface stub:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">std.json</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">json</span>
@@ -6171,21 +6258,16 @@ items with <code>@rust.extern</code> (this replaces the <code>@compiler_expand</
 <span class="nd">@rust</span><span class="o">.</span><span class="n">extern</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">request</span><span class="p">(</span><span class="n">req</span><span class="p">:</span> <span class="kt">Request</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kt">Response</span><span class="p">,</span> <span class="nb">str</span><span class="p">]:</span> <span class="o">...</span>
 </code></pre></div>
-<p>Here <code>Method</code>, <code>Request</code>, and <code>Response</code> are ordinary Incan types compiled by the standard pipeline.
-Only <code>request()</code> is marked <code>@rust.extern</code> — its body is provided by the Rust module (e.g. delegating to an HTTP client in
-<code>incan_stdlib</code>).</p>
+<p>Here <code>Method</code>, <code>Request</code>, and <code>Response</code> are ordinary Incan types compiled by the standard pipeline. Only <code>request()</code> is marked <code>@rust.extern</code> — its body is provided by the Rust module (e.g. delegating to an HTTP client in <code>incan_stdlib</code>).</p>
 <p>Migration note (normative):</p>
 <ul>
-<li>This RFC originally renamed the legacy marker <code>@compiler_expand</code> to <code>@std.builtin</code>; RFC 023 further renamed it to
-  <code>@rust.extern</code> and removed the stdlib-only restriction.</li>
+<li>This RFC originally renamed the legacy marker <code>@compiler_expand</code> to <code>@std.builtin</code>; RFC 023 further renamed it to <code>@rust.extern</code> and removed the stdlib-only restriction.</li>
 <li><code>@compiler_expand</code> must be treated as deprecated and <strong>removed as part of implementing this RFC</strong>.</li>
 </ul>
 <h3 id="surface-vocabulary-reduce-global-injections-follow-up">Surface vocabulary: reduce global injections (follow-up)<a class="headerlink" href="#surface-vocabulary-reduce-global-injections-follow-up" title="Permanent link">&para;</a></h3>
-<p>Today some stdlib-ish types/functions are globally available as “surface vocabulary” (e.g. <code>Json</code>, <code>Query</code>, async helpers).
-This RFC’s direction implies a follow-up change:</p>
+<p>Today some stdlib-ish types/functions are globally available as “surface vocabulary” (e.g. <code>Json</code>, <code>Query</code>, async helpers). This RFC’s direction implies a follow-up change:</p>
 <ul>
-<li>stdlib surface names should enter scope <strong>via imports</strong> (<code>from std.web import Json</code>) rather than being implicitly
-  defined in the global symbol table.</li>
+<li>stdlib surface names should enter scope <strong>via imports</strong> (<code>from std.web import Json</code>) rather than being implicitly defined in the global symbol table.</li>
 </ul>
 <blockquote>
 <p>Note: Users will have to update their code to use the new import syntax once this RFC is implemented.</p>
@@ -6197,16 +6279,12 @@ This RFC’s direction implies a follow-up change:</p>
 <li>Switch documentation/examples to <code>std</code> namespacing and namespaced decorators (<code>@std.web.route</code>) immediately.</li>
 <li>Treat unqualified decorators like <code>@route</code> as <strong>breaking removal</strong>.</li>
 </ul>
-<p>The core requirement is the <em>direction</em>: decorators must be resolvable by a namespace path so new stdlib modules can be
-added without expanding a global decorator vocabulary.</p>
+<p>The core requirement is the <em>direction</em>: decorators must be resolvable by a namespace path so new stdlib modules can be added without expanding a global decorator vocabulary.</p>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>Keep global decorator names</strong> (<code>@route</code>) and only namespace modules: helps somewhat, but does not solve
-  “which module owns this decorator?” and reintroduces collisions as decorator space expands.</li>
-<li><strong>Move everything into compiler builtins</strong> (more surface vocabulary): fastest short-term path, worst long-term
-  maintainability; does not scale with stdlib growth.</li>
-<li><strong>Runtime-only routing registration</strong> (no compiler metadata): hard in Rust due to typed handler signatures;
-  tends to force dynamic dispatch/boxing and leaks framework details.</li>
+<li><strong>Keep global decorator names</strong> (<code>@route</code>) and only namespace modules: helps somewhat, but does not solve “which module owns this decorator?” and reintroduces collisions as decorator space expands.</li>
+<li><strong>Move everything into compiler builtins</strong> (more surface vocabulary): fastest short-term path, worst long-term maintainability; does not scale with stdlib growth.</li>
+<li><strong>Runtime-only routing registration</strong> (no compiler metadata): hard in Rust due to typed handler signatures; tends to force dynamic dispatch/boxing and leaks framework details.</li>
 </ul>
 <h2 id="drawbacks">Drawbacks<a class="headerlink" href="#drawbacks" title="Permanent link">&para;</a></h2>
 <ul>
@@ -6219,17 +6297,12 @@ added without expanding a global decorator vocabulary.</p>
 <p>At a minimum, an implementation must:</p>
 <ul>
 <li><strong>Frontend</strong>: parse decorators as a path and resolve them through imports/aliases.</li>
-<li><strong>Compiler boundary</strong>: for known stdlib decorators (e.g. web routing), extract only structured metadata and avoid
-  framework-specific emission logic.</li>
+<li><strong>Compiler boundary</strong>: for known stdlib decorators (e.g. web routing), extract only structured metadata and avoid framework-specific emission logic.</li>
 <li><strong>Stdlib</strong>: provide stable entrypoints/macros for consuming that metadata and owning framework/runtime details.</li>
 <li><strong>Tests</strong> (minimum bar):<ul>
-<li>Parser tests: decorator paths using <code>.</code> and <code>::</code>, nested paths, and argument parsing for
-  namespaced decorators.</li>
-<li>Resolution tests: canonical path vs aliased path, and high-quality diagnostics for unresolved
-  decorator paths.</li>
-<li>Codegen snapshot tests: ensure the emitted Rust references <code>incan_stdlib::...</code> handoff
-  entrypoints and does <strong>not</strong> directly reference framework crates (e.g. no <code>axum::</code> in
-  generated output for web programs).</li>
+<li>Parser tests: decorator paths using <code>.</code> and <code>::</code>, nested paths, and argument parsing for namespaced decorators.</li>
+<li>Resolution tests: canonical path vs aliased path, and high-quality diagnostics for unresolved decorator paths.</li>
+<li>Codegen snapshot tests: ensure the emitted Rust references <code>incan_stdlib::...</code> handoff entrypoints and does <strong>not</strong> directly reference framework crates (e.g. no <code>axum::</code> in generated output for web programs).</li>
 <li>Negative tests: <code>std</code> / <code>rust</code> roots cannot be shadowed.</li>
 </ul>
 </li>
@@ -6238,14 +6311,12 @@ added without expanding a global decorator vocabulary.</p>
 <p>This section records concrete decisions so the implementation stays coherent and deterministic.</p>
 <h3 id="canonical-spelling-vs-accepted-syntax">Canonical spelling vs accepted syntax<a class="headerlink" href="#canonical-spelling-vs-accepted-syntax" title="Permanent link">&para;</a></h3>
 <ul>
-<li><strong>Accepted syntax</strong>: Incan module paths accept both dot and double-colon separators (RFC 000).
-  Therefore the following are equivalent at the language level:<ul>
+<li><strong>Accepted syntax</strong>: Incan module paths accept both dot and double-colon separators (RFC 000). Therefore the following are equivalent at the language level:<ul>
 <li><code>std.web</code> and <code>std::web</code></li>
 <li>the same equivalence applies to decorator paths (dot vs <code>::</code> separators)</li>
 </ul>
 </li>
-<li><strong>Canonical spelling</strong>: The formatter should normalize Incan module paths (including decorators) to a single canonical
-  spelling by default (recommended: <strong>dot-style</strong>).</li>
+<li><strong>Canonical spelling</strong>: The formatter should normalize Incan module paths (including decorators) to a single canonical spelling by default (recommended: <strong>dot-style</strong>).</li>
 </ul>
 <p>Rationale:</p>
 <ul>
@@ -6255,31 +6326,25 @@ added without expanding a global decorator vocabulary.</p>
 </ul>
 </li>
 <li>Rust interop paths follow RFC 005: <code>rust::...</code> is <code>::</code>-only and must not be normalized to dot notation.</li>
-<li>Any future configurability of formatter output (if desired) is out of scope for this RFC and should live in the
-  formatter/configuration RFC(s). The requirement here is determinism, not customization.</li>
+<li>Any future configurability of formatter output (if desired) is out of scope for this RFC and should live in the formatter/configuration RFC(s). The requirement here is determinism, not customization.</li>
 </ul>
 <h3 id="stdlib-handoff-compatibility-model">Stdlib handoff compatibility model<a class="headerlink" href="#stdlib-handoff-compatibility-model" title="Permanent link">&para;</a></h3>
 <ul>
-<li><code>incan_stdlib</code> is <strong>toolchain-locked</strong>: it is always tied to the Incan compiler version (like Python’s stdlib is tied
-  to the Python interpreter version).</li>
-<li>The “handoff API” between compiler and stdlib is therefore allowed to evolve alongside the compiler, without a promise
-  of supporting arbitrary historical stdlib versions.</li>
-<li>Implementation should include a simple, explicit <strong>version/compatibility check</strong> so mismatches fail fast with a clear
-  diagnostic.</li>
+<li><code>incan_stdlib</code> is <strong>toolchain-locked</strong>: it is always tied to the Incan compiler version (like Python’s stdlib is tied to the Python interpreter version).</li>
+<li>The “handoff API” between compiler and stdlib is therefore allowed to evolve alongside the compiler, without a promise of supporting arbitrary historical stdlib versions.</li>
+<li>Implementation should include a simple, explicit <strong>version/compatibility check</strong> so mismatches fail fast with a clear diagnostic.</li>
 </ul>
 <h3 id="user-defined-decorators">User-defined decorators<a class="headerlink" href="#user-defined-decorators" title="Permanent link">&para;</a></h3>
 <ul>
 <li>For now, decorators are reserved for <strong>stdlib/compiler vocabulary</strong>; unknown decorators are a compile-time error.</li>
-<li>This RFC intentionally keeps the <em>syntax and resolution model</em> open to future user-defined decorators by treating
-  decorators as <strong>resolved paths</strong> (not a closed set of global strings).</li>
+<li>This RFC intentionally keeps the <em>syntax and resolution model</em> open to future user-defined decorators by treating decorators as <strong>resolved paths</strong> (not a closed set of global strings).</li>
 <li>A future RFC may introduce user-defined decorators via an explicit macro/plugin system and determinism/safety policy.</li>
 </ul>
 <h3 id="reserved-roots-and-shadowing">Reserved roots and shadowing<a class="headerlink" href="#reserved-roots-and-shadowing" title="Permanent link">&para;</a></h3>
 <ul>
 <li><code>std</code> and <code>rust</code> are reserved root namespaces and must not be shadowed.</li>
 <li>Module path qualifiers like <code>crate</code>, <code>super</code>, and <code>..</code> are also reserved and must retain their special meaning in paths.</li>
-<li>We intentionally avoid any “shadowing” or alternate package-root behavior in v0.x. If the
-  community wants that later, it should be addressed in a dedicated packaging/modules RFC.</li>
+<li>We intentionally avoid any “shadowing” or alternate package-root behavior in v0.x. If the community wants that later, it should be addressed in a dedicated packaging/modules RFC.</li>
 </ul>
 <h2 id="checklist-comprehensive">Checklist (comprehensive)<a class="headerlink" href="#checklist-comprehensive" title="Permanent link">&para;</a></h2>
 <p>This RFC can be considered "implemented" when the following are complete.</p>
@@ -6313,8 +6378,7 @@ added without expanding a global decorator vocabulary.</p>
 <ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Web routes are collected as <em>structured metadata</em> across the full compilation unit (entry module + dependency modules).</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Route entries reference handlers by fully-qualified symbol path.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Codegen emits a single stdlib handoff for routing (macro/entrypoint in <code>incan_stdlib</code>), without embedding framework
-  glue.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Codegen emits a single stdlib handoff for routing (macro/entrypoint in <code>incan_stdlib</code>), without embedding framework glue.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Generated Rust for stdlib-driven web programs does not directly reference framework crates (e.g. no <code>axum::</code> in output).</li>
 </ul>
 <h3 id="runtime-stdlib">Runtime / stdlib<a class="headerlink" href="#runtime-stdlib" title="Permanent link">&para;</a></h3>
@@ -6326,14 +6390,12 @@ added without expanding a global decorator vocabulary.</p>
 </ul>
 <h3 id="dependency-model-generated-project">Dependency model / generated project<a class="headerlink" href="#dependency-model-generated-project" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Generated <code>Cargo.toml</code> depends on <code>incan_stdlib</code> (with features) rather than directly depending on framework crates
-  when those are purely stdlib implementation details.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Generated <code>Cargo.toml</code> depends on <code>incan_stdlib</code> (with features) rather than directly depending on framework crates when those are purely stdlib implementation details.</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> User <code>rust::...</code> dependencies remain explicit and governed by RFC 005 / RFC 013 (<code>incan.toml</code>, version/features policy).</li>
 </ul>
 <h3 id="tooling-ide">Tooling / IDE<a class="headerlink" href="#tooling-ide" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> LSP go-to-definition / hover can navigate <code>std.*</code> imports and namespaced stdlib decorators to stdlib surface sources
-  (via the same registry used for feature gating).</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> LSP go-to-definition / hover can navigate <code>std.*</code> imports and namespaced stdlib decorators to stdlib surface sources (via the same registry used for feature gating).</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> LSP reports decorator resolution errors without requiring backend/codegen.</li>
 </ul>
 <h3 id="tests-at-minimum">Tests (at minimum)<a class="headerlink" href="#tests-at-minimum" title="Permanent link">&para;</a></h3>
@@ -6346,10 +6408,8 @@ added without expanding a global decorator vocabulary.</p>
 </ul>
 <h3 id="docs">Docs<a class="headerlink" href="#docs" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Documentation that mentions the legacy marker is updated to the new spelling (<code>@rust.extern</code>) and the legacy
-  spellings (<code>@compiler_expand</code>, <code>@std.builtin</code>) are marked as removed.</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Documentation, tutorials, and examples are updated to use <code>std.*</code> imports and namespaced decorators
-  (e.g. <code>std.web</code>and <code>@std.web.route</code>), removing legacy spellings like <code>from web import ...</code> and <code>@route(...)</code>.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Documentation that mentions the legacy marker is updated to the new spelling (<code>@rust.extern</code>) and the legacy spellings (<code>@compiler_expand</code>, <code>@std.builtin</code>) are marked as removed.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Documentation, tutorials, and examples are updated to use <code>std.*</code> imports and namespaced decorators (e.g. <code>std.web</code>and <code>@std.web.route</code>), removing legacy spellings like <code>from web import ...</code> and <code>@route(...)</code>.</li>
 </ul>
 
 

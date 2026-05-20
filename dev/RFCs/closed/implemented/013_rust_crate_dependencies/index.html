@@ -1159,6 +1159,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1385,6 +1393,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1453,6 +1503,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1558,6 +1629,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3063,6 +3155,8 @@
       
         
       
+        
+      
     
     
       
@@ -3394,6 +3488,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3539,7 +3654,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3555,14 +3670,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6230,18 +6345,26 @@
 
 
 <h1 id="rfc-013-rust-crate-dependencies">RFC 013: Rust Crate Dependencies<a class="headerlink" href="#rfc-013-rust-crate-dependencies" title="Permanent link">&para;</a></h1>
-<p><strong>Status:</strong> Implemented<br />
-<strong>Created:</strong> 2025-12-16<br />
-<strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/72">#72</a>
-<strong>Author(s):</strong> Danny Meijer (@danny-meijer)<br />
-<strong>Supersedes:</strong> Parts of RFC 005 (Cargo integration section)<br />
-<strong>Related:</strong> RFC 015 (project lifecycle + <code>incan.toml</code>), RFC 020 (Cargo offline/locked policy)</p>
+<ul>
+<li><strong>Status:</strong> Implemented</li>
+<li><strong>Created:</strong> 2025-12-16</li>
+<li><strong>Author(s):</strong> Danny Meijer (@dannymeijer)</li>
+<li><strong>Supersedes:</strong> Parts of RFC 005 (Cargo integration section)</li>
+<li><strong>Related:</strong><ul>
+<li>RFC 005 (Rust interop)</li>
+<li>RFC 015 (project lifecycle + <code>incan.toml</code>)</li>
+<li>RFC 020 (Cargo offline/locked policy)</li>
+</ul>
+</li>
+<li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/72">#72</a></li>
+<li><strong>RFC PR:</strong> —</li>
+<li><strong>Written against:</strong> v0.1</li>
+<li><strong>Shipped in:</strong> v0.2</li>
+</ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
-<p>Define a comprehensive system for specifying Rust crate dependencies in Incan, including inline version annotations,
-project configuration (<code>incan.toml</code>), and lock files for reproducibility.</p>
+<p>Define a comprehensive system for specifying Rust crate dependencies in Incan, including inline version annotations, project configuration (<code>incan.toml</code>), and lock files for reproducibility.</p>
 <h2 id="motivation">Motivation<a class="headerlink" href="#motivation" title="Permanent link">&para;</a></h2>
-<p>Incan compiles to Rust, meaning access to the Rust ecosystem is a core value proposition.
-The current implementation (v0.1) has limitations:</p>
+<p>Incan compiles to Rust, meaning access to the Rust ecosystem is a core value proposition. The current implementation (v0.1) has limitations:</p>
 <ol>
 <li><strong>Known-good crates work</strong> - common crates like <code>serde</code>, <code>tokio</code> have curated defaults</li>
 <li><strong>Unknown crates error</strong> - no user-facing way to specify version/features</li>
@@ -6283,8 +6406,7 @@ The current implementation (v0.1) has limitations:</p>
 <span class="kn">import</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">exact_crate</span> <span class="o">@</span> <span class="s2">&quot;=1.2.3&quot;</span> <span class="c1"># exactly 1.2.3</span>
 </code></pre></div>
 <h4 id="111-version-requirement-syntax-normative">1.1.1 Version requirement syntax (normative)<a class="headerlink" href="#111-version-requirement-syntax-normative" title="Permanent link">&para;</a></h4>
-<p>All version requirement strings in this RFC use <strong>Cargo’s SemVer requirement syntax</strong> (the same syntax accepted by Cargo
-in <code>Cargo.toml</code>).</p>
+<p>All version requirement strings in this RFC use <strong>Cargo’s SemVer requirement syntax</strong> (the same syntax accepted by Cargo in <code>Cargo.toml</code>).</p>
 <ul>
 <li>Shorthand <code>"1.2.3"</code> is equivalent to caret <code>"^1.2.3"</code>.</li>
 <li>Comma-separated constraints (e.g. <code>"&gt;=1.30, &lt;2.0"</code>) are allowed.</li>
@@ -6314,14 +6436,12 @@ in <code>Cargo.toml</code>).</p>
 </code></pre></div>
 <p>Normative note (interop alignment):</p>
 <ul>
-<li>A <code>rust::...</code> import may include a module path (e.g. <code>rust::chrono::naive::date</code>), but dependency resolution is always
-  keyed by the <strong>crate segment</strong> (the first identifier after <code>rust::</code>), per RFC 005’s crate/path decomposition rules.</li>
+<li>A <code>rust::...</code> import may include a module path (e.g. <code>rust::chrono::naive::date</code>), but dependency resolution is always keyed by the <strong>crate segment</strong> (the first identifier after <code>rust::</code>), per RFC 005’s crate/path decomposition rules.</li>
 <li>Therefore, <code>@ "..."</code> / <code>with [...]</code> always apply to that crate segment, not to the module path.</li>
 </ul>
 <hr />
 <h2 id="2-project-configuration-incantoml">2. Project Configuration (<code>incan.toml</code>)<a class="headerlink" href="#2-project-configuration-incantoml" title="Permanent link">&para;</a></h2>
-<p>We propose to add a central configuration file for Incan projects called <code>incan.toml</code>. The <code>incan.toml</code> format is heavily
-inspired by Python's <code>pyproject.toml</code> - familiar, readable, and declarative.</p>
+<p>We propose to add a central configuration file for Incan projects called <code>incan.toml</code>. The <code>incan.toml</code> format is heavily inspired by Python's <code>pyproject.toml</code> - familiar, readable, and declarative.</p>
 <p>Schema note (normative):</p>
 <ul>
 <li>In <code>incan.toml</code>, Cargo/Rust crate dependencies use Cargo-style tables:<ul>
@@ -6331,19 +6451,15 @@ inspired by Python's <code>pyproject.toml</code> - familiar, readable, and decla
 </li>
 <li>Compatibility/aliasing (for this RFC):<ul>
 <li><code>[rust.dependencies]</code> / <code>[rust.dev-dependencies]</code> are accepted as aliases for <code>[dependencies]</code> / <code>[dev-dependencies]</code>.</li>
-<li>It is a configuration error to specify both the canonical and alias tables for the same kind (e.g. both
-  <code>[dependencies]</code> and <code>[rust.dependencies]</code>).</li>
+<li>It is a configuration error to specify both the canonical and alias tables for the same kind (e.g. both <code>[dependencies]</code> and <code>[rust.dependencies]</code>).</li>
 </ul>
 </li>
-<li>RFC 015 defines the broader project lifecycle and treats <code>incan.toml</code> as the project metadata root; it must not define
-  a separate, conflicting table for dependency policy.</li>
+<li>RFC 015 defines the broader project lifecycle and treats <code>incan.toml</code> as the project metadata root; it must not define a separate, conflicting table for dependency policy.</li>
 </ul>
 <p>Clarity note (future-proofing):</p>
 <ul>
-<li>In this RFC, <code>[dependencies]</code> / <code>[dev-dependencies]</code> refer specifically to <strong>Cargo/Rust crates</strong> used by <code>rust::...</code>
-  imports.</li>
-<li>Incan does not yet define a separate “Incan package registry” concept. If a future packaging story is added, it must
-  not overload these tables in a way that breaks Rust dependency determinism.</li>
+<li>In this RFC, <code>[dependencies]</code> / <code>[dev-dependencies]</code> refer specifically to <strong>Cargo/Rust crates</strong> used by <code>rust::...</code> imports.</li>
+<li>Incan does not yet define a separate “Incan package registry” concept. If a future packaging story is added, it must not overload these tables in a way that breaks Rust dependency determinism.</li>
 </ul>
 <p>Recommended practice (strongly suggested):</p>
 <ul>
@@ -6418,11 +6534,8 @@ inspired by Python's <code>pyproject.toml</code> - familiar, readable, and decla
 <p>Note:</p>
 <ul>
 <li><code>[project.features]</code> is part of the general Incan project model (RFC 015). It is included here for context only.</li>
-<li>This RFC does <strong>not</strong> specify an automatic mapping between <code>[project.features]</code> and Rust crate features/optional
-  dependencies. Any such mapping should be specified by RFC 015 (or a dedicated follow-up), so that Cargo feature
-  semantics are not implicitly re-invented in multiple places.</li>
-<li><code>[build]</code> is also part of the general Incan project model (RFC 015). This RFC references it only for completeness in
-  the “full example”; dependency resolution and <code>incan.lock</code> do not depend on build settings like <code>rust-edition</code>.</li>
+<li>This RFC does <strong>not</strong> specify an automatic mapping between <code>[project.features]</code> and Rust crate features/optional dependencies. Any such mapping should be specified by RFC 015 (or a dedicated follow-up), so that Cargo feature semantics are not implicitly re-invented in multiple places.</li>
+<li><code>[build]</code> is also part of the general Incan project model (RFC 015). This RFC references it only for completeness in the “full example”; dependency resolution and <code>incan.lock</code> do not depend on build settings like <code>rust-edition</code>.</li>
 </ul>
 <h3 id="23-section-reference">2.3 Section Reference<a class="headerlink" href="#23-section-reference" title="Permanent link">&para;</a></h3>
 <table>
@@ -6482,10 +6595,8 @@ inspired by Python's <code>pyproject.toml</code> - familiar, readable, and decla
 <span class="n">crate_h</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;1.0&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">default-features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">false</span><span class="p">,</span><span class="w"> </span><span class="n">features</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;only-this&quot;</span><span class="p">]</span><span class="w"> </span><span class="p">}</span>
 </code></pre></div>
 <h3 id="241-dependency-renames-package-normative">2.4.1 Dependency renames (<code>package = "..."</code>) (normative)<a class="headerlink" href="#241-dependency-renames-package-normative" title="Permanent link">&para;</a></h3>
-<p>Cargo supports depending on a package whose crates.io/package name differs from the identifier you want to use in code via
-dependency renaming (<code>package = "..."</code>).</p>
-<p>In Incan, <code>rust::...</code> imports refer to the <strong>dependency key</strong> (the Rust identifier form), which is also the name used in
-generated Rust code.</p>
+<p>Cargo supports depending on a package whose crates.io/package name differs from the identifier you want to use in code via dependency renaming (<code>package = "..."</code>).</p>
+<p>In Incan, <code>rust::...</code> imports refer to the <strong>dependency key</strong> (the Rust identifier form), which is also the name used in generated Rust code.</p>
 <p>Supported (for this RFC):</p>
 <ul>
 <li>In <code>incan.toml</code> dependency tables, users may specify a dependency rename using:</li>
@@ -6497,14 +6608,11 @@ generated Rust code.</p>
 <ul>
 <li>The <code>rust::</code> import must use the dependency key (<code>rust::serde_json</code> in the example above).</li>
 <li>If <code>package</code> is specified, it must be a non-empty string.</li>
-<li>It is a configuration error to specify two dependencies that would resolve to the same <code>(source, package)</code> pair with
-  different <code>crate_name</code> keys.</li>
+<li>It is a configuration error to specify two dependencies that would resolve to the same <code>(source, package)</code> pair with different <code>crate_name</code> keys.</li>
 </ul>
 <p>Note:</p>
 <ul>
-<li>For the common case where the crates.io package name differs only by <code>-</code> vs <code>_</code>, Cargo/crates.io name normalization is
-  typically sufficient. Using <code>package = "..."</code> is still allowed (and may improve clarity), and is required for
-  non-trivial mismatches beyond <code>-</code>/<code>_</code> normalization.</li>
+<li>For the common case where the crates.io package name differs only by <code>-</code> vs <code>_</code>, Cargo/crates.io name normalization is typically sufficient. Using <code>package = "..."</code> is still allowed (and may improve clarity), and is required for non-trivial mismatches beyond <code>-</code>/<code>_</code> normalization.</li>
 </ul>
 <p>Out of scope (for this RFC):</p>
 <ul>
@@ -6519,8 +6627,7 @@ generated Rust code.</p>
 <p>Enablement model (for this RFC):</p>
 <ul>
 <li>This RFC does <strong>not</strong> define an Incan-native feature system that automatically toggles Cargo optional dependencies.</li>
-<li>Optional dependency enablement is controlled by <strong>Cargo features</strong> (Cargo semantics), surfaced to users via RFC 020’s
-  <code>--cargo-args</code> escape hatch (e.g. <code>--cargo-args "--features" "fancy_logging"</code>), and/or a future RFC 015 mapping.</li>
+<li>Optional dependency enablement is controlled by <strong>Cargo features</strong> (Cargo semantics), surfaced to users via RFC 020’s <code>--cargo-args</code> escape hatch (e.g. <code>--cargo-args "--features" "fancy_logging"</code>), and/or a future RFC 015 mapping.</li>
 </ul>
 <p><code>[dependencies.optional]</code> table:</p>
 <ul>
@@ -6529,10 +6636,8 @@ generated Rust code.</p>
 </ul>
 <p>Cargo project generation (normative):</p>
 <ul>
-<li>Optional dependencies in <code>incan.toml</code> must be emitted as Cargo optional dependencies in the generated <code>Cargo.toml</code>
-  (<code>optional = true</code> on the dependency entry).</li>
-<li>The generated Cargo package must expose a Cargo feature with the <strong>same name as the dependency key</strong> that enables the
-  optional dependency (using Cargo’s namespaced dependency feature form):</li>
+<li>Optional dependencies in <code>incan.toml</code> must be emitted as Cargo optional dependencies in the generated <code>Cargo.toml</code> (<code>optional = true</code> on the dependency entry).</li>
+<li>The generated Cargo package must expose a Cargo feature with the <strong>same name as the dependency key</strong> that enables the optional dependency (using Cargo’s namespaced dependency feature form):</li>
 </ul>
 <div class="language-toml highlight"><pre><span></span><code><span class="k">[dependencies]</span>
 <span class="n">fancy_logging</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">{</span><span class="w"> </span><span class="n">version</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="s2">&quot;0.3&quot;</span><span class="p">,</span><span class="w"> </span><span class="n">optional</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="kc">true</span><span class="w"> </span><span class="p">}</span>
@@ -6540,17 +6645,14 @@ generated Rust code.</p>
 <span class="k">[features]</span>
 <span class="n">fancy_logging</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="p">[</span><span class="s2">&quot;dep:fancy_logging&quot;</span><span class="p">]</span>
 </code></pre></div>
-<p>This avoids relying on “implicit optional-dependency features,” which are edition/toolchain-sensitive and can create
-confusing behavior.</p>
+<p>This avoids relying on “implicit optional-dependency features,” which are edition/toolchain-sensitive and can create confusing behavior.</p>
 <p>Locking note (normative):</p>
 <ul>
-<li>Because Cargo feature selection can change the resolved dependency graph, strict builds (<code>--locked</code> / <code>--frozen</code>) must
-  ensure that the <strong>feature selection used for the build/test</strong> matches the one that was used to generate <code>incan.lock</code>.</li>
+<li>Because Cargo feature selection can change the resolved dependency graph, strict builds (<code>--locked</code> / <code>--frozen</code>) must ensure that the <strong>feature selection used for the build/test</strong> matches the one that was used to generate <code>incan.lock</code>.</li>
 </ul>
 <p>Diagnostics expectation (normative):</p>
 <ul>
-<li>If user code imports an optional dependency but the required Cargo feature(s) are not enabled for the build/test, the
-  toolchain must produce a targeted diagnostic explaining:<ul>
+<li>If user code imports an optional dependency but the required Cargo feature(s) are not enabled for the build/test, the toolchain must produce a targeted diagnostic explaining:<ul>
 <li>the crate is optional,</li>
 <li>which Cargo feature name is expected (typically the dependency key),</li>
 <li>and how to enable it (e.g. via RFC 020’s <code>--cargo-args "--features" "&lt;name&gt;"</code>, or via a future RFC 015 mapping).</li>
@@ -6561,14 +6663,11 @@ confusing behavior.</p>
 <p>Incan supports Rust <strong>development dependencies</strong> for test tooling that must not become part of release builds.</p>
 <h4 id="251-what-they-are">2.5.1 What they are<a class="headerlink" href="#251-what-they-are" title="Permanent link">&para;</a></h4>
 <ul>
-<li><code>[dev-dependencies]</code> has the <strong>same specification formats</strong> as <code>[dependencies]</code> (version string shorthand or table form
-  with <code>version</code>, <code>features</code>, <code>git</code>, <code>path</code>, <code>default-features</code>, etc.).</li>
-<li>A crate listed in <code>[dev-dependencies]</code> is <strong>dev-only</strong>: it is available only in test contexts and must not be
-  used by production code.</li>
+<li><code>[dev-dependencies]</code> has the <strong>same specification formats</strong> as <code>[dependencies]</code> (version string shorthand or table form with <code>version</code>, <code>features</code>, <code>git</code>, <code>path</code>, <code>default-features</code>, etc.).</li>
+<li>A crate listed in <code>[dev-dependencies]</code> is <strong>dev-only</strong>: it is available only in test contexts and must not be used by production code.</li>
 </ul>
 <h4 id="252-where-dev-dependencies-may-be-used-import-gating">2.5.2 Where dev-dependencies may be used (import gating)<a class="headerlink" href="#252-where-dev-dependencies-may-be-used-import-gating" title="Permanent link">&para;</a></h4>
-<p>Crates that are only present in <code>[dev-dependencies]</code> may be imported via <code>rust::...</code> <strong>only</strong> from test contexts as
-defined by the testing RFCs:</p>
+<p>Crates that are only present in <code>[dev-dependencies]</code> may be imported via <code>rust::...</code> <strong>only</strong> from test contexts as defined by the testing RFCs:</p>
 <ul>
 <li>test files under <code>tests/</code> (<code>test_*.incn</code> / <code>*_test.incn</code>) (RFC 019), and</li>
 <li>inline <code>module tests:</code> blocks inside production source files (RFC 018/019).</li>
@@ -6628,8 +6727,7 @@ defined by the testing RFCs:</p>
 <ul>
 <li><code>incan.lock</code> lives at the <strong>project root</strong> and is intended to be <strong>committed</strong> to version control.</li>
 <li><code>incan.lock</code> is the <strong>source of truth</strong> for what “locked” means in Incan.</li>
-<li>In locked modes, tooling must never silently change dependency resolution; any drift must be a hard error with a clear
-  instruction to run <code>incan lock</code>.</li>
+<li>In locked modes, tooling must never silently change dependency resolution; any drift must be a hard error with a clear instruction to run <code>incan lock</code>.</li>
 </ul>
 <h4 id="301-project-mode-vs-single-file-mode-normative">3.0.1 Project mode vs single-file mode (normative)<a class="headerlink" href="#301-project-mode-vs-single-file-mode-normative" title="Permanent link">&para;</a></h4>
 <p>This RFC defines <code>incan.lock</code> as a <strong>project artifact</strong>.</p>
@@ -6642,14 +6740,12 @@ defined by the testing RFCs:</p>
 <ul>
 <li>In <strong>project mode</strong>, strict flags (<code>--locked</code> / <code>--frozen</code>, RFC 020) are enforced against <code>incan.lock</code>:<ul>
 <li><code>incan.lock</code> must exist and be up to date (fingerprint matches), otherwise error with "run <code>incan lock</code>".</li>
-<li>Cargo is invoked with the corresponding Cargo policy flags (RFC 020), and <code>Cargo.lock</code> is materialized from
-  <code>incan.lock</code> into the generated project directory.</li>
+<li>Cargo is invoked with the corresponding Cargo policy flags (RFC 020), and <code>Cargo.lock</code> is materialized from <code>incan.lock</code> into the generated project directory.</li>
 </ul>
 </li>
 <li>In <strong>single-file mode</strong>, there is no <code>incan.lock</code>:<ul>
 <li>Rust dependencies may only be specified via inline annotations (<code>@ "..."</code> / <code>with [...]</code>) and/or known-good defaults.</li>
-<li>Strict flags (<code>--locked</code> / <code>--frozen</code>) are interpreted at the Cargo layer only (RFC 020) using the generated
-  project’s <code>Cargo.lock</code> as the lock artifact.</li>
+<li>Strict flags (<code>--locked</code> / <code>--frozen</code>) are interpreted at the Cargo layer only (RFC 020) using the generated project’s <code>Cargo.lock</code> as the lock artifact.</li>
 </ul>
 </li>
 </ul>
@@ -6704,8 +6800,7 @@ defined by the testing RFCs:</p>
 <li>The <code>deps-fingerprint</code> is an Incan-level affordance so <code>--locked</code> can fail fast and explain “run <code>incan lock</code>.”</li>
 </ul>
 <h3 id="311-canonicalization-and-deps-fingerprint-normative">3.1.1 Canonicalization and <code>deps-fingerprint</code> (normative)<a class="headerlink" href="#311-canonicalization-and-deps-fingerprint-normative" title="Permanent link">&para;</a></h3>
-<p>The canonicalization rules for the embedded Cargo lock payload, and the full <code>deps-fingerprint</code> algorithm, are specified
-in <strong>Appendix A</strong>.</p>
+<p>The canonicalization rules for the embedded Cargo lock payload, and the full <code>deps-fingerprint</code> algorithm, are specified in <strong>Appendix A</strong>.</p>
 <h3 id="32-cli-commands">3.2 CLI Commands<a class="headerlink" href="#32-cli-commands" title="Permanent link">&para;</a></h3>
 <table>
 <thead>
@@ -6731,10 +6826,8 @@ in <strong>Appendix A</strong>.</p>
 </ul>
 <p>Default behavior (normative; uv-inspired):</p>
 <ul>
-<li>If <code>incan.lock</code> is missing and no strict policy flag is set, <code>incan build</code> / <code>incan test</code> may resolve dependencies and
-  create <code>incan.lock</code> automatically (first-run convenience).</li>
-<li>If a strict policy flag is set (<code>--locked</code> or <code>--frozen</code> per RFC 020), <code>incan.lock</code> must already exist; otherwise the
-  command must fail with a targeted diagnostic instructing the user to run <code>incan lock</code>.</li>
+<li>If <code>incan.lock</code> is missing and no strict policy flag is set, <code>incan build</code> / <code>incan test</code> may resolve dependencies and create <code>incan.lock</code> automatically (first-run convenience).</li>
+<li>If a strict policy flag is set (<code>--locked</code> or <code>--frozen</code> per RFC 020), <code>incan.lock</code> must already exist; otherwise the command must fail with a targeted diagnostic instructing the user to run <code>incan lock</code>.</li>
 </ul>
 <blockquote>
 <p>Note: Cargo-level offline/locked enforcement flags (<code>--offline/--locked/--frozen</code>) are specified by RFC 020. This RFC
@@ -6749,30 +6842,26 @@ defines the Incan-level dependency and lockfile model; Cargo policy is a separat
 <p>Rules:</p>
 <ul>
 <li><code>incan build/test --locked</code>:<ul>
-<li><strong>Incan lock layer</strong>: <code>incan.lock</code> must exist and be <strong>up to date</strong> (its <code>deps-fingerprint</code> matches the current
-  effective dependency inputs). If not, fail with “run <code>incan lock</code>”.</li>
+<li><strong>Incan lock layer</strong>: <code>incan.lock</code> must exist and be <strong>up to date</strong> (its <code>deps-fingerprint</code> matches the current effective dependency inputs). If not, fail with “run <code>incan lock</code>”.</li>
 <li><strong>Cargo policy layer</strong>: Incan must invoke Cargo with <code>--locked</code>.</li>
 </ul>
 </li>
 <li><code>incan build/test --frozen</code>:<ul>
 <li><strong>Incan lock layer</strong>: same as <code>--locked</code> (lock must exist and be up to date).</li>
-<li><strong>Cargo policy layer</strong>: Incan must invoke Cargo with <code>--frozen</code> (equivalent to Cargo <code>--offline --locked</code>, per RFC
-  020).</li>
+<li><strong>Cargo policy layer</strong>: Incan must invoke Cargo with <code>--frozen</code> (equivalent to Cargo <code>--offline --locked</code>, per RFC 020).</li>
 </ul>
 </li>
 </ul>
 <p>Rationale:</p>
 <ul>
 <li><code>--frozen</code> is the <strong>strictest</strong> mode and should not allow stale locks.</li>
-<li>The difference between <code>--locked</code> and <code>--frozen</code> is the <strong>offline</strong> constraint at the Cargo layer, not whether lock
-  freshness is checked.</li>
+<li>The difference between <code>--locked</code> and <code>--frozen</code> is the <strong>offline</strong> constraint at the Cargo layer, not whether lock freshness is checked.</li>
 </ul>
 <h4 id="322-incan-lock-and-restricted-environments-normative-direction">3.2.2 <code>incan lock</code> and restricted environments (normative direction)<a class="headerlink" href="#322-incan-lock-and-restricted-environments-normative-direction" title="Permanent link">&para;</a></h4>
 <p><code>incan lock</code> is the mechanism for producing/refreshing <code>incan.lock</code>.</p>
 <p>Normative requirements:</p>
 <ul>
-<li>Strict flags <code>--locked/--frozen</code> are not meaningful for <code>incan lock</code> and should be rejected with a clear diagnostic
-  (including when set via CI environment variables).</li>
+<li>Strict flags <code>--locked/--frozen</code> are not meaningful for <code>incan lock</code> and should be rejected with a clear diagnostic (including when set via CI environment variables).</li>
 <li>
 <p><code>incan lock</code> must accept the same Cargo policy sources as other commands (RFC 020 precedence rules):</p>
 <ul>
@@ -6781,19 +6870,14 @@ defines the Incan-level dependency and lockfile model; Cargo policy is a separat
 </ul>
 </li>
 <li>
-<p><code>incan lock</code> must forward the relevant policy to the underlying Cargo operations it uses for resolution (e.g. it must
-  honor <code>--offline</code> when set).</p>
+<p><code>incan lock</code> must forward the relevant policy to the underlying Cargo operations it uses for resolution (e.g. it must honor <code>--offline</code> when set).</p>
 </li>
-<li>In offline mode, lock generation must fail if the required dependency sources are not already available locally (Cargo
-  cache, mirror, or vendor directory). This is expected behavior and should surface Cargo’s error with a short prefix
-  clarifying that offline policy caused the failure.</li>
+<li>In offline mode, lock generation must fail if the required dependency sources are not already available locally (Cargo cache, mirror, or vendor directory). This is expected behavior and should surface Cargo’s error with a short prefix clarifying that offline policy caused the failure.</li>
 </ul>
 <p>Recommended workflows (informative; enterprise-friendly):</p>
 <ul>
-<li><strong>Cache priming</strong>: run <code>incan lock</code> once without offline policy in a controlled environment to populate registries/git
-  caches, then use <code>--frozen</code> in CI.</li>
-<li><strong>Mirrors</strong>: use Cargo registry mirrors / sparse index configuration via <code>.cargo/config.toml</code> (generated-project
-  compatible) to avoid public network dependencies.</li>
+<li><strong>Cache priming</strong>: run <code>incan lock</code> once without offline policy in a controlled environment to populate registries/git caches, then use <code>--frozen</code> in CI.</li>
+<li><strong>Mirrors</strong>: use Cargo registry mirrors / sparse index configuration via <code>.cargo/config.toml</code> (generated-project compatible) to avoid public network dependencies.</li>
 <li><strong>Vendoring</strong>: prefer a <code>cargo vendor</code>-style workflow for fully air-gapped builds (future extension; RFC 020).</li>
 </ul>
 <h3 id="33-relationship-to-cargolock-normative">3.3 Relationship to <code>Cargo.lock</code> (normative)<a class="headerlink" href="#33-relationship-to-cargolock-normative" title="Permanent link">&para;</a></h3>
@@ -6801,15 +6885,13 @@ defines the Incan-level dependency and lockfile model; Cargo policy is a separat
 <p>Rules:</p>
 <ul>
 <li><code>incan.lock</code> is the project’s committed lockfile and contains an embedded <code>Cargo.lock</code> payload.</li>
-<li><code>Cargo.lock</code> files written into generated Rust output directories are <strong>derived artifacts</strong> produced by extracting the
-  embedded payload from <code>incan.lock</code>.</li>
+<li><code>Cargo.lock</code> files written into generated Rust output directories are <strong>derived artifacts</strong> produced by extracting the embedded payload from <code>incan.lock</code>.</li>
 <li>In locked modes, Incan must ensure the embedded lock matches the current dependency inputs:<ul>
 <li><code>--locked</code>: lock must exist and be <strong>up to date</strong> (fingerprint matches); otherwise fail and instruct <code>incan lock</code>.</li>
 <li><code>--frozen</code>: same as <code>--locked</code> for freshness; additionally enforce Cargo frozen/offline policy (RFC 020).</li>
 </ul>
 </li>
-<li>Cargo policy flags still apply to the underlying Cargo invocation (RFC 020), but the authoritative lock artifact is
-  <code>incan.lock</code> at the project root.</li>
+<li>Cargo policy flags still apply to the underlying Cargo invocation (RFC 020), but the authoritative lock artifact is <code>incan.lock</code> at the project root.</li>
 </ul>
 <h3 id="34-design-inspiration-informative-hatch-vs-uv">3.4 Design inspiration (informative): Hatch vs uv<a class="headerlink" href="#34-design-inspiration-informative-hatch-vs-uv" title="Permanent link">&para;</a></h3>
 <p>For design inspiration and background context (Hatch vs uv), see <strong>Appendix B</strong>.</p>
@@ -6827,8 +6909,7 @@ defines the Incan-level dependency and lockfile model; Cargo policy is a separat
 <li><code>[dev-dependencies]</code> is only considered for test contexts (see §2.5).</li>
 </ul>
 <h3 id="41-known-good-defaults">4.1 Known-Good Defaults<a class="headerlink" href="#41-known-good-defaults" title="Permanent link">&para;</a></h3>
-<p>The compiler maintains a curated list of common crates with tested version/feature combinations.
-These serve as <strong>convenient defaults</strong>, not restrictions:</p>
+<p>The compiler maintains a curated list of common crates with tested version/feature combinations. These serve as <strong>convenient defaults</strong>, not restrictions:</p>
 <div class="language-rust highlight"><pre><span></span><code><span class="c1">// In compiler (simplified)</span>
 <span class="k">static</span><span class="w"> </span><span class="n">KNOWN_GOOD</span><span class="p">:</span><span class="w"> </span><span class="kp">&amp;</span><span class="p">[(</span><span class="o">&amp;</span><span class="kt">str</span><span class="p">,</span><span class="w"> </span><span class="o">&amp;</span><span class="kt">str</span><span class="p">)]</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="o">&amp;</span><span class="p">[</span>
 <span class="w">    </span><span class="p">(</span><span class="s">&quot;serde&quot;</span><span class="p">,</span><span class="w"> </span><span class="s">r#&quot;{ version = &quot;1.0&quot;, features = [&quot;derive&quot;] }&quot;#</span><span class="p">),</span>
@@ -6846,12 +6927,10 @@ These serve as <strong>convenient defaults</strong>, not restrictions:</p>
 </ul>
 <p>User-facing contract (strongly recommended):</p>
 <ul>
-<li>The toolchain must publish a documented list of “known-good crates” (and their default version/features) per release
-  (e.g. in release notes and/or a dedicated docs page).</li>
+<li>The toolchain must publish a documented list of “known-good crates” (and their default version/features) per release (e.g. in release notes and/or a dedicated docs page).</li>
 <li>Changes to known-good defaults are allowed, but they must be treated as compatibility-relevant:<ul>
 <li>security updates may require updating defaults,</li>
-<li>and toolchain upgrades may require re-locking for projects that rely on defaults (because defaults participate in
-  <code>deps-fingerprint</code>).</li>
+<li>and toolchain upgrades may require re-locking for projects that rely on defaults (because defaults participate in <code>deps-fingerprint</code>).</li>
 </ul>
 </li>
 <li>If a project wants stability across toolchain upgrades, it should pin versions/features explicitly in <code>incan.toml</code>.</li>
@@ -6876,14 +6955,12 @@ Remove<span class="w"> </span>the<span class="w"> </span>inline<span class="w"> 
 <p>The resolver collects all crate requirements across a project before invoking Cargo.</p>
 <p>Definitions:</p>
 <ul>
-<li>A <strong>crate spec</strong> is the resolved dependency request for a single Rust crate (version requirement, source, features,
-  and <code>default-features</code> policy).</li>
+<li>A <strong>crate spec</strong> is the resolved dependency request for a single Rust crate (version requirement, source, features, and <code>default-features</code> policy).</li>
 </ul>
 <p>Rules:</p>
 <ul>
 <li><strong>Single source of truth when <code>incan.toml</code> exists</strong>:<ul>
-<li>If a crate is specified in <code>incan.toml</code> (either <code>[dependencies]</code> or <code>[dev-dependencies]</code>, including their <code>rust.*</code>
-  aliases), inline annotations for that crate are a <strong>compile-time error</strong>.</li>
+<li>If a crate is specified in <code>incan.toml</code> (either <code>[dependencies]</code> or <code>[dev-dependencies]</code>, including their <code>rust.*</code> aliases), inline annotations for that crate are a <strong>compile-time error</strong>.</li>
 <li>Rationale: avoid scattering dependency policy throughout code; keep audits and reviews centralized.</li>
 </ul>
 </li>
@@ -6895,16 +6972,12 @@ Remove<span class="w"> </span>the<span class="w"> </span>inline<span class="w"> 
 </ul>
 </li>
 </ul>
-<p>Future extensions may loosen the “inline is error when <code>incan.toml</code> exists” rule (e.g. allow inline <em>feature adds</em> only),
-but within the scope of this RFC, it should remain strict.</p>
+<p>Future extensions may loosen the “inline is error when <code>incan.toml</code> exists” rule (e.g. allow inline <em>feature adds</em> only), but within the scope of this RFC, it should remain strict.</p>
 <h3 id="44-source-policy-security-reproducibility-normative-direction">4.4 Source policy (security + reproducibility) (normative direction)<a class="headerlink" href="#44-source-policy-security-reproducibility-normative-direction" title="Permanent link">&para;</a></h3>
 <p>Git and path dependencies are supported, but reproducible builds require additional constraints:</p>
 <ul>
-<li>In locked/CI mode, git dependencies must resolve to an <strong>exact commit</strong> (e.g. <code>rev = "..."</code> or an immutable tag that is
-  recorded as a commit in <code>incan.lock</code>). Floating <code>branch = "..."</code> is not reproducible and should be rejected in strict
-  mode.</li>
-<li>Path dependencies are inherently machine-local unless vendored; locked/CI mode may reject them unless explicitly
-  allowlisted by configuration (future RFC 020 / RFC 015 integration).</li>
+<li>In locked/CI mode, git dependencies must resolve to an <strong>exact commit</strong> (e.g. <code>rev = "..."</code> or an immutable tag that is recorded as a commit in <code>incan.lock</code>). Floating <code>branch = "..."</code> is not reproducible and should be rejected in strict mode.</li>
+<li>Path dependencies are inherently machine-local unless vendored; locked/CI mode may reject them unless explicitly allowlisted by configuration (future RFC 020 / RFC 015 integration).</li>
 </ul>
 <hr />
 <h2 id="5-error-messages">5. Error Messages<a class="headerlink" href="#5-error-messages" title="Permanent link">&para;</a></h2>
@@ -7049,8 +7122,7 @@ Fix:<span class="w"> </span>keep<span class="w"> </span>only<span class="w"> </s
 </ul>
 <p>Optional escape hatch (non-default; not required by this RFC):</p>
 <ul>
-<li>If an “unpinned dependencies” mode exists for local prototyping, it must be <strong>explicitly enabled</strong> (e.g. via a CLI
-  flag) and must produce a visibly non-reproducible build warning suitable for CI policy enforcement.</li>
+<li>If an “unpinned dependencies” mode exists for local prototyping, it must be <strong>explicitly enabled</strong> (e.g. via a CLI flag) and must produce a visibly non-reproducible build warning suitable for CI policy enforcement.</li>
 </ul>
 <h3 id="phase-2-features-support">Phase 2: Features Support<a class="headerlink" href="#phase-2-features-support" title="Permanent link">&para;</a></h3>
 <ul>
@@ -7175,8 +7247,7 @@ Fix:<span class="w"> </span>keep<span class="w"> </span>only<span class="w"> </s
 <ol>
 <li><strong>Workspace support</strong>: Should <code>incan.toml</code> support workspaces with multiple packages?</li>
 <li><strong>Private registries</strong>: How to authenticate with private Cargo registries?</li>
-<li><strong>Auto-update tooling</strong>: Dependency update behavior (an <code>incan update</code> command) is intentionally out of scope for this
-   RFC and should be specified in a dedicated future RFC (likely alongside project lifecycle tooling).</li>
+<li><strong>Auto-update tooling</strong>: Dependency update behavior (an <code>incan update</code> command) is intentionally out of scope for this RFC and should be specified in a dedicated future RFC (likely alongside project lifecycle tooling).</li>
 </ol>
 <hr />
 <h2 id="10-checklist">10. Checklist<a class="headerlink" href="#10-checklist" title="Permanent link">&para;</a></h2>
@@ -7196,8 +7267,7 @@ Fix:<span class="w"> </span>keep<span class="w"> </span>only<span class="w"> </s
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Parser: <code>with ["features"]</code> syntax</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Resolution: features are unioned across sites per merging rules</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Codegen: emit features in generated Cargo metadata</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Error: unknown feature — <strong>deferred to Cargo</strong>: feature validation requires querying crate registry
-  metadata, which Incan does not currently do. Invalid features are caught by Cargo during the build step.</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Error: unknown feature — <strong>deferred to Cargo</strong>: feature validation requires querying crate registry metadata, which Incan does not currently do. Invalid features are caught by Cargo during the build step.</li>
 </ul>
 <h3 id="implementing-phase-3-project-configuration">Implementing Phase 3: Project Configuration<a class="headerlink" href="#implementing-phase-3-project-configuration" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
@@ -7212,10 +7282,8 @@ Fix:<span class="w"> </span>keep<span class="w"> </span>only<span class="w"> </s
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> CLI: <code>incan init</code> command</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Resolution: apply precedence rules (incan.toml &gt; inline &gt; known-good &gt; error)</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Known-good defaults: apply only when there is no <code>incan.toml</code> spec (canonical or alias) and no inline annotation</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Rule: if a crate is specified in incan.toml (canonical or alias tables), inline annotations for that crate are a
-  compile-time error</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Dev-dependencies gating: crates that are only in <code>[dev-dependencies]</code> are only allowed in test contexts (RFC 018/019)
-  and error in production code</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Rule: if a crate is specified in incan.toml (canonical or alias tables), inline annotations for that crate are a compile-time error</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Dev-dependencies gating: crates that are only in <code>[dev-dependencies]</code> are only allowed in test contexts (RFC 018/019) and error in production code</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Error: version/source/default-features conflicts across sites (per §4.2/§4.3)</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Multiple inline sites (no incan.toml entry): enforce this RFC’s merge rules:<ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> version requirement strings must match exactly across inline sites</li>
@@ -7224,8 +7292,7 @@ Fix:<span class="w"> </span>keep<span class="w"> </span>only<span class="w"> </s
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> features are unioned across inline sites</li>
 </ul>
 </li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Diagnostics: conflicting specs and resolution failures produce actionable errors that point to all relevant locations
-  (e.g. inline import site(s) + <code>incan.toml</code>), and suggest the concrete fix</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Diagnostics: conflicting specs and resolution failures produce actionable errors that point to all relevant locations (e.g. inline import site(s) + <code>incan.toml</code>), and suggest the concrete fix</li>
 </ul>
 <h3 id="implementing-phase-4-lock-file">Implementing Phase 4: Lock File<a class="headerlink" href="#implementing-phase-4-lock-file" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
@@ -7235,14 +7302,11 @@ Fix:<span class="w"> </span>keep<span class="w"> </span>only<span class="w"> </s
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>[cargo].lock</code> verbatim embedded <code>Cargo.lock</code> payload</li>
 </ul>
 </li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>deps-fingerprint</code> computation fingerprints dependency inputs and Cargo feature selection, and excludes non-dependency
-  settings like <code>[build].rust-edition</code></li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Default behavior: if <code>incan.lock</code> is missing and no strict policy flag is set, builds/tests may generate it
-  (first-run convenience)</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>deps-fingerprint</code> computation fingerprints dependency inputs and Cargo feature selection, and excludes non-dependency settings like <code>[build].rust-edition</code></li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Default behavior: if <code>incan.lock</code> is missing and no strict policy flag is set, builds/tests may generate it (first-run convenience)</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Strict behavior (uv-style; see RFC 020 for flags):<ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>--locked</code>: <code>incan.lock</code> must exist and be up-to-date (fingerprint matches) or fail with “run incan lock”</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>--frozen</code>: <code>incan.lock</code> must exist and be up-to-date (fingerprint matches); use it and also enforce Cargo
-  <code>--frozen</code> policy (offline + locked)</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> <code>--frozen</code>: <code>incan.lock</code> must exist and be up-to-date (fingerprint matches); use it and also enforce Cargo <code>--frozen</code> policy (offline + locked)</li>
 </ul>
 </li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> Diagnostics: missing/out-of-date lock failures are targeted and instruct the user to run <code>incan lock</code></li>
@@ -7259,10 +7323,8 @@ Fix:<span class="w"> </span>keep<span class="w"> </span>only<span class="w"> </s
 <h3 id="error-messages-section-5">Error messages (section 5)<a class="headerlink" href="#error-messages-section-5" title="Permanent link">&para;</a></h3>
 <ul class="task-list">
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> 5.1: Unknown crate without version</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> 5.2: Feature not found -- <strong>deferred to Cargo</strong> (requires registry queries; invalid features are caught by Cargo
-  during the build step)</li>
-<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> 5.3: Version not found -- <strong>deferred to Cargo</strong> (requires registry queries; invalid versions are caught by Cargo
-  during the build step)</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> 5.2: Feature not found -- <strong>deferred to Cargo</strong> (requires registry queries; invalid features are caught by Cargo during the build step)</li>
+<li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> 5.3: Version not found -- <strong>deferred to Cargo</strong> (requires registry queries; invalid versions are caught by Cargo during the build step)</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> 5.4: Lock out of date (includes fingerprint details and explanation)</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> 5.5: Optional dependency not enabled</li>
 <li class="task-list-item"><label class="task-list-control"><input type="checkbox" disabled checked/><span class="task-list-indicator"></span></label> 5.6: Inline annotation forbidden (crate in incan.toml)</li>
@@ -7279,8 +7341,7 @@ Fix:<span class="w"> </span>keep<span class="w"> </span>only<span class="w"> </s
 <li>The embedded <code>[cargo].lock</code> payload must be stored as <strong>UTF-8</strong> text.</li>
 <li>Newlines must be normalized to <code>\n</code> (LF). <code>\r\n</code> must not appear in the embedded payload.</li>
 <li>The payload must end with a trailing newline.</li>
-<li>The payload content is otherwise treated as an opaque string (verbatim Cargo output); Incan does not attempt to
-  reformat or “pretty print” it.</li>
+<li>The payload content is otherwise treated as an opaque string (verbatim Cargo output); Incan does not attempt to reformat or “pretty print” it.</li>
 </ul>
 <h3 id="a2-deps-fingerprint-algorithm">A.2 <code>deps-fingerprint</code> algorithm<a class="headerlink" href="#a2-deps-fingerprint-algorithm" title="Permanent link">&para;</a></h3>
 <p><code>deps-fingerprint</code> exists to answer: “Is the current lockfile still valid for the project’s dependency inputs?”</p>
@@ -7321,8 +7382,7 @@ Fix:<span class="w"> </span>keep<span class="w"> </span>only<span class="w"> </s
 </ul>
 <p><code>specs</code>:</p>
 <ul>
-<li>Build a list of entries <code>Spec { crate_name, kind, source, version_req, default_features, features, optional, package }</code>
-  where:<ul>
+<li>Build a list of entries <code>Spec { crate_name, kind, source, version_req, default_features, features, optional, package }</code> where:<ul>
 <li><code>crate_name</code> is the dependency key used by <code>rust::crate_name</code> imports (Rust identifier form).</li>
 <li><code>kind</code> is <code>"normal"</code> or <code>"dev"</code>.</li>
 <li><code>source</code> is one of:<ul>
@@ -7349,21 +7409,17 @@ Fix:<span class="w"> </span>keep<span class="w"> </span>only<span class="w"> </s
 </ul>
 </li>
 <li>Sort the list by <code>(kind, crate_name)</code> where <code>kind</code> sorts <code>"normal"</code> before <code>"dev"</code>.</li>
-<li>Serialize the canonical object into canonical JSON (UTF-8, no whitespace, deterministic key order) and compute:
-  <code>deps-fingerprint = "sha256:" + hex(sha256(json_bytes))</code>.</li>
+<li>Serialize the canonical object into canonical JSON (UTF-8, no whitespace, deterministic key order) and compute: <code>deps-fingerprint = "sha256:" + hex(sha256(json_bytes))</code>.</li>
 </ul>
 <p>Stability note:</p>
 <ul>
-<li>Because the fingerprint is computed from the <strong>effective</strong> crate specs, toolchain-provided known-good defaults become
-  part of the fingerprint for projects that rely on defaults. Changing the toolchain may therefore require re-locking,
-  which is expected when you are not fully pinned by explicit <code>incan.toml</code> configuration.</li>
+<li>Because the fingerprint is computed from the <strong>effective</strong> crate specs, toolchain-provided known-good defaults become part of the fingerprint for projects that rely on defaults. Changing the toolchain may therefore require re-locking, which is expected when you are not fully pinned by explicit <code>incan.toml</code> configuration.</li>
 </ul>
 <hr />
 <h2 id="appendix-b-design-inspiration-informative-hatch-vs-uv">Appendix B: Design inspiration (informative): Hatch vs uv<a class="headerlink" href="#appendix-b-design-inspiration-informative-hatch-vs-uv" title="Permanent link">&para;</a></h2>
 <p>This design is inspired by the developer experience of modern Python tooling:</p>
 <ul>
-<li>Tools like Hatch focus on project workflow and environment management; reproducible installs are often achieved via a
-  separate lock mechanism or plugin ecosystem.</li>
+<li>Tools like Hatch focus on project workflow and environment management; reproducible installs are often achieved via a separate lock mechanism or plugin ecosystem.</li>
 <li>Tools like Astral’s <code>uv</code> popularized a clear separation between:<ul>
 <li>“lock” (resolve and write a lockfile), and</li>
 <li>“sync/run” (use the lockfile in strict modes).</li>
@@ -7373,8 +7429,7 @@ Fix:<span class="w"> </span>keep<span class="w"> </span>only<span class="w"> </s
 <p>Incan adopts the same mental model:</p>
 <ul>
 <li><code>incan lock</code> produces/refreshes <code>incan.lock</code></li>
-<li><code>--locked</code> / <code>--frozen</code> (RFC 020) control the Cargo policy mode (<code>--locked</code> vs <code>--frozen</code>).
-  In both cases, Incan requires a project-root <code>incan.lock</code> that is present and up to date (fingerprint matches).</li>
+<li><code>--locked</code> / <code>--frozen</code> (RFC 020) control the Cargo policy mode (<code>--locked</code> vs <code>--frozen</code>). In both cases, Incan requires a project-root <code>incan.lock</code> that is present and up to date (fingerprint matches).</li>
 </ul>
 <p>RFC 015 provides more details on the project model and lifecycle.</p>
 

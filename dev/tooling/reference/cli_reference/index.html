@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5991,7 +6106,7 @@ incan<span class="w"> </span>--emit-rust<span class="w"> </span>path/to/file.inc
 <h2 id="commands">Commands<a class="headerlink" href="#commands" title="Permanent link">&para;</a></h2>
 <h3 id="incan-build"><code>incan build</code><a class="headerlink" href="#incan-build" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>
-<div class="language-text highlight"><pre><span></span><code>incan build [OPTIONS] &lt;FILE&gt; [OUTPUT_DIR]
+<div class="language-text highlight"><pre><span></span><code>incan build [OPTIONS] [FILE] [OUTPUT_DIR] [-- &lt;CARGO_PASSTHROUGH&gt;...]
 incan build --lib [OPTIONS] [OUTPUT_DIR]
 </code></pre></div>
 <p>Behavior:</p>
@@ -5999,8 +6114,7 @@ incan build --lib [OPTIONS] [OUTPUT_DIR]
 <li>Default mode compiles a source file into an executable.</li>
 <li><code>--lib</code> builds the current project as a library. In this mode, <code>src/lib.incn</code> is required and <code>FILE</code> is optional.</li>
 <li>Prints the generated Rust project path (example): <code>target/incan/&lt;name&gt;/</code></li>
-<li>Builds the generated Rust project and prints the binary path (example):
-  <code>target/incan/.cargo-target/release/&lt;name&gt;</code></li>
+<li>Builds the generated Rust project and prints the binary path (example): <code>target/incan/.cargo-target/release/&lt;name&gt;</code></li>
 <li>In <code>--lib</code> mode, also emits a library artifact under <code>target/lib/</code> (including <code>&lt;name&gt;.incnlib</code>).</li>
 </ul>
 <p>Dependency flags:</p>
@@ -6033,7 +6147,7 @@ incan<span class="w"> </span>build<span class="w"> </span>--lib
 </code></pre></div>
 <h3 id="incan-run"><code>incan run</code><a class="headerlink" href="#incan-run" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>
-<div class="language-text highlight"><pre><span></span><code>incan run [OPTIONS] [FILE]
+<div class="language-text highlight"><pre><span></span><code>incan run [OPTIONS] [FILE] [-- &lt;CARGO_PASSTHROUGH&gt;...]
 </code></pre></div>
 <p>Run a file:</p>
 <div class="language-bash highlight"><pre><span></span><code>incan<span class="w"> </span>run<span class="w"> </span>path/to/file.incn
@@ -6048,6 +6162,7 @@ incan<span class="w"> </span>build<span class="w"> </span>--lib
 <p>Dependency flags (same as <code>build</code>):</p>
 <ul>
 <li><code>--offline</code>, <code>--locked</code>, <code>--frozen</code>, <code>--no-offline</code>, <code>--no-locked</code>, <code>--no-frozen</code>, <code>--cargo-args</code>, <code>--cargo-features</code>, <code>--cargo-no-default-features</code>, <code>--cargo-all-features</code></li>
+<li><code>--release</code>: Build and run with Cargo's release profile.</li>
 </ul>
 <h3 id="incan-fmt"><code>incan fmt</code><a class="headerlink" href="#incan-fmt" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>
@@ -6314,8 +6429,7 @@ incan<span class="w"> </span>env<span class="w"> </span>run<span class="w"> </sp
 incan<span class="w"> </span>lock<span class="w">                          </span><span class="c1"># uses [project.scripts].main</span>
 incan<span class="w"> </span>lock<span class="w"> </span>--cargo-features<span class="w"> </span>metrics<span class="w"> </span><span class="c1"># include optional deps in lock</span>
 </code></pre></div>
-<p>The generated <code>incan.lock</code> contains an embedded <code>Cargo.lock</code> payload and a fingerprint of your dependency
-inputs. Commit it to version control for reproducible builds.</p>
+<p>The generated <code>incan.lock</code> contains an embedded <code>Cargo.lock</code> payload and a fingerprint of your dependency inputs. Commit it to version control for reproducible builds.</p>
 <p>See: <a href="../../how-to/dependencies/">Managing dependencies</a> for practical guidance.</p>
 <h3 id="incan-tools-doctor"><code>incan tools doctor</code><a class="headerlink" href="#incan-tools-doctor" title="Permanent link">&para;</a></h3>
 <p>Usage:</p>

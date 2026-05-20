@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -6050,8 +6165,7 @@
 </div>
 <div class="admonition note">
 <p class="admonition-title">If something fails</p>
-<p>If you run into errors, see <a href="../troubleshooting/">Troubleshooting</a>.
-If it still looks like a bug, please <a href="https://github.com/dannys-code-corner/incan/issues">file an issue on GitHub</a>.</p>
+<p>If you run into errors, see <a href="../troubleshooting/">Troubleshooting</a>. If it still looks like a bug, please <a href="https://github.com/dannys-code-corner/incan/issues">file an issue on GitHub</a>.</p>
 </div>
 <p>You can write tests in either of two places:</p>
 <ul>
@@ -6215,8 +6329,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 <span class="k">def</span><span class="w"> </span><span class="nf">test_known_issue</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
     <span class="nf">assert_eq</span><span class="p">(</span><span class="n">buggy_function</span><span class="p">(),</span> <span class="s2">&quot;fixed&quot;</span><span class="p">)</span>
 </code></pre></div>
-<p>If test fails: <code>XFAIL</code> (expected)
-If test passes: <code>XPASS</code> (unexpected - reported as failure)</p>
+<p>If test fails: <code>XFAIL</code> (expected) If test passes: <code>XPASS</code> (unexpected - reported as failure)</p>
 <h3 id="slow-mark-slow-tests">@slow - Mark slow tests<a class="headerlink" href="#slow-mark-slow-tests" title="Permanent link">&para;</a></h3>
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@slow</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">test_integration</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
@@ -6286,8 +6399,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 </code></pre></div>
 <p><code>-k</code> matches the stable test id shown by <code>--list</code>, for example <code>tests/test_math.incn::test_addition</code> or <code>tests/test_math.incn::test_add[1-2-3]</code>.</p>
 <p>When a generated Rust test harness is new or stale, <code>incan test</code> preheats it with <code>cargo test --no-run</code> before executing the tests. This keeps subsequent runs on the already-built path instead of surprising the next hot test command with a full Cargo compile. If two Incan processes reach the same stale harness at once, one process performs the preheat and the other waits for the fingerprint to be written.</p>
-<p><code>-m</code> matches marker names from decorators such as <code>@slow</code> and <code>@mark("smoke")</code>, plus default marks from <code>TEST_MARKS</code>.
-Use <code>TEST_MARKERS</code> with <code>--strict-markers</code> to make unknown marker names a collection error.</p>
+<p><code>-m</code> matches marker names from decorators such as <code>@slow</code> and <code>@mark("smoke")</code>, plus default marks from <code>TEST_MARKS</code>. Use <code>TEST_MARKERS</code> with <code>--strict-markers</code> to make unknown marker names a collection error.</p>
 <p><code>--timeout</code> and <code>@timeout</code> apply to generated test batches. They do not configure individual fixtures. The runner awaits async fixture teardown after ordinary assertion failures and panics while the worker remains alive. If timeout enforcement or external interruption terminates the worker process, remaining fixture teardown is best-effort and may not run.</p>
 <p>Conditional markers are evaluated during collection:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="n">feature</span><span class="p">,</span> <span class="n">platform</span><span class="p">,</span> <span class="n">skipif</span><span class="p">,</span> <span class="n">xfailif</span>

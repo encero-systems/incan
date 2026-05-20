@@ -1272,6 +1272,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1498,6 +1506,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../how-to/generators/" class="md-nav__link">
         
   
@@ -1566,6 +1616,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1671,6 +1742,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3176,6 +3268,8 @@
       
         
       
+        
+      
     
     
       
@@ -3507,6 +3601,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3652,7 +3767,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3668,14 +3783,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5731,8 +5846,7 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">first</span><span class="p">(</span><span class="n">items</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Optional</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
     <span class="k">return</span> <span class="n">items</span><span class="p">[</span><span class="mi">0</span><span class="p">]</span> <span class="k">if</span> <span class="n">items</span> <span class="k">else</span> <span class="kc">None</span>
 </code></pre></div>
-In Python, <code>Optional[T]</code> is mostly a type-hinting/tooling concept.
-In Incan, <code>Option[T]</code> is an explicit enum that the compiler can reason about and enforce.</p>
+In Python, <code>Optional[T]</code> is mostly a type-hinting/tooling concept. In Incan, <code>Option[T]</code> is an explicit enum that the compiler can reason about and enforce.</p>
 </div>
 <h2 id="propagating-errors-with">Propagating errors with <code>?</code><a class="headerlink" href="#propagating-errors-with" title="Permanent link">&para;</a></h2>
 <p>The <code>?</code> operator returns early on <code>Err</code>, otherwise unwraps the <code>Ok</code> value:</p>
@@ -5756,8 +5870,7 @@ In Incan, <code>Option[T]</code> is an explicit enum that the compiler can reaso
 <ol>
 <li>Write <code>def safe_div(a: float, b: float) -&gt; Result[float, str]</code>.</li>
 <li>Write <code>def first(items: List[str]) -&gt; Option[str]</code> and handle <code>None</code> vs <code>Some(...)</code> with <code>match</code>.</li>
-<li>Write <code>def parse_and_divide(n: float, s: str) -&gt; Result[float, str]</code> that uses <code>?</code> to parse <code>s</code> into a <code>float</code>,
-   then calls <code>safe_div</code>.</li>
+<li>Write <code>def parse_and_divide(n: float, s: str) -&gt; Result[float, str]</code> that uses <code>?</code> to parse <code>s</code> into a <code>float</code>, then calls <code>safe_div</code>.</li>
 </ol>
 <details class="example">
 <summary>One possible solution</summary>

@@ -1163,6 +1163,14 @@
       
         
       
+        
+      
+        
+      
+        
+      
+        
+      
     
     
       
@@ -1389,6 +1397,48 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/how-to/hashing_data/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Hashing data
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/logging/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/how-to/generators/" class="md-nav__link">
         
   
@@ -1457,6 +1507,27 @@
   
   <span class="md-ellipsis">
     Choosing collection types
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/working_with_graphs/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Working with graphs
   </span>
   
 
@@ -1562,6 +1633,27 @@
   
   <span class="md-ellipsis">
     String processing
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/how-to/regular_expressions/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Regular expressions
   </span>
   
 
@@ -3067,6 +3159,8 @@
       
         
       
+        
+      
     
     
       
@@ -3398,6 +3492,27 @@
   
   
     <li class="md-nav__item">
+      <a href="../../../language/explanation/graph_model/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Graph model
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
       <a href="../../../language/explanation/derives_and_traits/" class="md-nav__link">
         
   
@@ -3543,7 +3658,7 @@
       
         
         
-        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_21" >
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_5_22" >
         
           
           
@@ -3559,14 +3674,14 @@
             </a>
             
               
-              <label class="md-nav__link " for="__nav_4_5_21" id="__nav_4_5_21_label" tabindex="0">
+              <label class="md-nav__link " for="__nav_4_5_22" id="__nav_4_5_22_label" tabindex="0">
                 <span class="md-nav__icon md-icon"></span>
               </label>
             
           </div>
         
-        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_21_label" aria-expanded="false">
-          <label class="md-nav__title" for="__nav_4_5_21">
+        <nav class="md-nav" data-md-level="3" aria-labelledby="__nav_4_5_22_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_5_22">
             <span class="md-nav__icon md-icon"></span>
             Models and classes
           </label>
@@ -5615,8 +5730,7 @@
 
 
 <h1 id="stdtesting-compiler-internals"><code>std.testing</code> — compiler internals<a class="headerlink" href="#stdtesting-compiler-internals" title="Permanent link">&para;</a></h1>
-<p>This page documents the internal integration model, runtime boundary design, and open design questions for the
-<code>std.testing</code> stdlib module. It is aimed at compiler contributors, not Incan users.</p>
+<p>This page documents the internal integration model, runtime boundary design, and open design questions for the <code>std.testing</code> stdlib module. It is aimed at compiler contributors, not Incan users.</p>
 <blockquote>
 <p>For the user-facing guide, see [Language → How-to → <code>std.testing</code> guide].
 For the API reference, see [Standard library reference → <code>std.testing</code>].</p>
@@ -5625,48 +5739,35 @@ For the API reference, see [Standard library reference → <code>std.testing</co
 <p><code>std.testing</code> is compiled from Incan source instead of relying on hardcoded Rust assertion helpers.</p>
 <ul>
 <li><strong>Source of truth</strong>: <code>crates/incan_stdlib/stdlib/testing.incn</code>.</li>
-<li><strong>Rust module mapping</strong>: the file declares <code>rust.module("incan_stdlib::testing")</code>, routing host-boundary calls to the
-  <code>incan_stdlib::testing</code> Rust module.</li>
-<li><strong>Incan-implemented assertions</strong>: <code>assert</code>, <code>assert_eq</code>, <code>assert_ne</code>, <code>assert_true</code>, <code>assert_false</code>, <code>assert_is_some</code>,
-  <code>assert_is_none</code>, <code>assert_is_ok</code>, <code>assert_is_err</code>, and <code>fail</code> are all written in Incan source. They delegate to
-  <code>fail_t()</code> for the actual panic.</li>
+<li><strong>Rust module mapping</strong>: the file declares <code>rust.module("incan_stdlib::testing")</code>, routing host-boundary calls to the <code>incan_stdlib::testing</code> Rust module.</li>
+<li><strong>Incan-implemented assertions</strong>: <code>assert</code>, <code>assert_eq</code>, <code>assert_ne</code>, <code>assert_true</code>, <code>assert_false</code>, <code>assert_is_some</code>, <code>assert_is_none</code>, <code>assert_is_ok</code>, <code>assert_is_err</code>, and <code>fail</code> are all written in Incan source. They delegate to <code>fail_t()</code> for the actual panic.</li>
 <li><strong>Host-boundary primitives</strong> (<code>@rust.extern</code>):<ul>
 <li><code>fail_t[T](msg)</code> — generic panic primitive implemented in <code>incan_stdlib::testing</code>.</li>
-<li>Marker entrypoints (<code>skip</code>, <code>xfail</code>, <code>slow</code>, <code>fixture</code>, <code>parametrize</code>) — their Rust implementations intentionally
-  panic with a "runtime misuse" message; they exist only to satisfy the extern boundary.</li>
+<li>Marker entrypoints (<code>skip</code>, <code>xfail</code>, <code>slow</code>, <code>fixture</code>, <code>parametrize</code>) — their Rust implementations intentionally panic with a "runtime misuse" message; they exist only to satisfy the extern boundary.</li>
 </ul>
 </li>
 <li><strong>Known blocker</strong>:<ul>
 <li><code>assert_raises</code> remains unimplemented as an Incan-side placeholder (fails via <code>fail_t</code>) until parser/lowering support for <code>assert ... raises ...</code> lands.</li>
 </ul>
 </li>
-<li><strong>Marker metadata</strong>: each marker extern carries <code>metadata={...}</code> on its <code>@rust.extern</code> annotation. <code>incan test</code> reads
-  this metadata from the parsed stdlib source (via <code>src/frontend/testing_markers.rs</code>) as the single source of truth for
-  marker semantics.</li>
+<li><strong>Marker metadata</strong>: each marker extern carries <code>metadata={...}</code> on its <code>@rust.extern</code> annotation. <code>incan test</code> reads this metadata from the parsed stdlib source (via <code>src/frontend/testing_markers.rs</code>) as the single source of truth for marker semantics.</li>
 <li><strong>Surface semantics routing</strong>:<ul>
 <li>Pack contracts live in <code>crates/incan_semantics_core</code> (<code>SurfaceFeatureKey</code>, pack trait, registry).</li>
 <li>Stdlib handlers live in <code>crates/incan_semantics_stdlib</code> and are feature-gated by <code>std_testing</code>.</li>
-<li>Frontend/back adapters call into the registry (<code>src/frontend/surface_semantics.rs</code> and
-  <code>src/backend/ir/surface_semantics.rs</code>).</li>
+<li>Frontend/back adapters call into the registry (<code>src/frontend/surface_semantics.rs</code> and <code>src/backend/ir/surface_semantics.rs</code>).</li>
 <li><code>assert</code> statement syntax is lowered through registry-provided canonical call target metadata.</li>
 <li>Lowered assert calls carry canonical callee paths (<code>std.testing.assert_*</code>) in IR.</li>
-<li>Emission uses canonical paths for stdlib dispatch, so <code>import std.testing</code> and
-  <code>from std.testing import assert_*</code> behave consistently.</li>
+<li>Emission uses canonical paths for stdlib dispatch, so <code>import std.testing</code> and <code>from std.testing import assert_*</code> behave consistently.</li>
 </ul>
 </li>
 </ul>
-<p>This design keeps user-facing assertion behavior in one stdlib Incan file while limiting Rust host code to unavoidable
-panic/failure primitives.</p>
+<p>This design keeps user-facing assertion behavior in one stdlib Incan file while limiting Rust host code to unavoidable panic/failure primitives.</p>
 <h2 id="runtime-boundary-shape">Runtime boundary shape<a class="headerlink" href="#runtime-boundary-shape" title="Permanent link">&para;</a></h2>
 <p>The runtime boundary is intentionally narrow:</p>
 <ul>
-<li><strong>Incan-first assertions</strong>: behavior lives in <code>testing.incn</code>, not duplicated Rust wrappers. Adding a new assertion
-  helper means editing Incan source, not touching <code>incan_stdlib::testing</code>.</li>
-<li><strong>Host orchestration for markers</strong>: discovery and execution semantics (<code>skip</code>, <code>xfail</code>, <code>slow</code>, fixtures, parametrize)
-  are resolved by <code>incan test</code> from stdlib metadata at discovery time — they are never invoked at runtime in normal test
-  execution.</li>
-<li><strong>Fail-fast on runtime misuse</strong>: the Rust marker stubs panic immediately with a clear message if a marker function is
-  ever called outside the test runner (e.g., used as a regular function call instead of a decorator).</li>
+<li><strong>Incan-first assertions</strong>: behavior lives in <code>testing.incn</code>, not duplicated Rust wrappers. Adding a new assertion helper means editing Incan source, not touching <code>incan_stdlib::testing</code>.</li>
+<li><strong>Host orchestration for markers</strong>: discovery and execution semantics (<code>skip</code>, <code>xfail</code>, <code>slow</code>, fixtures, parametrize) are resolved by <code>incan test</code> from stdlib metadata at discovery time — they are never invoked at runtime in normal test execution.</li>
+<li><strong>Fail-fast on runtime misuse</strong>: the Rust marker stubs panic immediately with a clear message if a marker function is ever called outside the test runner (e.g., used as a regular function call instead of a decorator).</li>
 </ul>
 <h2 id="marker-metadata-flow">Marker metadata flow<a class="headerlink" href="#marker-metadata-flow" title="Permanent link">&para;</a></h2>
 <div class="language-text highlight"><pre><span></span><code>crates/incan_stdlib/stdlib/testing.incn    src/frontend/testing_markers.rs
