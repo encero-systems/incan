@@ -8173,31 +8173,26 @@ def f(encoded: bytes) -> None:
             },
         )
         .map_err(|err| std::io::Error::other(format!("seed trait metadata: {err}")))?;
-    for path in ["demo::FileDescriptorSet"] {
-        checker
-            .rust_inspect_cache
-            .insert_test_item(
-                &manifest_dir,
-                RustItemMetadata {
-                    canonical_path: path.to_string(),
-                    definition_path: Some(path.to_string()),
-                    visibility: RustVisibility::Public,
-                    kind: RustItemKind::Type(RustTypeInfo {
-                        methods: Vec::new(),
-                        implemented_traits: if path.ends_with("FileDescriptorSet") {
-                            vec![RustImplementedTrait {
-                                path: "demo::Message".to_string(),
-                            }]
-                        } else {
-                            Vec::new()
-                        },
-                        fields: Vec::new(),
-                        variants: Vec::new(),
-                    }),
-                },
-            )
-            .map_err(|err| std::io::Error::other(format!("seed type metadata: {err}")))?;
-    }
+    let path = "demo::FileDescriptorSet";
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: path.to_string(),
+                definition_path: Some(path.to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    methods: Vec::new(),
+                    implemented_traits: vec![RustImplementedTrait {
+                        path: "demo::Message".to_string(),
+                    }],
+                    fields: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed type metadata: {err}")))?;
 
     checker
         .check_program(&ast)

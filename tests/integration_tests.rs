@@ -6141,7 +6141,6 @@ async def main() -> None:
     fn test_run_std_regex_rfc059_surface() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args(["run", "tests/fixtures/valid/std_regex_surface.incn"])
-            .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
         assert!(
@@ -6201,7 +6200,6 @@ def main() -> None:
             println(err.message())
 "#,
             ])
-            .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
         assert!(
