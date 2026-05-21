@@ -1,7 +1,7 @@
 //! RFC 023: Trait bound inference for generic functions.
 //!
 //! This module scans IR function bodies to infer which Rust trait bounds are required on each type parameter based on
-//! how the parameter is used (e.g., `==` requires `PartialEq`, f-string interpolation requires `Display`).
+//! how the parameter is used (e.g., `==` requires `PartialEq`, display f-string interpolation requires `Display`).
 //!
 //! ## Inference rules (from RFC 023)
 //!
@@ -9,7 +9,8 @@
 //! | --------------------------- | ------------------------------ |
 //! | `==`, `!=`                  | `PartialEq`                    |
 //! | `<`, `<=`, `>`, `>=`        | `PartialOrd`                   |
-//! | f-string interpolation      | `std::fmt::Display`            |
+//! | f-string `{value}`          | `std::fmt::Display`            |
+//! | f-string `{value:?}`        | `std::fmt::Debug`              |
 //! | `+`                         | `std::ops::Add<Output = T>`    |
 //! | `-`                         | `std::ops::Sub<Output = T>`    |
 //! | `*`                         | `std::ops::Mul<Output = T>`    |
@@ -1042,7 +1043,7 @@ fn collect_backend_clone_bounds_in_expr(
         }
         IrExprKind::Format { parts } => {
             for part in parts {
-                if let FormatPart::Expr(expr) = part {
+                if let FormatPart::Expr { expr, .. } = part {
                     collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
                 }
             }
@@ -1437,12 +1438,24 @@ fn scan_expr_for_bounds(
             scan_expr_for_bounds(right, type_params, params, bounds_map);
         }
 
-        // ---- f-string interpolation: expressions used in format require Display ----
+        // ---- f-string interpolation: expressions used in format require the matching formatting trait ----
         IrExprKind::Format { parts } => {
             for part in parts {
-                if let FormatPart::Expr(inner) = part {
+                if let FormatPart::Expr { expr: inner, style } = part {
+                    let bound = if style.emits_rust_debug(&inner.ty) {
+                        tb::DEBUG
+                    } else {
+                        tb::DISPLAY
+                    };
+                    let mut formatted_type_params = HashSet::new();
                     if let Some(tp_name) = expr_type_param_name(inner, type_params, params) {
-                        add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::DISPLAY));
+                        formatted_type_params.insert(tp_name);
+                    }
+                    if style.emits_rust_debug(&inner.ty) {
+                        collect_generic_type_param_names(&inner.ty, type_params, &mut formatted_type_params);
+                    }
+                    for tp_name in formatted_type_params {
+                        add_bound(bounds_map, &tp_name, IrTraitBound::simple(bound));
                     }
                     scan_expr_for_bounds(inner, type_params, params, bounds_map);
                 }
@@ -2259,8 +2272,8 @@ fn collect_calls_in_expr(
         }
         IrExprKind::Format { parts } => {
             for part in parts {
-                if let FormatPart::Expr(e) = part {
-                    recurse_expr(e, result);
+                if let FormatPart::Expr { expr, .. } = part {
+                    recurse_expr(expr, result);
                 }
             }
         }

@@ -251,8 +251,8 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
         Expr::Paren(inner) => call_site_type_in_expr(inner, offset),
         Expr::Constructor(_, args) => scan_call_args(args, offset),
         Expr::FString(parts) => parts.iter().find_map(|p| {
-            if let crate::frontend::ast::FStringPart::Expr(e) = p {
-                call_site_type_in_expr(e, offset)
+            if let crate::frontend::ast::FStringPart::Expr { expr, .. } = p {
+                call_site_type_in_expr(expr, offset)
             } else {
                 None
             }

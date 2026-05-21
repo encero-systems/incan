@@ -2188,7 +2188,7 @@ impl AstLowering {
             ast::Expr::Constructor(_, args) => self.count_call_args_ident_reads(args, counts),
             ast::Expr::FString(parts) => {
                 for part in parts {
-                    if let ast::FStringPart::Expr(expr) = part {
+                    if let ast::FStringPart::Expr { expr, .. } = part {
                         self.count_expr_ident_reads(&expr.node, counts);
                     }
                 }

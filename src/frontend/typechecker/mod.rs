@@ -1740,7 +1740,7 @@ impl TypeChecker {
             }
             Expr::FString(parts) => {
                 for part in parts {
-                    if let FStringPart::Expr(expr) = part {
+                    if let FStringPart::Expr { expr, .. } = part {
                         self.collect_static_dependencies_from_expr(&expr.node, deps, visiting_functions);
                     }
                 }
@@ -1918,7 +1918,7 @@ impl TypeChecker {
             }
             Expr::FString(parts) => {
                 for part in parts {
-                    if let FStringPart::Expr(inner) = part {
+                    if let FStringPart::Expr { expr: inner, .. } = part {
                         self.collect_static_initializer_static_writes_from_expr(
                             inner,
                             current_static,

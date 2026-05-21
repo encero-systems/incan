@@ -417,7 +417,38 @@ pub enum FormatPart {
     /// Literal text
     Literal(String),
     /// Expression to interpolate
-    Expr(IrExpr),
+    Expr { expr: IrExpr, style: FormatStyle },
+}
+
+/// Formatting style requested by one f-string interpolation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FormatStyle {
+    /// User-facing display formatting (`{value}`).
+    #[default]
+    Display,
+    /// Structured debug formatting (`{value:?}`).
+    Debug,
+}
+
+impl FormatStyle {
+    /// Return whether this interpolation should emit Rust debug formatting for the resolved backend type.
+    pub fn emits_rust_debug(self, ty: &IrType) -> bool {
+        matches!(self, Self::Debug) || matches!(self, Self::Display) && display_style_uses_structured_debug(ty)
+    }
+}
+
+/// Return whether default Incan f-string display should use structured formatting for a backend representation that
+/// does not expose Rust `Display` directly.
+pub fn display_style_uses_structured_debug(ty: &IrType) -> bool {
+    matches!(
+        ty,
+        IrType::List(_)
+            | IrType::Dict(_, _)
+            | IrType::Set(_)
+            | IrType::Tuple(_)
+            | IrType::Option(_)
+            | IrType::Result(_, _)
+    )
 }
 
 /// How a variable is accessed

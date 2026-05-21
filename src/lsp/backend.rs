@@ -1938,7 +1938,7 @@ fn local_signature_in_expr(
         }),
         Expr::Constructor(_, args) => local_signature_in_call_args(args, ast, source, offset),
         Expr::FString(parts) => parts.iter().find_map(|part| match part {
-            crate::frontend::ast::FStringPart::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
+            crate::frontend::ast::FStringPart::Expr { expr, .. } => local_signature_in_expr(expr, ast, source, offset),
             crate::frontend::ast::FStringPart::Literal(_) => None,
         }),
         Expr::Yield(Some(value)) => local_signature_in_expr(value, ast, source, offset),
@@ -3569,7 +3569,7 @@ fn scoped_symbol_in_expr<'a>(
         Expr::Constructor(_, args) => scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found),
         Expr::FString(parts) => {
             for part in parts {
-                if let crate::frontend::ast::FStringPart::Expr(expr) = part {
+                if let crate::frontend::ast::FStringPart::Expr { expr, .. } = part {
                     scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
                 }
             }
@@ -4086,7 +4086,7 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
         Expr::Constructor(_, args) => scoped_symbol_context_in_call_args(args, offset, context),
         Expr::FString(parts) => {
             for part in parts {
-                if let crate::frontend::ast::FStringPart::Expr(expr) = part {
+                if let crate::frontend::ast::FStringPart::Expr { expr, .. } = part {
                     scoped_symbol_context_in_expr(expr, offset, context);
                 }
             }

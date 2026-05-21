@@ -763,7 +763,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             }
             IrExprKind::Format { parts } => {
                 for part in parts {
-                    if let super::super::expr::FormatPart::Expr(expr) = part {
+                    if let super::super::expr::FormatPart::Expr { expr, .. } = part {
                         self.scan_expr(expr);
                     }
                 }
@@ -1792,7 +1792,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Format { parts } => {
                 for part in parts {
-                    if let super::super::expr::FormatPart::Expr(expr) = part {
+                    if let super::super::expr::FormatPart::Expr { expr, .. } = part {
                         Self::collect_union_types_from_expr(expr, out);
                     }
                 }

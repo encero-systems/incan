@@ -1269,17 +1269,21 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Convert lexer f-string segments into parsed AST parts while preserving interpolation spans and format markers.
     fn convert_fstring_parts(&self, parts: &[LexFStringPart]) -> Vec<FStringPart> {
         parts
             .iter()
             .map(|p| match p {
                 LexFStringPart::Literal(s) => FStringPart::Literal(s.clone()),
                 LexFStringPart::Expr { text, offset } => {
-                    // Parse simple field access chains like "user.name" or "obj.field.sub"
                     let expr_span = Span::new(*offset, offset + text.len() + 2);
-                    let mut expr = self.parse_fstring_expr(text);
+                    let (expr_text, format) = split_fstring_format(text);
+                    let mut expr = self.parse_fstring_expr(expr_text);
                     self.shift_expr_spans(&mut expr, offset + 1);
-                    FStringPart::Expr(Spanned::new(expr, expr_span))
+                    FStringPart::Expr {
+                        expr: Spanned::new(expr, expr_span),
+                        format,
+                    }
                 }
             })
             .collect()
@@ -1441,8 +1445,8 @@ impl<'a> Parser<'a> {
             }
             Expr::FString(parts) => {
                 for part in parts {
-                    if let FStringPart::Expr(value) = part {
-                        self.shift_spanned_expr(value, offset);
+                    if let FStringPart::Expr { expr, .. } = part {
+                        self.shift_spanned_expr(expr, offset);
                     }
                 }
             }
@@ -1547,7 +1551,6 @@ impl<'a> Parser<'a> {
                 next_leading = 0;
             }
         }
-
         self.expect(&TokenKind::Dedent, "Expected dedent after match body")?;
         let end = self.tokens[self.pos - 1].span.end;
         Ok(Spanned::new(
@@ -2474,4 +2477,42 @@ impl<'a> Parser<'a> {
         Ok(partial_args)
     }
 
+}
+
+/// Split a raw f-string interpolation body into expression text plus the supported top-level format marker.
+fn split_fstring_format(text: &str) -> (&str, FStringFormat) {
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut format_colon = None;
+
+    for (idx, ch) in text.char_indices() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ':' if depth == 0 => format_colon = Some(idx),
+            _ => {}
+        }
+    }
+
+    if let Some(idx) = format_colon {
+        let spec = text[idx + 1..].trim();
+        if spec == "?" {
+            return (text[..idx].trim_end(), FStringFormat::Debug);
+        }
+    }
+
+    (text, FStringFormat::Display)
 }

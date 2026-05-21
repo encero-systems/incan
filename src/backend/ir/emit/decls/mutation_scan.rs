@@ -316,8 +316,8 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Format { parts } => {
                 for part in parts {
-                    if let super::super::super::expr::FormatPart::Expr(e) = part {
-                        self.scan_expr_for_param_writes(e, param_names, mutated);
+                    if let super::super::super::expr::FormatPart::Expr { expr, .. } = part {
+                        self.scan_expr_for_param_writes(expr, param_names, mutated);
                     }
                 }
             }

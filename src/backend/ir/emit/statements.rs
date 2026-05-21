@@ -773,7 +773,7 @@ fn expr_uses_binding_name(expr: &super::super::expr::IrExpr, binding_name: &str)
                     .is_some_and(|expr| expr_uses_binding_name(expr, binding_name))
         }
         IrExprKind::Format { parts } => parts.iter().any(|part| match part {
-            super::super::expr::FormatPart::Expr(expr) => expr_uses_binding_name(expr, binding_name),
+            super::super::expr::FormatPart::Expr { expr, .. } => expr_uses_binding_name(expr, binding_name),
             super::super::expr::FormatPart::Literal(_) => false,
         }),
         IrExprKind::Unit
