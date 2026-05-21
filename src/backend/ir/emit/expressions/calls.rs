@@ -724,12 +724,14 @@ impl<'a> IrEmitter<'a> {
                     None
                 };
                 let emitted = (|| {
+                    let mut emitted_from_seed = false;
                     let emitted = if let Some(target_ty) = target_ty {
                         if let Some(seed) = self.emit_inference_seeded_literal_arg_with_union_qualifier(
                             a,
                             target_ty,
                             pub_library_union_qualifier.as_deref(),
                         )? {
+                            emitted_from_seed = true;
                             seed
                         } else if Self::is_unresolved_call_seed_type(target_ty) {
                             // Signature exists but leaves generics unresolved: fallback to the argument's own inferred
@@ -739,6 +741,7 @@ impl<'a> IrEmitter<'a> {
                                 &a.ty,
                                 pub_library_union_qualifier.as_deref(),
                             )? {
+                                emitted_from_seed = true;
                                 seed
                             } else if target_aware_aggregate_literal_arg {
                                 self.emit_expr_for_use(a, use_site)?
@@ -758,6 +761,7 @@ impl<'a> IrEmitter<'a> {
                             &a.ty,
                             pub_library_union_qualifier.as_deref(),
                         )? {
+                            emitted_from_seed = true;
                             seed
                         } else if target_aware_aggregate_literal_arg {
                             self.emit_expr_for_use(a, use_site)?
@@ -765,12 +769,12 @@ impl<'a> IrEmitter<'a> {
                             self.emit_expr(a)?
                         }
                     };
-                    Ok::<TokenStream, EmitError>(emitted)
+                    Ok::<(TokenStream, bool), EmitError>((emitted, emitted_from_seed))
                 })();
                 if let Some(previous) = previous_qualify {
                     self.qualify_internal_canonical_paths.replace(previous);
                 }
-                let emitted = emitted?;
+                let (emitted, emitted_from_seed) = emitted?;
 
                 if let Some(adapter) = self.borrowed_function_adapter_arg(a, target_ty) {
                     return Ok(adapter);
@@ -817,7 +821,7 @@ impl<'a> IrEmitter<'a> {
                     }
                 }
 
-                let mut tokens = if target_aware_aggregate_literal_arg {
+                let mut tokens = if emitted_from_seed || target_aware_aggregate_literal_arg {
                     emitted
                 } else {
                     match use_site {
@@ -1549,7 +1553,7 @@ mod tests {
     use crate::backend::ir::expr::{
         IrCallArg, IrCallArgKind, IrInteropCoercionKind, Literal as IrLiteral, VarAccess, VarRefKind,
     };
-    use crate::backend::ir::types::{IrType, Mutability};
+    use crate::backend::ir::types::{IR_UNION_TYPE_NAME, IrType, Mutability};
     use crate::backend::ir::{FunctionRegistry, IrEmitter, TypedExpr};
     use incan_core::lang::types::numerics::NumericTypeId;
 
@@ -1868,6 +1872,55 @@ mod tests {
             .emit_call_expr(&func, &[], &[pos_arg(err)], None, Some(&path))
             .map_err(|err| std::io::Error::other(format!("canonical assert_is_err should emit: {err:?}")))?;
         assert_eq!(render(tokens), "(\"boom\").to_string()");
+        Ok(())
+    }
+
+    #[test]
+    fn emit_call_expr_keeps_return_context_union_string_seed_as_union_value() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let union_ty = IrType::NamedGeneric(
+            IR_UNION_TYPE_NAME.to_string(),
+            vec![IrType::String, IrType::Bool, IrType::Float, IrType::Int],
+        );
+        let mut registry = FunctionRegistry::new();
+        registry.register(
+            "lit".to_string(),
+            vec![FunctionParam {
+                name: "value".to_string(),
+                ty: union_ty.clone(),
+                mutability: Mutability::Immutable,
+                is_self: false,
+                kind: ParamKind::Normal,
+                default: None,
+            }],
+            IrType::String,
+        );
+        let emitter = IrEmitter::new(&registry);
+        emitter.in_return_context.replace(true);
+        let func = TypedExpr::new(
+            IrExprKind::Var {
+                name: "lit".to_string(),
+                access: VarAccess::Copy,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Function {
+                params: vec![union_ty],
+                ret: Box::new(IrType::String),
+            },
+        );
+        let arg = TypedExpr::new(IrExprKind::String("open".to_string()), IrType::String);
+        let tokens = emitter
+            .emit_call_expr(&func, &[], &[pos_arg(arg)], None, None)
+            .map_err(|err| {
+                std::io::Error::other(format!(
+                    "union string literal call should emit without post-wrapper coercion: {err:?}"
+                ))
+            })?;
+
+        assert_eq!(
+            render(tokens),
+            "lit(__IncanUnion43fbd19e99c1db05::V0(\"open\".to_string()))"
+        );
         Ok(())
     }
 
