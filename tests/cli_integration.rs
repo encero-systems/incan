@@ -1660,6 +1660,80 @@ def main() -> None:
 }
 
 #[test]
+fn build_pub_consumer_imports_public_alias_of_imported_item_issue617() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let producer_root = tmp.path().join("alias_lib");
+    let producer_src = producer_root.join("src");
+    fs::create_dir_all(&producer_src)?;
+    fs::write(
+        producer_root.join("incan.toml"),
+        r#"[project]
+name = "alias_lib"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        producer_src.join("helper.incn"),
+        r#"pub def target(value: int) -> int:
+    return value + 1
+"#,
+    )?;
+    fs::write(
+        producer_src.join("functions.incn"),
+        r#"from helper import target as target_impl
+
+pub public_target = alias target_impl
+"#,
+    )?;
+    fs::write(
+        producer_src.join("lib.incn"),
+        r#"pub from functions import public_target
+"#,
+    )?;
+
+    let producer_build = run_incan(&producer_root, &["build", "--lib"])?;
+    assert_success(&producer_build, "producer build --lib for public alias issue617");
+
+    let manifest_path = producer_root.join("target").join("lib").join("alias_lib.incnlib");
+    let manifest: serde_json::Value = serde_json::from_str(&fs::read_to_string(&manifest_path)?)?;
+    assert!(
+        manifest.pointer("/exports/aliases/0/projected_function").is_some(),
+        "callable alias export should include function projection metadata, got:\n{manifest}"
+    );
+
+    let consumer_root = tmp.path().join("alias_consumer");
+    let consumer_main = write_minimal_project(
+        &consumer_root,
+        "alias_consumer",
+        r#"
+[dependencies]
+alias_lib = { path = "../alias_lib" }
+"#,
+    )?;
+    fs::write(
+        &consumer_main,
+        r#"from pub::alias_lib import public_target
+
+
+def main() -> None:
+    assert public_target(1) == 2
+"#,
+    )?;
+
+    let output_dir = tmp.path().join("consumer_out");
+    let consumer_build = run_incan(
+        &consumer_root,
+        &[
+            "build",
+            consumer_main.to_str().ok_or("consumer main path was not valid UTF-8")?,
+            output_dir.to_str().ok_or("output path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(&consumer_build, "pub consumer build for public alias issue617");
+    Ok(())
+}
+
+#[test]
 fn build_frozen_uses_existing_lockfile_without_network() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_frozen_existing_lock_project", "")?;

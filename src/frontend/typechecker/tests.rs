@@ -12,10 +12,10 @@ use crate::frontend::library_manifest_index::{
 use crate::frontend::testing_markers::TestingFixtureScope;
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
-    ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport, FunctionExport,
-    LibraryContractMetadata, LibraryExports, LibraryManifest, LibraryRustAbi, MethodExport, ModelExport, ParamExport,
-    ParamKindExport, PartialExport, PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport,
-    StaticExport, TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
+    AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport,
+    FunctionExport, LibraryContractMetadata, LibraryExports, LibraryManifest, LibraryRustAbi, MethodExport,
+    ModelExport, ParamExport, ParamKindExport, PartialExport, PartialPresetExport, PartialTargetKindExport,
+    PresetValueExport, ReceiverExport, StaticExport, TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
@@ -1207,6 +1207,10 @@ pub mean = alias avg
     assert_eq!(manifest.exports.aliases[0].name, "mean");
     assert_eq!(manifest.exports.aliases[0].target_path, vec!["avg"]);
     assert!(
+        manifest.exports.aliases[0].projected_function.is_some(),
+        "function aliases should carry callable projection metadata for pub:: consumers"
+    );
+    assert!(
         manifest
             .exports
             .functions
@@ -1477,6 +1481,59 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     }],
                 },
             }],
+        },
+        vocab: None,
+        soft_keywords: Default::default(),
+        contract_metadata: LibraryContractMetadata::default(),
+        rust_abi: None,
+    };
+
+    LibraryManifestIndex::from_entries(HashMap::from([(
+        "mylib".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root("mylib", "mylib", synthetic_artifact_root("mylib")),
+        },
+    )]))
+}
+
+fn library_index_with_callable_alias_export() -> LibraryManifestIndex {
+    let manifest = LibraryManifest {
+        name: "mylib".to_string(),
+        version: "0.1.0".to_string(),
+        incan_version: crate::version::INCAN_VERSION.to_string(),
+        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        exports: LibraryExports {
+            aliases: vec![AliasExport {
+                name: "public_target".to_string(),
+                target_path: vec!["target_impl".to_string()],
+                projected_function: Some(FunctionExport {
+                    name: "public_target".to_string(),
+                    type_params: Vec::new(),
+                    params: vec![ParamExport {
+                        name: "value".to_string(),
+                        ty: TypeRef::Named {
+                            name: "int".to_string(),
+                        },
+                        kind: ParamKindExport::Normal,
+                        has_default: false,
+                    }],
+                    return_type: TypeRef::Named {
+                        name: "int".to_string(),
+                    },
+                    is_async: false,
+                }),
+            }],
+            partials: Vec::new(),
+            models: Vec::new(),
+            classes: Vec::new(),
+            functions: Vec::new(),
+            traits: Vec::new(),
+            enums: Vec::new(),
+            type_aliases: Vec::new(),
+            newtypes: Vec::new(),
+            consts: Vec::new(),
+            statics: Vec::new(),
         },
         vocab: None,
         soft_keywords: Default::default(),
@@ -10935,6 +10992,21 @@ def build() -> Widget:
     assert!(
         result.is_ok(),
         "expected pub-imported manifest partial callable to typecheck, got: {result:?}"
+    );
+}
+
+#[test]
+fn test_pub_from_import_manifest_callable_alias_typechecks() {
+    let source = r#"
+from pub::mylib import public_target
+
+def build() -> int:
+  return public_target(1)
+"#;
+    let result = check_str_with_library_index(source, library_index_with_callable_alias_export());
+    assert!(
+        result.is_ok(),
+        "expected pub-imported callable alias to typecheck, got: {result:?}"
     );
 }
 

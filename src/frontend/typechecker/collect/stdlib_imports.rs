@@ -733,6 +733,9 @@ impl TypeChecker {
                 fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
             }),
             ManifestExportRef::Alias(export) => {
+                if let Some(function) = &export.projected_function {
+                    return Some(SymbolKind::Function(self.function_info_from_manifest(function)));
+                }
                 let target_name = export.target_path.last()?;
                 return self.lookup_pub_library_symbol_member(library, target_name);
             }
@@ -990,13 +993,23 @@ impl TypeChecker {
                 is_used: false,
             }),
             ManifestExportRef::Alias(export) => {
-                let Some(target_name) = export.target_path.last() else {
-                    return;
-                };
-                let Some(target_export) = Self::find_manifest_export(manifest, target_name) else {
-                    return;
-                };
-                return self.define_pub_import_symbol(manifest, local_name, target_export, imported_type_aliases, span);
+                if let Some(function) = &export.projected_function {
+                    SymbolKind::Function(self.function_info_from_manifest(function))
+                } else {
+                    let Some(target_name) = export.target_path.last() else {
+                        return;
+                    };
+                    let Some(target_export) = Self::find_manifest_export(manifest, target_name) else {
+                        return;
+                    };
+                    return self.define_pub_import_symbol(
+                        manifest,
+                        local_name,
+                        target_export,
+                        imported_type_aliases,
+                        span,
+                    );
+                }
             }
         };
         self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);

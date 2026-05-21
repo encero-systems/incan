@@ -88,6 +88,8 @@ pub struct LibraryExports {
 pub struct AliasExport {
     pub name: String,
     pub target_path: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projected_function: Option<FunctionExport>,
 }
 
 /// Exported partial callable preset metadata.
@@ -682,6 +684,7 @@ fn alias_export_from_checked(export: &CheckedAliasExport) -> AliasExport {
     AliasExport {
         name: export.name.clone(),
         target_path: export.target_path.clone(),
+        projected_function: export.projected_function.as_ref().map(function_export_from_checked),
     }
 }
 

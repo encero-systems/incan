@@ -117,6 +117,7 @@ pub struct CheckedTypeAliasExport {
 pub struct CheckedAliasExport {
     pub name: String,
     pub target_path: Vec<String>,
+    pub projected_function: Option<CheckedFunctionExport>,
 }
 
 #[derive(Debug, Clone)]
@@ -324,14 +325,30 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
 
 /// Build a checked public export entry for a module-level alias.
 fn checked_alias_export(alias: &AliasDecl, checker: &TypeChecker) -> Option<CheckedNamedExport> {
-    checker.lookup_symbol(alias.name.as_str())?;
+    let symbol = checker.lookup_symbol(alias.name.as_str())?;
+    let projected_function = match &symbol.kind {
+        SymbolKind::Function(info) => Some(checked_alias_function_export(&alias.name, info)),
+        _ => None,
+    };
     Some(CheckedNamedExport {
         name: alias.name.clone(),
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: alias.name.clone(),
             target_path: alias.target.segments.clone(),
+            projected_function,
         }),
     })
+}
+
+/// Build manifest-ready callable metadata for an alias that projects a function.
+fn checked_alias_function_export(name: &str, info: &FunctionInfo) -> CheckedFunctionExport {
+    CheckedFunctionExport {
+        name: name.to_string(),
+        type_params: checked_function_type_params(info),
+        params: info.params.clone(),
+        return_type: info.return_type.clone(),
+        is_async: info.is_async,
+    }
 }
 
 /// Build checked export metadata for a public partial callable preset.
@@ -517,6 +534,20 @@ fn checked_function_export(function: &FunctionDecl, checker: &TypeChecker) -> Op
         return_type,
         is_async,
     })
+}
+
+/// Convert checked function metadata type parameters into export metadata type parameters.
+fn checked_function_type_params(info: &FunctionInfo) -> Vec<CheckedTypeParam> {
+    info.type_params
+        .iter()
+        .map(|name| CheckedTypeParam {
+            name: name.clone(),
+            bounds: info
+                .type_param_bound_details
+                .get(name)
+                .map_or_else(Vec::new, |bounds| map_type_bound_infos(bounds)),
+        })
+        .collect()
 }
 
 fn checked_type_alias_export(alias: &TypeAliasDecl, checker: &TypeChecker) -> CheckedTypeAliasExport {
