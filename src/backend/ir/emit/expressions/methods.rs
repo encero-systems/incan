@@ -233,32 +233,9 @@ impl<'a> IrEmitter<'a> {
         )
     }
 
-    /// Return whether an argument expression already emits Rust reference-shaped tokens.
-    ///
-    /// The frontend keeps `bytes.as_slice()` typed as `bytes` because Incan does not expose Rust slice types directly.
-    /// During Rust emission, however, that call is already a borrowed view. External fallback borrowing must not wrap
-    /// it again or Rust receives `&&[u8]`.
+    /// Return whether an argument expression already has Rust reference shape in IR.
     fn method_arg_already_has_reference_shape(arg: &TypedExpr) -> bool {
-        if Self::method_arg_already_borrowed_for_ref_param(&arg.ty) {
-            return true;
-        }
-        let IrExprKind::MethodCall {
-            receiver, method, args, ..
-        } = &arg.kind
-        else {
-            return false;
-        };
-        if !args.is_empty() {
-            return false;
-        }
-        match method.as_str() {
-            "as_slice" => matches!(&receiver.ty, IrType::Bytes | IrType::StaticBytes | IrType::FrozenBytes),
-            "as_bytes" | "as_str" => matches!(
-                &receiver.ty,
-                IrType::String | IrType::StaticStr | IrType::FrozenStr | IrType::StrRef
-            ),
-            _ => false,
-        }
+        Self::method_arg_already_borrowed_for_ref_param(&arg.ty)
     }
 
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
@@ -437,21 +414,6 @@ impl<'a> IrEmitter<'a> {
                         self.external_list_arg_element_coercion(arg, Some(&param.ty), emitted.clone())
                 {
                     emitted = coerced;
-                }
-                if external_method_shape
-                    && !external_param_planned
-                    && idx == 0
-                    && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty)
-                {
-                    return Ok(quote! { &mut #emitted });
-                }
-                if external_method_shape
-                    && !external_param_planned
-                    && idx == 0
-                    && Self::method_arg_needs_fallback_borrow(method, &arg.ty)
-                    && !Self::method_arg_already_has_reference_shape(arg)
-                {
-                    return Ok(quote! { &#emitted });
                 }
                 if !external_param_planned {
                     match &param.ty {

@@ -3025,6 +3025,15 @@ fn test_rust_metadata_lookup_path_rejects_unknown_placeholder() {
     assert_eq!(TypeChecker::rust_metadata_lookup_path("{unknown}"), None);
 }
 
+#[test]
+fn test_rust_display_unknown_placeholder_resolves_unknown() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_type_from_rust_display("{unknown}"),
+        ResolvedType::Unknown
+    );
+}
+
 #[cfg(feature = "rust_inspect")]
 #[test]
 fn test_rust_item_metadata_lookup_reuses_cached_nominal_item_for_instantiated_rust_path()
@@ -8155,6 +8164,75 @@ def f(encoded: bytes) -> None:
     assert!(
         checker.type_info().rust.arg_coercions.is_empty(),
         "expected trait-provided impl Trait decode to avoid borrow coercions, got {:?}",
+        checker.type_info().rust.arg_coercions
+    );
+    Ok(())
+}
+
+#[test]
+fn test_rust_extension_trait_associated_call_records_param_shape_without_receiver_metadata()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import Message
+from rust::datafusion_substrait::substrait::proto import Plan as ConsumerPlan
+
+def f(encoded: bytes) -> None:
+  _ = ConsumerPlan.decode(encoded.as_slice())
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Message".to_string(),
+                definition_path: Some("demo::Message".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Trait(RustTraitInfo {
+                    items: vec![RustTraitAssoc::Function {
+                        name: "decode".to_string(),
+                        signature: RustFunctionSig {
+                            params: vec![RustParam {
+                                name: Some("buf".to_string()),
+                                type_display: "implBuf".to_string(),
+                            }],
+                            return_type: "Self".to_string(),
+                            is_async: false,
+                            is_unsafe: false,
+                        },
+                    }],
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed trait metadata: {err}")))?;
+
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+    let uses = &checker.type_info().rust.method_trait_import_uses;
+    assert!(
+        uses.values()
+            .any(|import_use| import_use.binding == "Message" && import_use.method == "decode"),
+        "expected Message import use for unresolved receiver metadata, got {uses:?}"
+    );
+    assert!(
+        checker
+            .type_info()
+            .calls
+            .call_site_callable_params
+            .values()
+            .any(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("implBuf".to_string())),
+        "expected trait-provided decode parameter shape without receiver metadata, got {:?}",
+        checker.type_info().calls.call_site_callable_params
+    );
+    assert!(
+        checker.type_info().rust.arg_coercions.is_empty(),
+        "expected unresolved receiver trait signature to avoid borrow coercions, got {:?}",
         checker.type_info().rust.arg_coercions
     );
     Ok(())

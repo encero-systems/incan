@@ -1104,6 +1104,20 @@ mod tests {
     use crate::backend::ir::{FunctionParam, FunctionRegistry, FunctionSignature, Mutability};
     use incan_core::lang::traits::{self as core_traits, TraitId};
 
+    fn prost_decode_signature(return_type: IrType) -> FunctionSignature {
+        FunctionSignature {
+            params: vec![FunctionParam {
+                name: "buf".to_string(),
+                ty: IrType::Generic("Buf".to_string()),
+                mutability: Mutability::Immutable,
+                is_self: false,
+                kind: crate::frontend::ast::ParamKind::Normal,
+                default: None,
+            }],
+            return_type,
+        }
+    }
+
     #[test]
     fn type_name_associated_call_does_not_borrow_string_arguments() -> Result<(), String> {
         let registry = FunctionRegistry::new();
@@ -1295,10 +1309,14 @@ mod tests {
     }
 
     #[test]
-    fn external_decode_fallback_keeps_explicit_slice_argument_shape() -> Result<(), String> {
+    fn external_decode_metadata_keeps_explicit_slice_argument_shape() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);
         let descriptor_set = IrType::Struct("prost_types::FileDescriptorSet".to_string());
+        let result_ty = IrType::Result(
+            Box::new(descriptor_set.clone()),
+            Box::new(IrType::Struct("prost::DecodeError".to_string())),
+        );
         let expr = TypedExpr::new(
             IrExprKind::MethodCall {
                 receiver: Box::new(TypedExpr::new(
@@ -1335,13 +1353,10 @@ mod tests {
                         IrType::Bytes,
                     ),
                 }],
-                callable_signature: None,
+                callable_signature: Some(prost_decode_signature(result_ty.clone())),
                 arg_policy: MethodCallArgPolicy::Default,
             },
-            IrType::Result(
-                Box::new(descriptor_set),
-                Box::new(IrType::Struct("prost::DecodeError".to_string())),
-            ),
+            result_ty,
         );
 
         let emitted = emitter
@@ -1354,7 +1369,73 @@ mod tests {
         );
         assert!(
             !rendered.contains("FileDescriptorSet :: decode (& data . as_slice ())"),
-            "decode fallback must not add a second borrow to explicit slice arguments, got `{rendered}`"
+            "decode metadata must not add a fallback borrow to explicit slice arguments, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_decode_metadata_keeps_explicit_rust_vec_slice_argument_shape() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let descriptor_set = IrType::Struct("prost_types::FileDescriptorSet".to_string());
+        let result_ty = IrType::Result(
+            Box::new(descriptor_set.clone()),
+            Box::new(IrType::Struct("prost::DecodeError".to_string())),
+        );
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "FileDescriptorSet".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    descriptor_set.clone(),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: "encoded".to_string(),
+                                    access: VarAccess::Read,
+                                    ref_kind: VarRefKind::Value,
+                                },
+                                IrType::Struct("alloc::vec::Vec<u8>".to_string()),
+                            )),
+                            method: "as_slice".to_string(),
+                            dispatch: None,
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: None,
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        IrType::Bytes,
+                    ),
+                }],
+                callable_signature: Some(prost_decode_signature(result_ty.clone())),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            result_ty,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("FileDescriptorSet :: decode (encoded . as_slice ())"),
+            "explicit Rust Vec slice arguments should be passed through, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("FileDescriptorSet :: decode (& encoded . as_slice ())"),
+            "decode metadata must not add a fallback borrow to explicit Rust Vec slice arguments, got `{rendered}`"
         );
         Ok(())
     }

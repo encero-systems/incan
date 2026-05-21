@@ -915,6 +915,7 @@ impl TypeChecker {
             };
         }
         match normalized.as_str() {
+            "{unknown}" => ResolvedType::Unknown,
             "bool" => ResolvedType::Bool,
             "f64" => ResolvedType::Float,
             "i64" => ResolvedType::Int,

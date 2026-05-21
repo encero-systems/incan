@@ -1342,7 +1342,23 @@ impl TypeChecker {
         if preserves_lookup_arg_shape {
             self.type_info.record_regular_method_arg_shape(receiver_span, method);
         }
-        let metadata = self.rust_item_metadata_for_path(rust_path)?;
+        let Some(metadata) = self.rust_item_metadata_for_path(rust_path) else {
+            if let Some(import_use) = self.record_unique_rust_trait_import_for_unresolved_receiver_call(method, span)
+                && let Some(sig) = import_use.signature.as_ref()
+            {
+                let callable_display = format!("rust::{rust_path}.{method}");
+                let ret = self.validate_rust_method_call(
+                    callable_display.as_str(),
+                    sig,
+                    args,
+                    arg_types,
+                    preserves_lookup_arg_shape,
+                    span,
+                );
+                return Some(Self::substitute_rust_self_type(ret, rust_path));
+            }
+            return None;
+        };
         match &metadata.kind {
             RustItemKind::Type(_) => {
                 let Some(sig) = self.rust_method_signature(rust_path, method) else {
@@ -1429,6 +1445,38 @@ impl TypeChecker {
         let [import_use] = matches.as_slice() else {
             return None;
         };
+        self.type_info
+            .record_rust_method_trait_import_use(span, import_use.clone());
+        Some(import_use.clone())
+    }
+
+    /// Record a unique imported Rust trait method when receiver metadata is unavailable.
+    ///
+    /// rust-inspect can miss generated or re-export-heavy concrete types while still extracting the imported trait's
+    /// signature. In that case the trait signature is enough for call-site parameter shape metadata; rustc remains the
+    /// authority on whether the receiver type actually implements the trait.
+    fn record_unique_rust_trait_import_for_unresolved_receiver_call(
+        &mut self,
+        method: &str,
+        span: Span,
+    ) -> Option<RustMethodTraitImportUse> {
+        let matches = self
+            .type_info
+            .rust
+            .trait_imports
+            .iter()
+            .filter(|(_, import)| import.methods.contains(method))
+            .map(|(binding, import)| RustMethodTraitImportUse {
+                binding: binding.clone(),
+                trait_path: import.trait_path.clone(),
+                method: method.to_string(),
+                signature: Self::rust_trait_method_signature(import, method),
+            })
+            .collect::<Vec<_>>();
+        let [import_use] = matches.as_slice() else {
+            return None;
+        };
+        import_use.signature.as_ref()?;
         self.type_info
             .record_rust_method_trait_import_use(span, import_use.clone());
         Some(import_use.clone())

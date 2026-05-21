@@ -824,11 +824,12 @@ prost-types = { path = "rust/prost-types" }
     fs::write(
         &main_path,
         r#"from rust::prost import Message
-from rust::prost_types import FileDescriptorSet
+from rust::prost_types import FileDescriptorSet, ProducerPlan
 
 
 def main() -> None:
-  encoded = b"abc"
+  producer = ProducerPlan.new()
+  encoded = producer.encode_to_vec()
   match FileDescriptorSet.decode(encoded.as_slice()):
     Ok(_) => println("ok")
     Err(_) => println("err")
@@ -875,7 +876,19 @@ prost = { path = "../prost" }
     )?;
     fs::write(
         prost_types_src.join("lib.rs"),
-        r#"pub struct FileDescriptorSet;
+        r#"pub struct ProducerPlan;
+
+impl ProducerPlan {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn encode_to_vec(&self) -> Vec<u8> {
+        b"abc".to_vec()
+    }
+}
+
+pub struct FileDescriptorSet;
 
 impl prost::Message for FileDescriptorSet {
     fn decode(_buf: impl prost::Buf) -> Result<Self, prost::DecodeError> {
