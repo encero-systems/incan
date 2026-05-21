@@ -780,11 +780,11 @@ pub struct DecodeError;
 pub struct FileDescriptorSet;
 
 pub trait Message: Sized {
-    fn decode<T: DecodeBuf>(_buf: T) -> Result<Self, DecodeError>;
+    fn decode(_buf: impl DecodeBuf) -> Result<Self, DecodeError>;
 }
 
 impl Message for FileDescriptorSet {
-    fn decode<T: DecodeBuf>(_buf: T) -> Result<Self, DecodeError> {
+    fn decode(_buf: impl DecodeBuf) -> Result<Self, DecodeError> {
         Ok(Self)
     }
 }
@@ -804,6 +804,100 @@ impl Message for FileDescriptorSet {
     assert!(
         stdout.contains("ok"),
         "expected trait-provided by-value generic decode helper output, got:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn run_accepts_cross_crate_trait_decode_slice_param_issue612() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_cross_crate_trait_decode_project",
+        r#"
+
+[rust-dependencies]
+prost = { path = "rust/prost" }
+prost-types = { path = "rust/prost-types" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::prost import Message
+from rust::prost_types import FileDescriptorSet
+
+
+def main() -> None:
+  encoded = b"abc"
+  match FileDescriptorSet.decode(encoded.as_slice()):
+    Ok(_) => println("ok")
+    Err(_) => println("err")
+"#,
+    )?;
+    let prost_src = tmp.path().join("rust").join("prost").join("src");
+    fs::create_dir_all(&prost_src)?;
+    fs::write(
+        prost_src.parent().ok_or("prost src has no parent")?.join("Cargo.toml"),
+        r#"[package]
+name = "prost"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        prost_src.join("lib.rs"),
+        r#"pub trait Buf {}
+
+impl Buf for &[u8] {}
+
+pub struct DecodeError;
+
+pub trait Message: Sized {
+    fn decode(_buf: impl Buf) -> Result<Self, DecodeError>;
+}
+"#,
+    )?;
+    let prost_types_src = tmp.path().join("rust").join("prost-types").join("src");
+    fs::create_dir_all(&prost_types_src)?;
+    fs::write(
+        prost_types_src
+            .parent()
+            .ok_or("prost-types src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "prost-types"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+prost = { path = "../prost" }
+"#,
+    )?;
+    fs::write(
+        prost_types_src.join("lib.rs"),
+        r#"pub struct FileDescriptorSet;
+
+impl prost::Message for FileDescriptorSet {
+    fn decode(_buf: impl prost::Buf) -> Result<Self, prost::DecodeError> {
+        Ok(Self)
+    }
+}
+"#,
+    )?;
+
+    let output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+
+    assert_success(
+        &output,
+        "incan run with cross-crate trait-provided decode over explicit slice",
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("ok"),
+        "expected cross-crate trait-provided decode helper output, got:\n{stdout}"
     );
     Ok(())
 }

@@ -999,6 +999,8 @@ mod validate_rust_function_call_tests {
         let checker = TypeChecker::new();
 
         assert!(checker.rust_arg_matches_boundary(&ResolvedType::Named("Payload".to_string()), "T",));
+        assert!(checker.rust_arg_matches_boundary(&ResolvedType::Bytes, "impl Buf"));
+        assert!(checker.rust_arg_matches_boundary(&ResolvedType::Bytes, "implBuf"));
         assert!(checker.rust_arg_matches_boundary(&ResolvedType::Named("Payload".to_string()), "&T",));
         assert!(checker.rust_arg_matches_boundary(&ResolvedType::Named("Payload".to_string()), "&TValue",));
     }
@@ -1042,6 +1044,54 @@ mod validate_rust_function_call_tests {
                 .get(&(span.start, span.end))
                 .is_some_and(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("T".to_string())),
             "expected Rust by-value generic method param shape to be recorded, got {:?}",
+            checker.type_info.calls.call_site_callable_params
+        );
+    }
+
+    #[test]
+    fn validate_rust_method_call_records_by_value_impl_trait_param_shape() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(30, 40);
+        let arg_expr = Spanned::new(Expr::Ident("encoded".to_string()), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let arg_types = [ResolvedType::Bytes];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("buf".to_string()),
+                type_display: "implBuf".to_string(),
+            }],
+            return_type: "demo::FileDescriptorSet".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_method_call(
+            "rust::demo::FileDescriptorSet.decode",
+            &sig,
+            &args,
+            &arg_types,
+            false,
+            span,
+        );
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected by-value impl Trait Rust param to accept bytes without borrow coercion, got {:?}",
+            checker.errors
+        );
+        assert!(
+            checker.type_info.rust.arg_coercions.is_empty(),
+            "expected by-value impl Trait Rust param to avoid borrow coercion, got {:?}",
+            checker.type_info.rust.arg_coercions
+        );
+        assert!(
+            checker
+                .type_info
+                .calls
+                .call_site_callable_params
+                .get(&(span.start, span.end))
+                .is_some_and(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("implBuf".to_string())),
+            "expected Rust by-value impl Trait method param shape to be recorded, got {:?}",
             checker.type_info.calls.call_site_callable_params
         );
     }

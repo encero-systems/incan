@@ -46,16 +46,21 @@ fn strip_ansi_escapes(text: &str) -> String {
     out
 }
 
-static RUNTIME_ERROR_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
+static TEST_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Create a throwaway project name that does not collide under parallel nextest workers.
+///
+/// Several CLI tests rely on the default `target/incan/<name>` output location. The generated project name includes
+/// both the current process id and a local counter so those tests do not trample each other's generated Cargo projects.
+fn unique_test_project_name(prefix: &str) -> String {
+    let unique = TEST_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}_{}_{}", std::process::id(), unique)
+}
 
 /// Create a minimal throwaway Incan project for end-to-end runtime error assertions.
-///
-/// The generated project name includes both the current process id and a local counter so parallel nextest workers do
-/// not trample each other's `target/incan/<name>` outputs.
 fn write_runtime_error_project(source: &str) -> Result<(tempfile::TempDir, PathBuf), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
-    let unique = RUNTIME_ERROR_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let project_name = format!("runtime_error_contract_{}_{}", std::process::id(), unique);
+    let project_name = unique_test_project_name("runtime_error_contract");
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
@@ -12886,10 +12891,13 @@ pub def small_key_map_bytes() -> bytes:
         );
 
         let consumer_root = tmp.path().join("ordinal_keys_consumer");
+        let consumer_name = unique_test_project_name("ordinal_keys_consumer");
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::write(
             consumer_root.join("incan.toml"),
-            "[project]\nname = \"consumer\"\n\n[dependencies]\nordinal_keys = { path = \"../ordinal_keys_lib\" }\n",
+            format!(
+                "[project]\nname = \"{consumer_name}\"\n\n[dependencies]\nordinal_keys = {{ path = \"../ordinal_keys_lib\" }}\n"
+            ),
         )?;
         let consumer_main = consumer_root.join("src/main.incn");
         std::fs::write(
@@ -13282,9 +13290,12 @@ pub def projection(name: str, target: str) -> str:
         );
 
         let consumer_root = tmp.path().join("nested_consumer");
+        let consumer_name = unique_test_project_name("nested_consumer");
         let consumer_main = write_project_files(
             &consumer_root,
-            "[project]\nname = \"consumer\"\n\n[dependencies]\nnested = { path = \"../nested_vocab_project\" }\n",
+            &format!(
+                "[project]\nname = \"{consumer_name}\"\n\n[dependencies]\nnested = {{ path = \"../nested_vocab_project\" }}\n"
+            ),
             r#"import pub::nested
 
 def main() -> None:

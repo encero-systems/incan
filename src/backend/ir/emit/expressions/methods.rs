@@ -233,6 +233,34 @@ impl<'a> IrEmitter<'a> {
         )
     }
 
+    /// Return whether an argument expression already emits Rust reference-shaped tokens.
+    ///
+    /// The frontend keeps `bytes.as_slice()` typed as `bytes` because Incan does not expose Rust slice types directly.
+    /// During Rust emission, however, that call is already a borrowed view. External fallback borrowing must not wrap
+    /// it again or Rust receives `&&[u8]`.
+    fn method_arg_already_has_reference_shape(arg: &TypedExpr) -> bool {
+        if Self::method_arg_already_borrowed_for_ref_param(&arg.ty) {
+            return true;
+        }
+        let IrExprKind::MethodCall {
+            receiver, method, args, ..
+        } = &arg.kind
+        else {
+            return false;
+        };
+        if !args.is_empty() {
+            return false;
+        }
+        match method.as_str() {
+            "as_slice" => matches!(&receiver.ty, IrType::Bytes | IrType::StaticBytes | IrType::FrozenBytes),
+            "as_bytes" | "as_str" => matches!(
+                &receiver.ty,
+                IrType::String | IrType::StaticStr | IrType::FrozenStr | IrType::StrRef
+            ),
+            _ => false,
+        }
+    }
+
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
     fn emit_method_call_args(
         &self,
@@ -395,6 +423,7 @@ impl<'a> IrEmitter<'a> {
                     } else if external_method_shape
                         && idx == 0
                         && Self::method_arg_needs_fallback_borrow(method, &arg.ty)
+                        && !Self::method_arg_already_has_reference_shape(arg)
                     {
                         emitted = quote! { &#emitted };
                     }
@@ -420,6 +449,7 @@ impl<'a> IrEmitter<'a> {
                     && !external_param_planned
                     && idx == 0
                     && Self::method_arg_needs_fallback_borrow(method, &arg.ty)
+                    && !Self::method_arg_already_has_reference_shape(arg)
                 {
                     return Ok(quote! { &#emitted });
                 }
@@ -427,7 +457,7 @@ impl<'a> IrEmitter<'a> {
                     match &param.ty {
                         IrType::Ref(_) if matches!(base_use_site, ValueUseSite::MethodArg) => {}
                         IrType::Ref(_) => match &arg.ty {
-                            _ if Self::method_arg_already_borrowed_for_ref_param(&arg.ty) => {}
+                            _ if Self::method_arg_already_has_reference_shape(arg) => {}
                             _ => emitted = quote! { &#emitted },
                         },
                         IrType::RefMut(_) => match &arg.ty {

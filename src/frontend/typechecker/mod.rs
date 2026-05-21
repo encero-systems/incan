@@ -789,6 +789,36 @@ impl TypeChecker {
         normalized.strip_prefix('&').map(|inner| (false, inner))
     }
 
+    /// Remove Rust lifetime labels that decorate borrowed display types.
+    ///
+    /// rust-analyzer commonly prints borrowed method parameters as `&'h str` or `&'a [u8]`. The typechecker only needs
+    /// the ownership shape and payload type, so erase the lifetime after `&` before whitespace normalization turns it
+    /// into an unparseable token such as `&'hstr`.
+    fn strip_borrow_lifetimes(rust_ty: &str) -> String {
+        let mut out = String::with_capacity(rust_ty.len());
+        let mut chars = rust_ty.chars().peekable();
+        while let Some(ch) = chars.next() {
+            out.push(ch);
+            if ch != '&' {
+                continue;
+            }
+            while matches!(chars.peek(), Some(next) if next.is_whitespace()) {
+                out.push(chars.next().expect("peeked whitespace should exist"));
+            }
+            if !matches!(chars.peek(), Some('\'')) {
+                continue;
+            }
+            chars.next();
+            while matches!(chars.peek(), Some(next) if next.is_ascii_alphanumeric() || *next == '_') {
+                chars.next();
+            }
+            while matches!(chars.peek(), Some(next) if next.is_whitespace()) {
+                chars.next();
+            }
+        }
+        out
+    }
+
     /// Map structured rust-inspect [`RustTypeShape`] into a [`ResolvedType`] for field access and pattern typing.
     ///
     /// `Option`/`Result` become [`ResolvedType::Generic`] with constructor names `Option` and `Result`. Concrete paths
@@ -860,7 +890,8 @@ impl TypeChecker {
     /// for one or both type arguments. Prefer precise typing from Incan surfaces over relying on this heuristic.
     pub(crate) fn resolved_type_from_rust_display(&self, rust_ty: &str) -> ResolvedType {
         let trimmed = rust_ty.trim();
-        let no_lifetimes = trimmed.replace("'static ", "").replace("'_", "").replace(' ', "");
+        let no_lifetimes = Self::strip_borrow_lifetimes(trimmed);
+        let no_lifetimes = no_lifetimes.replace("'static ", "").replace("'_", "").replace(' ', "");
         let normalized = no_lifetimes.trim_start_matches("::").to_string();
         if let Some(Symbol {
             kind: SymbolKind::RustItem(info),
@@ -949,9 +980,18 @@ impl TypeChecker {
         }
     }
 
-    /// Return a Rust generic type-parameter name when the display is the simple identifier form rust-analyzer uses
-    /// for params like `T` or `U`.
+    /// Return a Rust generic parameter display when rust-analyzer reports a by-value generic boundary.
+    ///
+    /// Plain type parameters appear as `T` or `U`. Anonymous `impl Trait` parameters can arrive with whitespace erased,
+    /// such as `implBuf` for `impl Buf`; those still carry by-value shape and must not be treated as borrowed Rust
+    /// boundary targets.
     pub(crate) fn rust_display_type_var_name(normalized: &str) -> Option<&str> {
+        if let Some(tail) = normalized.strip_prefix("impl")
+            && !tail.is_empty()
+            && (tail.contains("::") || tail.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
+        {
+            return Some(normalized);
+        }
         if normalized.len() == 1 && normalized.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()) {
             Some(normalized)
         } else {
@@ -966,7 +1006,8 @@ impl TypeChecker {
     /// borrowed Rust boundary so emission can pass `&arg` instead of moving an owned `String` or `Vec<u8>`.
     pub(crate) fn resolved_param_type_from_rust_display(&self, rust_ty: &str) -> ResolvedType {
         let trimmed = rust_ty.trim();
-        let no_lifetimes = trimmed.replace("'static ", "").replace("'_", "").replace(' ', "");
+        let no_lifetimes = Self::strip_borrow_lifetimes(trimmed);
+        let no_lifetimes = no_lifetimes.replace("'static ", "").replace("'_", "").replace(' ', "");
         let normalized = no_lifetimes.trim_start_matches("::").to_string();
         if let Some(name) = Self::rust_display_type_var_name(normalized.as_str()) {
             return ResolvedType::TypeVar(name.to_string());

@@ -1295,6 +1295,121 @@ mod tests {
     }
 
     #[test]
+    fn external_decode_fallback_keeps_explicit_slice_argument_shape() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let descriptor_set = IrType::Struct("prost_types::FileDescriptorSet".to_string());
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "FileDescriptorSet".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    descriptor_set.clone(),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: "data".to_string(),
+                                    access: VarAccess::Read,
+                                    ref_kind: VarRefKind::Value,
+                                },
+                                IrType::Bytes,
+                            )),
+                            method: "as_slice".to_string(),
+                            dispatch: None,
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: None,
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        IrType::Bytes,
+                    ),
+                }],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Result(
+                Box::new(descriptor_set),
+                Box::new(IrType::Struct("prost::DecodeError".to_string())),
+            ),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("FileDescriptorSet :: decode (data . as_slice ())"),
+            "explicit slice arguments should be passed through, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("FileDescriptorSet :: decode (& data . as_slice ())"),
+            "decode fallback must not add a second borrow to explicit slice arguments, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_decode_fallback_still_borrows_owned_bytes_argument() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let descriptor_set = IrType::Struct("prost_types::FileDescriptorSet".to_string());
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "FileDescriptorSet".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    descriptor_set.clone(),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "data".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Bytes,
+                    ),
+                }],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Result(
+                Box::new(descriptor_set),
+                Box::new(IrType::Struct("prost::DecodeError".to_string())),
+            ),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("FileDescriptorSet :: decode (& data)"),
+            "owned bytes should still use the decode fallback borrow, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn interop_try_adapter_emits_question_mark() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);
