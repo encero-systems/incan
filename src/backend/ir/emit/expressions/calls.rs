@@ -8,8 +8,8 @@ use quote::quote;
 use super::super::super::FunctionSignature;
 use super::super::super::conversions::{BinOpEmitKind, determine_binop_plan};
 use super::super::super::decl::FunctionParam;
-use super::super::super::expr::{BinOp, IrCallArg, IrCallArgKind, IrExprKind, TypedExpr, VarAccess, VarRefKind};
-use super::super::super::ownership::{ValueUseSite, incan_call_arg_needs_rust_mut_borrow, plan_value_use};
+use super::super::super::expr::{BinOp, IrCallArg, IrCallArgKind, IrExprKind, TypedExpr, VarRefKind};
+use super::super::super::ownership::{ArgumentPassingPlan, ValueUseSite};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use crate::frontend::ast::ParamKind;
@@ -718,6 +718,7 @@ impl<'a> IrEmitter<'a> {
                 };
                 let target_aware_aggregate_literal_arg =
                     aggregate_literal_arg && !matches!(use_site, ValueUseSite::ExternalCallArg { .. });
+                let arg_plan = ArgumentPassingPlan::for_use_site(a, use_site);
                 let previous_qualify = if *from_default {
                     Some(self.qualify_internal_canonical_paths.replace(true))
                 } else {
@@ -780,65 +781,11 @@ impl<'a> IrEmitter<'a> {
                     return Ok(adapter);
                 }
 
-                // Check VarAccess for explicit borrow requirements
-                if let IrExprKind::Var { access, .. } = &a.kind {
-                    match access {
-                        VarAccess::BorrowMut => return Ok(quote! { &mut #emitted }),
-                        VarAccess::Borrow if matches!(target_ty, Some(IrType::Ref(_) | IrType::RefMut(_)) | None) => {
-                            return Ok(quote! { &#emitted });
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Prefer explicit lowering access decisions, then derive obvious borrow requirements from parameter
-                // typing information.
-                if let Some(param) = sig_param {
-                    match &param.ty {
-                        IrType::Ref(_) => match &a.ty {
-                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                            _ => return Ok(quote! { &#emitted }),
-                        },
-                        IrType::RefMut(_) => match &a.ty {
-                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                            _ => return Ok(quote! { &mut #emitted }),
-                        },
-                        _ => {}
-                    }
-                } else if let Some(target_ty) = target_ty {
-                    // Toward #121: when registry metadata is unavailable, use the call expression's function type as a
-                    // borrow hint.
-                    match target_ty {
-                        IrType::RefMut(_) => match &a.ty {
-                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                            _ => return Ok(quote! { &mut #emitted }),
-                        },
-                        IrType::Ref(_) => match &a.ty {
-                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                            _ => return Ok(quote! { &#emitted }),
-                        },
-                        _ => {}
-                    }
-                }
-
-                let mut tokens = if emitted_from_seed || target_aware_aggregate_literal_arg {
-                    emitted
+                let tokens = if emitted_from_seed || target_aware_aggregate_literal_arg {
+                    arg_plan.apply_after_value_plan(emitted)
                 } else {
-                    match use_site {
-                        ValueUseSite::ExternalCallArg { target_ty } => self
-                            .external_list_arg_element_coercion(a, target_ty, emitted.clone())
-                            .unwrap_or_else(|| plan_value_use(a, use_site).apply(emitted)),
-                        _ => plan_value_use(a, use_site).apply(emitted),
-                    }
+                    arg_plan.apply_full(emitted)
                 };
-                if let Some(param) = sig_param
-                    && incan_call_arg_needs_rust_mut_borrow(param)
-                {
-                    match &a.ty {
-                        IrType::Ref(_) | IrType::RefMut(_) => {}
-                        _ => tokens = quote! { &mut #tokens },
-                    }
-                }
                 Ok(tokens)
             })
             .collect::<Result<_, _>>()?;
@@ -1320,54 +1267,20 @@ impl<'a> IrEmitter<'a> {
                 in_return,
             }
         };
+        let arg_plan = ArgumentPassingPlan::for_use_site(arg, use_site);
         let emitted = if let Some(seed) = self.emit_inference_seeded_literal_arg(arg, &param.ty)? {
-            seed
+            arg_plan.apply_after_value_plan(seed)
         } else if Self::is_unresolved_call_seed_type(&param.ty) {
             if let Some(seed) = self.emit_inference_seeded_literal_arg(arg, &arg.ty)? {
-                seed
+                arg_plan.apply_after_value_plan(seed)
             } else {
-                self.emit_expr_for_use(arg, use_site)?
+                arg_plan.apply_after_value_plan(self.emit_expr_for_use(arg, use_site)?)
             }
         } else {
-            self.emit_expr_for_use(arg, use_site)?
+            arg_plan.apply_after_value_plan(self.emit_expr_for_use(arg, use_site)?)
         };
-
-        if let IrExprKind::Var { access, .. } = &arg.kind {
-            match access {
-                VarAccess::BorrowMut => return Ok(quote! { &mut #emitted }),
-                VarAccess::Borrow if matches!(target_ty, Some(IrType::Ref(_) | IrType::RefMut(_)) | None) => {
-                    return Ok(quote! { &#emitted });
-                }
-                _ => {}
-            }
-        }
-
-        match &param.ty {
-            IrType::Ref(_) => match &arg.ty {
-                IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                _ => return Ok(quote! { &#emitted }),
-            },
-            IrType::RefMut(_) => match &arg.ty {
-                IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                _ => return Ok(quote! { &mut #emitted }),
-            },
-            _ => {}
-        }
-
-        let mut tokens = match use_site {
-            ValueUseSite::ExternalCallArg { target_ty } => self
-                .external_list_arg_element_coercion(arg, target_ty, emitted.clone())
-                .unwrap_or(emitted),
-            _ => emitted,
-        };
-        if incan_call_arg_needs_rust_mut_borrow(param) {
-            match &arg.ty {
-                IrType::Ref(_) | IrType::RefMut(_) => {}
-                _ => tokens = quote! { &mut #tokens },
-            }
-        }
         let _ = idx;
-        Ok(tokens)
+        Ok(emitted)
     }
 
     /// Emit a canonical callee path when the compiler knows how to materialize that namespace at the current call
@@ -2145,6 +2058,45 @@ mod tests {
                 ))
             })?;
         assert_eq!(render(tokens), "consume(&state,&plan)");
+        Ok(())
+    }
+
+    #[test]
+    fn rest_aware_call_arg_uses_argument_plan_without_double_borrow() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let func = rust_call_target("takes_ref_rest");
+        let signature = FunctionSignature {
+            params: vec![
+                FunctionParam {
+                    name: "value".to_string(),
+                    ty: IrType::Ref(Box::new(IrType::Struct("demo::Thing".to_string()))),
+                    mutability: Mutability::Immutable,
+                    is_self: false,
+                    kind: ParamKind::Normal,
+                    default: None,
+                },
+                FunctionParam {
+                    name: "rest".to_string(),
+                    ty: IrType::List(Box::new(IrType::Int)),
+                    mutability: Mutability::Immutable,
+                    is_self: false,
+                    kind: ParamKind::RestPositional,
+                    default: None,
+                },
+            ],
+            return_type: IrType::Unit,
+        };
+        let arg = local_arg("value", IrType::Struct("demo::Thing".to_string()));
+        let tokens = emitter
+            .emit_call_expr(&func, &[], &[pos_arg(arg)], Some(&signature), None)
+            .map_err(|err| std::io::Error::other(format!("rest-aware call should emit borrowed arg: {err:?}")))?;
+        let rendered = render(tokens);
+        assert!(rendered.starts_with("takes_ref_rest(&value,"));
+        assert!(
+            !rendered.contains("&&value"),
+            "argument plan must not add a second borrow after emit_expr_for_use: {rendered}"
+        );
         Ok(())
     }
 

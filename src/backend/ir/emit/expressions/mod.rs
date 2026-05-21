@@ -59,7 +59,7 @@ use super::super::expr::{
 };
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
-use crate::backend::ir::ownership::{ValueUseSite, plan_value_use};
+use crate::backend::ir::ownership::{ValueUseSite, plan_value_use, value_use_site_target_ty};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 #[derive(Debug, Clone)]
@@ -91,31 +91,6 @@ pub(in crate::backend::ir::emit) fn method_kind_uses_mutable_receiver(kind: &Met
 }
 
 impl<'a> IrEmitter<'a> {
-    /// Convert a direct `Vec<T>` argument into `Vec<U>` at external Rust call boundaries.
-    ///
-    /// The Incan typechecker does not prove Rust `From<T>` relationships. At an external Rust boundary, Rust's own
-    /// trait checker is the source of truth, so this emits an element-level `.into()` map only when metadata says the
-    /// parameter expects a different direct list element type.
-    pub(super) fn external_list_arg_element_coercion(
-        &self,
-        arg: &TypedExpr,
-        target_ty: Option<&IrType>,
-        emitted: TokenStream,
-    ) -> Option<TokenStream> {
-        let Some(IrType::List(target_elem)) = target_ty else {
-            return None;
-        };
-        let IrType::List(source_elem) = &arg.ty else {
-            return None;
-        };
-        if source_elem == target_elem || Self::is_unresolved_call_seed_type(target_elem) {
-            return None;
-        }
-        Some(quote! {
-            (#emitted).into_iter().map(|__incan_item| ::std::convert::Into::into(__incan_item)).collect::<Vec<_>>()
-        })
-    }
-
     /// Build a typed tuple-field read for compiler-expanded tuple unpacking.
     pub(super) fn tuple_field_expr(expr: &TypedExpr, idx: usize, ty: IrType) -> TypedExpr {
         TypedExpr::new(
@@ -273,16 +248,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Return the target type carried by a value-use site, if the site has one.
     fn use_site_target_ty<'b>(site: ValueUseSite<'b>) -> Option<&'b IrType> {
-        match site {
-            ValueUseSite::IncanCallArg { target_ty, .. }
-            | ValueUseSite::ExternalCallArg { target_ty }
-            | ValueUseSite::StructField { target_ty }
-            | ValueUseSite::CollectionElement { target_ty }
-            | ValueUseSite::Assignment { target_ty }
-            | ValueUseSite::ReturnValue { target_ty }
-            | ValueUseSite::MatchScrutinee { target_ty } => target_ty,
-            ValueUseSite::MethodArg => None,
-        }
+        value_use_site_target_ty(site)
     }
 
     /// Return whether an expression already emits an owned Rust `String` value.
