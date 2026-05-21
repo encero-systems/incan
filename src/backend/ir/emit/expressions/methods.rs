@@ -567,6 +567,17 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return whether a receiver is a zero-cost `rusttype` alias over an external Rust type.
+    fn is_rusttype_alias_receiver(&self, receiver_ty: &IrType) -> bool {
+        match Self::receiver_type_for_method_dispatch(receiver_ty) {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => {
+                let short_name = name.rsplit("::").next().unwrap_or(name);
+                self.rusttype_alias_names.contains(name) || self.rusttype_alias_names.contains(short_name)
+            }
+            _ => false,
+        }
+    }
+
     /// Recover a field receiver's declared surface type before choosing method-call ownership policy.
     fn receiver_with_known_field_type(&self, receiver: &TypedExpr) -> Option<TypedExpr> {
         let IrExprKind::Field { object, field } = &receiver.kind else {
@@ -900,8 +911,10 @@ impl<'a> IrEmitter<'a> {
         let preserve_lookup_arg_shape = matches!(arg_policy, MethodCallArgPolicy::PreserveShape)
             || rust_collection_family_for_ir_type(&receiver.ty)
                 .is_some_and(|family| family.preserves_lookup_arg_shape(method));
+        let rusttype_alias_receiver = self.is_rusttype_alias_receiver(&receiver.ty);
         let use_site = if receiver_ref_kind != Some(VarRefKind::ExternalRustName)
-            && (has_incan_method_signature || self.is_incan_owned_nominal_receiver(&receiver.ty))
+            && (has_incan_method_signature
+                || (self.is_incan_owned_nominal_receiver(&receiver.ty) && !rusttype_alias_receiver))
         {
             ValueUseSite::IncanCallArg {
                 target_ty: None,

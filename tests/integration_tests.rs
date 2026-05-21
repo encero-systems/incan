@@ -6357,6 +6357,31 @@ async def main() -> None:
             ],
             "unexpected std.regex output:\n{stdout}"
         );
+        let generated_core = fs::read_to_string("target/incan/std_regex_surface/src/__incan_std/regex/_core.rs")?;
+        for unexpected in [
+            "RegexBuilder::new(&(pattern).to_string())",
+            "raw.find(&(text).to_string())",
+            "raw.find_iter(&(text).to_string())",
+            "raw.captures(&(text).to_string())",
+            "raw.captures_iter(&(text).to_string())",
+        ] {
+            assert!(
+                !generated_core.contains(unexpected),
+                "std.regex should let the compiler borrow Incan strings for Rust regex APIs instead of cloning them:\n{generated_core}"
+            );
+        }
+        for expected in [
+            "RegexBuilder::new(&pattern)",
+            "raw.find(&text)",
+            "raw.find_iter(&text)",
+            "raw.captures(&text)",
+            "raw.captures_iter(&text)",
+        ] {
+            assert!(
+                generated_core.contains(expected),
+                "std.regex should preserve compiler-managed Rust borrow boundaries; missing `{expected}`:\n{generated_core}"
+            );
+        }
         Ok(())
     }
 

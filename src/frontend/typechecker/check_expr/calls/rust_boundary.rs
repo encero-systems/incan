@@ -409,7 +409,7 @@ impl TypeChecker {
         for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(params.iter()) {
             let arg_expr = Self::call_arg_expr(arg);
             let normalized = param.type_display.replace(' ', "");
-            let target_ty = self.resolved_type_from_rust_display(normalized.as_str());
+            let target_ty = self.resolved_param_type_from_rust_display(param.type_display.as_str());
             if preserves_lookup_arg_shape && self.rust_lookup_probe_boundary_match(arg_ty, &target_ty) {
                 continue;
             }
@@ -462,7 +462,7 @@ impl TypeChecker {
         for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(sig.params.iter()) {
             let arg_expr = Self::call_arg_expr(arg);
             let normalized = param.type_display.replace(' ', "");
-            let target_ty = self.resolved_type_from_rust_display(normalized.as_str());
+            let target_ty = self.resolved_param_type_from_rust_display(param.type_display.as_str());
             match self.rust_arg_boundary_match(arg_ty, param.type_display.as_str()) {
                 RustArgBoundaryMatch::Exact => {}
                 RustArgBoundaryMatch::Coercion(kind) => {
@@ -836,6 +836,17 @@ mod validate_rust_function_call_tests {
                 .arg_coercions
                 .contains_key(&(span.start, span.end)),
             "expected rust arg coercion metadata for borrowed String boundary"
+        );
+        let coercion = checker
+            .type_info
+            .rust
+            .arg_coercions
+            .get(&(span.start, span.end))
+            .expect("coercion metadata should be present");
+        assert_eq!(
+            coercion.target_type,
+            ResolvedType::Ref(Box::new(ResolvedType::Str)),
+            "borrowed Rust params must preserve borrow shape in lowering metadata"
         );
     }
 
