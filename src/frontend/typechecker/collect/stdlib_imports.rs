@@ -16,7 +16,7 @@ use crate::frontend::typechecker::type_info::RustTraitImportInfo;
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
     FunctionExport, LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamExport, ParamKindExport,
-    PartialExport, ReceiverExport, StaticExport, TraitExport, TypeBoundExport, TypeParamExport,
+    PartialExport, ReceiverExport, StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport,
     resolved_type_from_manifest_type_ref,
 };
 use incan_core::interop::{RustItemKind, RustTraitAssoc, is_rust_capability_bound};
@@ -36,7 +36,7 @@ enum ManifestExportRef<'a> {
         enum_name: &'a str,
         fields: &'a [crate::library_manifest::TypeRef],
     },
-    TypeAlias,
+    TypeAlias(&'a TypeAliasExport),
     Newtype(&'a NewtypeExport),
     Const(&'a ConstExport),
     Static(&'a StaticExport),
@@ -713,7 +713,7 @@ impl TypeChecker {
             ManifestExportRef::Partial(export) => SymbolKind::Function(self.partial_info_from_manifest(export)),
             ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
             ManifestExportRef::Enum(export) => SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))),
-            ManifestExportRef::TypeAlias => SymbolKind::Type(TypeInfo::TypeAlias),
+            ManifestExportRef::TypeAlias(_) => SymbolKind::Type(TypeInfo::TypeAlias),
             ManifestExportRef::Newtype(export) => {
                 SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))
             }
@@ -907,8 +907,8 @@ impl TypeChecker {
                 });
             }
         }
-        if manifest.exports.type_aliases.iter().any(|item| item.name == name) {
-            return Some(ManifestExportRef::TypeAlias);
+        if let Some(item) = manifest.exports.type_aliases.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::TypeAlias(item));
         }
         if let Some(item) = manifest.exports.newtypes.iter().find(|item| item.name == name) {
             return Some(ManifestExportRef::Newtype(item));
@@ -922,6 +922,7 @@ impl TypeChecker {
         None
     }
 
+    /// Return whether a manifest export introduces a type-like name into the importing module.
     fn manifest_export_is_type(export: &ManifestExportRef<'_>) -> bool {
         matches!(
             export,
@@ -929,7 +930,7 @@ impl TypeChecker {
                 | ManifestExportRef::Class(_)
                 | ManifestExportRef::Trait(_)
                 | ManifestExportRef::Enum(_)
-                | ManifestExportRef::TypeAlias
+                | ManifestExportRef::TypeAlias(_)
                 | ManifestExportRef::Newtype(_)
         )
     }
@@ -977,7 +978,18 @@ impl TypeChecker {
                 enum_name: enum_name.to_string(),
                 fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
             }),
-            ManifestExportRef::TypeAlias => SymbolKind::Type(TypeInfo::TypeAlias),
+            ManifestExportRef::TypeAlias(export) => {
+                let mut target = resolved_type_from_manifest_type_ref(&export.target);
+                Self::remap_resolved_type_with_import_aliases(&mut target, imported_type_aliases);
+                self.type_aliases.insert(
+                    local_name.clone(),
+                    crate::frontend::typechecker::TypeAliasTarget {
+                        type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
+                        target,
+                    },
+                );
+                SymbolKind::Type(TypeInfo::TypeAlias)
+            }
             ManifestExportRef::Newtype(export) => {
                 SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))
             }

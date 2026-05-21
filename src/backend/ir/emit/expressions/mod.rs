@@ -350,11 +350,16 @@ impl<'a> IrEmitter<'a> {
     /// expression is emitted. Non-aggregate expressions are emitted normally, then the planned conversion is applied to
     /// the resulting token stream.
     pub(super) fn emit_expr_for_use(&self, expr: &TypedExpr, site: ValueUseSite<'_>) -> Result<TokenStream, EmitError> {
-        if matches!(site, ValueUseSite::CollectionElement { .. })
-            && let Some(target_ty) = Self::use_site_target_ty(site)
-            && let Some(wrapped) = self.emit_inference_seeded_literal_arg(expr, target_ty)?
-        {
-            return Ok(wrapped);
+        let resolved_target_ty = Self::use_site_target_ty(site).map(|ty| self.resolve_type_aliases_for_emit(ty));
+        if let Some(target_ty) = resolved_target_ty.as_ref() {
+            if let Some(wrapped) = self.emit_union_payload_arg_for_site(expr, target_ty, None, site)? {
+                return Ok(wrapped);
+            }
+            if matches!(site, ValueUseSite::CollectionElement { .. })
+                && let Some(wrapped) = self.emit_inference_seeded_literal_arg(expr, target_ty)?
+            {
+                return Ok(wrapped);
+            }
         }
 
         match &expr.kind {
@@ -374,7 +379,7 @@ impl<'a> IrEmitter<'a> {
                 return self.emit_expr_for_use(inner, site);
             }
             IrExprKind::List(items) => {
-                let site_item_ty = match Self::use_site_target_ty(site) {
+                let site_item_ty = match resolved_target_ty.as_ref() {
                     Some(IrType::List(elem)) => Some(elem.as_ref()),
                     _ => None,
                 };
@@ -386,7 +391,7 @@ impl<'a> IrEmitter<'a> {
                 return self.emit_list_literal_entries(items, item_target_ty);
             }
             IrExprKind::Dict(pairs) => {
-                let (site_key_ty, site_value_ty) = match Self::use_site_target_ty(site) {
+                let (site_key_ty, site_value_ty) = match resolved_target_ty.as_ref() {
                     Some(IrType::Dict(key, value)) => (Some(key.as_ref()), Some(value.as_ref())),
                     _ => (None, None),
                 };
@@ -402,7 +407,7 @@ impl<'a> IrEmitter<'a> {
                 if items.is_empty() {
                     return Ok(quote! { std::collections::HashSet::new() });
                 }
-                let site_item_ty = match Self::use_site_target_ty(site) {
+                let site_item_ty = match resolved_target_ty.as_ref() {
                     Some(IrType::Set(elem)) => Some(elem.as_ref()),
                     _ => None,
                 };
@@ -425,7 +430,7 @@ impl<'a> IrEmitter<'a> {
                 return Ok(quote! { [#(#item_tokens),*].into_iter().collect::<std::collections::HashSet<_>>() });
             }
             IrExprKind::Tuple(items) => {
-                let site_tuple_items = match Self::use_site_target_ty(site) {
+                let site_tuple_items = match resolved_target_ty.as_ref() {
                     Some(IrType::Tuple(items)) => Some(items.as_slice()),
                     _ => None,
                 };
@@ -483,13 +488,18 @@ impl<'a> IrEmitter<'a> {
                 callable_signature,
                 canonical_path,
             } => {
+                let target_site = if let Some(target_ty) = resolved_target_ty.as_ref() {
+                    Self::retarget_value_use_site(site, Some(target_ty))
+                } else {
+                    site
+                };
                 return self.emit_call_expr_for_use(
                     func,
                     type_args,
                     args,
                     callable_signature.as_ref(),
                     canonical_path.as_deref(),
-                    site,
+                    target_site,
                 );
             }
             _ => {}
@@ -555,15 +565,31 @@ impl<'a> IrEmitter<'a> {
         Self::expr_storage_root(expr).is_some()
     }
 
+    /// Rewrite a static/storage binding root to the local borrowed value used inside `with_ref`.
     pub(super) fn rewrite_storage_root_expr(expr: &TypedExpr, local_name: &str) -> TypedExpr {
+        Self::rewrite_storage_root_expr_inner(expr, local_name, false)
+    }
+
+    /// Rewrite a static/storage binding root to the local mutable borrow used inside `with_mut`.
+    pub(super) fn rewrite_storage_root_expr_for_mut(expr: &TypedExpr, local_name: &str) -> TypedExpr {
+        Self::rewrite_storage_root_expr_inner(expr, local_name, true)
+    }
+
+    /// Rewrite the root of a storage-backed path while preserving the original field/index chain.
+    fn rewrite_storage_root_expr_inner(expr: &TypedExpr, local_name: &str, mutable_root: bool) -> TypedExpr {
         let replacement = || {
+            let ty = if mutable_root {
+                IrType::RefMut(Box::new(expr.ty.clone()))
+            } else {
+                expr.ty.clone()
+            };
             TypedExpr::new(
                 IrExprKind::Var {
                     name: local_name.to_string(),
                     access: super::super::expr::VarAccess::Read,
                     ref_kind: VarRefKind::Value,
                 },
-                expr.ty.clone(),
+                ty,
             )
         };
 
@@ -575,14 +601,14 @@ impl<'a> IrEmitter<'a> {
             } => replacement(),
             IrExprKind::Field { object, field } => TypedExpr::new(
                 IrExprKind::Field {
-                    object: Box::new(Self::rewrite_storage_root_expr(object, local_name)),
+                    object: Box::new(Self::rewrite_storage_root_expr_inner(object, local_name, mutable_root)),
                     field: field.clone(),
                 },
                 expr.ty.clone(),
             ),
             IrExprKind::Index { object, index } => TypedExpr::new(
                 IrExprKind::Index {
-                    object: Box::new(Self::rewrite_storage_root_expr(object, local_name)),
+                    object: Box::new(Self::rewrite_storage_root_expr_inner(object, local_name, mutable_root)),
                     index: index.clone(),
                 },
                 expr.ty.clone(),

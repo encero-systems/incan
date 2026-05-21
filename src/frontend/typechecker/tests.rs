@@ -15,7 +15,8 @@ use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport,
     FunctionExport, LibraryContractMetadata, LibraryExports, LibraryManifest, LibraryRustAbi, MethodExport,
     ModelExport, ParamExport, ParamKindExport, PartialExport, PartialPresetExport, PartialTargetKindExport,
-    PresetValueExport, ReceiverExport, StaticExport, TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
+    PresetValueExport, ReceiverExport, StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport,
+    TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
@@ -1464,7 +1465,13 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 }],
                 derives: Vec::new(),
             }],
-            type_aliases: Vec::new(),
+            type_aliases: vec![TypeAliasExport {
+                name: "WidgetAlias".to_string(),
+                type_params: Vec::new(),
+                target: TypeRef::Named {
+                    name: "Widget".to_string(),
+                },
+            }],
             newtypes: Vec::new(),
             consts: vec![ConstExport {
                 name: "DEFAULT_NAME".to_string(),
@@ -2883,6 +2890,49 @@ def normalize(value: int | str) -> str:
             .iter()
             .any(|error| error.message.contains("non-exhaustive") || error.message.contains("str")),
         "expected non-exhaustive union match diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_union_clone_method_typechecks_when_members_are_cloneable() {
+    let source = r#"
+@derive(Clone)
+model Leaf:
+  value: int
+
+@derive(Clone)
+model Pair:
+  args: List[Expr]
+
+type Expr = Union[Leaf, Pair]
+
+def clone_expr(expr: Expr) -> Expr:
+  return expr.clone()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_model_variants_reject_direct_recursive_payload_without_indirection() {
+    let source = r#"
+@derive(Clone)
+model Leaf:
+  value: int
+
+@derive(Clone)
+model Pair:
+  left: Expr
+  right: Expr
+
+type Expr = Union[Leaf, Pair]
+"#;
+    let errors = check_str_err(source, "direct recursive union model payload should be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("direct recursive") && error.message.contains("Pair")),
+        "expected direct recursive model diagnostic, got: {:?}",
         errors.iter().map(|error| &error.message).collect::<Vec<_>>()
     );
 }
@@ -10972,6 +11022,24 @@ def build() -> Widget:
 "#;
     let result = check_str_with_library_index(source, library_index_with_mylib_exports());
     assert!(result.is_ok(), "expected pub import to typecheck, got: {result:?}");
+}
+
+#[test]
+fn test_pub_from_import_type_alias_is_transparent() {
+    let source = r#"
+from pub::mylib import WidgetAlias, make_widget
+
+def keep(widget: WidgetAlias) -> WidgetAlias:
+  return widget
+
+def build() -> WidgetAlias:
+  return keep(make_widget("ok"))
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected pub-imported type alias to behave transparently, got: {result:?}"
+    );
 }
 
 #[test]

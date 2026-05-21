@@ -2297,6 +2297,36 @@ def main() -> None:
 }
 
 #[test]
+fn test_static_list_index_assignment_and_remove_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+static entries: list[int] = []
+
+def main() -> None:
+  entries.append(1)
+  entries[0] = 2
+  println(entries[0])
+  entries.remove(0)
+  entries.append(3)
+  println(entries[0])
+"#;
+    let output = Command::new(incan_debug_binary())
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "expected static list index mutation program to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    assert_eq!(lines, ["2", "3"], "unexpected static list mutation output");
+    Ok(())
+}
+
+#[test]
 fn test_list_concatenation_plus_operator_runs() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> None:
@@ -4372,6 +4402,111 @@ def main() -> None:
                 "from-path"
             ],
             "unexpected union output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_union_model_variants_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+model Leaf:
+    value: int
+
+@derive(Clone)
+model Pair:
+    args: list[Expr]
+
+type Expr = Union[Leaf, Pair]
+
+def pair() -> Expr:
+    return Pair(args=[Leaf(value=1), Leaf(value=2)])
+
+def clone_expr(expr: Expr) -> Expr:
+    return expr.clone()
+
+def sum_expr(expr: Expr) -> int:
+    match expr:
+        Leaf(leaf) =>
+            return leaf.value
+        Pair(pair) =>
+            return sum_expr(pair.args[0])
+
+def main() -> None:
+    println(sum_expr(clone_expr(pair())))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "union model variant run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["1"], "unexpected union model variant output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_imported_union_alias_list_field_compiles_issue622() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("union_list_cross_module_alias_repro");
+        fs::create_dir_all(project_root.join("src"))?;
+        fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"union_list_cross_module_alias_repro\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(
+            project_root.join("src/exprs.incn"),
+            r#"
+@derive(Clone)
+pub model Leaf:
+    pub value: int
+
+@derive(Clone)
+pub model Pair:
+    pub args: list[Expr]
+
+pub type Expr = Union[Leaf, Pair]
+
+pub def pair() -> Expr:
+    return Pair(args=[Leaf(value=1), Leaf(value=2)])
+"#,
+        )?;
+        fs::write(
+            project_root.join("src/lib.incn"),
+            r#"
+from exprs import Expr, Leaf, Pair, pair
+
+def sum_expr(expr: Expr) -> int:
+    match expr:
+        Leaf(leaf) => return leaf.value
+        Pair(pair_expr) => return sum_expr(pair_expr.args[0])
+
+pub def main_value() -> int:
+    return sum_expr(pair())
+"#,
+        )?;
+
+        let output = Command::new(incan_debug_binary())
+            .args(["build", "--lib"])
+            .current_dir(&project_root)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "expected imported union alias list-field project to build for #622.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
         );
         Ok(())
     }

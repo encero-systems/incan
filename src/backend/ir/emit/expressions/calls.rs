@@ -174,10 +174,30 @@ impl<'a> IrEmitter<'a> {
         target_ty: &IrType,
         union_qualifier: Option<&[String]>,
     ) -> Result<Option<TokenStream>, EmitError> {
-        if arg.ty.is_union() {
+        self.emit_union_payload_arg_for_site(
+            arg,
+            target_ty,
+            union_qualifier,
+            ValueUseSite::IncanCallArg {
+                target_ty: None,
+                callee_param: None,
+                in_return: false,
+            },
+        )
+    }
+
+    /// Emit a concrete payload argument for a `Union[...]` target while preserving the caller's ownership site.
+    pub(super) fn emit_union_payload_arg_for_site(
+        &self,
+        arg: &TypedExpr,
+        target_ty: &IrType,
+        union_qualifier: Option<&[String]>,
+        site: ValueUseSite<'_>,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let Some(value_ty) = self.union_payload_candidate_type(arg, target_ty) else {
             return Ok(None);
-        }
-        let Some(variant_index) = target_ty.union_variant_index_for_member(&arg.ty) else {
+        };
+        let Some(variant_index) = target_ty.union_variant_index_for_member(&value_ty) else {
             return Ok(None);
         };
         let Some(members) = target_ty.union_members() else {
@@ -188,15 +208,33 @@ impl<'a> IrEmitter<'a> {
         };
         let variant_ident = quote::format_ident!("{}", IrType::union_variant_name(variant_index));
         let union_path = self.emit_union_type_path_with_qualifier(target_ty, union_qualifier);
-        let emitted = self.emit_expr_for_use(
-            arg,
-            ValueUseSite::IncanCallArg {
-                target_ty: Some(member_ty),
-                callee_param: None,
-                in_return: false,
-            },
-        )?;
+        let emitted = self.emit_expr_for_use(arg, Self::retarget_value_use_site(site, Some(member_ty)))?;
         Ok(Some(quote! { #union_path :: #variant_ident(#emitted) }))
+    }
+
+    /// Return the concrete union-member payload type for an argument that may already be typed as the target union.
+    fn union_payload_candidate_type(&self, arg: &TypedExpr, target_ty: &IrType) -> Option<IrType> {
+        if !arg.ty.is_union() {
+            return Some(arg.ty.clone());
+        }
+
+        let candidate_name = match &arg.kind {
+            IrExprKind::Struct { name, .. } => Some(name.as_str()),
+            IrExprKind::Call { func, .. } => match &func.kind {
+                IrExprKind::Var {
+                    name,
+                    ref_kind: VarRefKind::TypeName,
+                    ..
+                } => Some(name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        }?;
+        target_ty
+            .union_members()?
+            .iter()
+            .find(|member| member.nominal_type_name() == Some(candidate_name))
+            .cloned()
     }
 
     /// Emit a type-seeded literal argument for `None`/`Ok`/`Err` when possible.

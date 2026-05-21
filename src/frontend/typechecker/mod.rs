@@ -3815,6 +3815,12 @@ impl TypeChecker {
             }
         };
 
+        let expanded_actual = self.expand_type_aliases(actual.clone());
+        let expanded_expected = self.expand_type_aliases(expected.clone());
+        if &expanded_actual != actual || &expanded_expected != expected {
+            return self.types_compatible(&expanded_actual, &expanded_expected);
+        }
+
         if actual == expected {
             return true;
         }

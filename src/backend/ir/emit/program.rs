@@ -2165,6 +2165,18 @@ impl<'a> IrEmitter<'a> {
             }
             if let IrDeclKind::TypeAlias {
                 name,
+                type_params,
+                ty,
+                is_rusttype,
+                ..
+            } = &decl.kind
+                && type_params.is_empty()
+                && !is_rusttype
+            {
+                self.type_aliases.insert(name.clone(), ty.clone());
+            }
+            if let IrDeclKind::TypeAlias {
+                name,
                 is_rusttype: true,
                 ..
             } = &decl.kind

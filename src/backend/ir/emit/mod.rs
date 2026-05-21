@@ -220,6 +220,8 @@ pub struct IrEmitter<'a> {
     struct_field_defaults: std::collections::HashMap<(String, String), super::IrExpr>,
     /// Constructor metadata variants for source-defined structs that share a simple name across modules.
     struct_constructor_metadata: HashMap<String, Vec<StructConstructorMetadata>>,
+    /// Transparent local type aliases keyed by alias name.
+    type_aliases: HashMap<String, IrType>,
     /// Incan `rusttype` aliases that should use compiler-owned call conversion rules at the surface boundary.
     rusttype_alias_names: HashSet<String>,
     /// Method signature lookup for Incan-owned nominal receivers, including imported modules.
@@ -326,6 +328,7 @@ impl<'a> IrEmitter<'a> {
             struct_field_descriptions: std::collections::HashMap::new(),
             struct_field_defaults: std::collections::HashMap::new(),
             struct_constructor_metadata: HashMap::new(),
+            type_aliases: HashMap::new(),
             rusttype_alias_names: HashSet::new(),
             method_signatures: HashMap::new(),
             method_signature_type_params: HashMap::new(),
@@ -349,6 +352,67 @@ impl<'a> IrEmitter<'a> {
             result_observer_callable_types: RefCell::new(HashSet::new()),
             emitted_result_observer_callable_helpers: RefCell::new(HashSet::new()),
             borrowed_function_adapters: RefCell::new(HashSet::new()),
+        }
+    }
+
+    /// Resolve transparent type aliases before emission decisions that need structural type information.
+    pub(in crate::backend::ir::emit) fn resolve_type_aliases_for_emit(&self, ty: &IrType) -> IrType {
+        let mut visiting = HashSet::new();
+        self.resolve_type_aliases_for_emit_inner(ty, &mut visiting)
+    }
+
+    /// Resolve nested transparent aliases while preserving cycles as their original alias names.
+    fn resolve_type_aliases_for_emit_inner(&self, ty: &IrType, visiting: &mut HashSet<String>) -> IrType {
+        match ty {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) if self.type_aliases.contains_key(name) => {
+                if !visiting.insert(name.clone()) {
+                    return ty.clone();
+                }
+                let Some(target) = self.type_aliases.get(name) else {
+                    visiting.remove(name);
+                    return ty.clone();
+                };
+                let resolved = self.resolve_type_aliases_for_emit_inner(target, visiting);
+                visiting.remove(name);
+                resolved
+            }
+            IrType::List(inner) => IrType::List(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting))),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(self.resolve_type_aliases_for_emit_inner(key, visiting)),
+                Box::new(self.resolve_type_aliases_for_emit_inner(value, visiting)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting))),
+            IrType::Tuple(items) => IrType::Tuple(
+                items
+                    .iter()
+                    .map(|item| self.resolve_type_aliases_for_emit_inner(item, visiting))
+                    .collect(),
+            ),
+            IrType::Option(inner) => {
+                IrType::Option(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting)))
+            }
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(self.resolve_type_aliases_for_emit_inner(ok, visiting)),
+                Box::new(self.resolve_type_aliases_for_emit_inner(err, visiting)),
+            ),
+            IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
+                name.clone(),
+                args.iter()
+                    .map(|arg| self.resolve_type_aliases_for_emit_inner(arg, visiting))
+                    .collect(),
+            ),
+            IrType::Function { params, ret } => IrType::Function {
+                params: params
+                    .iter()
+                    .map(|param| self.resolve_type_aliases_for_emit_inner(param, visiting))
+                    .collect(),
+                ret: Box::new(self.resolve_type_aliases_for_emit_inner(ret, visiting)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting))),
+            IrType::RefMut(inner) => {
+                IrType::RefMut(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting)))
+            }
+            _ => ty.clone(),
         }
     }
 
@@ -676,13 +740,20 @@ impl<'a> IrEmitter<'a> {
                 }
                 IrDeclKind::TypeAlias {
                     name,
-                    is_rusttype: true,
+                    type_params,
+                    ty,
+                    is_rusttype,
                     ..
                 } => {
                     if skip_ambiguous && self.ambiguous_type_names.contains(name) {
                         continue;
                     }
-                    self.rusttype_alias_names.insert(name.clone());
+                    if type_params.is_empty() && !is_rusttype {
+                        self.type_aliases.insert(name.clone(), ty.clone());
+                    }
+                    if *is_rusttype {
+                        self.rusttype_alias_names.insert(name.clone());
+                    }
                 }
                 IrDeclKind::Impl(i) => {
                     for method in &i.methods {

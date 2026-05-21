@@ -621,9 +621,13 @@ impl<'a> IrEmitter<'a> {
                 });
             }
 
-            let rewritten_receiver = Self::rewrite_storage_root_expr(receiver, "__incan_static_value");
-            let inner = self.emit_known_method_call(&rewritten_receiver, kind, &rewritten_args)?;
             let use_mut = super::method_kind_uses_mutable_receiver(kind);
+            let rewritten_receiver = if use_mut {
+                Self::rewrite_storage_root_expr_for_mut(receiver, "__incan_static_value")
+            } else {
+                Self::rewrite_storage_root_expr(receiver, "__incan_static_value")
+            };
+            let inner = self.emit_known_method_call(&rewritten_receiver, kind, &rewritten_args)?;
             let wrapped = if use_mut {
                 self.emit_storage_with_mut(receiver, inner)
             } else {
@@ -721,7 +725,12 @@ impl<'a> IrEmitter<'a> {
     ) -> Result<TokenStream, EmitError> {
         if Self::expr_is_storage_rooted(receiver) {
             let (arg_bindings, rewritten_args) = self.materialize_storage_rooted_args(args)?;
-            let rewritten_receiver = Self::rewrite_storage_root_expr(receiver, "__incan_static_value");
+            let use_mut = !matches!(arg_policy, MethodCallArgPolicy::PreserveShape);
+            let rewritten_receiver = if use_mut {
+                Self::rewrite_storage_root_expr_for_mut(receiver, "__incan_static_value")
+            } else {
+                Self::rewrite_storage_root_expr(receiver, "__incan_static_value")
+            };
             let inner = self.emit_method_call_expr_with_result_use(
                 &rewritten_receiver,
                 method,
@@ -732,10 +741,10 @@ impl<'a> IrEmitter<'a> {
                 arg_policy,
                 result_use_site,
             )?;
-            let wrapped = if matches!(arg_policy, MethodCallArgPolicy::PreserveShape) {
-                self.emit_storage_with_ref(receiver, inner)
-            } else {
+            let wrapped = if use_mut {
                 self.emit_storage_with_mut(receiver, inner)
+            } else {
+                self.emit_storage_with_ref(receiver, inner)
             }?;
             return Ok(quote! {
                 #(#arg_bindings)*

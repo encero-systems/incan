@@ -3065,6 +3065,12 @@ impl TypeChecker {
             }
         }
 
+        if let Some(ret) =
+            self.resolve_union_clone_trait_method_call(&base_ty, method, type_args, args, &arg_types, span)
+        {
+            return ret;
+        }
+
         if let ResolvedType::Generic(type_name, _type_args) = &base_ty
             && let Some(type_info) = self.lookup_semantic_type_info(type_name).cloned()
         {
@@ -3309,6 +3315,37 @@ impl TypeChecker {
                 .push(errors::missing_method(&base_ty.to_string(), method, span));
         }
         ResolvedType::Unknown
+    }
+
+    /// Resolve methods supplied by Clone for anonymous union wrappers.
+    fn resolve_union_clone_trait_method_call(
+        &mut self,
+        receiver_ty: &ResolvedType,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        span: Span,
+    ) -> Option<ResolvedType> {
+        if !receiver_ty.is_union() {
+            return None;
+        }
+
+        let adoption = TypeBoundInfo {
+            name: core_traits::as_str(TraitId::Clone).to_string(),
+            source_name: None,
+            type_args: Vec::new(),
+            module_path: None,
+        };
+        let method_info = self.trait_method_info_resolved_for_adoption(&adoption, method, span)?;
+        if !self.is_clone_type(receiver_ty) {
+            self.errors.push(CompileError::type_error(
+                format!("Union type '{receiver_ty}' cannot use '{method}(...)' because not all variants are cloneable"),
+                span,
+            ));
+            return Some(ResolvedType::Unknown);
+        }
+        Some(self.check_generic_method_call(method, method_info, type_args, args, arg_types, span, receiver_ty))
     }
 
     /// Return known method result types for Rust imports when rust-inspect metadata is not specific enough.

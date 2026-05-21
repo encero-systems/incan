@@ -11,7 +11,7 @@ use crate::frontend::testing_markers::{
     TestingFixtureMarkerArgs, TestingMarkerSemantics, load_testing_marker_semantics,
     resolve_testing_fixture_marker_args,
 };
-use crate::frontend::typechecker::helpers::{dict_ty, list_ty};
+use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty};
 
 use super::{DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, TestingFixtureInfo, TypeChecker, YieldContext};
 use incan_core::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc};
@@ -20,6 +20,7 @@ use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
 use incan_core::lang::stdlib;
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
+use incan_core::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::SurfaceModifierTypeCheck;
 use std::collections::{HashMap, HashSet};
 
@@ -2439,6 +2440,7 @@ impl TypeChecker {
         // Define fields in scope
         for field in &model.fields {
             let ty = self.resolve_type_checked(&field.node.ty);
+            self.validate_direct_recursive_model_field(&model.name, &ty, field.span);
             self.symbols.define(Symbol {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
@@ -2483,6 +2485,129 @@ impl TypeChecker {
         }
 
         self.symbols.exit_scope();
+    }
+
+    /// Reject model fields whose resolved type contains the model itself without an indirection boundary.
+    fn validate_direct_recursive_model_field(&mut self, model_name: &str, field_ty: &ResolvedType, span: Span) {
+        let mut visiting = HashSet::new();
+        if self.type_contains_direct_recursive_model(field_ty, model_name, &mut visiting) {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "Model '{model_name}' has a direct recursive field type '{field_ty}'. Use an indirection such as List[...] for recursive payloads."
+                ),
+                span,
+            ));
+        }
+    }
+
+    /// Return whether a type contains the target model through only inline Rust-layout positions.
+    fn type_contains_direct_recursive_model(
+        &self,
+        ty: &ResolvedType,
+        model_name: &str,
+        visiting: &mut HashSet<String>,
+    ) -> bool {
+        match ty {
+            ResolvedType::Named(name) => {
+                self.nominal_type_contains_direct_recursive_model(name, &[], model_name, visiting)
+            }
+            ResolvedType::Generic(name, args) if name == UNION_TYPE_NAME => args
+                .iter()
+                .any(|arg| self.type_contains_direct_recursive_model(arg, model_name, visiting)),
+            ResolvedType::Generic(name, args) => match collection_type_id(name.as_str()) {
+                Some(
+                    CollectionTypeId::List
+                    | CollectionTypeId::Dict
+                    | CollectionTypeId::Set
+                    | CollectionTypeId::FrozenList
+                    | CollectionTypeId::FrozenDict
+                    | CollectionTypeId::FrozenSet
+                    | CollectionTypeId::Generator,
+                ) => false,
+                Some(CollectionTypeId::Tuple | CollectionTypeId::Option | CollectionTypeId::Result) => args
+                    .iter()
+                    .any(|arg| self.type_contains_direct_recursive_model(arg, model_name, visiting)),
+                None => self.nominal_type_contains_direct_recursive_model(name, args, model_name, visiting),
+            },
+            ResolvedType::Tuple(items) => items
+                .iter()
+                .any(|item| self.type_contains_direct_recursive_model(item, model_name, visiting)),
+            ResolvedType::Ref(_)
+            | ResolvedType::RefMut(_)
+            | ResolvedType::FrozenList(_)
+            | ResolvedType::FrozenDict(_, _)
+            | ResolvedType::FrozenSet(_)
+            | ResolvedType::Function(_, _) => false,
+            ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Numeric(_)
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit
+            | ResolvedType::TypeVar(_)
+            | ResolvedType::SelfType
+            | ResolvedType::RustPath(_)
+            | ResolvedType::CallSiteInfer
+            | ResolvedType::Unknown => false,
+        }
+    }
+
+    /// Follow known nominal field types to find direct recursive model layouts.
+    fn nominal_type_contains_direct_recursive_model(
+        &self,
+        type_name: &str,
+        type_args: &[ResolvedType],
+        model_name: &str,
+        visiting: &mut HashSet<String>,
+    ) -> bool {
+        if type_name == model_name {
+            return true;
+        }
+
+        let visit_key = if type_args.is_empty() {
+            type_name.to_string()
+        } else {
+            format!(
+                "{}[{}]",
+                type_name,
+                type_args.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+            )
+        };
+        if !visiting.insert(visit_key.clone()) {
+            return false;
+        }
+
+        let result = match self.lookup_semantic_type_info(type_name) {
+            Some(TypeInfo::Model(info)) => {
+                let subst = type_param_subst_map(&info.type_params, type_args);
+                info.fields.values().any(|field| {
+                    let field_ty = substitute_resolved_type(&field.ty, &subst);
+                    let field_ty = self.expand_type_aliases(field_ty);
+                    self.type_contains_direct_recursive_model(&field_ty, model_name, visiting)
+                })
+            }
+            Some(TypeInfo::Class(info)) => {
+                let subst = type_param_subst_map(&info.type_params, type_args);
+                info.fields.values().any(|field| {
+                    let field_ty = substitute_resolved_type(&field.ty, &subst);
+                    let field_ty = self.expand_type_aliases(field_ty);
+                    self.type_contains_direct_recursive_model(&field_ty, model_name, visiting)
+                })
+            }
+            Some(TypeInfo::Newtype(info)) => {
+                let subst = type_param_subst_map(&info.type_params, type_args);
+                let underlying = substitute_resolved_type(&info.underlying, &subst);
+                let underlying = self.expand_type_aliases(underlying);
+                self.type_contains_direct_recursive_model(&underlying, model_name, visiting)
+            }
+            Some(TypeInfo::Enum(_) | TypeInfo::Builtin | TypeInfo::TypeAlias) | None => false,
+        };
+
+        visiting.remove(&visit_key);
+        result
     }
 
     fn check_validate_derive_model(&mut self, model: &ModelDecl) {

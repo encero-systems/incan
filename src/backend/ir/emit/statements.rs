@@ -990,11 +990,11 @@ impl<'a> IrEmitter<'a> {
         let rhs_ident = format_ident!("{}", rhs_name);
         let rewritten_target = match target {
             AssignTarget::Field { object, field } => AssignTarget::Field {
-                object: Box::new(Self::rewrite_storage_root_expr(object, local_name)),
+                object: Box::new(Self::rewrite_storage_root_expr_for_mut(object, local_name)),
                 field: field.clone(),
             },
             AssignTarget::Index { object, index } => AssignTarget::Index {
-                object: Box::new(Self::rewrite_storage_root_expr(object, local_name)),
+                object: Box::new(Self::rewrite_storage_root_expr_for_mut(object, local_name)),
                 index: index.clone(),
             },
             _ => {
