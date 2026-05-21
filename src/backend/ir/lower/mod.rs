@@ -35,7 +35,7 @@ mod types;
 use std::collections::{HashMap, HashSet};
 
 use super::TypedExpr;
-use super::decl::{FunctionParam, IrDecl, IrDeclKind};
+use super::decl::{FunctionParam, IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier};
 use super::expr::{IrCallArg, IrCallArgKind, IrExprKind, VarAccess, VarRefKind};
 use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
@@ -62,6 +62,13 @@ pub(in crate::backend::ir::lower) struct TraitImplLoweringInput<'a> {
     pub impl_methods: &'a [ast::Spanned<ast::MethodDecl>],
     pub impl_properties: &'a [ast::Spanned<ast::PropertyDecl>],
     pub impl_associated_types: &'a [ast::Spanned<ast::AssociatedTypeDecl>],
+}
+
+#[derive(Debug, Clone)]
+pub(super) struct ImportedAliasTarget {
+    pub origin: IrImportOrigin,
+    pub qualifier: IrImportQualifier,
+    pub path: Vec<String>,
 }
 
 /// AST to IR lowering context.
@@ -144,6 +151,8 @@ pub struct AstLowering {
     pub(super) callable_param_scopes: Vec<HashSet<String>>,
     /// Module-level symbol aliases mapped from alias name to canonical target name.
     pub(super) symbol_aliases: HashMap<String, String>,
+    /// Imported item bindings mapped to their original import paths for public alias re-export emission.
+    pub(super) imported_alias_targets: HashMap<String, ImportedAliasTarget>,
     /// Cached stdlib metadata used to resolve rust.module-backed decorators/derives.
     pub(super) stdlib_cache: StdlibAstCache,
     /// `rusttype` underlying Rust type lookup by alias name.
@@ -235,6 +244,7 @@ impl AstLowering {
             rust_import_aliases: HashMap::new(),
             callable_param_scopes: Vec::new(),
             symbol_aliases: HashMap::new(),
+            imported_alias_targets: HashMap::new(),
             stdlib_cache: StdlibAstCache::new(),
             rusttype_underlying: HashMap::new(),
             rusttype_interop_edges: HashMap::new(),
@@ -912,6 +922,7 @@ impl AstLowering {
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
+        self.imported_alias_targets = self.collect_imported_alias_targets(program);
         self.seed_imported_stdlib_trait_decls(program);
         self.alias_imported_dependency_trait_decls();
         self.symbol_aliases = program
@@ -1534,6 +1545,40 @@ impl AstLowering {
             // Return all collected errors
             Err(LoweringErrors(errors))
         }
+    }
+
+    /// Collect imported item bindings that module-level symbol aliases may need to re-export directly.
+    fn collect_imported_alias_targets(&self, program: &ast::Program) -> HashMap<String, ImportedAliasTarget> {
+        let mut targets = HashMap::new();
+        for decl in &program.declarations {
+            let ast::Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            let IrDeclKind::Import {
+                origin,
+                qualifier,
+                path,
+                items,
+                ..
+            } = self.lower_import(import)
+            else {
+                continue;
+            };
+            for item in items {
+                let binding = item.alias.unwrap_or_else(|| item.name.clone());
+                let mut item_path = path.clone();
+                item_path.push(item.name);
+                targets.insert(
+                    binding,
+                    ImportedAliasTarget {
+                        origin: origin.clone(),
+                        qualifier,
+                        path: item_path,
+                    },
+                );
+            }
+        }
+        targets
     }
 
     /// Lower a function declaration, expanding RFC 036 decorated functions into original/static/wrapper items.

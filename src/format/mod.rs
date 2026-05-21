@@ -368,6 +368,20 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_list_comprehension_tuple_target_omits_parentheses() -> Result<(), FormatError> {
+        let source = r#"def labels(values: list[str]) -> list[str]:
+  return [f"{idx}:{value}" for idx, value in enumerate(values)]
+"#;
+        let expected = r#"def labels(values: list[str]) -> list[str]:
+    return [f"{idx}:{value}" for idx, value in enumerate(values)]
+"#;
+        let formatted = format_source(source)?;
+        assert_eq!(formatted, expected);
+        assert_eq!(format_source(&formatted)?, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_rfc028_operator_spellings() -> Result<(), FormatError> {
         let source = r#"def ops(a: Any, b: Any, c: Any) -> None:
   mat=a@b

@@ -452,7 +452,7 @@ impl Formatter {
             match clause {
                 ComprehensionClause::For { pattern, iter } => {
                     self.writer.write(" for ");
-                    self.format_pattern(&pattern.node);
+                    self.format_for_pattern(&pattern.node);
                     self.writer.write(" in ");
                     self.format_expr(&iter.node);
                 }

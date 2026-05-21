@@ -285,7 +285,8 @@ impl Formatter {
         self.writer.dedent();
     }
 
-    fn format_for_pattern(&mut self, pattern: &Pattern) {
+    /// Format a `for`-target pattern using the grammar's unparenthesized tuple-target spelling.
+    pub(super) fn format_for_pattern(&mut self, pattern: &Pattern) {
         if let Pattern::Tuple(items) = pattern {
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {

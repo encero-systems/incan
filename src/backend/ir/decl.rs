@@ -57,6 +57,8 @@ pub enum IrDeclKind {
         visibility: Visibility,
         name: String,
         target_path: Vec<String>,
+        target_origin: Option<IrImportOrigin>,
+        target_qualifier: Option<IrImportQualifier>,
     },
 
     /// Constant

@@ -4771,6 +4771,58 @@ def main() -> None:
     }
 
     #[test]
+    fn test_loop_item_field_index_assignment_materializes_owned_value_issue616()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let output = Command::new(incan_debug_binary())
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+model Assignment:
+    output_name: str
+
+def names(assignments: list[Assignment]) -> list[str]:
+    mut output_names: list[str] = []
+    for assignment in assignments:
+        existing_idx = index_of_name(output_names, assignment.output_name)
+        if existing_idx >= 0:
+            output_names[existing_idx] = assignment.output_name
+        else:
+            output_names.append(assignment.output_name)
+    return output_names
+
+def index_of_name(names: list[str], name: str) -> int:
+    for idx, current in enumerate(names):
+        if current == name:
+            return idx
+    return -1
+
+def main() -> None:
+    result = names([Assignment(output_name="amount"), Assignment(output_name="amount")])
+    println(result[0])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "loop item field index-assignment regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["amount"],
+            "unexpected loop item field index-assignment output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_field_backed_by_value_method_args_do_not_require_user_clone_issue241()
     -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())

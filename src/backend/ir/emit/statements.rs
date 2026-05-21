@@ -95,6 +95,15 @@ fn for_body_needs_mut_iteration(pattern: &Pattern, body: &[IrStmt]) -> bool {
     body.iter().any(|s| stmt_mutates_var(s, loop_var))
 }
 
+/// Return the element target type for assignment into a list index.
+fn list_index_assignment_element_type(object_ty: &IrType) -> Option<&IrType> {
+    match object_ty {
+        IrType::Ref(inner) | IrType::RefMut(inner) => list_index_assignment_element_type(inner),
+        IrType::List(elem_ty) => Some(elem_ty.as_ref()),
+        _ => None,
+    }
+}
+
 /// Return the local `StaticBinding` name at the root of a storage-rooted expression.
 ///
 /// This is used by statement-slice analysis to detect aliases like `live` in
@@ -1132,6 +1141,18 @@ impl<'a> IrEmitter<'a> {
                     )
                     .apply(v);
                     return Ok(quote! { #o.insert(#k, #v); });
+                }
+                if let AssignTarget::Index { object, .. } = target
+                    && let Some(value_target_ty) = list_index_assignment_element_type(&object.ty)
+                {
+                    let t = self.emit_assign_target(target)?;
+                    let v = self.emit_expr_for_use(
+                        value,
+                        ValueUseSite::Assignment {
+                            target_ty: Some(value_target_ty),
+                        },
+                    )?;
+                    return Ok(quote! { #t = #v; });
                 }
                 let t = self.emit_assign_target(target)?;
                 let v = self.emit_assignment_value(value, None)?;

@@ -1571,6 +1571,95 @@ pub def ping() -> str:
 }
 
 #[test]
+fn fmt_tuple_target_list_comprehension_remains_buildable() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "fmt_tuple_target_list_comp", "")?;
+    fs::write(
+        &main_path,
+        r#"def main() -> None:
+  values = ["alpha", "beta"]
+  labels: list[str] = [f"{idx}:{value}" for idx, value in enumerate(values)]
+"#,
+    )?;
+
+    let fmt_output = run_incan(
+        tmp.path(),
+        &["fmt", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&fmt_output, "incan fmt tuple-target list comprehension");
+
+    let formatted = fs::read_to_string(&main_path)?;
+    assert!(
+        formatted.contains("for idx, value in enumerate(values)"),
+        "formatter should keep tuple comprehension targets unparenthesized, got:\n{formatted}"
+    );
+    assert!(
+        !formatted.contains("for (idx, value) in enumerate(values)"),
+        "formatter emitted parser-invalid tuple target parentheses, got:\n{formatted}"
+    );
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &build_output,
+        "incan build after formatting tuple-target list comprehension",
+    );
+    Ok(())
+}
+
+#[test]
+fn build_public_alias_of_imported_item_reexports_original_path_issue617() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "public_alias_import_reexport", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    fs::write(
+        src_dir.join("helper.incn"),
+        r#"pub def target(value: int) -> int:
+    """Return one incremented value."""
+    return value + 1
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from helper import target as target_builder
+
+
+pub public_target = alias target_builder
+
+
+def main() -> None:
+    """Exercise public alias re-export of an imported public function."""
+    assert public_target(1) == 2
+"#,
+    )?;
+
+    let output_dir = tmp.path().join("out");
+    let build_output = run_incan(
+        tmp.path(),
+        &[
+            "build",
+            main_path.to_str().ok_or("main path was not valid UTF-8")?,
+            output_dir.to_str().ok_or("output path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(&build_output, "public alias of imported item build");
+
+    let generated_main = fs::read_to_string(output_dir.join("src/main.rs"))?;
+    assert!(
+        !generated_main.contains("pub use target_builder as public_target;"),
+        "public alias should not re-export the private local import binding, got:\n{generated_main}"
+    );
+    assert!(
+        generated_main.contains("pub use crate::helper::target as public_target;")
+            || generated_main.contains("pub use helper::target as public_target;"),
+        "public alias should re-export the original imported path, got:\n{generated_main}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_frozen_uses_existing_lockfile_without_network() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_frozen_existing_lock_project", "")?;

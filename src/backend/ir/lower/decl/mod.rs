@@ -16,7 +16,10 @@ mod newtypes;
 mod traits;
 
 use super::super::IrSpan;
-use super::super::decl::{IrDecl, IrDeclKind, IrInteropAdapterKind, IrInteropDirection, IrInteropEdge, Visibility};
+use super::super::decl::{
+    IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier, IrInteropAdapterKind, IrInteropDirection, IrInteropEdge,
+    Visibility,
+};
 use super::super::types::IrType;
 use super::AstLowering;
 use super::errors::LoweringError;
@@ -138,11 +141,16 @@ impl AstLowering {
                 is_rusttype: false,
                 interop_edges: Vec::new(),
             },
-            ast::Declaration::Alias(a) => IrDeclKind::SymbolAlias {
-                visibility: Self::map_visibility(a.visibility),
-                name: a.name.clone(),
-                target_path: a.target.segments.clone(),
-            },
+            ast::Declaration::Alias(a) => {
+                let (target_path, target_origin, target_qualifier) = self.alias_reexport_target(&a.target.segments);
+                IrDeclKind::SymbolAlias {
+                    visibility: Self::map_visibility(a.visibility),
+                    name: a.name.clone(),
+                    target_path,
+                    target_origin,
+                    target_qualifier,
+                }
+            }
             ast::Declaration::Partial(_) => {
                 return Err(LoweringError {
                     message: "Partial callable presets are not lowered by this syntax-only slice".to_string(),
@@ -186,6 +194,26 @@ impl AstLowering {
             }
         };
         Ok(IrDecl::new(kind))
+    }
+
+    /// Resolve the path that should be used when emitting a module-level alias declaration.
+    ///
+    /// A source alias can target a local import binding, but generated Rust public re-exports must point at the
+    /// imported item path itself. Expression lowering still keeps the source binding for ordinary calls.
+    fn alias_reexport_target(
+        &self,
+        segments: &[String],
+    ) -> (Vec<String>, Option<IrImportOrigin>, Option<IrImportQualifier>) {
+        if let [target] = segments
+            && let Some(imported) = self.imported_alias_targets.get(target)
+        {
+            return (
+                imported.path.clone(),
+                Some(imported.origin.clone()),
+                Some(imported.qualifier),
+            );
+        }
+        (segments.to_vec(), None, None)
     }
 
     fn lower_interop_edges(
