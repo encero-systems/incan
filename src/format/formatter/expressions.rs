@@ -372,9 +372,12 @@ impl Formatter {
                 for part in parts {
                     match part {
                         FStringPart::Literal(s) => self.writer.write(&escape_fstring_literal(s)),
-                        FStringPart::Expr(expr) => {
+                        FStringPart::Expr { expr, format } => {
                             self.writer.write("{");
                             self.format_expr(&expr.node);
+                            if matches!(format, FStringFormat::Debug) {
+                                self.writer.write(":?");
+                            }
                             self.writer.write("}");
                         }
                     }

@@ -640,7 +640,7 @@ fn expr_references_name(expr: &Expr, name: &str) -> bool {
             | CallArg::KeywordUnpack(expr) => expr_references_name(&expr.node, name),
         }),
         Expr::FString(parts) => parts.iter().any(|part| {
-            if let crate::frontend::ast::FStringPart::Expr(expr) = part {
+            if let crate::frontend::ast::FStringPart::Expr { expr, .. } = part {
                 expr_references_name(&expr.node, name)
             } else {
                 false

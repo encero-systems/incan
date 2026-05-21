@@ -1259,9 +1259,13 @@ impl AstLowering {
                     .iter()
                     .map(|part| match part {
                         ast::FStringPart::Literal(s) => Ok(super::super::expr::FormatPart::Literal(s.clone())),
-                        ast::FStringPart::Expr(e) => {
-                            let lowered = self.lower_expr_spanned(e)?;
-                            Ok(super::super::expr::FormatPart::Expr(lowered))
+                        ast::FStringPart::Expr { expr, format } => {
+                            let lowered = self.lower_expr_spanned(expr)?;
+                            let style = match format {
+                                ast::FStringFormat::Display => super::super::expr::FormatStyle::Display,
+                                ast::FStringFormat::Debug => super::super::expr::FormatStyle::Debug,
+                            };
+                            Ok(super::super::expr::FormatPart::Expr { expr: lowered, style })
                         }
                     })
                     .collect::<Result<Vec<_>, LoweringError>>()?;

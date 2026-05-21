@@ -3113,14 +3113,14 @@ def main() -> int:
         };
 
         let first_expr = match &parts[1] {
-            FStringPart::Expr(expr) => expr,
+            FStringPart::Expr { expr, .. } => expr,
             _ => panic!("Expected first interpolation expression"),
         };
         assert_eq!(first_expr.span.start, first_expected_start);
         assert_eq!(first_expr.span.end, first_expected_start + "{title}".len());
 
         let second_expr = match &parts[3] {
-            FStringPart::Expr(expr) => expr,
+            FStringPart::Expr { expr, .. } => expr,
             _ => panic!("Expected second interpolation expression"),
         };
         assert_eq!(second_expr.span.start, second_expected_start);
@@ -3155,13 +3155,52 @@ def main() -> int:
         };
 
         let interpolation = match &parts[1] {
-            FStringPart::Expr(expr) => expr,
+            FStringPart::Expr { expr, .. } => expr,
             _ => panic!("Expected interpolation expression"),
         };
 
         assert_eq!(interpolation.span.start, expected_start);
         assert_eq!(interpolation.span.end, expected_start + "{x + y * z}".len());
         assert!(matches!(interpolation.node, Expr::Binary(_, _, _)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_fstring_debug_format_marker() -> Result<(), Vec<CompileError>> {
+        let source = "def render(columns: list[str]) -> str:\n  return f\"columns: {columns:?}\"\n";
+        let program = parse_str(source)?;
+
+        let function = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+
+        let return_expr = match &function.body[0].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return with expression"),
+        };
+
+        let parts = match &return_expr.node {
+            Expr::FString(parts) => parts,
+            _ => panic!("Expected f-string expression"),
+        };
+
+        let expected_start = match source.find("{columns:?}") {
+            Some(start) => start,
+            None => panic!("Could not find interpolation in source"),
+        };
+        let interpolation = match &parts[1] {
+            FStringPart::Expr { expr, format } => {
+                assert!(matches!(format, FStringFormat::Debug));
+                expr
+            }
+            _ => panic!("Expected interpolation expression"),
+        };
+
+        assert_eq!(interpolation.span.start, expected_start);
+        assert_eq!(interpolation.span.end, expected_start + "{columns:?}".len());
+        assert!(matches!(interpolation.node, Expr::Ident(ref name) if name == "columns"));
 
         Ok(())
     }
@@ -3192,7 +3231,7 @@ def main() -> int:
         };
 
         let interpolation = match &parts[1] {
-            FStringPart::Expr(expr) => expr,
+            FStringPart::Expr { expr, .. } => expr,
             _ => panic!("Expected interpolation expression"),
         };
         assert_eq!(interpolation.span.start, expected_start);
@@ -3353,7 +3392,7 @@ def main() -> int:
         };
 
         let interpolation = match &parts[1] {
-            FStringPart::Expr(expr) => expr,
+            FStringPart::Expr { expr, .. } => expr,
             _ => panic!("Expected interpolation expression"),
         };
         assert_eq!(interpolation.span.start, expected_start);

@@ -126,6 +126,7 @@ pub mod rust {
     pub const CLONE: &str = "Clone";
 
     // Formatting
+    pub const DEBUG: &str = "std::fmt::Debug";
     pub const DISPLAY: &str = "std::fmt::Display";
 
     // Arithmetic ops

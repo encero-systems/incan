@@ -183,9 +183,15 @@ pub struct ScopedSurfaceOwner {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum FStringFormat {
+    Display,
+    Debug,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum FStringPart {
     Literal(String),
-    Expr(Spanned<Expr>),
+    Expr { expr: Spanned<Expr>, format: FStringFormat },
 }
 
 /// Parsed integer literal with the **source substring** used for formatting.

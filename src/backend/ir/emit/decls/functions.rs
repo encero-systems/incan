@@ -274,7 +274,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Format { parts } => {
                 for part in parts {
-                    if let super::super::super::expr::FormatPart::Expr(expr) = part {
+                    if let super::super::super::expr::FormatPart::Expr { expr, .. } = part {
                         Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
                     }
                 }
@@ -1483,7 +1483,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Format { parts } => {
                 for part in parts {
-                    if let super::super::super::expr::FormatPart::Expr(expr) = part {
+                    if let super::super::super::expr::FormatPart::Expr { expr, .. } = part {
                         Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
                     }
                 }

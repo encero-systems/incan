@@ -185,8 +185,8 @@ impl TypeChecker {
             Expr::Constructor(name, args) => self.check_constructor(name, args, expr.span),
             Expr::FString(parts) => {
                 for part in parts {
-                    if let FStringPart::Expr(e) = part {
-                        self.check_expr(e);
+                    if let FStringPart::Expr { expr, .. } = part {
+                        self.check_expr(expr);
                     }
                 }
                 ResolvedType::Str

@@ -1965,6 +1965,49 @@ fn test_fstring_unknown_symbol_cli_caret_points_to_interpolation() {
 }
 
 #[test]
+fn test_fstring_list_interpolation_uses_structured_formatting() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"def debug_values[T](values: list[T]) -> str:
+  return f"{values:?}"
+
+def display_values[T](values: list[T]) -> str:
+  return f"{values}"
+
+def main() -> None:
+  columns: list[str] = ["id", "amount"]
+  println(f"debug: {columns:?}")
+  println(f"display: {columns}")
+  println(debug_values[str](["id", "amount"]))
+  println(display_values[str](["id", "amount"]))
+"#;
+    let output = Command::new(incan_debug_binary())
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        output.status.success(),
+        "expected list f-string interpolation to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("debug: [\"id\", \"amount\"]"),
+        "expected debug list output, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("display: [\"id\", \"amount\"]"),
+        "expected default list f-string output to use structured formatting, got:\n{stdout}"
+    );
+    assert!(
+        stdout.lines().filter(|line| *line == "[\"id\", \"amount\"]").count() == 2,
+        "expected both generic list helpers to render, got:\n{stdout}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixed_call_unpack_runs_for_positional_and_keyword_shapes() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def total(a: int, b: int, *rest: int, **labels: str) -> int:

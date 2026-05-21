@@ -376,7 +376,7 @@ where
         }),
         Expr::FString(parts) => parts.iter().any(|part| match part {
             crate::frontend::ast::FStringPart::Literal(_) => false,
-            crate::frontend::ast::FStringPart::Expr(expr) => expr_has(&expr.node, pred),
+            crate::frontend::ast::FStringPart::Expr { expr, .. } => expr_has(&expr.node, pred),
         }),
         Expr::Yield(Some(expr)) => expr_has(&expr.node, pred),
         Expr::Yield(None) | Expr::Partial(_) => false,

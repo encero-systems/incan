@@ -1105,6 +1105,18 @@ async def run() -> int:
         Ok(())
     }
 
+    /// Regression (GitHub #625): f-string debug markers are semantic and must survive formatting.
+    #[test]
+    fn test_format_source_preserves_fstring_debug_marker() -> Result<(), FormatError> {
+        let source = "def main(columns: list[str]) -> str:\n    return f\"columns: {columns:?}\"\n";
+        let formatted = assert_format_round_trip_lex_parse(source)?;
+        assert!(
+            formatted.contains(r#"f"columns: {columns:?}""#),
+            "expected formatter to preserve f-string debug marker, got: {formatted}"
+        );
+        Ok(())
+    }
+
     /// Regression #235: qualified constructor patterns use `::` in the AST; the formatter must print Incan surface `.`.
     #[test]
     fn test_format_source_qualified_match_pattern_round_trip() -> Result<(), FormatError> {
