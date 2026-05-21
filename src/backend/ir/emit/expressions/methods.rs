@@ -11,7 +11,7 @@ use super::super::super::expr::{
     CollectionMethodKind, InternalMethodKind, IrCallArg, IrExprKind, IrMethodDispatch, MethodCallArgPolicy, MethodKind,
     TypedExpr, VarAccess, VarRefKind,
 };
-use super::super::super::ownership::ValueUseSite;
+use super::super::super::ownership::{ArgumentPassingPlan, ValueUseSite};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 use incan_core::interop::RustCollectionFamily;
@@ -335,7 +335,6 @@ impl<'a> IrEmitter<'a> {
                     base_use_site,
                     ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg
                 );
-                let external_call_arg_shape = matches!(base_use_site, ValueUseSite::ExternalCallArg { .. });
                 let arg_use_site = match (base_use_site, param) {
                     (ValueUseSite::ExternalCallArg { .. }, Some(param)) => ValueUseSite::ExternalCallArg {
                         target_ty: Some(&param.ty),
@@ -352,8 +351,7 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     None
                 };
-                let external_param_planned =
-                    matches!(arg_use_site, ValueUseSite::ExternalCallArg { target_ty: Some(_) });
+                let arg_plan = ArgumentPassingPlan::for_use_site(arg, arg_use_site);
                 let direct_mut_trait_receiver = external_method_shape
                     && idx == 0
                     && Self::external_trait_first_arg_needs_mut_borrow(receiver, method);
@@ -407,29 +405,9 @@ impl<'a> IrEmitter<'a> {
                     return Ok(emitted);
                 };
                 if let Some(wrapped) = self.emit_union_payload_arg(arg, &param.ty, None)? {
-                    return Ok(wrapped);
+                    return Ok(arg_plan.apply_after_value_plan(wrapped));
                 }
-                if external_call_arg_shape
-                    && let Some(coerced) =
-                        self.external_list_arg_element_coercion(arg, Some(&param.ty), emitted.clone())
-                {
-                    emitted = coerced;
-                }
-                if !external_param_planned {
-                    match &param.ty {
-                        IrType::Ref(_) if matches!(base_use_site, ValueUseSite::MethodArg) => {}
-                        IrType::Ref(_) => match &arg.ty {
-                            _ if Self::method_arg_already_has_reference_shape(arg) => {}
-                            _ => emitted = quote! { &#emitted },
-                        },
-                        IrType::RefMut(_) => match &arg.ty {
-                            IrType::Ref(_) | IrType::RefMut(_) => {}
-                            _ => emitted = quote! { &mut #emitted },
-                        },
-                        _ => {}
-                    }
-                }
-                Ok(emitted)
+                Ok(arg_plan.apply_after_value_plan(emitted))
             })
             .collect()
     }
@@ -563,6 +541,17 @@ impl<'a> IrEmitter<'a> {
                     .any(|(enum_name, _)| enum_name == name || enum_name == short_name)
             }
             IrType::Trait(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Return whether a receiver is a zero-cost `rusttype` alias over an external Rust type.
+    fn is_rusttype_alias_receiver(&self, receiver_ty: &IrType) -> bool {
+        match Self::receiver_type_for_method_dispatch(receiver_ty) {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => {
+                let short_name = name.rsplit("::").next().unwrap_or(name);
+                self.rusttype_alias_names.contains(name) || self.rusttype_alias_names.contains(short_name)
+            }
             _ => false,
         }
     }
@@ -900,8 +889,10 @@ impl<'a> IrEmitter<'a> {
         let preserve_lookup_arg_shape = matches!(arg_policy, MethodCallArgPolicy::PreserveShape)
             || rust_collection_family_for_ir_type(&receiver.ty)
                 .is_some_and(|family| family.preserves_lookup_arg_shape(method));
+        let rusttype_alias_receiver = self.is_rusttype_alias_receiver(&receiver.ty);
         let use_site = if receiver_ref_kind != Some(VarRefKind::ExternalRustName)
-            && (has_incan_method_signature || self.is_incan_owned_nominal_receiver(&receiver.ty))
+            && (has_incan_method_signature
+                || (self.is_incan_owned_nominal_receiver(&receiver.ty) && !rusttype_alias_receiver))
         {
             ValueUseSite::IncanCallArg {
                 target_ty: None,

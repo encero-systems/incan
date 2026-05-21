@@ -6357,6 +6357,31 @@ async def main() -> None:
             ],
             "unexpected std.regex output:\n{stdout}"
         );
+        let generated_core = fs::read_to_string("target/incan/std_regex_surface/src/__incan_std/regex/_core.rs")?;
+        for unexpected in [
+            "RegexBuilder::new(&(pattern).to_string())",
+            "raw.find(&(text).to_string())",
+            "raw.find_iter(&(text).to_string())",
+            "raw.captures(&(text).to_string())",
+            "raw.captures_iter(&(text).to_string())",
+        ] {
+            assert!(
+                !generated_core.contains(unexpected),
+                "std.regex should let the compiler borrow Incan strings for Rust regex APIs instead of cloning them:\n{generated_core}"
+            );
+        }
+        for expected in [
+            "RegexBuilder::new(&pattern)",
+            "raw.find(&text)",
+            "raw.find_iter(&text)",
+            "raw.captures(&text)",
+            "raw.captures_iter(&text)",
+        ] {
+            assert!(
+                generated_core.contains(expected),
+                "std.regex should preserve compiler-managed Rust borrow boundaries; missing `{expected}`:\n{generated_core}"
+            );
+        }
         Ok(())
     }
 
@@ -10634,6 +10659,107 @@ mod rfc031_pub_import_integration_tests {
             .current_dir(project_root)
             .env("CARGO_NET_OFFLINE", "true")
             .output()?)
+    }
+
+    #[test]
+    fn build_keeps_return_context_string_literal_union_arg_as_union_value() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("return_context_union_arg");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"return_context_union_arg\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            project_root.join("src/projection_builders.incn"),
+            r#"pub model ColumnRefExpr:
+    column_name: str
+
+pub model StringLiteralExpr:
+    value: str
+
+pub model FloatLiteralExpr:
+    value: float
+
+pub model EqExpr:
+    arguments: list[ColumnExpr]
+
+pub type ColumnExpr = Union[ColumnRefExpr, StringLiteralExpr, FloatLiteralExpr, EqExpr]
+
+pub def col(name: str) -> ColumnExpr:
+    return ColumnRefExpr(column_name=name)
+
+pub def str_expr(value: str) -> ColumnExpr:
+    return StringLiteralExpr(value=value)
+
+pub def float_expr(value: float) -> ColumnExpr:
+    return FloatLiteralExpr(value=value)
+
+pub def lit(value: Union[int, float, str, bool]) -> ColumnExpr:
+    match value:
+        float(number) => return float_expr(number)
+        str(text) => return str_expr(text)
+        bool(flag) => return str_expr("bool")
+        int(number) => return str_expr("int")
+
+pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
+    return EqExpr(arguments=[left, right])
+"#,
+        )?;
+        std::fs::write(
+            project_root.join("src/functions.incn"),
+            "from projection_builders import col as col_builder, eq as eq_builder, lit as lit_builder\n\npub col = alias col_builder\npub lit = alias lit_builder\npub eq = alias eq_builder\n",
+        )?;
+        std::fs::write(
+            project_root.join("src/dataset.incn"),
+            r#"from projection_builders import ColumnExpr
+
+pub class LazyFrame[T with Clone]:
+    pub rows: list[T]
+
+    def filter(self, predicate: ColumnExpr) -> Self:
+        return self
+"#,
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            r#"from dataset import LazyFrame
+from functions import col, eq, lit
+
+model OrderLine:
+    status: str
+    discount: float
+
+def repro(lines: LazyFrame[OrderLine]) -> LazyFrame[OrderLine]:
+    return lines.filter(eq(col("status"), lit("open"))).filter(eq(col("discount"), lit(0.9)))
+
+def main() -> None:
+    lines: LazyFrame[OrderLine] = LazyFrame[OrderLine](rows=[])
+    _ = repro(lines)
+    println("done")
+"#,
+        )?;
+
+        let out_dir = project_root.join("out");
+        let output = run_build(&main_path, &out_dir)?;
+        assert!(
+            output.status.success(),
+            "expected union literal regression build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let generated_main = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        let normalized: String = generated_main.chars().filter(|c| !c.is_whitespace()).collect();
+        assert!(
+            normalized.contains("lit(crate::__IncanUnion43fbd19e99c1db05::V0(\"open\".to_string()))"),
+            "expected string literal to be wrapped directly as the union string arm, got:\n{generated_main}"
+        );
+        assert!(
+            !normalized.contains("V0(\"open\".to_string()).to_string()"),
+            "union wrapper must not receive a post-wrapper string coercion, got:\n{generated_main}"
+        );
+        Ok(())
     }
 
     #[test]

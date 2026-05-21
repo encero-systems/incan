@@ -35,7 +35,7 @@ use super::expr::{
     BinOp, FormatPart, IrCallArg, IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause, IrListEntry, MethodCallArgPolicy,
     VarAccess, VarRefKind,
 };
-use super::ownership::{ValueUseSite, plan_value_use};
+use super::ownership::{ValueUseSite, plan_value_use, value_use_site_target_ty};
 use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
 
@@ -1124,20 +1124,6 @@ fn incan_call_arg_requires_backend_clone(expr: &IrExpr) -> bool {
         _ if matches!(&expr.ty, IrType::Ref(inner) | IrType::RefMut(inner) if !inner.as_ref().is_copy()) => true,
         _ if borrowed_method_inner_ty(expr).is_some_and(|inner| !inner.is_copy()) => true,
         _ => false,
-    }
-}
-
-/// Return the target type carried by a use site, if that site has one.
-fn value_use_site_target_ty(site: ValueUseSite<'_>) -> Option<&IrType> {
-    match site {
-        ValueUseSite::IncanCallArg { target_ty, .. }
-        | ValueUseSite::ExternalCallArg { target_ty }
-        | ValueUseSite::StructField { target_ty }
-        | ValueUseSite::CollectionElement { target_ty }
-        | ValueUseSite::Assignment { target_ty }
-        | ValueUseSite::ReturnValue { target_ty }
-        | ValueUseSite::MatchScrutinee { target_ty } => target_ty,
-        ValueUseSite::MethodArg => None,
     }
 }
 

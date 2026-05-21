@@ -59,7 +59,7 @@ use super::super::expr::{
 };
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
-use crate::backend::ir::ownership::{ValueUseSite, plan_value_use};
+use crate::backend::ir::ownership::{ValueUseSite, plan_value_use, value_use_site_target_ty};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 #[derive(Debug, Clone)]
@@ -91,31 +91,6 @@ pub(in crate::backend::ir::emit) fn method_kind_uses_mutable_receiver(kind: &Met
 }
 
 impl<'a> IrEmitter<'a> {
-    /// Convert a direct `Vec<T>` argument into `Vec<U>` at external Rust call boundaries.
-    ///
-    /// The Incan typechecker does not prove Rust `From<T>` relationships. At an external Rust boundary, Rust's own
-    /// trait checker is the source of truth, so this emits an element-level `.into()` map only when metadata says the
-    /// parameter expects a different direct list element type.
-    pub(super) fn external_list_arg_element_coercion(
-        &self,
-        arg: &TypedExpr,
-        target_ty: Option<&IrType>,
-        emitted: TokenStream,
-    ) -> Option<TokenStream> {
-        let Some(IrType::List(target_elem)) = target_ty else {
-            return None;
-        };
-        let IrType::List(source_elem) = &arg.ty else {
-            return None;
-        };
-        if source_elem == target_elem || Self::is_unresolved_call_seed_type(target_elem) {
-            return None;
-        }
-        Some(quote! {
-            (#emitted).into_iter().map(|__incan_item| ::std::convert::Into::into(__incan_item)).collect::<Vec<_>>()
-        })
-    }
-
     /// Build a typed tuple-field read for compiler-expanded tuple unpacking.
     pub(super) fn tuple_field_expr(expr: &TypedExpr, idx: usize, ty: IrType) -> TypedExpr {
         TypedExpr::new(
@@ -273,15 +248,57 @@ impl<'a> IrEmitter<'a> {
 
     /// Return the target type carried by a value-use site, if the site has one.
     fn use_site_target_ty<'b>(site: ValueUseSite<'b>) -> Option<&'b IrType> {
-        match site {
-            ValueUseSite::IncanCallArg { target_ty, .. }
-            | ValueUseSite::ExternalCallArg { target_ty }
-            | ValueUseSite::StructField { target_ty }
-            | ValueUseSite::CollectionElement { target_ty }
-            | ValueUseSite::Assignment { target_ty }
-            | ValueUseSite::ReturnValue { target_ty }
-            | ValueUseSite::MatchScrutinee { target_ty } => target_ty,
-            ValueUseSite::MethodArg => None,
+        value_use_site_target_ty(site)
+    }
+
+    /// Return whether an expression already emits an owned Rust `String` value.
+    fn expr_already_materializes_owned_string(expr: &TypedExpr) -> bool {
+        matches!(expr.ty, IrType::String)
+            && !matches!(
+                expr.kind,
+                IrExprKind::String(_) | IrExprKind::Literal(IrLiteral::StaticStr(_)) | IrExprKind::StaticRead { .. }
+            )
+    }
+
+    /// Return whether an expression already emits an owned Rust `Vec<u8>` value.
+    fn expr_already_materializes_owned_bytes(expr: &TypedExpr) -> bool {
+        matches!(expr.ty, IrType::Bytes) && !matches!(expr.kind, IrExprKind::Bytes(_) | IrExprKind::StaticRead { .. })
+    }
+
+    /// Emit a typechecker-selected Rust borrow coercion without re-planning ownership at the call site.
+    fn emit_builtin_borrow_coercion(
+        inner_expr: &TypedExpr,
+        inner_tokens: TokenStream,
+        rust_target: &str,
+    ) -> TokenStream {
+        match rust_target {
+            "&str" => match &inner_expr.ty {
+                IrType::StaticStr | IrType::StrRef | IrType::FrozenStr | IrType::Ref(_) | IrType::RefMut(_) => {
+                    quote! { #inner_tokens }
+                }
+                _ => quote! { &#inner_tokens },
+            },
+            "&[u8]" => match &inner_expr.ty {
+                IrType::StaticBytes | IrType::FrozenBytes | IrType::Ref(_) | IrType::RefMut(_) => {
+                    quote! { #inner_tokens }
+                }
+                _ => quote! { &#inner_tokens },
+            },
+            "&String" | "&std::string::String" | "&alloc::string::String" => {
+                if Self::expr_already_materializes_owned_string(inner_expr) {
+                    quote! { &#inner_tokens }
+                } else {
+                    quote! { &(#inner_tokens).to_string() }
+                }
+            }
+            "&Vec<u8>" | "&std::vec::Vec<u8>" | "&alloc::vec::Vec<u8>" => {
+                if Self::expr_already_materializes_owned_bytes(inner_expr) {
+                    quote! { &#inner_tokens }
+                } else {
+                    quote! { &(#inner_tokens).to_vec() }
+                }
+            }
+            _ => quote! { &#inner_tokens },
         }
     }
 
@@ -1046,19 +1063,19 @@ impl<'a> IrEmitter<'a> {
                 to_ty: _,
                 kind,
             } => {
-                let inner = self.emit_expr(inner)?;
+                let inner_tokens = self.emit_expr(inner)?;
                 match kind {
                     IrInteropCoercionKind::Builtin { policy, rust_target } => {
                         let rust_target = rust_target.replace(' ', "");
                         let emitted = match policy {
                             incan_core::interop::CoercionPolicy::Exact => match rust_target.as_str() {
                                 "String" | "std::string::String" => {
-                                    quote! { (#inner).to_string() }
+                                    quote! { (#inner_tokens).to_string() }
                                 }
                                 "Vec<u8>" | "std::vec::Vec<u8>" => {
-                                    quote! { (#inner).to_vec() }
+                                    quote! { (#inner_tokens).to_vec() }
                                 }
-                                _ => quote! { #inner },
+                                _ => quote! { #inner_tokens },
                             },
                             incan_core::interop::CoercionPolicy::Lossless => {
                                 let target = syn::parse_str::<syn::Type>(rust_target.as_str()).map_err(|err| {
@@ -1066,35 +1083,28 @@ impl<'a> IrEmitter<'a> {
                                         "invalid Rust boundary cast target `{rust_target}`: {err}"
                                     ))
                                 })?;
-                                quote! { (#inner) as #target }
+                                quote! { (#inner_tokens) as #target }
                             }
-                            incan_core::interop::CoercionPolicy::Borrow => match rust_target.as_str() {
-                                "&str" | "&[u8]" => quote! { &#inner },
-                                "&String" | "&std::string::String" | "&alloc::string::String" => {
-                                    quote! { &(#inner).to_string() }
-                                }
-                                "&Vec<u8>" | "&std::vec::Vec<u8>" | "&alloc::vec::Vec<u8>" => {
-                                    quote! { &(#inner).to_vec() }
-                                }
-                                _ => quote! { &#inner },
-                            },
+                            incan_core::interop::CoercionPolicy::Borrow => {
+                                Self::emit_builtin_borrow_coercion(inner, inner_tokens, rust_target.as_str())
+                            }
                             incan_core::interop::CoercionPolicy::Lossy => match rust_target.as_str() {
-                                "f32" => quote! { (#inner) as f32 },
-                                _ => quote! { #inner },
+                                "f32" => quote! { (#inner_tokens) as f32 },
+                                _ => quote! { #inner_tokens },
                             },
                         };
                         Ok(emitted)
                     }
                     IrInteropCoercionKind::AdapterCall { adapter, adapter_kind } => {
                         let adapter = self.emit_expr(adapter)?;
-                        let call = quote! { #adapter(#inner) };
+                        let call = quote! { #adapter(#inner_tokens) };
                         let emitted = match adapter_kind {
                             IrInteropAdapterKind::Via => call,
                             IrInteropAdapterKind::Try => quote! { #call? },
                         };
                         Ok(emitted)
                     }
-                    IrInteropCoercionKind::RustTypeUnwrap => Ok(quote! { #inner }),
+                    IrInteropCoercionKind::RustTypeUnwrap => Ok(quote! { #inner_tokens }),
                 }
             }
 
@@ -1589,6 +1599,45 @@ mod tests {
         assert!(
             rendered.starts_with("&"),
             "expected borrowed String interop coercion to emit a borrow, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn interop_borrowed_string_coercion_borrows_owned_string_without_materializing() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "text".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::String,
+                )),
+                from_ty: IrType::String,
+                to_ty: IrType::Ref(Box::new(IrType::String)),
+                kind: IrInteropCoercionKind::Builtin {
+                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    rust_target: "&String".to_string(),
+                },
+            },
+            IrType::Ref(Box::new(IrType::String)),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered == "& text" || rendered == "&text",
+            "expected borrowed owned String interop coercion to borrow directly, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("to_string"),
+            "owned String borrow coercions must not clone through `.to_string()`, got `{rendered}`"
         );
         Ok(())
     }
@@ -2528,7 +2577,7 @@ mod tests {
     }
 
     #[test]
-    fn qualified_rusttype_receiver_method_uses_incan_string_conversion() -> Result<(), String> {
+    fn qualified_rusttype_receiver_method_uses_rust_signature_borrowing() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let mut emitter = IrEmitter::new(&registry);
         emitter.rusttype_alias_names.insert("_RawRegex".to_string());
@@ -2567,7 +2616,17 @@ mod tests {
                         IrType::String,
                     ),
                 }],
-                callable_signature: None,
+                callable_signature: Some(FunctionSignature {
+                    params: vec![FunctionParam {
+                        name: "text".to_string(),
+                        ty: IrType::Ref(Box::new(IrType::String)),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: crate::frontend::ast::ParamKind::Normal,
+                        default: None,
+                    }],
+                    return_type: IrType::Struct("_RawMatchIterator".to_string()),
+                }),
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Struct("_RawMatchIterator".to_string()),
@@ -2582,8 +2641,12 @@ mod tests {
             "expected regular method-call emission on qualified rusttype receiver, got `{rendered}`"
         );
         assert!(
-            !rendered.contains("& text") && !rendered.contains("&text"),
-            "qualified rusttype receiver methods must use Incan arg rules for owned string args, got `{rendered}`"
+            rendered.contains("find_iter (& text)") || rendered.contains("find_iter (&text)"),
+            "metadata-resolved rusttype receiver methods should borrow owned strings for Rust &str params, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("to_string"),
+            "metadata-resolved rusttype receiver methods should not clone strings before borrowing, got `{rendered}`"
         );
         Ok(())
     }
