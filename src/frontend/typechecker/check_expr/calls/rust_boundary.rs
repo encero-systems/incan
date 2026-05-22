@@ -268,20 +268,22 @@ impl TypeChecker {
     /// This first tries builtin coercion-matrix matches, then resolved-type compatibility, then rusttype-specific
     /// boundary adapters.
     fn rust_arg_boundary_match(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> RustArgBoundaryMatch {
-        let normalized = rust_param_ty.replace(' ', "");
+        let display = Self::rust_display_without_lifetimes(rust_param_ty);
+        let normalized = display.replace(' ', "");
         if Self::rust_display_type_var_name(normalized.as_str()).is_some() {
             return RustArgBoundaryMatch::Exact;
         }
-        let borrowed_shared = matches!(Self::rust_display_borrow_kind(normalized.as_str()), Some((false, _)));
-        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
-            if Self::is_rust_generic_type_param_display(inner)
+        let borrowed_shared = matches!(Self::rust_display_borrow_kind(display.as_str()), Some((false, _)));
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str()) {
+            let inner_normalized = Self::compact_rust_display(inner);
+            if Self::is_rust_generic_type_param_display(inner_normalized.as_str())
                 && !is_mut
                 && !matches!(arg_ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
             {
                 return RustArgBoundaryMatch::Exact;
             }
             if !is_mut {
-                let target_inner_ty = self.resolved_type_from_rust_display(inner);
+                let target_inner_ty = self.resolved_type_from_rust_display(inner_normalized.as_str());
                 if Self::incan_boundary_type_display(arg_ty).is_none()
                     && self.types_compatible(arg_ty, &target_inner_ty)
                 {
@@ -289,13 +291,13 @@ impl TypeChecker {
                 }
             }
             if is_mut {
-                let target_inner_ty = self.resolved_type_from_rust_display(inner);
+                let target_inner_ty = self.resolved_type_from_rust_display(inner_normalized.as_str());
                 if self.types_compatible(arg_ty, &target_inner_ty) {
                     return RustArgBoundaryMatch::Exact;
                 }
                 if let Some(incan_display) = Self::incan_boundary_type_display(arg_ty)
                     && let Some(CoercionPolicy::Exact) =
-                        admitted_builtin_coercion(incan_display.as_str(), inner.replace(' ', "").as_str())
+                        admitted_builtin_coercion(incan_display.as_str(), inner_normalized.as_str())
                 {
                     return RustArgBoundaryMatch::Exact;
                 }
@@ -331,7 +333,9 @@ impl TypeChecker {
         let params: Vec<CallableParam> = params
             .iter()
             .map(|param| {
-                CallableParam::positional(self.resolved_param_type_from_rust_display(param.type_display.as_str()))
+                CallableParam::positional(
+                    self.resolved_rust_boundary_target_from_param_display(param.type_display.as_str()),
+                )
             })
             .collect();
         // Plain Rust type variables carry by-value shape, but they are not ordinary borrow-boundary snapshots.
@@ -409,7 +413,7 @@ impl TypeChecker {
         for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(params.iter()) {
             let arg_expr = Self::call_arg_expr(arg);
             let normalized = param.type_display.replace(' ', "");
-            let target_ty = self.resolved_param_type_from_rust_display(param.type_display.as_str());
+            let target_ty = self.resolved_rust_boundary_target_from_param_display(param.type_display.as_str());
             if preserves_lookup_arg_shape && self.rust_lookup_probe_boundary_match(arg_ty, &target_ty) {
                 continue;
             }
@@ -462,7 +466,7 @@ impl TypeChecker {
         for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(sig.params.iter()) {
             let arg_expr = Self::call_arg_expr(arg);
             let normalized = param.type_display.replace(' ', "");
-            let target_ty = self.resolved_param_type_from_rust_display(param.type_display.as_str());
+            let target_ty = self.resolved_rust_boundary_target_from_param_display(param.type_display.as_str());
             match self.rust_arg_boundary_match(arg_ty, param.type_display.as_str()) {
                 RustArgBoundaryMatch::Exact => {}
                 RustArgBoundaryMatch::Coercion(kind) => {
@@ -837,16 +841,88 @@ mod validate_rust_function_call_tests {
                 .contains_key(&(span.start, span.end)),
             "expected rust arg coercion metadata for borrowed String boundary"
         );
-        let coercion = checker
-            .type_info
-            .rust
-            .arg_coercions
-            .get(&(span.start, span.end))
-            .expect("coercion metadata should be present");
+        let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath("String".to_string())));
         assert_eq!(
-            coercion.target_type,
-            ResolvedType::Ref(Box::new(ResolvedType::Str)),
-            "borrowed Rust params must preserve borrow shape in lowering metadata"
+            checker
+                .type_info
+                .rust
+                .arg_coercions
+                .get(&(span.start, span.end))
+                .map(|coercion| &coercion.target_type),
+            Some(&expected),
+            "borrowed owned Rust params must preserve owned target shape in lowering metadata"
+        );
+    }
+
+    #[test]
+    fn rust_function_call_accepts_string_for_borrowed_str_param() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(10, 20);
+        let arg_expr = Spanned::new(Expr::Literal(Literal::String("{}".to_string())), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("value".to_string()),
+                type_display: "&str".to_string(),
+            }],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::demo::takes_borrowed_str", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected borrowed str boundary to admit Incan str, errors={:?}",
+            checker.errors
+        );
+        let expected = ResolvedType::Ref(Box::new(ResolvedType::Str));
+        assert_eq!(
+            checker
+                .type_info
+                .rust
+                .arg_coercions
+                .get(&(span.start, span.end))
+                .map(|coercion| &coercion.target_type),
+            Some(&expected),
+            "borrowed str params must stay distinct from borrowed owned String params"
+        );
+    }
+
+    #[test]
+    fn rust_function_call_accepts_bytes_for_borrowed_vec_param() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(10, 20);
+        let arg_expr = Spanned::new(Expr::Literal(Literal::Bytes(b"abc".to_vec())), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("value".to_string()),
+                type_display: "&Vec<u8>".to_string(),
+            }],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::demo::takes_borrowed_vec", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected borrowed Vec<u8> boundary to admit Incan bytes, errors={:?}",
+            checker.errors
+        );
+        let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath("Vec<u8>".to_string())));
+        assert_eq!(
+            checker
+                .type_info
+                .rust
+                .arg_coercions
+                .get(&(span.start, span.end))
+                .map(|coercion| &coercion.target_type),
+            Some(&expected),
+            "borrowed owned Rust byte-vector params must preserve owned target shape in lowering metadata"
         );
     }
 

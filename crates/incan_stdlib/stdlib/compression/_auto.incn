@@ -10,11 +10,11 @@ the generic boundary can express owned reader adapters directly.
 """
 
 from rust::std::io import Cursor, Read
-from rust::bzip2::read @ "0.6" import BzDecoder
-from rust::flate2::read @ "1" import GzDecoder, ZlibDecoder
-from rust::snap::read @ "1" import FrameDecoder
-from rust::xz2::read @ "0.1" import XzDecoder
-from rust::zstd::stream::read @ "0.13" import Decoder as ZstdReadDecoder
+from rust::bzip2::read import BzDecoder
+from rust::flate2::read import GzDecoder, ZlibDecoder
+from rust::snap::read import FrameDecoder
+from rust::xz2::read import XzDecoder
+from rust::zstd::stream::read import Decoder as ZstdReadDecoder
 from std.compression._core import (
     Codec,
     CompressionError,

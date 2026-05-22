@@ -6,7 +6,7 @@ autodetection. Raw block helpers live under `std.compression.snappy.raw`.
 """
 
 from rust::std::io import Cursor, Read
-from rust::snap::read @ "1" import FrameDecoder, FrameEncoder
+from rust::snap::read import FrameDecoder, FrameEncoder
 from std.compression._core import Codec, CompressionError, _codec_error, _reject_level, _validate_chunk_size, _write_sink_bytes
 from std.fs import File
 from std.io import _BytesIO

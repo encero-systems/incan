@@ -45,6 +45,7 @@ mod calls;
 mod comprehensions;
 mod format;
 mod indexing;
+mod interop_coercions;
 mod lvalue;
 mod methods;
 mod structs_enums;
@@ -249,57 +250,6 @@ impl<'a> IrEmitter<'a> {
     /// Return the target type carried by a value-use site, if the site has one.
     fn use_site_target_ty<'b>(site: ValueUseSite<'b>) -> Option<&'b IrType> {
         value_use_site_target_ty(site)
-    }
-
-    /// Return whether an expression already emits an owned Rust `String` value.
-    fn expr_already_materializes_owned_string(expr: &TypedExpr) -> bool {
-        matches!(expr.ty, IrType::String)
-            && !matches!(
-                expr.kind,
-                IrExprKind::String(_) | IrExprKind::Literal(IrLiteral::StaticStr(_)) | IrExprKind::StaticRead { .. }
-            )
-    }
-
-    /// Return whether an expression already emits an owned Rust `Vec<u8>` value.
-    fn expr_already_materializes_owned_bytes(expr: &TypedExpr) -> bool {
-        matches!(expr.ty, IrType::Bytes) && !matches!(expr.kind, IrExprKind::Bytes(_) | IrExprKind::StaticRead { .. })
-    }
-
-    /// Emit a typechecker-selected Rust borrow coercion without re-planning ownership at the call site.
-    fn emit_builtin_borrow_coercion(
-        inner_expr: &TypedExpr,
-        inner_tokens: TokenStream,
-        rust_target: &str,
-    ) -> TokenStream {
-        match rust_target {
-            "&str" => match &inner_expr.ty {
-                IrType::StaticStr | IrType::StrRef | IrType::FrozenStr | IrType::Ref(_) | IrType::RefMut(_) => {
-                    quote! { #inner_tokens }
-                }
-                _ => quote! { &#inner_tokens },
-            },
-            "&[u8]" => match &inner_expr.ty {
-                IrType::StaticBytes | IrType::FrozenBytes | IrType::Ref(_) | IrType::RefMut(_) => {
-                    quote! { #inner_tokens }
-                }
-                _ => quote! { &#inner_tokens },
-            },
-            "&String" | "&std::string::String" | "&alloc::string::String" => {
-                if Self::expr_already_materializes_owned_string(inner_expr) {
-                    quote! { &#inner_tokens }
-                } else {
-                    quote! { &(#inner_tokens).to_string() }
-                }
-            }
-            "&Vec<u8>" | "&std::vec::Vec<u8>" | "&alloc::vec::Vec<u8>" => {
-                if Self::expr_already_materializes_owned_bytes(inner_expr) {
-                    quote! { &#inner_tokens }
-                } else {
-                    quote! { &(#inner_tokens).to_vec() }
-                }
-            }
-            _ => quote! { &#inner_tokens },
-        }
     }
 
     /// Prefer the call-site target type for aggregate literal elements.
@@ -1060,25 +1010,21 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::InteropCoerce {
                 expr: inner,
                 from_ty: _,
-                to_ty: _,
+                to_ty,
                 kind,
             } => {
                 let inner_tokens = self.emit_expr(inner)?;
                 match kind {
                     IrInteropCoercionKind::Builtin { policy, rust_target } => {
-                        let rust_target = rust_target.replace(' ', "");
                         let emitted = match policy {
-                            incan_core::interop::CoercionPolicy::Exact => match rust_target.as_str() {
-                                "String" | "std::string::String" => {
-                                    quote! { (#inner_tokens).to_string() }
-                                }
-                                "Vec<u8>" | "std::vec::Vec<u8>" => {
-                                    quote! { (#inner_tokens).to_vec() }
-                                }
+                            incan_core::interop::CoercionPolicy::Exact => match to_ty {
+                                IrType::String => quote! { (#inner_tokens).to_string() },
+                                IrType::Bytes => quote! { (#inner_tokens).to_vec() },
                                 _ => quote! { #inner_tokens },
                             },
                             incan_core::interop::CoercionPolicy::Lossless => {
-                                let target = syn::parse_str::<syn::Type>(rust_target.as_str()).map_err(|err| {
+                                let target = self.emit_type(to_ty);
+                                let _: syn::Type = syn::parse2(target.clone()).map_err(|err| {
                                     EmitError::SynParse(format!(
                                         "invalid Rust boundary cast target `{rust_target}`: {err}"
                                     ))
@@ -1086,7 +1032,7 @@ impl<'a> IrEmitter<'a> {
                                 quote! { (#inner_tokens) as #target }
                             }
                             incan_core::interop::CoercionPolicy::Borrow => {
-                                Self::emit_builtin_borrow_coercion(inner, inner_tokens, rust_target.as_str())
+                                interop_coercions::emit_builtin_borrow_coercion(inner, inner_tokens, to_ty)
                             }
                             incan_core::interop::CoercionPolicy::Lossy => match rust_target.as_str() {
                                 "f32" => quote! { (#inner_tokens) as f32 },
@@ -1527,6 +1473,173 @@ mod tests {
     }
 
     #[test]
+    fn encoding_decode_compatibility_policy_overrides_incomplete_by_value_signature() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "enc".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("encoding_rs::Encoding".to_string()),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "data".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Bytes,
+                    ),
+                }],
+                callable_signature: Some(FunctionSignature {
+                    params: vec![FunctionParam {
+                        name: "bytes".to_string(),
+                        ty: IrType::Bytes,
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: crate::frontend::ast::ParamKind::Normal,
+                        default: None,
+                    }],
+                    return_type: IrType::Unknown,
+                }),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("enc . decode (& data)"),
+            "encoding_rs decode should borrow bytes even when the recovered signature is incomplete, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unregistered_decode_method_with_by_value_metadata_preserves_argument_shape() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "decoder".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("ExternalDecoder".to_string()),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "data".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Bytes,
+                    ),
+                }],
+                callable_signature: Some(FunctionSignature {
+                    params: vec![FunctionParam {
+                        name: "data".to_string(),
+                        ty: IrType::Bytes,
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: crate::frontend::ast::ParamKind::Normal,
+                        default: None,
+                    }],
+                    return_type: IrType::Unknown,
+                }),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("decoder . decode (data)"),
+            "explicit by-value metadata must preserve argument shape, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("decoder . decode (& data)") && !rendered.contains("decoder.decode(&data)"),
+            "explicit by-value metadata must not use the metadata-free byte borrow default, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_free_read_to_string_fallback_requires_string_buffer() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "reader".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("ExternalReader".to_string()),
+                )),
+                method: "read_to_string".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "count".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Int,
+                    ),
+                }],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("reader . read_to_string (count)"),
+            "read_to_string fallback should preserve non-string argument shape, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("reader . read_to_string (& mut count)")
+                && !rendered.contains("reader.read_to_string(&mut count)"),
+            "read_to_string fallback must not mutably borrow non-string arguments, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn interop_try_adapter_emits_question_mark() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);
@@ -1579,13 +1692,13 @@ mod tests {
                     IrType::String,
                 )),
                 from_ty: IrType::String,
-                to_ty: IrType::Ref(Box::new(IrType::String)),
+                to_ty: IrType::Ref(Box::new(IrType::Struct("String".to_string()))),
                 kind: IrInteropCoercionKind::Builtin {
                     policy: incan_core::interop::CoercionPolicy::Borrow,
-                    rust_target: "&String".to_string(),
+                    rust_target: "&str".to_string(),
                 },
             },
-            IrType::Ref(Box::new(IrType::String)),
+            IrType::Ref(Box::new(IrType::Struct("String".to_string()))),
         );
 
         let emitted = emitter
@@ -1618,13 +1731,13 @@ mod tests {
                     IrType::String,
                 )),
                 from_ty: IrType::String,
-                to_ty: IrType::Ref(Box::new(IrType::String)),
+                to_ty: IrType::Ref(Box::new(IrType::Struct("String".to_string()))),
                 kind: IrInteropCoercionKind::Builtin {
                     policy: incan_core::interop::CoercionPolicy::Borrow,
-                    rust_target: "&String".to_string(),
+                    rust_target: "&str".to_string(),
                 },
             },
-            IrType::Ref(Box::new(IrType::String)),
+            IrType::Ref(Box::new(IrType::Struct("String".to_string()))),
         );
 
         let emitted = emitter
@@ -1638,6 +1751,49 @@ mod tests {
         assert!(
             !rendered.contains("to_string"),
             "owned String borrow coercions must not clone through `.to_string()`, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn interop_structural_list_borrow_coercion_projects_str_items() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "items".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::List(Box::new(IrType::String)),
+                )),
+                from_ty: IrType::List(Box::new(IrType::String)),
+                to_ty: IrType::List(Box::new(IrType::StrRef)),
+                kind: IrInteropCoercionKind::Builtin {
+                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    rust_target: "Vec<&str>".to_string(),
+                },
+            },
+            IrType::List(Box::new(IrType::StrRef)),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("items . iter ()"),
+            "expected structural borrow coercion to iterate source list, got `{rendered}`"
+        );
+        assert!(
+            rendered.contains("as_str ()"),
+            "expected structural borrow coercion to project string items as &str, got `{rendered}`"
+        );
+        assert!(
+            rendered.contains("collect :: < Vec < _ >> ()"),
+            "expected structural borrow coercion to collect a Rust Vec, got `{rendered}`"
         );
         Ok(())
     }
@@ -1768,6 +1924,38 @@ mod tests {
         assert!(
             rendered.contains("data"),
             "expected borrowed bytes coercion to preserve the source expression, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn interop_borrowed_vec_bytes_coercion_materializes_owned_bytes_before_borrow() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(TypedExpr::new(IrExprKind::Bytes(b"abc".to_vec()), IrType::StaticBytes)),
+                from_ty: IrType::StaticBytes,
+                to_ty: IrType::Ref(Box::new(IrType::Struct("Vec<u8>".to_string()))),
+                kind: IrInteropCoercionKind::Builtin {
+                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    rust_target: "&[u8]".to_string(),
+                },
+            },
+            IrType::Ref(Box::new(IrType::Struct("Vec<u8>".to_string()))),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains(". to_vec ()"),
+            "expected borrowed Vec<u8> interop coercion to materialize owned bytes, got `{rendered}`"
+        );
+        assert!(
+            rendered.starts_with("&"),
+            "expected borrowed Vec<u8> interop coercion to emit a borrow, got `{rendered}`"
         );
         Ok(())
     }

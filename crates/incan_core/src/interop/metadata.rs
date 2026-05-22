@@ -114,6 +114,132 @@ impl RustItemMetadata {
     }
 }
 
+/// Borrow shape for a metadata-free external method compatibility policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetadataFreeMethodArgBorrowPolicy {
+    Shared,
+    Mutable,
+}
+
+/// Receiver class used by metadata-free external method compatibility policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetadataFreeReceiverClass {
+    IoValue,
+    EncodingInstance,
+    ExternalAssociated,
+}
+
+/// Argument class used by metadata-free external method compatibility policy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MetadataFreeArgClass {
+    StringBuffer,
+    ByteBuffer,
+    Any,
+}
+
+/// Borrow compatibility rule for one metadata-free Rust method surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MetadataFreeMethodBorrowRule {
+    pub methods: &'static [&'static str],
+    pub receiver: MetadataFreeReceiverClass,
+    pub arg: MetadataFreeArgClass,
+    pub policy: MetadataFreeMethodArgBorrowPolicy,
+}
+
+/// One parameter in a metadata-free Rust method signature.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MetadataFreeMethodParamRule {
+    pub name: Option<&'static str>,
+    pub type_display: &'static str,
+}
+
+/// Complete callable signature for one metadata-free Rust method surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MetadataFreeMethodSignatureRule {
+    pub receiver_path: &'static str,
+    pub method: &'static str,
+    pub params: &'static [MetadataFreeMethodParamRule],
+    pub return_type: &'static str,
+    pub is_async: bool,
+    pub is_unsafe: bool,
+}
+
+/// Metadata-free external method borrow policies used when rust-inspect metadata is unavailable.
+pub const METADATA_FREE_METHOD_BORROW_RULES: &[MetadataFreeMethodBorrowRule] = &[
+    MetadataFreeMethodBorrowRule {
+        methods: &["read_to_string"],
+        receiver: MetadataFreeReceiverClass::IoValue,
+        arg: MetadataFreeArgClass::StringBuffer,
+        policy: MetadataFreeMethodArgBorrowPolicy::Mutable,
+    },
+    MetadataFreeMethodBorrowRule {
+        methods: &["read", "read_to_end", "read_exact", "read_buf", "read_buf_exact"],
+        receiver: MetadataFreeReceiverClass::IoValue,
+        arg: MetadataFreeArgClass::ByteBuffer,
+        policy: MetadataFreeMethodArgBorrowPolicy::Mutable,
+    },
+    MetadataFreeMethodBorrowRule {
+        methods: &["write"],
+        receiver: MetadataFreeReceiverClass::IoValue,
+        arg: MetadataFreeArgClass::ByteBuffer,
+        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
+    },
+    MetadataFreeMethodBorrowRule {
+        methods: &["write_all"],
+        receiver: MetadataFreeReceiverClass::IoValue,
+        arg: MetadataFreeArgClass::Any,
+        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
+    },
+    MetadataFreeMethodBorrowRule {
+        methods: &["for_label", "encode", "decode"],
+        receiver: MetadataFreeReceiverClass::EncodingInstance,
+        arg: MetadataFreeArgClass::Any,
+        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
+    },
+    MetadataFreeMethodBorrowRule {
+        methods: &["decode"],
+        receiver: MetadataFreeReceiverClass::ExternalAssociated,
+        arg: MetadataFreeArgClass::ByteBuffer,
+        policy: MetadataFreeMethodArgBorrowPolicy::Shared,
+    },
+];
+
+/// Metadata-free external method signatures used when rust-inspect metadata is unavailable.
+pub const METADATA_FREE_METHOD_SIGNATURE_RULES: &[MetadataFreeMethodSignatureRule] =
+    &[MetadataFreeMethodSignatureRule {
+        receiver_path: "encoding_rs::Encoding",
+        method: "for_label",
+        params: &[MetadataFreeMethodParamRule {
+            name: Some("label"),
+            type_display: "&[u8]",
+        }],
+        return_type: "Option<&'static encoding_rs::Encoding>",
+        is_async: false,
+        is_unsafe: false,
+    }];
+
+/// Return conservative callable metadata for Rust surfaces the stdlib must compile against even when rust-inspect
+/// cannot recover full crate metadata in generated smoke projects.
+#[must_use]
+pub fn metadata_free_method_signature(rust_path: &str, method: &str) -> Option<RustFunctionSig> {
+    let rule = METADATA_FREE_METHOD_SIGNATURE_RULES
+        .iter()
+        .find(|rule| rule.receiver_path == rust_path && rule.method == method)?;
+    Some(RustFunctionSig {
+        params: rule
+            .params
+            .iter()
+            .map(|param| RustParam {
+                name: param.name.map(str::to_string),
+                type_display: param.type_display.to_string(),
+            })
+            .collect(),
+        return_type: rule.return_type.to_string(),
+        is_async: rule.is_async,
+        is_unsafe: rule.is_unsafe,
+    })
+}
+
 /// A single parameter in a Rust function signature (display strings only for Phase 1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustParam {
@@ -175,6 +301,105 @@ pub enum RustTypeShape {
     TypeParam(String),
     /// Metadata recovery could not determine a stable semantic shape.
     Unknown,
+}
+
+/// Render `path` with generic arguments as `path<A, B, ...>` for stable Rust-like display.
+#[must_use]
+pub fn render_rust_type_shape_path(path: &str, args: &[RustTypeShape]) -> String {
+    if args.is_empty() {
+        return path.to_string();
+    }
+    let rendered_args: Vec<String> = args.iter().map(render_rust_type_shape).collect();
+    format!("{path}<{}>", rendered_args.join(", "))
+}
+
+/// Pretty-print a [`RustTypeShape`] as a stable Rust-like type string.
+#[must_use]
+pub fn render_rust_type_shape(shape: &RustTypeShape) -> String {
+    match shape {
+        RustTypeShape::Bool => "bool".to_string(),
+        RustTypeShape::Float => "f64".to_string(),
+        RustTypeShape::Int => "i64".to_string(),
+        RustTypeShape::Str => "String".to_string(),
+        RustTypeShape::Bytes => "Vec<u8>".to_string(),
+        RustTypeShape::Unit => "()".to_string(),
+        RustTypeShape::Option(inner) => format!("Option<{}>", render_rust_type_shape(inner)),
+        RustTypeShape::Result(ok, err) => {
+            format!(
+                "Result<{}, {}>",
+                render_rust_type_shape(ok),
+                render_rust_type_shape(err)
+            )
+        }
+        RustTypeShape::Tuple(items) => {
+            let rendered: Vec<String> = items.iter().map(render_rust_type_shape).collect();
+            format!("({})", rendered.join(", "))
+        }
+        RustTypeShape::Ref(inner) => format!("&{}", render_rust_type_shape(inner)),
+        RustTypeShape::RustPath { path, args } => render_rust_type_shape_path(path, args),
+        RustTypeShape::TypeParam(name) => name.clone(),
+        RustTypeShape::Unknown => "?".to_string(),
+    }
+}
+
+/// Remove Rust lifetime labels that decorate borrowed display types.
+#[must_use]
+pub fn strip_rust_borrow_lifetimes(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(ch) = chars.next() {
+        out.push(ch);
+        if ch != '&' {
+            continue;
+        }
+        while matches!(chars.peek(), Some(next) if next.is_whitespace()) {
+            if let Some(next) = chars.next() {
+                out.push(next);
+            }
+        }
+        if !matches!(chars.peek(), Some('\'')) {
+            continue;
+        }
+        chars.next();
+        while matches!(chars.peek(), Some(next) if next.is_ascii_alphanumeric() || *next == '_') {
+            chars.next();
+        }
+        while matches!(chars.peek(), Some(next) if next.is_whitespace()) {
+            chars.next();
+        }
+    }
+    out
+}
+
+/// Split a comma-separated Rust generic/tuple argument list without splitting inside nested generic, tuple, or slice
+/// delimiters.
+#[must_use]
+pub fn split_top_level_rust_args(text: &str) -> Vec<&str> {
+    let mut args = Vec::new();
+    let mut start = 0usize;
+    let mut angle = 0usize;
+    let mut paren = 0usize;
+    let mut bracket = 0usize;
+    for (idx, ch) in text.char_indices() {
+        match ch {
+            '<' => angle += 1,
+            '>' => angle = angle.saturating_sub(1),
+            '(' => paren += 1,
+            ')' => paren = paren.saturating_sub(1),
+            '[' => bracket += 1,
+            ']' => bracket = bracket.saturating_sub(1),
+            ',' if angle == 0 && paren == 0 && bracket == 0 => {
+                args.push(text[start..idx].trim());
+                start = idx + ch.len_utf8();
+            }
+            _ => {}
+        }
+    }
+    let tail = text[start..].trim();
+    if !tail.is_empty() {
+        args.push(tail);
+    }
+    args
 }
 
 /// A public field surfaced on a Rust struct/union-like type.

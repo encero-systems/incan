@@ -2223,16 +2223,26 @@ def identity(
     }
 
     #[test]
-    fn test_parse_rust_import_with_features_requires_version() {
+    fn test_parse_rust_import_with_features_without_inline_version() -> Result<(), Vec<CompileError>> {
         let source = r#"import rust::tokio with ["full"]"#;
-        let Err(err) = parse_str(source) else {
-            panic!("Expected rust import features to require version");
-        };
-        assert!(
-            err[0].message.contains("features require a version"),
-            "Unexpected error: {}",
-            err[0].message
-        );
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(import) => match &import.kind {
+                ImportKind::RustCrate {
+                    crate_name,
+                    version,
+                    features,
+                    ..
+                } => {
+                    assert_eq!(crate_name, "tokio");
+                    assert_eq!(version, &None);
+                    assert_eq!(features, &vec!["full".to_string()]);
+                }
+                _ => panic!("Expected rust module import"),
+            },
+            _ => panic!("Expected import"),
+        }
+        Ok(())
     }
 
     #[test]

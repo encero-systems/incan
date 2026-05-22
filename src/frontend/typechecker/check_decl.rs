@@ -19,6 +19,7 @@ use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
 use incan_core::lang::stdlib;
+use incan_core::lang::testing;
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::SurfaceModifierTypeCheck;
@@ -173,7 +174,10 @@ fn fixture_function_span(func: &FunctionDecl) -> Span {
 /// Return whether a decorator resolves to the RFC 004 `std.testing.fixture` marker path.
 fn is_possible_testing_fixture_decorator(dec: &Decorator, aliases: &HashMap<String, Vec<String>>) -> bool {
     let resolved = crate::frontend::decorator_resolution::resolve_decorator_path(dec, aliases);
-    resolved.len() == 3 && resolved[0] == "std" && resolved[1] == "testing" && resolved[2] == "fixture"
+    resolved.len() == 3
+        && resolved[0] == stdlib::STDLIB_ROOT
+        && resolved[1] == testing::STDLIB_TESTING_MODULE
+        && resolved[2] == testing::TESTING_MARKER_FIXTURE
 }
 
 /// Return whether any declaration in this slice of AST may be a `std.testing.fixture`.

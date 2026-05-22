@@ -10,7 +10,8 @@ use incan_core::lang::operators;
 use incan_core::lang::punctuation;
 use incan_core::lang::registry::{RFC, Since};
 use incan_core::lang::surface::types::{SurfaceTypeCategory, SurfaceTypeId, SurfaceTypeOwner};
-use incan_core::lang::surface::{constructors, functions, types as surface_types};
+use incan_core::lang::surface::{constructors, functions, iterator_methods, result_methods, types as surface_types};
+use incan_core::lang::testing;
 use incan_core::lang::traits;
 use incan_core::lang::types::{collections, numerics, stringlike};
 use std::path::{Path, PathBuf};
@@ -233,6 +234,19 @@ fn types_spellings_unique_and_resolvable() {
 }
 
 #[test]
+fn collection_rust_display_bases_are_not_ordinary_source_aliases() {
+    assert_eq!(
+        collections::from_rust_display_base("std::collections::HashSet"),
+        Some(collections::CollectionTypeId::Set)
+    );
+    assert_eq!(
+        collections::from_rust_display_base("HashMap"),
+        Some(collections::CollectionTypeId::Dict)
+    );
+    assert_eq!(collections::from_str("HashSet"), None);
+}
+
+#[test]
 fn derives_spellings_unique_and_resolvable() {
     assert_registry_round_trip(RegistryRoundTrip {
         label: "derive",
@@ -339,6 +353,48 @@ fn surface_functions_spellings_unique_and_resolvable() {
         aliases_of: |info| info.aliases,
         from_str: functions::from_str,
         as_str: functions::as_str,
+    });
+}
+
+#[test]
+fn iterator_methods_spellings_unique_and_resolvable() {
+    assert_registry_round_trip(RegistryRoundTrip {
+        label: "iterator method",
+        expected_len: 21,
+        items: iterator_methods::ITERATOR_METHODS,
+        id_of: |info| info.id,
+        canonical_of: |info| info.canonical,
+        aliases_of: |info| info.aliases,
+        from_str: iterator_methods::from_str,
+        as_str: iterator_methods::as_str,
+    });
+}
+
+#[test]
+fn result_methods_spellings_unique_and_resolvable() {
+    assert_registry_round_trip(RegistryRoundTrip {
+        label: "result method",
+        expected_len: 8,
+        items: result_methods::RESULT_METHODS,
+        id_of: |info| info.id,
+        canonical_of: |info| info.canonical,
+        aliases_of: |info| info.aliases,
+        from_str: result_methods::from_str,
+        as_str: result_methods::as_str,
+    });
+}
+
+#[test]
+fn testing_assert_helpers_spellings_unique_and_resolvable() {
+    assert_registry_round_trip(RegistryRoundTrip {
+        label: "testing assert helper",
+        expected_len: 9,
+        items: testing::TESTING_ASSERT_HELPERS,
+        id_of: |info| info.id,
+        canonical_of: |info| info.canonical,
+        aliases_of: |info| info.aliases,
+        from_str: testing::assert_helper_from_str,
+        as_str: testing::assert_helper_as_str,
     });
 }
 

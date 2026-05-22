@@ -171,6 +171,7 @@
 
 use super::decl::FunctionParam;
 use super::expr::{BinOp, VarAccess};
+use super::reference_shape::expr_has_rust_reference_shape;
 use super::types::Mutability;
 use super::{IrExpr, IrExprKind, IrType, TypedExpr};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_exponent_kind_from_ir};
@@ -793,14 +794,22 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 (IrExprKind::Field { .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => {
                     Conversion::Clone
                 }
-                (IrExprKind::Var { .. }, _) if matches!(expr.ty, IrType::String) => Conversion::Borrow,
-                (IrExprKind::Field { .. }, None) if matches!(expr.ty, IrType::String) => Conversion::Borrow,
-                (_, Some(IrType::Ref(_))) if !matches!(expr.ty, IrType::Ref(_) | IrType::RefMut(_)) => {
-                    Conversion::Borrow
+                (IrExprKind::Var { .. }, _) if matches!(expr.ty, IrType::String) => {
+                    if expr_has_rust_reference_shape(expr) {
+                        Conversion::None
+                    } else {
+                        Conversion::Borrow
+                    }
                 }
-                (_, Some(IrType::RefMut(_))) if !matches!(expr.ty, IrType::Ref(_) | IrType::RefMut(_)) => {
-                    Conversion::MutBorrow
+                (IrExprKind::Field { .. }, None) if matches!(expr.ty, IrType::String) => {
+                    if expr_has_rust_reference_shape(expr) {
+                        Conversion::None
+                    } else {
+                        Conversion::Borrow
+                    }
                 }
+                (_, Some(IrType::Ref(_))) if !expr_has_rust_reference_shape(expr) => Conversion::Borrow,
+                (_, Some(IrType::RefMut(_))) if !expr_has_rust_reference_shape(expr) => Conversion::MutBorrow,
                 // Rust adapter leaves commonly accept borrowed handles (`&Sender<T>`, `&Mutex<T>`, ...).
                 // When metadata is unavailable, do not move non-Copy wrapper fields out of `&self`.
                 (IrExprKind::Field { .. }, None)
@@ -925,11 +934,11 @@ pub(crate) fn determine_conversion_for_incan_call(
     ) {
         match target_ty {
             Some(IrType::Ref(_)) => match &expr.ty {
-                IrType::Ref(_) | IrType::RefMut(_) => return Conversion::None,
+                _ if expr_has_rust_reference_shape(expr) => return Conversion::None,
                 _ => return Conversion::Borrow,
             },
             Some(IrType::RefMut(_)) => match &expr.ty {
-                IrType::Ref(_) | IrType::RefMut(_) => return Conversion::None,
+                _ if expr_has_rust_reference_shape(expr) => return Conversion::None,
                 _ => return Conversion::MutBorrow,
             },
             _ => {}
@@ -949,7 +958,7 @@ pub(crate) fn determine_conversion_for_incan_call(
 mod tests {
     use super::*;
     use crate::backend::ir::decl::FunctionParam;
-    use crate::backend::ir::expr::{VarAccess, VarRefKind};
+    use crate::backend::ir::expr::{MethodCallArgPolicy, VarAccess, VarRefKind};
     use crate::backend::ir::types::Mutability;
 
     // === IncanFunctionArg Tests ===
@@ -1343,6 +1352,44 @@ mod tests {
 
         let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
         assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_external_function_as_slice_arg_does_not_double_borrow() {
+        let expr = IrExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "data".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Bytes,
+                )),
+                method: "as_slice".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Bytes,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "an explicit as_slice() argument is already a Rust borrow boundary"
+        );
+
+        let target = IrType::Ref(Box::new(IrType::Bytes));
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "an explicit as_slice() argument must not become &&[u8] for ref targets"
+        );
     }
 
     #[test]

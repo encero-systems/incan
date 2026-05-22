@@ -5,7 +5,7 @@ The public `std.compression.lzma` name exposes XZ-framed LZMA-family data throug
 """
 
 from rust::std::io import Cursor, Read
-from rust::xz2::read @ "0.1" import XzDecoder, XzEncoder
+from rust::xz2::read import XzDecoder, XzEncoder
 from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default, _validate_chunk_size, _write_sink_bytes
 from std.fs import File
 from std.io import _BytesIO

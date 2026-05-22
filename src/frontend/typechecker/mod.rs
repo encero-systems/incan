@@ -49,6 +49,7 @@ mod collect;
 mod const_eval;
 mod helpers;
 pub(crate) mod stdlib_loader;
+mod trait_bound_relations;
 mod type_info;
 mod validate_rust_module;
 
@@ -76,8 +77,11 @@ use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::RustMetadataCache;
-use helpers::{collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
-use incan_core::interop::{RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape};
+use helpers::{collection_name, collection_type_id, render_resolved_type_as_rust_arg, stringlike_type_id};
+use incan_core::interop::{
+    RustFunctionSig, RustItemKind, RustItemMetadata, RustParam, RustTypeShape, render_rust_type_shape_path,
+    split_top_level_rust_args, strip_rust_borrow_lifetimes,
+};
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 use incan_core::lang::surface::types as surface_types;
@@ -477,25 +481,7 @@ impl TypeChecker {
     }
 
     fn split_top_level_generic_args(args: &str) -> Vec<&str> {
-        let mut parts = Vec::new();
-        let mut depth = 0usize;
-        let mut start = 0usize;
-        for (idx, ch) in args.char_indices() {
-            match ch {
-                '<' | '(' | '[' => depth += 1,
-                '>' | ')' | ']' => depth = depth.saturating_sub(1),
-                ',' if depth == 0 => {
-                    parts.push(args[start..idx].trim());
-                    start = idx + ch.len_utf8();
-                }
-                _ => {}
-            }
-        }
-        let tail = args[start..].trim();
-        if !tail.is_empty() {
-            parts.push(tail);
-        }
-        parts
+        split_top_level_rust_args(args)
     }
 
     /// Normalize a rust-inspect lookup path down to the nominal item path.
@@ -740,53 +726,21 @@ impl TypeChecker {
     ///
     /// When `args` is empty, returns `path` unchanged (no angle brackets).
     fn render_rust_shape_path(path: &str, args: &[RustTypeShape]) -> String {
-        if args.is_empty() {
-            return path.to_string();
-        }
-        let rendered_args: Vec<String> = args.iter().map(Self::render_rust_shape_type).collect();
-        format!("{path}<{}>", rendered_args.join(", "))
+        render_rust_type_shape_path(path, args)
     }
 
-    /// Pretty-print a [`RustTypeShape`] as a stable Rust-like type string.
-    ///
-    /// Feeds [`ResolvedType::RustPath`] strings. Scalar widths are normalized (`f64`, `i64`, `String`, `Vec<u8>`) to
-    /// match [`Self::resolved_type_from_rust_shape`], not to recover the exact original Rust spelling from metadata.
-    fn render_rust_shape_type(shape: &RustTypeShape) -> String {
-        match shape {
-            RustTypeShape::Bool => "bool".to_string(),
-            RustTypeShape::Float => "f64".to_string(),
-            RustTypeShape::Int => "i64".to_string(),
-            RustTypeShape::Str => "String".to_string(),
-            RustTypeShape::Bytes => "Vec<u8>".to_string(),
-            RustTypeShape::Unit => "()".to_string(),
-            RustTypeShape::Option(inner) => format!("Option<{}>", Self::render_rust_shape_type(inner)),
-            RustTypeShape::Result(ok, err) => {
-                format!(
-                    "Result<{}, {}>",
-                    Self::render_rust_shape_type(ok),
-                    Self::render_rust_shape_type(err)
-                )
-            }
-            RustTypeShape::Tuple(items) => {
-                let rendered: Vec<String> = items.iter().map(Self::render_rust_shape_type).collect();
-                format!("({})", rendered.join(", "))
-            }
-            RustTypeShape::Ref(inner) => format!("&{}", Self::render_rust_shape_type(inner)),
-            RustTypeShape::RustPath { path, args } => Self::render_rust_shape_path(path, args),
-            RustTypeShape::TypeParam(name) => name.clone(),
-            RustTypeShape::Unknown => "?".to_string(),
-        }
-    }
-
-    /// Detect whether a normalized Rust display type starts with `&T` or `&mut T`.
+    /// Detect whether a Rust display type starts with `&T` or `&mut T`.
     ///
     /// Returns the mutability flag plus the remaining inner type spelling so [`Self::resolved_type_from_rust_display`]
     /// can preserve borrow semantics for Rust-backed values instead of collapsing them into plain path types.
-    fn rust_display_borrow_kind(normalized: &str) -> Option<(bool, &str)> {
-        if let Some(inner) = normalized.strip_prefix("&mut") {
-            return Some((true, inner));
+    fn rust_display_borrow_kind(display: &str) -> Option<(bool, &str)> {
+        let after_amp = display.trim().strip_prefix('&')?.trim_start();
+        if let Some(inner) = after_amp.strip_prefix("mut")
+            && inner.chars().next().is_none_or(char::is_whitespace)
+        {
+            return Some((true, inner.trim_start()));
         }
-        normalized.strip_prefix('&').map(|inner| (false, inner))
+        Some((false, after_amp))
     }
 
     /// Remove Rust lifetime labels that decorate borrowed display types.
@@ -795,28 +749,84 @@ impl TypeChecker {
     /// the ownership shape and payload type, so erase the lifetime after `&` before whitespace normalization turns it
     /// into an unparseable token such as `&'hstr`.
     fn strip_borrow_lifetimes(rust_ty: &str) -> String {
-        let mut out = String::with_capacity(rust_ty.len());
-        let mut chars = rust_ty.chars().peekable();
-        while let Some(ch) = chars.next() {
-            out.push(ch);
-            if ch != '&' {
-                continue;
-            }
-            while matches!(chars.peek(), Some(next) if next.is_whitespace()) {
-                out.push(chars.next().expect("peeked whitespace should exist"));
-            }
-            if !matches!(chars.peek(), Some('\'')) {
-                continue;
-            }
-            chars.next();
-            while matches!(chars.peek(), Some(next) if next.is_ascii_alphanumeric() || *next == '_') {
-                chars.next();
-            }
-            while matches!(chars.peek(), Some(next) if next.is_whitespace()) {
-                chars.next();
-            }
+        strip_rust_borrow_lifetimes(rust_ty)
+    }
+
+    fn rust_display_without_lifetimes(rust_ty: &str) -> String {
+        Self::strip_borrow_lifetimes(rust_ty)
+            .replace("'static ", "")
+            .replace("'_", "")
+            .trim_start_matches("::")
+            .to_string()
+    }
+
+    fn compact_rust_display(rust_ty: &str) -> String {
+        Self::rust_display_without_lifetimes(rust_ty).replace(' ', "")
+    }
+
+    fn rust_generic_base_and_args(normalized: &str) -> Option<(&str, Vec<&str>)> {
+        let start = normalized.find('<')?;
+        if !normalized.ends_with('>') {
+            return None;
         }
-        out
+        let base = normalized[..start].trim();
+        let inner = &normalized[start + 1..normalized.len() - 1];
+        Some((base, Self::split_top_level_generic_args(inner)))
+    }
+
+    fn rust_collection_id_from_display_base(base: &str) -> Option<CollectionTypeId> {
+        incan_core::lang::types::collections::from_rust_display_base(base)
+    }
+
+    fn resolved_structural_rust_param_display<F>(&self, normalized: &str, mut resolve_arg: F) -> Option<ResolvedType>
+    where
+        F: FnMut(&Self, &str) -> ResolvedType,
+    {
+        let (base, arg_displays) = Self::rust_generic_base_and_args(normalized)?;
+        let collection_id = Self::rust_collection_id_from_display_base(base)?;
+        let mut args = arg_displays
+            .into_iter()
+            .map(|arg| resolve_arg(self, arg))
+            .collect::<Vec<_>>();
+        match collection_id {
+            CollectionTypeId::List if args.len() == 1 => Some(ResolvedType::Generic(
+                collection_name(CollectionTypeId::List).to_string(),
+                args,
+            )),
+            CollectionTypeId::Dict if args.len() == 2 => Some(ResolvedType::Generic(
+                collection_name(CollectionTypeId::Dict).to_string(),
+                args,
+            )),
+            CollectionTypeId::Set if args.len() == 1 => Some(ResolvedType::Generic(
+                collection_name(CollectionTypeId::Set).to_string(),
+                args,
+            )),
+            CollectionTypeId::Option if args.len() == 1 => Some(ResolvedType::Generic(
+                collection_name(CollectionTypeId::Option).to_string(),
+                args,
+            )),
+            CollectionTypeId::Result if args.len() <= 2 => {
+                let ok = args.first().cloned().unwrap_or(ResolvedType::Unknown);
+                let err = args.get(1).cloned().unwrap_or(ResolvedType::Unknown);
+                Some(ResolvedType::Generic(
+                    collection_name(CollectionTypeId::Result).to_string(),
+                    vec![ok, err],
+                ))
+            }
+            CollectionTypeId::Tuple => Some(ResolvedType::Tuple(args)),
+            CollectionTypeId::FrozenList if args.len() == 1 => Some(ResolvedType::FrozenList(Box::new(args.remove(0)))),
+            CollectionTypeId::FrozenSet if args.len() == 1 => Some(ResolvedType::FrozenSet(Box::new(args.remove(0)))),
+            CollectionTypeId::FrozenDict if args.len() == 2 => {
+                let value = args.pop().unwrap_or(ResolvedType::Unknown);
+                let key = args.pop().unwrap_or(ResolvedType::Unknown);
+                Some(ResolvedType::FrozenDict(Box::new(key), Box::new(value)))
+            }
+            CollectionTypeId::Generator if args.len() == 1 => Some(ResolvedType::Generic(
+                collection_name(CollectionTypeId::Generator).to_string(),
+                args,
+            )),
+            _ => None,
+        }
     }
 
     /// Map structured rust-inspect [`RustTypeShape`] into a [`ResolvedType`] for field access and pattern typing.
@@ -885,14 +895,12 @@ impl TypeChecker {
     ///
     /// ## `Result<T, E>` parsing
     ///
-    /// `Result<…>` is split on the **first** top-level comma only. Nested generics that contain commas (for example
-    /// `Result<Vec<(i32, i32)>, String>`) are therefore parsed incorrectly and may degrade to [`ResolvedType::Unknown`]
-    /// for one or both type arguments. Prefer precise typing from Incan surfaces over relying on this heuristic.
+    /// `Result<…>` uses top-level generic splitting, so nested generic or tuple commas stay inside the appropriate
+    /// argument. Prefer precise typing from Incan surfaces over relying on this heuristic for arbitrary Rust paths.
     pub(crate) fn resolved_type_from_rust_display(&self, rust_ty: &str) -> ResolvedType {
         let trimmed = rust_ty.trim();
-        let no_lifetimes = Self::strip_borrow_lifetimes(trimmed);
-        let no_lifetimes = no_lifetimes.replace("'static ", "").replace("'_", "").replace(' ', "");
-        let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        let display = Self::rust_display_without_lifetimes(trimmed);
+        let normalized = display.replace(' ', "");
         if let Some(Symbol {
             kind: SymbolKind::RustItem(info),
             ..
@@ -906,7 +914,7 @@ impl TypeChecker {
             "&[u8]" => return ResolvedType::Bytes,
             _ => {}
         }
-        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str()) {
             let inner_ty = self.resolved_type_from_rust_display(inner);
             return if is_mut {
                 ResolvedType::RefMut(Box::new(inner_ty))
@@ -935,31 +943,32 @@ impl TypeChecker {
             "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" | "&[u8]" => ResolvedType::Bytes,
             "()" => ResolvedType::Unit,
             _ if normalized.ends_with('>') => {
-                if let Some((base, inner)) = normalized.split_once('<') {
-                    let base = base.trim_end_matches('>');
-                    let inner = inner.trim_end_matches('>');
+                if let Some((base, args)) = Self::rust_generic_base_and_args(normalized.as_str()) {
                     let tail = base.rsplit("::").next().unwrap_or(base);
                     match collection_type_id(tail) {
                         Some(CollectionTypeId::Option) => {
+                            let inner = args.first().copied().unwrap_or("");
                             return ResolvedType::Generic(
-                                "Option".to_string(),
+                                collection_name(CollectionTypeId::Option).to_string(),
                                 vec![self.resolved_type_from_rust_display(inner)],
                             );
                         }
                         Some(CollectionTypeId::Result) => {
-                            let mut parts = inner.splitn(2, ',');
-                            let ok_ty = parts
-                                .next()
+                            let ok_ty = args
+                                .first()
                                 .map(|p| self.resolved_type_from_rust_display(p))
                                 .unwrap_or(ResolvedType::Unknown);
                             // Result aliases such as `datafusion_common::error::Result<T>` often erase the concrete
                             // error arm from the display. Keep the success path semantic and degrade only the missing
                             // error arm.
-                            let err_ty = parts
-                                .next()
+                            let err_ty = args
+                                .get(1)
                                 .map(|p| self.resolved_type_from_rust_display(p))
                                 .unwrap_or(ResolvedType::Unknown);
-                            return ResolvedType::Generic("Result".to_string(), vec![ok_ty, err_ty]);
+                            return ResolvedType::Generic(
+                                collection_name(CollectionTypeId::Result).to_string(),
+                                vec![ok_ty, err_ty],
+                            );
                         }
                         _ => {}
                     }
@@ -1007,17 +1016,17 @@ impl TypeChecker {
     /// borrowed Rust boundary so emission can pass `&arg` instead of moving an owned `String` or `Vec<u8>`.
     pub(crate) fn resolved_param_type_from_rust_display(&self, rust_ty: &str) -> ResolvedType {
         let trimmed = rust_ty.trim();
-        let no_lifetimes = Self::strip_borrow_lifetimes(trimmed);
-        let no_lifetimes = no_lifetimes.replace("'static ", "").replace("'_", "").replace(' ', "");
-        let normalized = no_lifetimes.trim_start_matches("::").to_string();
+        let display = Self::rust_display_without_lifetimes(trimmed);
+        let normalized = display.replace(' ', "");
         if let Some(name) = Self::rust_display_type_var_name(normalized.as_str()) {
             return ResolvedType::TypeVar(name.to_string());
         }
-        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str()) {
+            let inner_normalized = Self::compact_rust_display(inner);
             let inner_ty = match inner {
                 "str" => ResolvedType::Str,
                 "[u8]" => ResolvedType::Bytes,
-                _ => self.resolved_type_from_rust_display(inner),
+                _ => self.resolved_type_from_rust_display(inner_normalized.as_str()),
             };
             return if is_mut {
                 ResolvedType::RefMut(Box::new(inner_ty))
@@ -1025,7 +1034,45 @@ impl TypeChecker {
                 ResolvedType::Ref(Box::new(inner_ty))
             };
         }
+        if let Some(structural) = self.resolved_structural_rust_param_display(normalized.as_str(), |checker, arg| {
+            checker.resolved_param_type_from_rust_display(arg)
+        }) {
+            return structural;
+        }
         self.resolved_type_from_rust_display(normalized.as_str())
+    }
+
+    /// Convert a Rust parameter display type into the typed target carried by Rust-boundary coercion metadata.
+    ///
+    /// This preserves the semantic difference between slice borrow targets such as `&str`/`&[u8]` and borrowed owned
+    /// Rust targets such as `&String`/`&Vec<u8>`. Ordinary parameter typing still maps Rust scalar displays onto Incan
+    /// value types, but coercion metadata is a backend contract: lowering and emission must be able to choose borrow
+    /// versus materialize-then-borrow behavior from this typed target without re-decoding Rust display strings.
+    pub(crate) fn resolved_rust_boundary_target_from_param_display(&self, rust_ty: &str) -> ResolvedType {
+        let trimmed = rust_ty.trim();
+        let display = Self::rust_display_without_lifetimes(trimmed);
+        let normalized = display.replace(' ', "");
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str()) {
+            let inner_normalized = Self::compact_rust_display(inner);
+            let inner_ty = match inner {
+                "str" => ResolvedType::Str,
+                "[u8]" => ResolvedType::Bytes,
+                "String" | "std::string::String" | "alloc::string::String" => ResolvedType::RustPath(inner.to_string()),
+                "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>" => ResolvedType::RustPath(inner.to_string()),
+                _ => self.resolved_type_from_rust_display(inner_normalized.as_str()),
+            };
+            return if is_mut {
+                ResolvedType::RefMut(Box::new(inner_ty))
+            } else {
+                ResolvedType::Ref(Box::new(inner_ty))
+            };
+        }
+        if let Some(structural) = self.resolved_structural_rust_param_display(normalized.as_str(), |checker, arg| {
+            checker.resolved_rust_boundary_target_from_param_display(arg)
+        }) {
+            return structural;
+        }
+        self.resolved_param_type_from_rust_display(normalized.as_str())
     }
 
     /// Set the declared Rust crate names from `incan.toml [rust-dependencies]`.

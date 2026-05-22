@@ -96,6 +96,25 @@ pub(super) struct GeneratedUseAnalysis {
     pub(super) borrowed_function_adapters: HashSet<(String, Vec<usize>)>,
 }
 
+impl GeneratedUseAnalysis {
+    /// Return whether generated Rust should retain an impl method under the current program-level preservation mode.
+    pub(super) fn should_retain_method(
+        &self,
+        preserve_public_items: bool,
+        target_type: &str,
+        method_name: &str,
+        visibility: &Visibility,
+    ) -> bool {
+        self.public_types.contains(target_type)
+            || (!preserve_public_items
+                && !matches!(visibility, Visibility::Private)
+                && self.reachable_items.contains(target_type))
+            || self
+                .used_methods
+                .contains(&(target_type.to_string(), method_name.to_string()))
+    }
+}
+
 #[derive(Clone)]
 pub(super) struct StructConstructorMetadata {
     fields: Vec<String>,
@@ -628,14 +647,12 @@ impl<'a> IrEmitter<'a> {
 
     /// True when a method should be emitted for a preserved public surface or an observed generated-use call.
     pub(super) fn should_emit_method(&self, target_type: &str, method_name: &str, visibility: &Visibility) -> bool {
-        let analysis = self.generated_use_analysis.borrow();
-        analysis.public_types.contains(target_type)
-            || (!self.preserve_public_items
-                && !matches!(visibility, Visibility::Private)
-                && analysis.reachable_items.contains(target_type))
-            || analysis
-                .used_methods
-                .contains(&(target_type.to_string(), method_name.to_string()))
+        self.generated_use_analysis.borrow().should_retain_method(
+            self.preserve_public_items,
+            target_type,
+            method_name,
+            visibility,
+        )
     }
 
     /// True when the generated free constructor function for a struct should be retained.

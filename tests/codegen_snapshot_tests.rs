@@ -723,6 +723,27 @@ def main(result: Result[int, str]) -> Result[int, str]:
 }
 
 #[test]
+fn test_rfc070_result_unwrap_codegen_does_not_require_debug_err() {
+    let source = r#"
+model PlainError:
+  message: str
+
+pub def direct(result: Result[int, PlainError]) -> int:
+  return result.unwrap()
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.split_whitespace().collect::<String>();
+    assert!(
+        compact.contains("matchresult{Ok(__incan_ok)=>__incan_ok,Err(_)=>panic!"),
+        "Result.unwrap should lower to an explicit match that discards Err without a Debug bound:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("result.unwrap()"),
+        "Result.unwrap should not lower to Rust unwrap(), which requires E: Debug:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_rfc070_result_inspect_non_copy_observer_borrows_payload() {
     let source = r#"
 model Payload:

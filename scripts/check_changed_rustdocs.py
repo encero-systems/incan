@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Fail when touched Rust source files contain undocumented non-test functions or methods.
+"""Fail when changed Rust source files contain undocumented non-test functions or methods.
 
-This script is intentionally scoped to changed `.rs` files so the branch enforces a boyscout-style documentation
-standard without requiring an immediate repo-wide documentation migration.
+By default, this checks both staged and unstaged `.rs` changes. Pass `--base <ref>` or set `INCAN_RUSTDOC_GATE_BASE`
+when a release or review branch needs to be checked against a comparison base such as `origin/release/v0.2`.
 
 Eventually, we can replace this script with the following clippy rules:
 #![warn(missing_docs)]
@@ -11,6 +11,8 @@ Eventually, we can replace this script with the following clippy rules:
 
 from __future__ import annotations
 
+import argparse
+import os
 import re
 import subprocess
 import sys
@@ -27,10 +29,16 @@ ATTR_RE = re.compile(r"^\s*#\s*\[")
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 
 
-def changed_rust_files() -> dict[Path, set[int]]:
-    """Return changed Rust source files and their changed current-file line numbers."""
+def merge_changed_lines(target: dict[Path, set[int]], source: dict[Path, set[int]]) -> None:
+    """Merge changed-line data from one parsed diff into `target`."""
+    for path, lines in source.items():
+        target.setdefault(path, set()).update(lines)
+
+
+def changed_rust_files_from_diff_args(args: list[str]) -> dict[Path, set[int]]:
+    """Return changed Rust source files and current-file line numbers for one `git diff` invocation."""
     result = subprocess.run(
-        ["git", "diff", "--unified=0", "--", "*.rs"],
+        args,
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -64,7 +72,24 @@ def changed_rust_files() -> dict[Path, set[int]]:
         count = int(match.group("count") or "1")
         if count == 0:
             continue
-        files[current_path].update(range(start, start + count))
+            files[current_path].update(range(start, start + count))
+    return files
+
+
+def changed_rust_files(base_ref: str | None) -> dict[Path, set[int]]:
+    """Return changed Rust source files and their changed current-file line numbers."""
+    if base_ref:
+        return changed_rust_files_from_diff_args(["git", "diff", "--unified=0", base_ref, "--", "*.rs"])
+
+    files: dict[Path, set[int]] = {}
+    merge_changed_lines(
+        files,
+        changed_rust_files_from_diff_args(["git", "diff", "--unified=0", "--", "*.rs"]),
+    )
+    merge_changed_lines(
+        files,
+        changed_rust_files_from_diff_args(["git", "diff", "--cached", "--unified=0", "--", "*.rs"]),
+    )
     return files
 
 
@@ -191,10 +216,22 @@ def missing_docs(path: Path, changed_lines: set[int]) -> list[tuple[int, str]]:
     return misses
 
 
-def main() -> int:
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse command-line options for the rustdoc gate."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--base",
+        default=os.environ.get("INCAN_RUSTDOC_GATE_BASE"),
+        help="optional git ref to diff against instead of staged plus unstaged changes",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
     """Run the touched-file rustdoc gate and print failures in `path:line:name` form."""
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     misses: list[tuple[Path, int, str]] = []
-    for path, changed_lines in changed_rust_files().items():
+    for path, changed_lines in changed_rust_files(args.base).items():
         for line, name in missing_docs(path, changed_lines):
             misses.append((path, line, name))
 

@@ -680,11 +680,16 @@ impl AstLowering {
         if let Some(trait_id) = core_traits::from_str(short_name) {
             return core_traits::method_names(trait_id);
         }
-        match short_name {
-            "Callable0" | "Callable1" | "Callable2" => &["__call__"],
-            "Serialize" | "JsonSerialize" => &["to_json"],
-            "Deserialize" | "JsonDeserialize" => &["from_json"],
-            _ => &[],
+        if matches!(short_name, "Callable0" | "Callable1" | "Callable2") {
+            &["__call__"]
+        } else {
+            match incan_core::lang::stdlib::stdlib_json_trait_id(trait_name)
+                .or_else(|| incan_core::lang::stdlib::stdlib_json_trait_id(short_name))
+            {
+                Some(incan_core::lang::stdlib::StdlibJsonTraitId::Serialize) => &["to_json"],
+                Some(incan_core::lang::stdlib::StdlibJsonTraitId::Deserialize) => &["from_json"],
+                None => &[],
+            }
         }
     }
 
@@ -698,13 +703,13 @@ impl AstLowering {
             .rsplit(['.', ':'])
             .find(|segment| !segment.is_empty())
             .unwrap_or(trait_name);
-        matches!(
-            (short_name, method_name),
-            ("Serialize", "to_json")
-                | ("JsonSerialize", "to_json")
-                | ("Deserialize", "from_json")
-                | ("JsonDeserialize", "from_json")
-        )
+        match incan_core::lang::stdlib::stdlib_json_trait_id(trait_name)
+            .or_else(|| incan_core::lang::stdlib::stdlib_json_trait_id(short_name))
+        {
+            Some(incan_core::lang::stdlib::StdlibJsonTraitId::Serialize) => method_name == "to_json",
+            Some(incan_core::lang::stdlib::StdlibJsonTraitId::Deserialize) => method_name == "from_json",
+            None => false,
+        }
     }
 
     /// Return whether a method is safe to emit into an imported trait impl when the trait declaration is missing.

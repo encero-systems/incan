@@ -176,7 +176,7 @@ impl<'a> IrEmitter<'a> {
                 })
                 .map(|m| self.emit_trait_method(m))
                 .collect::<Result<_, _>>()?;
-            if Self::is_serde_serialize_trait_name(trait_name)
+            if incan_core::lang::stdlib::is_stdlib_json_serialize_trait_name(trait_name)
                 && !impl_block.methods.iter().any(|method| method.name == "to_json")
             {
                 trait_methods.push(quote! {
@@ -185,7 +185,7 @@ impl<'a> IrEmitter<'a> {
                     }
                 });
             }
-            if Self::is_serde_deserialize_trait_name(trait_name)
+            if incan_core::lang::stdlib::is_stdlib_json_deserialize_trait_name(trait_name)
                 && !impl_block.methods.iter().any(|method| method.name == "from_json")
             {
                 trait_methods.push(quote! {
@@ -248,22 +248,6 @@ impl<'a> IrEmitter<'a> {
             #borrowed_observer_impl
             #(#trait_impls)*
         })
-    }
-
-    /// Return whether a trait impl target names the stdlib JSON serialization trait or an imported alias of it.
-    fn is_serde_serialize_trait_name(trait_name: &str) -> bool {
-        matches!(
-            trait_name,
-            "Serialize" | "JsonSerialize" | "json.Serialize" | "std.serde.json.Serialize"
-        )
-    }
-
-    /// Return whether a trait impl target names the stdlib JSON deserialization trait or an imported alias of it.
-    fn is_serde_deserialize_trait_name(trait_name: &str) -> bool {
-        matches!(
-            trait_name,
-            "Deserialize" | "JsonDeserialize" | "json.Deserialize" | "std.serde.json.Deserialize"
-        )
     }
 
     /// Return the final path segment of a trait name.

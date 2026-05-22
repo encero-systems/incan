@@ -31,7 +31,7 @@ use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig};
 use incan_core::lang::{
-    stdlib::{self, StdlibExtraCrateSource},
+    stdlib::{self, StdlibExtraCrateDep, StdlibExtraCrateSource},
     surface::result_methods,
 };
 #[cfg(feature = "rust_inspect")]
@@ -327,30 +327,7 @@ pub(crate) fn collect_project_requirements(
             continue;
         };
         for dep in namespace.extra_crate_deps {
-            let spec = match dep.source {
-                StdlibExtraCrateSource::Version(version) => DependencySpec {
-                    crate_name: dep.crate_name.to_string(),
-                    version: Some(version.to_string()),
-                    features: vec![],
-                    default_features: true,
-                    source: DependencySource::Registry,
-                    optional: false,
-                    package: None,
-                },
-                StdlibExtraCrateSource::Path(relative_path) => DependencySpec {
-                    crate_name: dep.crate_name.to_string(),
-                    version: None,
-                    features: vec![],
-                    default_features: true,
-                    source: DependencySource::Path {
-                        path: workspace_root.join(relative_path),
-                    },
-                    optional: false,
-                    package: None,
-                },
-            }
-            .normalized();
-
+            let spec = dependency_spec_from_stdlib_dep(dep, &workspace_root);
             merge_requirement_dependency(
                 &mut requirements.dependencies,
                 spec,
@@ -361,16 +338,7 @@ pub(crate) fn collect_project_requirements(
 
     let needs_serde_runtime = needs_legacy_serde_runtime || stdlib_namespaces.contains("serde");
     if needs_serde_runtime {
-        let serde = DependencySpec {
-            crate_name: "serde".to_string(),
-            version: Some("1.0".to_string()),
-            features: vec!["derive".to_string()],
-            default_features: true,
-            source: DependencySource::Registry,
-            optional: false,
-            package: None,
-        }
-        .normalized();
+        let serde = dependency_spec_from_stdlib_extra_crate("serde")?;
         merge_requirement_dependency(
             &mut requirements.dependencies,
             serde,
@@ -397,6 +365,42 @@ pub(crate) fn collect_project_requirements(
     }
 
     Ok(requirements)
+}
+
+fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> CliResult<DependencySpec> {
+    let dep = stdlib::find_extra_crate_dep(crate_name).ok_or_else(|| {
+        CliError::failure(format!(
+            "stdlib dependency metadata for `{crate_name}` is missing from the registry"
+        ))
+    })?;
+    let workspace_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    Ok(dependency_spec_from_stdlib_dep(dep, &workspace_root))
+}
+
+fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep, workspace_root: &Path) -> DependencySpec {
+    match dep.source {
+        StdlibExtraCrateSource::Version(version) => DependencySpec {
+            crate_name: dep.crate_name.to_string(),
+            version: Some(version.to_string()),
+            features: dep.features.iter().map(|feature| (*feature).to_string()).collect(),
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: stdlib::extra_crate_package_alias(dep.crate_name).map(str::to_string),
+        },
+        StdlibExtraCrateSource::Path(relative_path) => DependencySpec {
+            crate_name: dep.crate_name.to_string(),
+            version: None,
+            features: dep.features.iter().map(|feature| (*feature).to_string()).collect(),
+            default_features: true,
+            source: DependencySource::Path {
+                path: workspace_root.join(relative_path),
+            },
+            optional: false,
+            package: None,
+        },
+    }
+    .normalized()
 }
 
 /// Merge a dependency requirement into a collection of requirements.
@@ -469,14 +473,32 @@ const RUST_INSPECT_WORKSPACE_FINGERPRINT_FILE: &str = ".incan_rust_inspect_finge
 #[cfg(feature = "rust_inspect")]
 const RUST_INSPECT_WORKSPACE_FINGERPRINT_PREFIX: &str = "v1:";
 
-/// Counts how many times the rust-inspect stub workspace is fully regenerated (not skipped via fingerprint).
-/// Used by unit tests in this module; serialized with [`RUST_INSPECT_WORKSPACE_TEST_LOCK`].
+/// Counts how many times each rust-inspect stub workspace is fully regenerated instead of skipped via fingerprint.
+///
+/// Full lib tests run in parallel and other tests can legitimately create unrelated rust-inspect workspaces, so this
+/// instrumentation is keyed by generated workspace path instead of using one process-wide counter.
 #[cfg(all(test, feature = "rust_inspect"))]
-pub(crate) static TEST_RUST_INSPECT_WORKSPACE_GENERATIONS: std::sync::atomic::AtomicU64 =
-    std::sync::atomic::AtomicU64::new(0);
+static TEST_RUST_INSPECT_WORKSPACE_GENERATIONS: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::BTreeMap<PathBuf, u64>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
 
+/// Records a full rust-inspect workspace regeneration for the generated workspace path under test.
 #[cfg(all(test, feature = "rust_inspect"))]
-static RUST_INSPECT_WORKSPACE_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+fn record_test_rust_inspect_workspace_generation(workspace_dir: &Path) {
+    let mut counts = TEST_RUST_INSPECT_WORKSPACE_GENERATIONS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    *counts.entry(workspace_dir.to_path_buf()).or_default() += 1;
+}
+
+/// Returns the number of full rust-inspect workspace regenerations recorded for a generated workspace path.
+#[cfg(all(test, feature = "rust_inspect"))]
+fn test_rust_inspect_workspace_generations(workspace_dir: &Path) -> u64 {
+    let counts = TEST_RUST_INSPECT_WORKSPACE_GENERATIONS
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    counts.get(workspace_dir).copied().unwrap_or(0)
+}
 
 #[cfg(feature = "rust_inspect")]
 fn normalized_stdlib_features_for_rust_inspect_fingerprint(features: &[String]) -> Vec<String> {
@@ -683,7 +705,7 @@ pub(crate) fn ensure_rust_inspect_workspace(
     rust_inspect_stub.push_str("fn main() {}");
 
     #[cfg(all(test, feature = "rust_inspect"))]
-    TEST_RUST_INSPECT_WORKSPACE_GENERATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    record_test_rust_inspect_workspace_generation(&rust_inspect_manifest_dir);
 
     generator.generate(rust_inspect_stub.as_str()).map_err(|e| {
         CliError::failure(format!(
@@ -2618,13 +2640,6 @@ pub def main() -> int:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn ensure_rust_inspect_workspace_uses_rust_safe_dependency_keys() -> Result<(), Box<dyn std::error::Error>> {
-        use std::sync::atomic::Ordering;
-
-        let _serial = super::RUST_INSPECT_WORKSPACE_TEST_LOCK
-            .lock()
-            .map_err(|e| format!("rust-inspect workspace test lock poisoned: {e}"))?;
-        super::TEST_RUST_INSPECT_WORKSPACE_GENERATIONS.store(0, Ordering::SeqCst);
-
         let tmp = tempfile::tempdir()?;
         let requirements = ProjectRequirements::default();
         let resolved = ResolvedDependencies {
@@ -2649,7 +2664,7 @@ pub def main() -> int:
             Some("[[package]]\nname = \"metadata_probe\"\n".to_string()),
         )?;
         assert_eq!(
-            super::TEST_RUST_INSPECT_WORKSPACE_GENERATIONS.load(Ordering::SeqCst),
+            super::test_rust_inspect_workspace_generations(&out_dir),
             1,
             "expected one rust-inspect workspace generation"
         );
@@ -2680,13 +2695,6 @@ pub def main() -> int:
     #[cfg(feature = "rust_inspect")]
     #[test]
     fn ensure_rust_inspect_workspace_skips_regeneration_when_unchanged() -> Result<(), Box<dyn std::error::Error>> {
-        use std::sync::atomic::Ordering;
-
-        let _serial = super::RUST_INSPECT_WORKSPACE_TEST_LOCK
-            .lock()
-            .map_err(|e| format!("rust-inspect workspace test lock poisoned: {e}"))?;
-        super::TEST_RUST_INSPECT_WORKSPACE_GENERATIONS.store(0, Ordering::SeqCst);
-
         let tmp = tempfile::tempdir()?;
         let requirements = ProjectRequirements::default();
         let resolved = ResolvedDependencies {
@@ -2703,7 +2711,7 @@ pub def main() -> int:
         };
         let lock = Some("[[package]]\nname = \"skip_probe\"\n".to_string());
 
-        ensure_rust_inspect_workspace(
+        let out_dir = ensure_rust_inspect_workspace(
             tmp.path(),
             "skip_probe",
             Some("2021".to_string()),
@@ -2712,7 +2720,7 @@ pub def main() -> int:
             lock.clone(),
         )?;
         assert_eq!(
-            super::TEST_RUST_INSPECT_WORKSPACE_GENERATIONS.load(Ordering::SeqCst),
+            super::test_rust_inspect_workspace_generations(&out_dir),
             1,
             "first call should generate the workspace"
         );
@@ -2726,7 +2734,7 @@ pub def main() -> int:
             lock,
         )?;
         assert_eq!(
-            super::TEST_RUST_INSPECT_WORKSPACE_GENERATIONS.load(Ordering::SeqCst),
+            super::test_rust_inspect_workspace_generations(&out_dir),
             1,
             "second call with identical inputs should skip regeneration"
         );

@@ -641,6 +641,35 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | OrElse | `or_else` |  | Recover or remap through a Result-returning operation from an Err payload. | RFC 070 | 0.3 | Stable |
 | Inspect | `inspect` |  | Observe an Ok payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
 | InspectErr | `inspect_err` |  | Observe an Err payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
+| Unwrap | `unwrap` |  | Return the Ok payload or panic. | RFC 000 | 0.1 | Stable |
+| UnwrapOr | `unwrap_or` |  | Return the Ok payload or a default value. | RFC 000 | 0.1 | Stable |
+
+
+### Iterator methods
+
+| Id | Canonical | Aliases | Description | RFC | Since | Stability |
+|---|---|---|---|---|---|---|
+| Iter | `iter` |  | Create an iterator over an iterable. | RFC 088 | 0.3 | Stable |
+| Map | `map` |  | Lazily transform iterator items. | RFC 088 | 0.3 | Stable |
+| Filter | `filter` |  | Lazily keep items that match a predicate. | RFC 088 | 0.3 | Stable |
+| Enumerate | `enumerate` |  | Yield each item with its zero-based index. | RFC 088 | 0.3 | Stable |
+| Zip | `zip` |  | Pair items from two iterables. | RFC 088 | 0.3 | Stable |
+| Take | `take` |  | Yield at most the requested number of items. | RFC 088 | 0.3 | Stable |
+| Skip | `skip` |  | Discard at most the requested number of items. | RFC 088 | 0.3 | Stable |
+| TakeWhile | `take_while` |  | Yield items until a predicate first returns false. | RFC 088 | 0.3 | Stable |
+| SkipWhile | `skip_while` |  | Discard items while a predicate returns true. | RFC 088 | 0.3 | Stable |
+| Chain | `chain` |  | Yield receiver items followed by another iterable. | RFC 088 | 0.3 | Stable |
+| FlatMap | `flat_map` |  | Map items to iterables and flatten the result. | RFC 088 | 0.3 | Stable |
+| Batch | `batch` |  | Yield fixed-size list batches. | RFC 088 | 0.3 | Stable |
+| Collect | `collect` |  | Consume an iterator into a list. | RFC 088 | 0.3 | Stable |
+| Count | `count` |  | Consume an iterator and return the item count. | RFC 088 | 0.3 | Stable |
+| Reduce | `reduce` |  | Consume an iterator with an explicit accumulator. | RFC 088 | 0.3 | Stable |
+| Fold | `fold` |  | Consume an iterator with an explicit accumulator. | RFC 088 | 0.3 | Stable |
+| Any | `any` |  | Return whether any item satisfies a predicate. | RFC 088 | 0.3 | Stable |
+| All | `all` |  | Return whether every item satisfies a predicate. | RFC 088 | 0.3 | Stable |
+| Find | `find` |  | Return the first item satisfying a predicate. | RFC 088 | 0.3 | Stable |
+| ForEach | `for_each` |  | Consume an iterator for side effects. | RFC 088 | 0.3 | Stable |
+| Sum | `sum` |  | Consume an iterator and return the numeric sum. | RFC 088 | 0.3 | Stable |
 
 
 ### FrozenList methods

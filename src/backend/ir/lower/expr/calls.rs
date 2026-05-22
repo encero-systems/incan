@@ -20,6 +20,8 @@ use incan_core::lang::stdlib;
 use incan_core::lang::stdlib::{STDLIB_BUILTINS, STDLIB_ROOT};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::surface::types as surface_types;
+use incan_core::lang::testing::{self, TestingAssertHelperId};
+use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
 
@@ -1391,7 +1393,7 @@ impl AstLowering {
         let Some(coercion) = coercion else {
             return Ok(arg_expr);
         };
-        let target_ty = self.lower_resolved_type(&coercion.target_type);
+        let target_ty = self.lower_rust_boundary_target_type(&coercion.target_type);
         let from_ty = arg_expr.ty.clone();
         let kind = match coercion.kind {
             RustArgCoercionKind::Builtin(policy) => IrInteropCoercionKind::Builtin {
@@ -1419,6 +1421,104 @@ impl AstLowering {
             },
             target_ty,
         ))
+    }
+
+    /// Lower the typechecker-selected Rust boundary target without collapsing borrowed Rust slices into owned values.
+    ///
+    /// General source-level references lower as `Ref<T>`, but Rust argument coercions use the target type as a backend
+    /// contract. A `&str` parameter therefore lowers to `StrRef`, while `&String` remains a reference to the owned Rust
+    /// string target recorded by the frontend.
+    fn lower_rust_boundary_target_type(&self, target_ty: &ResolvedType) -> IrType {
+        match target_ty {
+            ResolvedType::Ref(inner) if matches!(inner.as_ref(), ResolvedType::Str) => IrType::StrRef,
+            ResolvedType::Ref(inner) => IrType::Ref(Box::new(self.lower_rust_boundary_target_type(inner))),
+            ResolvedType::RefMut(inner) => IrType::RefMut(Box::new(self.lower_rust_boundary_target_type(inner))),
+            ResolvedType::Tuple(items) => IrType::Tuple(
+                items
+                    .iter()
+                    .map(|item| self.lower_rust_boundary_target_type(item))
+                    .collect(),
+            ),
+            ResolvedType::FrozenList(inner) => IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::FrozenList).to_string(),
+                vec![self.lower_rust_boundary_target_type(inner)],
+            ),
+            ResolvedType::FrozenSet(inner) => IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::FrozenSet).to_string(),
+                vec![self.lower_rust_boundary_target_type(inner)],
+            ),
+            ResolvedType::FrozenDict(key, value) => IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::FrozenDict).to_string(),
+                vec![
+                    self.lower_rust_boundary_target_type(key),
+                    self.lower_rust_boundary_target_type(value),
+                ],
+            ),
+            ResolvedType::Generic(name, args) => match collections::from_str(name.as_str()) {
+                Some(CollectionTypeId::List) => IrType::List(Box::new(
+                    args.first()
+                        .map(|arg| self.lower_rust_boundary_target_type(arg))
+                        .unwrap_or(IrType::Unknown),
+                )),
+                Some(CollectionTypeId::Dict) => IrType::Dict(
+                    Box::new(
+                        args.first()
+                            .map(|arg| self.lower_rust_boundary_target_type(arg))
+                            .unwrap_or(IrType::Unknown),
+                    ),
+                    Box::new(
+                        args.get(1)
+                            .map(|arg| self.lower_rust_boundary_target_type(arg))
+                            .unwrap_or(IrType::Unknown),
+                    ),
+                ),
+                Some(CollectionTypeId::Set) => IrType::Set(Box::new(
+                    args.first()
+                        .map(|arg| self.lower_rust_boundary_target_type(arg))
+                        .unwrap_or(IrType::Unknown),
+                )),
+                Some(CollectionTypeId::Option) => IrType::Option(Box::new(
+                    args.first()
+                        .map(|arg| self.lower_rust_boundary_target_type(arg))
+                        .unwrap_or(IrType::Unknown),
+                )),
+                Some(CollectionTypeId::Result) => IrType::Result(
+                    Box::new(
+                        args.first()
+                            .map(|arg| self.lower_rust_boundary_target_type(arg))
+                            .unwrap_or(IrType::Unknown),
+                    ),
+                    Box::new(
+                        args.get(1)
+                            .map(|arg| self.lower_rust_boundary_target_type(arg))
+                            .unwrap_or(IrType::Unknown),
+                    ),
+                ),
+                Some(CollectionTypeId::Tuple) => IrType::Tuple(
+                    args.iter()
+                        .map(|arg| self.lower_rust_boundary_target_type(arg))
+                        .collect(),
+                ),
+                Some(
+                    id @ (CollectionTypeId::FrozenList
+                    | CollectionTypeId::FrozenSet
+                    | CollectionTypeId::FrozenDict
+                    | CollectionTypeId::Generator),
+                ) => IrType::NamedGeneric(
+                    collections::as_str(id).to_string(),
+                    args.iter()
+                        .map(|arg| self.lower_rust_boundary_target_type(arg))
+                        .collect(),
+                ),
+                None => IrType::NamedGeneric(
+                    name.clone(),
+                    args.iter()
+                        .map(|arg| self.lower_rust_boundary_target_type(arg))
+                        .collect(),
+                ),
+            },
+            _ => self.lower_resolved_type(target_ty),
+        }
     }
 
     /// Lower a function/constructor call expression.
@@ -1595,11 +1695,12 @@ impl AstLowering {
             let arg_span = Self::call_arg_expr(arg_ast).span;
             arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
         }
-        if imported_callee_path.as_ref().is_some_and(|path| {
-            path.len() == 3 && path[0] == "std" && path[1] == "testing" && path[2] == "assert_raises"
-        }) && args_ir
-            .get(1)
-            .is_none_or(|arg| !matches!(arg.expr.kind, IrExprKind::Literal(IrLiteral::StaticStr(_))))
+        if imported_callee_path
+            .as_ref()
+            .is_some_and(|path| testing::is_assert_helper_std_path(path, TestingAssertHelperId::AssertRaises))
+            && args_ir
+                .get(1)
+                .is_none_or(|arg| !matches!(arg.expr.kind, IrExprKind::Literal(IrLiteral::StaticStr(_))))
         {
             let Some(error_type) = type_args.first() else {
                 return Err(LoweringError {
@@ -2097,7 +2198,7 @@ mod tests {
             (arg_span.start, arg_span.end),
             RustArgCoercionInfo {
                 rust_target_type: "&str".to_string(),
-                target_type: ResolvedType::Str,
+                target_type: ResolvedType::Ref(Box::new(ResolvedType::Str)),
                 kind: RustArgCoercionKind::Builtin(CoercionPolicy::Borrow),
             },
         );
@@ -2119,17 +2220,38 @@ mod tests {
 
         match lowered.kind {
             IrExprKind::MethodCall { args, .. } => {
-                assert!(
-                    matches!(
-                        args.first().map(|arg| &arg.expr.kind),
-                        Some(IrExprKind::InteropCoerce { .. })
-                    ),
-                    "expected first method arg to be wrapped in InteropCoerce, got {args:?}"
-                );
+                let Some(first_arg) = args.first() else {
+                    return Err("expected lowered method arg".to_string());
+                };
+                match &first_arg.expr.kind {
+                    IrExprKind::InteropCoerce { to_ty, .. } => {
+                        assert_eq!(
+                            *to_ty,
+                            IrType::StrRef,
+                            "expected borrowed str target to lower to StrRef"
+                        );
+                    }
+                    other => {
+                        return Err(format!(
+                            "expected first method arg to be wrapped in InteropCoerce, got {other:?}"
+                        ));
+                    }
+                }
             }
             other => return Err(format!("expected MethodCall lowering, got {other:?}")),
         }
         Ok(())
+    }
+
+    #[test]
+    fn lower_rust_boundary_target_preserves_nested_borrowed_str_refs() {
+        let lowering = AstLowering::new();
+        let target = ResolvedType::Generic("List".to_string(), vec![ResolvedType::Ref(Box::new(ResolvedType::Str))]);
+
+        assert_eq!(
+            lowering.lower_rust_boundary_target_type(&target),
+            IrType::List(Box::new(IrType::StrRef)),
+        );
     }
 
     #[test]
