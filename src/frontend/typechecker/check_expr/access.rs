@@ -13,14 +13,14 @@ use crate::frontend::typechecker::helpers::{
     option_ty, string_method_return,
 };
 use crate::frontend::typechecker::type_info::{RustMethodTraitImportUse, RustTraitImportInfo};
-use incan_core::interop::{RustCollectionFamily, RustItemKind};
+use incan_core::interop::{RustCollectionFamily, RustFunctionSig, RustItemKind, metadata_free_method_signature};
 use incan_core::lang::magic_methods;
 use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::types as surface_types;
 use incan_core::lang::surface::types::{SEMAPHORE_ACQUIRE_ERROR_TYPE_NAME, SEMAPHORE_PERMIT_TYPE_NAME, SurfaceTypeId};
 use incan_core::lang::surface::{
     dict_methods, float_methods, frozen_bytes_methods, frozen_dict_methods, frozen_list_methods, frozen_set_methods,
-    list_methods, result_methods, set_methods,
+    iterator_methods, list_methods, result_methods, set_methods,
 };
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
@@ -63,7 +63,17 @@ fn rust_receiver_display(path: &str) -> String {
 impl TypeChecker {
     /// Return whether `method` names an RFC 070 `Result[T, E]` combinator.
     fn result_combinator_name(method: &str) -> bool {
-        result_methods::from_str(method).is_some()
+        matches!(
+            result_methods::from_str(method),
+            Some(
+                result_methods::ResultMethodId::Map
+                    | result_methods::ResultMethodId::MapErr
+                    | result_methods::ResultMethodId::AndThen
+                    | result_methods::ResultMethodId::OrElse
+                    | result_methods::ResultMethodId::Inspect
+                    | result_methods::ResultMethodId::InspectErr
+            )
+        )
     }
 
     /// Resolve a callable function or callable object to its parameter and return types.
@@ -200,6 +210,7 @@ impl TypeChecker {
                 self.validate_result_combinator_callback(method, callback_ty, &err_ty, Some(&ResolvedType::Unit), span);
                 ResolvedType::Generic("Result".to_string(), vec![ok_ty, err_ty])
             }
+            result_methods::ResultMethodId::Unwrap | result_methods::ResultMethodId::UnwrapOr => ResolvedType::Unknown,
         }
     }
 
@@ -574,13 +585,15 @@ impl TypeChecker {
         let iterator_elem = self
             .iterator_protocol_element_type(base_ty)
             .unwrap_or_else(|| elem.clone());
+        let method_id = iterator_methods::from_str(method)?;
+        use iterator_methods::IteratorMethodId as M;
 
-        match method {
-            "iter" => {
+        match method_id {
+            M::Iter => {
                 self.validate_iterator_method_arity(method, 0, args.len(), span);
                 Some(Self::iterator_protocol_ty(elem))
             }
-            "map" => {
+            M::Map => {
                 if !self.validate_iterator_method_arity(method, 1, args.len(), span) {
                     return Some(Self::iterator_protocol_ty(ResolvedType::Unknown));
                 }
@@ -591,7 +604,7 @@ impl TypeChecker {
                 );
                 Some(Self::iterator_protocol_ty(mapped))
             }
-            "filter" | "take_while" | "skip_while" => {
+            M::Filter | M::TakeWhile | M::SkipWhile => {
                 if self.validate_iterator_method_arity(method, 1, args.len(), span) {
                     self.validate_iterator_callback_return(
                         method,
@@ -603,7 +616,7 @@ impl TypeChecker {
                 }
                 Some(Self::iterator_protocol_ty(iterator_elem))
             }
-            "flat_map" => {
+            M::FlatMap => {
                 if !self.validate_iterator_method_arity(method, 1, args.len(), span) {
                     return Some(Self::iterator_protocol_ty(ResolvedType::Unknown));
                 }
@@ -628,7 +641,7 @@ impl TypeChecker {
                 };
                 Some(Self::iterator_protocol_ty(flat_elem))
             }
-            "take" | "skip" => {
+            M::Take | M::Skip => {
                 if self.validate_iterator_method_arity(method, 1, args.len(), span)
                     && let Some(arg_ty) = arg_types.first()
                     && !self.types_compatible(arg_ty, &ResolvedType::Int)
@@ -638,7 +651,7 @@ impl TypeChecker {
                 }
                 Some(Self::iterator_protocol_ty(iterator_elem))
             }
-            "chain" => {
+            M::Chain => {
                 if self.validate_iterator_method_arity(method, 1, args.len(), span)
                     && let Some(arg_ty) = arg_types.first()
                 {
@@ -650,14 +663,14 @@ impl TypeChecker {
                 }
                 Some(Self::iterator_protocol_ty(iterator_elem))
             }
-            "enumerate" => {
+            M::Enumerate => {
                 self.validate_iterator_method_arity(method, 0, args.len(), span);
                 Some(Self::iterator_protocol_ty(ResolvedType::Tuple(vec![
                     ResolvedType::Int,
                     iterator_elem,
                 ])))
             }
-            "zip" => {
+            M::Zip => {
                 if !self.validate_iterator_method_arity(method, 1, args.len(), span) {
                     return Some(Self::iterator_protocol_ty(ResolvedType::Unknown));
                 }
@@ -682,7 +695,7 @@ impl TypeChecker {
                     other_elem,
                 ])))
             }
-            "batch" => {
+            M::Batch => {
                 if self.validate_iterator_method_arity(method, 1, args.len(), span)
                     && let Some(arg_ty) = arg_types.first()
                     && !self.types_compatible(arg_ty, &ResolvedType::Int)
@@ -693,15 +706,15 @@ impl TypeChecker {
                 self.validate_iterator_batch_size_literal(args, span);
                 Some(Self::iterator_protocol_ty(list_ty(iterator_elem)))
             }
-            "collect" => {
+            M::Collect => {
                 self.validate_iterator_method_arity(method, 0, args.len(), span);
                 Some(list_ty(iterator_elem))
             }
-            "count" => {
+            M::Count => {
                 self.validate_iterator_method_arity(method, 0, args.len(), span);
                 Some(ResolvedType::Int)
             }
-            "any" | "all" => {
+            M::Any | M::All => {
                 if self.validate_iterator_method_arity(method, 1, args.len(), span) {
                     self.validate_iterator_callback_return(
                         method,
@@ -713,7 +726,7 @@ impl TypeChecker {
                 }
                 Some(ResolvedType::Bool)
             }
-            "find" => {
+            M::Find => {
                 if self.validate_iterator_method_arity(method, 1, args.len(), span) {
                     self.validate_iterator_callback_return(
                         method,
@@ -725,7 +738,7 @@ impl TypeChecker {
                 }
                 Some(option_ty(iterator_elem))
             }
-            "reduce" | "fold" => {
+            M::Reduce | M::Fold => {
                 if !self.validate_iterator_method_arity(method, 2, args.len(), span) {
                     return Some(ResolvedType::Unknown);
                 }
@@ -739,7 +752,7 @@ impl TypeChecker {
                 );
                 Some(acc_ty)
             }
-            "for_each" => {
+            M::ForEach => {
                 if self.validate_iterator_method_arity(method, 1, args.len(), span) {
                     self.validate_iterator_callback_return(
                         method,
@@ -751,11 +764,10 @@ impl TypeChecker {
                 }
                 Some(ResolvedType::Unit)
             }
-            "sum" => {
+            M::Sum => {
                 self.validate_iterator_method_arity(method, 0, args.len(), span);
                 Some(self.iterator_sum_output_type(&iterator_elem, span))
             }
-            _ => None,
         }
     }
 
@@ -1357,6 +1369,16 @@ impl TypeChecker {
                 );
                 return Some(Self::substitute_rust_self_type(ret, rust_path));
             }
+            if let Some(ret) = self.validate_metadata_free_rust_method_call(
+                rust_path,
+                method,
+                args,
+                arg_types,
+                preserves_lookup_arg_shape,
+                span,
+            ) {
+                return Some(ret);
+            }
             return None;
         };
         match &metadata.kind {
@@ -1375,6 +1397,16 @@ impl TypeChecker {
                             span,
                         );
                         return Some(Self::substitute_rust_self_type(ret, rust_path));
+                    }
+                    if let Some(ret) = self.validate_metadata_free_rust_method_call(
+                        rust_path,
+                        method,
+                        args,
+                        arg_types,
+                        preserves_lookup_arg_shape,
+                        span,
+                    ) {
+                        return Some(ret);
                     }
                     // Stay permissive when no unambiguous imported trait or trait method signature can be selected.
                     return Some(ResolvedType::Unknown);
@@ -1409,6 +1441,34 @@ impl TypeChecker {
             // Function, Trait, Module, Constant: metadata is incomplete for method surfaces.
             // Stay permissive and let rustc catch genuine errors at compile time.
             _ => Some(ResolvedType::Unknown),
+        }
+    }
+
+    /// Validate one metadata-free Rust method compatibility rule through the ordinary Rust-boundary path.
+    fn validate_metadata_free_rust_method_call(
+        &mut self,
+        rust_path: &str,
+        method: &str,
+        args: &[CallArg],
+        arg_types: &[ResolvedType],
+        preserves_lookup_arg_shape: bool,
+        span: Span,
+    ) -> Option<ResolvedType> {
+        let sig: RustFunctionSig = metadata_free_method_signature(rust_path, method)?;
+        let callable_display = format!("rust::{rust_path}.{method}");
+        let error_count = self.errors.len();
+        let ret = self.validate_rust_method_call(
+            callable_display.as_str(),
+            &sig,
+            args,
+            arg_types,
+            preserves_lookup_arg_shape,
+            span,
+        );
+        if self.errors.len() > error_count {
+            Some(ResolvedType::Unknown)
+        } else {
+            Some(Self::substitute_rust_self_type(ret, rust_path))
         }
     }
 
@@ -1452,9 +1512,9 @@ impl TypeChecker {
 
     /// Record a unique imported Rust trait method when receiver metadata is unavailable.
     ///
-    /// rust-inspect can miss generated or re-export-heavy concrete types while still extracting the imported trait's
-    /// signature. In that case the trait signature is enough for call-site parameter shape metadata; rustc remains the
-    /// authority on whether the receiver type actually implements the trait.
+    /// rust-inspect can miss generated or re-export-heavy concrete types while still extracting the imported trait or
+    /// falling back to core extension-trait vocabulary. In that case the import itself is enough for Rust method
+    /// lookup; a recovered signature only adds call-site parameter shape metadata.
     fn record_unique_rust_trait_import_for_unresolved_receiver_call(
         &mut self,
         method: &str,
@@ -1476,7 +1536,6 @@ impl TypeChecker {
         let [import_use] = matches.as_slice() else {
             return None;
         };
-        import_use.signature.as_ref()?;
         self.type_info
             .record_rust_method_trait_import_use(span, import_use.clone());
         Some(import_use.clone())
@@ -2915,7 +2974,8 @@ impl TypeChecker {
                     // Rust: `Option<&T>::copied() -> Option<T>` (for `T: Copy`).
                     if let ResolvedType::Ref(t) | ResolvedType::RefMut(t) = inner {
                         let t = (*t).clone();
-                        if matches!(t, ResolvedType::Int | ResolvedType::Float | ResolvedType::Bool) {
+                        let is_unresolved_rust_generic = matches!(&t, ResolvedType::RustPath(path) if TypeChecker::rust_display_type_var_name(path).is_some());
+                        if self.is_copy_type(&t) || self.is_generic_placeholder_type(&t) || is_unresolved_rust_generic {
                             return option_ty(t);
                         }
                     }
@@ -2942,6 +3002,42 @@ impl TypeChecker {
         if let ResolvedType::Generic(name, type_args) = &base_ty
             && collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
             && type_args.len() == 2
+        {
+            let ok_ty = type_args[0].clone();
+            match result_methods::from_str(method) {
+                Some(result_methods::ResultMethodId::Unwrap) => {
+                    if !args.is_empty() {
+                        self.errors.push(errors::type_mismatch(
+                            "no arguments",
+                            &format!("{} argument(s)", args.len()),
+                            span,
+                        ));
+                    }
+                    return ok_ty;
+                }
+                Some(result_methods::ResultMethodId::UnwrapOr) => {
+                    if let Some(default_ty) = arg_types.first()
+                        && !self.types_compatible(default_ty, &ok_ty)
+                    {
+                        self.errors
+                            .push(errors::type_mismatch(&ok_ty.to_string(), &default_ty.to_string(), span));
+                    }
+                    if args.len() != 1 {
+                        self.errors.push(errors::type_mismatch(
+                            "one default argument",
+                            &format!("{} argument(s)", args.len()),
+                            span,
+                        ));
+                    }
+                    return ok_ty;
+                }
+                _ => {}
+            }
+        }
+
+        if let ResolvedType::Generic(name, type_args) = &base_ty
+            && collection_type_id(name.as_str()) == Some(CollectionTypeId::Result)
+            && type_args.len() == 2
             && Self::result_combinator_name(method)
         {
             return self.check_result_combinator_method(
@@ -2958,20 +3054,21 @@ impl TypeChecker {
         if let ResolvedType::Generic(name, type_args) = &base_ty {
             if collection_type_id(name.as_str()) == Some(CollectionTypeId::Generator) {
                 let elem = type_args.first().cloned().unwrap_or(ResolvedType::Unknown);
-                match method {
-                    "map" => {
+                use iterator_methods::IteratorMethodId as M;
+                match iterator_methods::from_str(method) {
+                    Some(M::Map) => {
                         let mapped = self.generator_map_return_type(&elem, args, &arg_types, span);
                         return generator_ty(mapped);
                     }
-                    "filter" => {
+                    Some(M::Filter) => {
                         self.validate_generator_filter_arg(&elem, args, &arg_types, span);
                         return generator_ty(elem);
                     }
-                    "take" => {
+                    Some(M::Take) => {
                         self.validate_generator_take_arg(args, &arg_types, span);
                         return generator_ty(elem);
                     }
-                    "collect" => {
+                    Some(M::Collect) => {
                         if !args.is_empty() {
                             self.errors.push(errors::type_mismatch(
                                 "no arguments",

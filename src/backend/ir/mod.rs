@@ -23,6 +23,7 @@
 pub mod conversions;
 pub mod ownership;
 pub mod prelude;
+pub(crate) mod reference_shape;
 
 pub mod codegen;
 pub mod decl;

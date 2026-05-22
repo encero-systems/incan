@@ -155,6 +155,17 @@ pub fn from_str(name: &str) -> Option<CollectionTypeId> {
         .map(|t| t.id)
 }
 
+/// Resolve a Rust generic display base such as `Vec`, `HashMap`, or `HashSet` into the matching
+/// Incan collection type without making Rust-specific names valid source-level aliases.
+pub fn from_rust_display_base(base: &str) -> Option<CollectionTypeId> {
+    let tail = base.rsplit("::").next().unwrap_or(base);
+    match tail {
+        "HashMap" => Some(CollectionTypeId::Dict),
+        "HashSet" => Some(CollectionTypeId::Set),
+        _ => from_str(tail),
+    }
+}
+
 /// Return the canonical spelling for a collection/generic-base builtin type.
 ///
 /// ## Parameters

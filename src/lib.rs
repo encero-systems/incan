@@ -42,4 +42,4 @@ pub use frontend::typechecker;
 pub use backend::IrCodegen;
 pub use backend::project::ProjectGenerator;
 
-pub use format::{FormatConfig, check_formatted, format_diff, format_source, format_source_with_config};
+pub use format::{FormatConfig, FormatError, check_formatted, format_diff, format_source, format_source_with_config};

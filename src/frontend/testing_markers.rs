@@ -135,24 +135,10 @@ pub struct TestingFixtureMarkerArgs {
 }
 
 impl Default for TestingMarkerSemantics {
-    /// Return the built-in marker semantics used as the extraction baseline for stdlib metadata.
+    /// Return fixture defaults used while strict marker metadata is loaded from stdlib source.
     fn default() -> Self {
-        let mut marker_kinds = HashMap::new();
-        marker_kinds.insert("test".to_string(), TestingMarkerKind::Test);
-        marker_kinds.insert("fixture".to_string(), TestingMarkerKind::Fixture);
-        marker_kinds.insert("skip".to_string(), TestingMarkerKind::Skip);
-        marker_kinds.insert("skipif".to_string(), TestingMarkerKind::SkipIf);
-        marker_kinds.insert("xfail".to_string(), TestingMarkerKind::XFail);
-        marker_kinds.insert("xfailif".to_string(), TestingMarkerKind::XFailIf);
-        marker_kinds.insert("slow".to_string(), TestingMarkerKind::Slow);
-        marker_kinds.insert("mark".to_string(), TestingMarkerKind::Mark);
-        marker_kinds.insert("resource".to_string(), TestingMarkerKind::Resource);
-        marker_kinds.insert("serial".to_string(), TestingMarkerKind::Serial);
-        marker_kinds.insert("timeout".to_string(), TestingMarkerKind::Timeout);
-        marker_kinds.insert("parametrize".to_string(), TestingMarkerKind::Parametrize);
-
         Self {
-            marker_kinds,
+            marker_kinds: HashMap::new(),
             fixture_scope_arg: "scope".to_string(),
             fixture_autouse_arg: "autouse".to_string(),
             fixture_scope_function: "function".to_string(),
@@ -358,7 +344,46 @@ fn extract_testing_marker_semantics(program: &ast::Program) -> Result<TestingMar
             "std.testing does not declare any marker metadata (`@rust.extern(metadata={\"marker_kind\": ...})`)",
         ));
     }
+    validate_testing_marker_inventory(&semantics)?;
     Ok(semantics)
+}
+
+fn validate_testing_marker_inventory(semantics: &TestingMarkerSemantics) -> Result<(), TestingMarkerLoadError> {
+    let expected_names = incan_core::lang::testing::RUNNER_ONLY_MARKER_NAMES;
+    let mut missing = Vec::new();
+    let mut mismatched = Vec::new();
+
+    for expected_name in expected_names {
+        let Some(actual_kind) = semantics.marker_kinds.get(*expected_name) else {
+            missing.push(*expected_name);
+            continue;
+        };
+        let expected_kind = TestingMarkerKind::from_str(expected_name).ok_or_else(|| {
+            TestingMarkerLoadError::new(format!(
+                "runtime marker inventory contains unknown marker `{expected_name}`"
+            ))
+        })?;
+        if actual_kind != &expected_kind {
+            mismatched.push(format!(
+                "{expected_name} declares {actual_kind:?}, expected {expected_kind:?}"
+            ));
+        }
+    }
+
+    let unexpected = semantics
+        .marker_kinds
+        .keys()
+        .filter(|name| !expected_names.contains(&name.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    if !missing.is_empty() || !unexpected.is_empty() || !mismatched.is_empty() {
+        return Err(TestingMarkerLoadError::new(format!(
+            "std.testing marker metadata does not match runtime marker inventory; missing={missing:?}, unexpected={unexpected:?}, mismatched={mismatched:?}"
+        )));
+    }
+
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -399,6 +424,7 @@ fn parse_testing_metadata_dict(
     };
 
     let mut kind: Option<TestingMarkerKind> = None;
+    let mut runner_only = false;
     let mut fixture_scope_arg: Option<String> = None;
     let mut fixture_autouse_arg: Option<String> = None;
     let mut fixture_scopes: Option<[String; 3]> = None;
@@ -428,10 +454,13 @@ fn parse_testing_metadata_dict(
                 };
                 kind = Some(parsed_kind);
             }
-            TESTING_MARKER_RUNNER_ONLY_KEY if expr_as_bool_literal(value_expr).is_none() => {
-                return Err(TestingMarkerLoadError::new(
-                    "malformed runner_only metadata value (expected bool)",
-                ));
+            TESTING_MARKER_RUNNER_ONLY_KEY => {
+                let Some(value) = expr_as_bool_literal(value_expr) else {
+                    return Err(TestingMarkerLoadError::new(
+                        "malformed runner_only metadata value (expected bool)",
+                    ));
+                };
+                runner_only = value;
             }
             TESTING_FIXTURE_SCOPE_ARG_KEY => {
                 let Some(value) = expr_as_string_literal(value_expr) else {
@@ -465,6 +494,12 @@ fn parse_testing_metadata_dict(
         // Not a testing marker metadata blob.
         return Ok(None);
     };
+
+    if !runner_only {
+        return Err(TestingMarkerLoadError::new(
+            "std.testing marker metadata must declare runner_only=true",
+        ));
+    }
 
     Ok(Some(TestingMarkerAnnotation {
         kind,
@@ -538,6 +573,19 @@ mod tests {
     }
 
     #[test]
+    fn test_std_testing_metadata_matches_runtime_marker_names() -> Result<(), Box<dyn std::error::Error>> {
+        let semantics = load_testing_marker_semantics_from_stdlib()?;
+        let mut metadata_names: Vec<&str> = semantics.marker_kinds.keys().map(String::as_str).collect();
+        metadata_names.sort_unstable();
+
+        let mut runtime_names = incan_core::lang::testing::RUNNER_ONLY_MARKER_NAMES.to_vec();
+        runtime_names.sort_unstable();
+
+        assert_eq!(metadata_names, runtime_names);
+        Ok(())
+    }
+
+    #[test]
     fn test_testing_marker_semantics_malformed_annotation_is_error() -> Result<(), Box<dyn std::error::Error>> {
         let source = r#"
 @rust.extern(metadata={"marker_kind": "skip", "runner_only": true})
@@ -559,6 +607,84 @@ def xfail(reason: str = "") -> None:
 
         let extracted = extract_testing_marker_semantics(&program);
         assert!(extracted.is_err(), "malformed marker annotation should fail extraction");
+        Ok(())
+    }
+
+    #[test]
+    fn test_testing_marker_semantics_rejects_non_runner_only_marker() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+@rust.extern(metadata={"marker_kind": "skip", "runner_only": false})
+def skip(reason: str = "") -> None:
+    ...
+"#;
+        let tokens = match crate::frontend::lexer::lex(source) {
+            Ok(tokens) => tokens,
+            Err(errs) => return Err(format!("lex failed for non-runner-only annotation fixture: {errs:?}").into()),
+        };
+        let program = match crate::frontend::parser::parse(&tokens) {
+            Ok(program) => program,
+            Err(errs) => return Err(format!("parse failed for non-runner-only annotation fixture: {errs:?}").into()),
+        };
+
+        let extracted = extract_testing_marker_semantics(&program);
+        assert!(
+            extracted
+                .as_ref()
+                .is_err_and(|err| err.to_string().contains("runner_only=true")),
+            "non-runner-only marker annotation should fail extraction; got: {extracted:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_testing_marker_semantics_rejects_incomplete_marker_inventory() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+@rust.extern(metadata={"marker_kind": "skip", "runner_only": true})
+def skip(reason: str = "") -> None:
+    ...
+"#;
+        let tokens = match crate::frontend::lexer::lex(source) {
+            Ok(tokens) => tokens,
+            Err(errs) => return Err(format!("lex failed for incomplete marker inventory fixture: {errs:?}").into()),
+        };
+        let program = match crate::frontend::parser::parse(&tokens) {
+            Ok(program) => program,
+            Err(errs) => return Err(format!("parse failed for incomplete marker inventory fixture: {errs:?}").into()),
+        };
+
+        let extracted = extract_testing_marker_semantics(&program);
+        assert!(
+            extracted
+                .as_ref()
+                .is_err_and(|err| err.to_string().contains("runtime marker inventory")),
+            "incomplete marker inventory should fail extraction; got: {extracted:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_testing_marker_semantics_rejects_function_kind_mismatch() -> Result<(), Box<dyn std::error::Error>> {
+        let source = r#"
+@rust.extern(metadata={"marker_kind": "xfail", "runner_only": true})
+def skip(reason: str = "") -> None:
+    ...
+"#;
+        let tokens = match crate::frontend::lexer::lex(source) {
+            Ok(tokens) => tokens,
+            Err(errs) => return Err(format!("lex failed for mismatched marker fixture: {errs:?}").into()),
+        };
+        let program = match crate::frontend::parser::parse(&tokens) {
+            Ok(program) => program,
+            Err(errs) => return Err(format!("parse failed for mismatched marker fixture: {errs:?}").into()),
+        };
+
+        let extracted = extract_testing_marker_semantics(&program);
+        assert!(
+            extracted
+                .as_ref()
+                .is_err_and(|err| err.to_string().contains("mismatched")),
+            "mismatched marker inventory should fail extraction; got: {extracted:?}"
+        );
         Ok(())
     }
 }

@@ -1065,6 +1065,31 @@ fn render_surface_methods_section(out: &mut String) {
     }
     out.push('\n');
 
+    // Iterator
+    out.push_str("\n### Iterator methods\n\n");
+    out.push_str(table_header());
+    for m in surface::iterator_methods::ITERATOR_METHODS {
+        let id = format!("{:?}", m.id);
+        let canonical = format!("`{}`", m.canonical);
+        let aliases = if m.aliases.is_empty() {
+            String::new()
+        } else {
+            m.aliases
+                .iter()
+                .map(|a| format!("`{}`", a))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let desc = m.description;
+        let rfc = m.introduced_in_rfc;
+        let since = m.since;
+        let stability = format!("{:?}", m.stability);
+        out.push_str(&format!(
+            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
+        ));
+    }
+    out.push('\n');
+
     // Frozen containers
     out.push_str("\n### FrozenList methods\n\n");
     out.push_str(table_header());

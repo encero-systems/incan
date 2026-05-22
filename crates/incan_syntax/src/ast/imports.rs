@@ -61,7 +61,7 @@ pub enum ImportKind {
         path: Vec<Ident>,
         /// Optional version requirement string (Cargo semver syntax).
         version: Option<String>,
-        /// Optional feature list (only valid when `version` is provided).
+        /// Optional feature list.
         features: Vec<String>,
     },
     /// `from rust::time import Instant, Duration` - Rust crate with specific items
@@ -71,7 +71,7 @@ pub enum ImportKind {
         path: Vec<Ident>,
         /// Optional version requirement string (Cargo semver syntax).
         version: Option<String>,
-        /// Optional feature list (only valid when `version` is provided).
+        /// Optional feature list.
         features: Vec<String>,
         items: Vec<ImportItem>,
     },

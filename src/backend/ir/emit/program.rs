@@ -343,23 +343,21 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         match magic_methods::from_str(method.name.as_str()) {
             Some(magic_methods::MagicMethodId::Eq | magic_methods::MagicMethodId::Str) => true,
             Some(magic_methods::MagicMethodId::ClassName | magic_methods::MagicMethodId::Fields) => {
-                self.method_is_needed(&impl_block.target_type, method)
+                self.analysis.should_retain_method(
+                    self.preserve_public_items,
+                    &impl_block.target_type,
+                    &method.name,
+                    &method.visibility,
+                )
             }
             _ if impl_block.trait_name.is_some() => true,
-            _ => self.method_is_needed(&impl_block.target_type, method),
+            _ => self.analysis.should_retain_method(
+                self.preserve_public_items,
+                &impl_block.target_type,
+                &method.name,
+                &method.visibility,
+            ),
         }
-    }
-
-    /// Mirror the emitter's method-retention predicate for generated-use analysis.
-    fn method_is_needed(&self, target_type: &str, method: &IrFunction) -> bool {
-        self.analysis.public_types.contains(target_type)
-            || (!self.preserve_public_items
-                && !matches!(method.visibility, Visibility::Private)
-                && self.analysis.reachable_items.contains(target_type))
-            || self
-                .analysis
-                .used_methods
-                .contains(&(target_type.to_string(), method.name.clone()))
     }
 
     /// Scan a function signature, defaults, and body for generated Rust dependencies.
@@ -916,16 +914,15 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         method: &str,
         dispatch: Option<&IrMethodDispatch>,
     ) {
-        if let Some(IrMethodDispatch::RustExtensionTraitImport { binding }) = dispatch {
-            if self.rust_extension_trait_imports.contains_key(binding) {
-                self.analysis.used_extension_trait_imports.insert(binding.clone());
+        let Some(IrMethodDispatch::RustExtensionTraitImport { binding }) = dispatch else {
+            if self.receiver_can_use_rust_extension_trait(receiver) {
+                self.mark_unambiguous_rust_extension_trait_import(method);
             }
             return;
+        };
+        if self.rust_extension_trait_imports.contains_key(binding) {
+            self.analysis.used_extension_trait_imports.insert(binding.clone());
         }
-        if !self.receiver_can_use_rust_extension_trait(receiver) {
-            return;
-        }
-        self.mark_unambiguous_rust_extension_trait_import(method);
     }
 
     /// Mark a trait import for metadata-free fallback only when the method has one possible imported trait.
@@ -2273,16 +2270,20 @@ impl<'a> IrEmitter<'a> {
             matches!(
                 &decl.kind,
                 IrDeclKind::Impl(impl_block)
-                    if impl_block.trait_name.as_deref() == Some("json.Serialize")
-                        || impl_block.trait_name.as_deref() == Some("std.serde.json.Serialize")
+                    if impl_block.trait_name
+                        .as_deref()
+                        .and_then(incan_core::lang::stdlib::stdlib_json_trait_scope_import_id)
+                        == Some(incan_core::lang::stdlib::StdlibJsonTraitId::Serialize)
             )
         });
         let needs_json_deserialize_trait_scope = emitted_declarations.iter().any(|decl| {
             matches!(
                 &decl.kind,
                 IrDeclKind::Impl(impl_block)
-                    if impl_block.trait_name.as_deref() == Some("json.Deserialize")
-                        || impl_block.trait_name.as_deref() == Some("std.serde.json.Deserialize")
+                    if impl_block.trait_name
+                        .as_deref()
+                        .and_then(incan_core::lang::stdlib::stdlib_json_trait_scope_import_id)
+                        == Some(incan_core::lang::stdlib::StdlibJsonTraitId::Deserialize)
             )
         });
         match (needs_json_serialize_trait_scope, needs_json_deserialize_trait_scope) {

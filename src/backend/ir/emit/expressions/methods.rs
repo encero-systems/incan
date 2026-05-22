@@ -11,10 +11,16 @@ use super::super::super::expr::{
     CollectionMethodKind, InternalMethodKind, IrCallArg, IrExprKind, IrMethodDispatch, MethodCallArgPolicy, MethodKind,
     TypedExpr, VarAccess, VarRefKind,
 };
-use super::super::super::ownership::{ArgumentPassingPlan, ValueUseSite};
+use super::super::super::ownership::{
+    ArgumentPassingPlan, RegularMethodArgumentContext, ValueUseSite, regular_method_argument_use_site,
+};
+use super::super::super::reference_shape::{expr_has_rust_reference_shape, type_has_rust_reference_shape};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
-use incan_core::interop::RustCollectionFamily;
+use incan_core::interop::{
+    METADATA_FREE_METHOD_BORROW_RULES, MetadataFreeArgClass, MetadataFreeMethodArgBorrowPolicy,
+    MetadataFreeReceiverClass, RustCollectionFamily,
+};
 use incan_core::lang::surface::result_methods::{self, ResultMethodId};
 
 mod collection_methods;
@@ -205,6 +211,11 @@ impl<'a> IrEmitter<'a> {
                     })
                 }
             }
+            ResultMethodId::Unwrap | ResultMethodId::UnwrapOr => {
+                return Err(EmitError::Unsupported(format!(
+                    "Result.{method_name} is not a callback combinator"
+                )));
+            }
         };
         Ok(call)
     }
@@ -227,15 +238,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Return whether an argument already has Rust reference shape for a method parameter.
     fn method_arg_already_borrowed_for_ref_param(arg_ty: &IrType) -> bool {
-        matches!(
-            arg_ty,
-            IrType::Ref(_) | IrType::RefMut(_) | IrType::StrRef | IrType::StaticStr
-        )
-    }
-
-    /// Return whether an argument expression already has Rust reference shape in IR.
-    fn method_arg_already_has_reference_shape(arg: &TypedExpr) -> bool {
-        Self::method_arg_already_borrowed_for_ref_param(&arg.ty)
+        type_has_rust_reference_shape(arg_ty)
     }
 
     /// Emit method-call arguments with Rust-boundary borrowing and union wrapping applied from callable metadata.
@@ -267,6 +270,7 @@ impl<'a> IrEmitter<'a> {
         let receiver_signature = self
             .method_signature_for_receiver(&receiver.ty, method)
             .or(specialized_signature.as_ref());
+        let has_incan_receiver_signature = receiver_signature.is_some();
         let callable_signature = match (callable_signature, receiver_signature) {
             (Some(call_sig), Some(method_sig))
                 if call_sig.params.iter().all(|param| param.default.is_none())
@@ -351,14 +355,27 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     None
                 };
-                let arg_plan = ArgumentPassingPlan::for_use_site(arg, arg_use_site);
                 let direct_mut_trait_receiver = external_method_shape
                     && idx == 0
                     && Self::external_trait_first_arg_needs_mut_borrow(receiver, method);
+                let metadata_free_policy = if (external_method_shape || !has_incan_receiver_signature)
+                    && idx == 0
+                    && !param.is_some_and(|param| Self::method_arg_already_borrowed_for_ref_param(&param.ty))
+                {
+                    Self::metadata_free_method_arg_borrow_policy(receiver, method, &arg.ty)
+                } else {
+                    None
+                };
+                let effective_arg_use_site = if metadata_free_policy.is_some() {
+                    ValueUseSite::MethodArg
+                } else {
+                    arg_use_site
+                };
+                let arg_plan = ArgumentPassingPlan::for_use_site(arg, effective_arg_use_site);
                 let emitted = if direct_mut_trait_receiver {
                     self.emit_expr(arg)
                 } else {
-                    self.emit_expr_for_use(arg, arg_use_site)
+                    self.emit_expr_for_use(arg, effective_arg_use_site)
                 };
                 if let Some(previous) = previous_qualify {
                     self.qualify_internal_canonical_paths.replace(previous);
@@ -391,17 +408,16 @@ impl<'a> IrEmitter<'a> {
                 {
                     return Ok(wrapped);
                 }
+                if let Some(policy) = metadata_free_policy {
+                    emitted = match policy {
+                        MetadataFreeMethodArgBorrowPolicy::Shared if !expr_has_rust_reference_shape(arg) => {
+                            quote! { &#emitted }
+                        }
+                        MetadataFreeMethodArgBorrowPolicy::Mutable => quote! { &mut #emitted },
+                        MetadataFreeMethodArgBorrowPolicy::Shared => emitted,
+                    };
+                }
                 let Some(param) = param else {
-                    if external_method_shape && idx == 0 && Self::method_arg_needs_fallback_mut_borrow(method, &arg.ty)
-                    {
-                        emitted = quote! { &mut #emitted };
-                    } else if external_method_shape
-                        && idx == 0
-                        && Self::method_arg_needs_fallback_borrow(method, &arg.ty)
-                        && !Self::method_arg_already_has_reference_shape(arg)
-                    {
-                        emitted = quote! { &#emitted };
-                    }
                     return Ok(emitted);
                 };
                 if let Some(wrapped) = self.emit_union_payload_arg(arg, &param.ty, None)? {
@@ -412,13 +428,50 @@ impl<'a> IrEmitter<'a> {
             .collect()
     }
 
-    /// Return whether an external Rust method's first argument should be emitted as a mutable borrow.
-    fn method_arg_needs_fallback_mut_borrow(method: &str, arg_ty: &IrType) -> bool {
-        match method {
-            "read_to_string" => true,
-            "read" | "read_to_end" | "read_exact" | "read_buf" | "read_buf_exact" => Self::is_byte_buffer_type(arg_ty),
-            _ => false,
+    /// Return the explicitly registered compatibility borrow policy for a metadata-free external method argument.
+    ///
+    /// Signature metadata remains the source of truth for Rust-boundary borrowing. These policies are only for
+    /// default-build interop surfaces that v0.3 already emits without rust-inspect metadata.
+    fn metadata_free_method_arg_borrow_policy(
+        receiver: &TypedExpr,
+        method: &str,
+        arg_ty: &IrType,
+    ) -> Option<MetadataFreeMethodArgBorrowPolicy> {
+        METADATA_FREE_METHOD_BORROW_RULES.iter().find_map(|rule| {
+            if !rule.methods.contains(&method) {
+                return None;
+            }
+            if !Self::metadata_free_receiver_matches(receiver, rule.receiver) {
+                return None;
+            }
+            if !Self::metadata_free_arg_matches(arg_ty, rule.arg) {
+                return None;
+            }
+            Some(rule.policy)
+        })
+    }
+
+    fn metadata_free_receiver_matches(receiver: &TypedExpr, class: MetadataFreeReceiverClass) -> bool {
+        match class {
+            MetadataFreeReceiverClass::IoValue => Self::receiver_allows_io_method_fallback(receiver),
+            MetadataFreeReceiverClass::EncodingInstance => {
+                Self::receiver_type_matches_any(receiver, &["Encoding", "encoding_rs::Encoding"])
+            }
+            MetadataFreeReceiverClass::ExternalAssociated => Self::is_external_associated_receiver(receiver),
         }
+    }
+
+    fn metadata_free_arg_matches(arg_ty: &IrType, class: MetadataFreeArgClass) -> bool {
+        match class {
+            MetadataFreeArgClass::StringBuffer => Self::is_string_buffer_type(arg_ty),
+            MetadataFreeArgClass::ByteBuffer => Self::is_byte_buffer_type(arg_ty),
+            MetadataFreeArgClass::Any => true,
+        }
+    }
+
+    /// Return whether a metadata-free receiver is eligible for std::io-style compatibility borrowing.
+    fn receiver_allows_io_method_fallback(receiver: &TypedExpr) -> bool {
+        !Self::expr_is_type_like(receiver)
     }
 
     /// Return whether an external Rust trait-style associated call needs `&mut` for its first argument.
@@ -436,14 +489,27 @@ impl<'a> IrEmitter<'a> {
         )
     }
 
-    /// Return whether an external Rust method's first argument should be emitted as a shared borrow.
-    fn method_arg_needs_fallback_borrow(method: &str, arg_ty: &IrType) -> bool {
-        match method {
-            "write_all" => true,
-            "for_label" | "decode" | "encode" => true,
-            "write" => Self::is_byte_buffer_type(arg_ty),
-            _ => false,
-        }
+    /// Return whether a metadata-free method receiver is an external Rust associated-call target.
+    fn is_external_associated_receiver(receiver: &TypedExpr) -> bool {
+        matches!(
+            &receiver.kind,
+            IrExprKind::Var {
+                ref_kind: VarRefKind::ExternalRustName,
+                ..
+            }
+        ) && Self::expr_is_type_like(receiver)
+    }
+
+    /// Return whether the receiver's nominal type name matches one of the expected Rust compatibility surfaces.
+    fn receiver_type_matches_any(receiver: &TypedExpr, expected: &[&str]) -> bool {
+        Self::receiver_type_for_method_dispatch(&receiver.ty)
+            .nominal_type_name()
+            .is_some_and(|name| {
+                let short_name = name.rsplit("::").next().unwrap_or(name);
+                expected.iter().any(|expected_name| {
+                    name == *expected_name || short_name == expected_name.rsplit("::").next().unwrap_or(expected_name)
+                })
+            })
     }
 
     /// Return whether an IR type can stand in for a mutable Rust byte buffer.
@@ -451,9 +517,27 @@ impl<'a> IrEmitter<'a> {
         matches!(ty, IrType::Bytes | IrType::FrozenBytes)
             || matches!(
                 ty,
+                IrType::Struct(name)
+                    if matches!(name.as_str(), "Vec<u8>" | "std::vec::Vec<u8>" | "alloc::vec::Vec<u8>")
+            )
+            || matches!(
+                ty,
                 IrType::NamedGeneric(name, args)
-                    if matches!(name.as_str(), "Vec" | "std::vec::Vec")
-                        && matches!(args.as_slice(), [IrType::Int])
+                    if matches!(name.as_str(), "Vec" | "std::vec::Vec" | "alloc::vec::Vec")
+                        && matches!(
+                            args.as_slice(),
+                            [IrType::Int | IrType::Numeric(incan_core::lang::types::numerics::NumericTypeId::U8)]
+                        )
+            )
+    }
+
+    /// Return whether an IR type can stand in for a mutable Rust string buffer.
+    fn is_string_buffer_type(ty: &IrType) -> bool {
+        matches!(ty, IrType::String)
+            || matches!(
+                ty,
+                IrType::Struct(name)
+                    if matches!(name.as_str(), "String" | "std::string::String" | "alloc::string::String")
             )
     }
 
@@ -635,6 +719,28 @@ impl<'a> IrEmitter<'a> {
             MethodKind::String(kind) => emit_string_method(self, &info, kind, &arg_exprs),
             MethodKind::Collection(kind) => emit_collection_method(self, receiver, &info, kind, &arg_exprs),
             MethodKind::Iterator(kind) => emit_iterator_method(self, receiver, &info, kind, &arg_exprs),
+            MethodKind::Result(ResultMethodId::Unwrap) => {
+                if !arg_exprs.is_empty() {
+                    return Err(EmitError::Unsupported("Result.unwrap expects no arguments".to_string()));
+                }
+                let receiver_tokens = &info.r;
+                Ok(quote! {
+                    match #receiver_tokens {
+                        Ok(__incan_ok) => __incan_ok,
+                        Err(_) => panic!("called Result.unwrap() on an Err value"),
+                    }
+                })
+            }
+            MethodKind::Result(ResultMethodId::UnwrapOr) => {
+                let Some(default) = arg_exprs.first() else {
+                    return Err(EmitError::Unsupported(
+                        "Result.unwrap_or expects one default argument".to_string(),
+                    ));
+                };
+                let default_tokens = self.emit_expr(default)?;
+                let receiver_tokens = &info.r;
+                Ok(quote! { #receiver_tokens.unwrap_or(#default_tokens) })
+            }
             MethodKind::Result(kind) => {
                 let Some(callback) = arg_exprs.first() else {
                     return Err(EmitError::Unsupported(format!(
@@ -890,30 +996,18 @@ impl<'a> IrEmitter<'a> {
             || rust_collection_family_for_ir_type(&receiver.ty)
                 .is_some_and(|family| family.preserves_lookup_arg_shape(method));
         let rusttype_alias_receiver = self.is_rusttype_alias_receiver(&receiver.ty);
-        let use_site = if receiver_ref_kind != Some(VarRefKind::ExternalRustName)
-            && (has_incan_method_signature
-                || (self.is_incan_owned_nominal_receiver(&receiver.ty) && !rusttype_alias_receiver))
-        {
-            ValueUseSite::IncanCallArg {
-                target_ty: None,
-                callee_param: None,
-                in_return: false,
-            }
-        } else if receiver_ref_kind == Some(VarRefKind::ExternalName) {
-            // Module-qualified calls like `widgets.make_widget(...)` are function namespace lookups, not external Rust
-            // methods. They should keep ordinary Incan/public-function conversions instead of Rust interop coercions.
-            ValueUseSite::IncanCallArg {
-                target_ty: None,
-                callee_param: None,
+        let use_site = regular_method_argument_use_site(
+            RegularMethodArgumentContext {
+                arg_policy,
+                receiver_ref_kind,
+                has_incan_method_signature,
+                is_incan_owned_nominal_receiver: self.is_incan_owned_nominal_receiver(&receiver.ty),
+                is_rusttype_alias_receiver: rusttype_alias_receiver,
+                preserves_lookup_arg_shape: preserve_lookup_arg_shape,
                 in_return,
-            }
-        } else if preserve_lookup_arg_shape {
-            // Borrow-sensitive collection lookups must keep the source argument shape instead of applying
-            // function-style coercions such as `.to_string()` / `.into()`.
-            ValueUseSite::MethodArg
-        } else {
-            ValueUseSite::ExternalCallArg { target_ty: None }
-        };
+            },
+            None,
+        );
         let arg_tokens =
             self.emit_method_call_args(method, receiver, args, callable_signature, use_site, result_target_ty)?;
         Ok(quote! { #r.#m #method_turbofish (#(#arg_tokens),*) })

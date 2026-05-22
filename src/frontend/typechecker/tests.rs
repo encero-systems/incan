@@ -2605,6 +2605,49 @@ fn test_resolved_param_type_from_builtin_borrowed_displays_preserves_ref_payload
 }
 
 #[test]
+fn test_resolved_param_type_from_structural_borrowed_display_preserves_nested_ref_payload() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("Vec<&str>"),
+        ResolvedType::Generic("List".to_string(), vec![ResolvedType::Ref(Box::new(ResolvedType::Str))]),
+    );
+    assert_eq!(
+        checker.resolved_rust_boundary_target_from_param_display("Vec<&String>"),
+        ResolvedType::Generic(
+            "List".to_string(),
+            vec![ResolvedType::Ref(Box::new(ResolvedType::RustPath(
+                "String".to_string()
+            )))]
+        ),
+    );
+}
+
+#[test]
+fn test_resolved_param_type_does_not_treat_mut_prefix_as_mutable_borrow_keyword() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&mutability::Foo"),
+        ResolvedType::Ref(Box::new(ResolvedType::RustPath("mutability::Foo".to_string()))),
+    );
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&mut mutability::Foo"),
+        ResolvedType::RefMut(Box::new(ResolvedType::RustPath("mutability::Foo".to_string()))),
+    );
+}
+
+#[test]
+fn test_resolved_result_display_splits_only_top_level_generic_commas() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_type_from_rust_display("Result<Vec<(i32, i32)>, String>"),
+        ResolvedType::Generic(
+            "Result".to_string(),
+            vec![ResolvedType::RustPath("Vec<(i32,i32)>".to_string()), ResolvedType::Str,],
+        ),
+    );
+}
+
+#[test]
 fn test_types_compatible_refmut_is_assignable_to_ref_but_not_reverse() {
     let checker = TypeChecker::new();
     let immutable = ResolvedType::Ref(Box::new(ResolvedType::RustPath("demo::Thing".to_string())));
@@ -11824,6 +11867,29 @@ def main(result: Result[int, str]) -> None:
   recovered: Result[int, int] = result.or_else(recover)
   inspected: Result[int, str] = result.inspect(observe_int).inspect(observer)
   inspected_err: Result[int, str] = result.inspect_err(observe_err)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_result_unwrap_helpers_typecheck() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def direct(result: Result[int, str]) -> int:
+  return result.unwrap()
+
+def fallback(result: Result[int, str]) -> int:
+  return result.unwrap_or(0)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_option_copied_accepts_generic_reference_payloads() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def copy_placeholder[T](value: Option[&T]) -> Option[T]:
+  return value.copied()
 "#;
 
     check_str(source)

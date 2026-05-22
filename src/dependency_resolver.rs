@@ -15,7 +15,7 @@ use crate::frontend::ast::Span;
 use crate::frontend::diagnostics::CompileError;
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
-use incan_core::lang::stdlib::{self, STDLIB_NAMESPACES, StdlibExtraCrateSource};
+use incan_core::lang::stdlib::{self, StdlibExtraCrateSource};
 
 /// Validate that a version requirement string uses Cargo SemVer syntax.
 ///
@@ -306,21 +306,6 @@ fn merge_inline_imports(
     let mut resolved = HashMap::new();
     for (crate_name, mut merged_spec) in merged {
         if merged_spec.spec.version.is_none() {
-            if !merged_spec.spec.features.is_empty() {
-                errors.push(DependencyError {
-                    file_path: merged_spec.first_site.file_path.clone(),
-                    error: with_rust_import_context(
-                        CompileError::new(
-                            format!("Rust import features for `{}` require a version annotation", crate_name),
-                            merged_spec.first_site.span,
-                        )
-                        .with_hint("Add `@ \"version\"` to the rust import."),
-                        &merged_spec.first_site,
-                    ),
-                });
-                continue;
-            }
-
             let Some(default) = known_good_spec(&crate_name) else {
                 errors.push(DependencyError {
                     file_path: merged_spec.first_site.file_path.clone(),
@@ -337,7 +322,14 @@ fn merge_inline_imports(
                 });
                 continue;
             };
+            let requested_features = std::mem::take(&mut merged_spec.spec.features);
             merged_spec.spec = default;
+            for feature in requested_features {
+                if !merged_spec.spec.features.contains(&feature) {
+                    merged_spec.spec.features.push(feature);
+                }
+            }
+            merged_spec.spec = merged_spec.spec.normalized();
         }
 
         resolved.insert(crate_name, merged_spec);
@@ -355,18 +347,9 @@ fn inline_spec_from_import(import: &InlineRustImport) -> DependencySpec {
         default_features: true,
         source: DependencySource::Registry,
         optional: false,
-        package: rust_crate_package_alias(&import.crate_name).map(str::to_string),
+        package: stdlib::extra_crate_package_alias(&import.crate_name).map(str::to_string),
     }
     .normalized()
-}
-
-/// Return the published Cargo package name when it differs from the Rust crate import path.
-fn rust_crate_package_alias(crate_name: &str) -> Option<&'static str> {
-    match crate_name {
-        "md5" => Some("md-5"),
-        "xxhash_rust" => Some("xxhash-rust"),
-        _ => None,
-    }
 }
 
 fn merge_inline_spec(existing: &mut InlineMergedSpec, next: &InlineRustImport) -> Result<(), String> {
@@ -500,6 +483,10 @@ fn validate_optional_imports(
 // ============================================================================
 
 fn known_good_spec(crate_name: &str) -> Option<DependencySpec> {
+    if let Some(spec) = known_good_spec_from_stdlib(crate_name) {
+        return Some(spec);
+    }
+
     let (version, features): (&str, Vec<&str>) = match crate_name {
         "serde" => ("1.0", vec!["derive"]),
         "serde_json" => ("1.0", vec![]),
@@ -508,8 +495,6 @@ fn known_good_spec(crate_name: &str) -> Option<DependencySpec> {
         "chrono" => ("0.4", vec!["serde"]),
         "reqwest" => ("0.11", vec!["json"]),
         "uuid" => ("1.0", vec!["v4", "serde"]),
-        "rand" => ("0.8", vec![]),
-        "regex" => ("1.0", vec![]),
         "anyhow" => ("1.0", vec![]),
         "thiserror" => ("1.0", vec![]),
         "tracing" => ("0.1", vec![]),
@@ -520,10 +505,7 @@ fn known_good_spec(crate_name: &str) -> Option<DependencySpec> {
         "futures" => ("0.3", vec![]),
         "bytes" => ("1.0", vec![]),
         "itertools" => ("0.12", vec![]),
-        // For any crate not in the hardcoded list above, fall through to the stdlib registry.
-        // STDLIB_NAMESPACES is the single source of truth for stdlib-managed crate versions,
-        // so we derive the spec from there rather than duplicating version strings here.
-        _ => return known_good_spec_from_stdlib(crate_name),
+        _ => return None,
     };
 
     Some(
@@ -542,33 +524,27 @@ fn known_good_spec(crate_name: &str) -> Option<DependencySpec> {
 
 /// Look up a known-good spec for crates declared as `extra_crate_deps` in any stdlib namespace.
 ///
-/// This makes `STDLIB_NAMESPACES` the single source of truth for stdlib-managed crate versions.
-/// When a stdlib `.incn` file writes `from rust::axum import ...` without an inline version annotation, the resolver
-/// finds the version here rather than requiring a duplicate hardcoded entry in `known_good_spec`.
+/// This makes the stdlib registry the single source of truth for stdlib-managed crate versions. When a stdlib `.incn`
+/// file writes `from rust::axum import ...` without an inline version annotation, the resolver finds the version here
+/// rather than requiring a duplicate hardcoded entry in `known_good_spec`.
 fn known_good_spec_from_stdlib(crate_name: &str) -> Option<DependencySpec> {
-    for ns in STDLIB_NAMESPACES {
-        for dep in ns.extra_crate_deps {
-            if dep.crate_name == crate_name {
-                let StdlibExtraCrateSource::Version(version) = dep.source else {
-                    // Path dependencies are not registry crates; skip.
-                    continue;
-                };
-                return Some(
-                    DependencySpec {
-                        crate_name: crate_name.to_string(),
-                        version: Some(version.to_string()),
-                        features: vec![],
-                        default_features: true,
-                        source: DependencySource::Registry,
-                        optional: false,
-                        package: None,
-                    }
-                    .normalized(),
-                );
-            }
+    let dep = stdlib::extra_crate_deps()
+        .find(|dep| dep.crate_name == crate_name && matches!(dep.source, StdlibExtraCrateSource::Version(_)))?;
+    let StdlibExtraCrateSource::Version(version) = dep.source else {
+        return None;
+    };
+    Some(
+        DependencySpec {
+            crate_name: crate_name.to_string(),
+            version: Some(version.to_string()),
+            features: dep.features.iter().map(|feature| (*feature).to_string()).collect(),
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: stdlib::extra_crate_package_alias(crate_name).map(str::to_string),
         }
-    }
-    None
+        .normalized(),
+    )
 }
 
 #[cfg(test)]
@@ -791,6 +767,51 @@ test_lib = "0.5"
         let serde = dependency(&resolved.dependencies, "serde")?;
         assert_eq!(serde.version.as_deref(), Some("1.0"));
         assert!(serde.features.contains(&"derive".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn known_good_default_allows_features_without_inline_version() -> TestResult {
+        let imports = vec![inline("tokio", None, &["full"], false)];
+
+        let resolved = resolve_ok(None, &imports, false, &default_cargo_features())?;
+        let tokio = dependency(&resolved.dependencies, "tokio")?;
+        assert_eq!(tokio.version.as_deref(), Some("1"));
+        assert!(tokio.features.contains(&"rt-multi-thread".to_string()));
+        assert!(tokio.features.contains(&"full".to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn stdlib_registry_version_dependencies_drive_known_good_defaults() -> TestResult {
+        for ns in stdlib::STDLIB_NAMESPACES {
+            for dep in ns.extra_crate_deps {
+                let StdlibExtraCrateSource::Version(version) = dep.source else {
+                    continue;
+                };
+                let spec = known_good_spec(dep.crate_name).ok_or_else(|| {
+                    std::io::Error::other(format!(
+                        "expected registry dependency `{}` to resolve as a known-good default",
+                        dep.crate_name
+                    ))
+                })?;
+                assert_eq!(
+                    spec.version.as_deref(),
+                    Some(version),
+                    "dependency resolver drifted from stdlib registry metadata for `{}`",
+                    dep.crate_name
+                );
+                assert_eq!(
+                    spec.features,
+                    dep.features
+                        .iter()
+                        .map(|feature| (*feature).to_string())
+                        .collect::<Vec<_>>(),
+                    "dependency resolver drifted from stdlib registry feature metadata for `{}`",
+                    dep.crate_name
+                );
+            }
+        }
         Ok(())
     }
 

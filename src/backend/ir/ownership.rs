@@ -15,7 +15,7 @@ use super::conversions::{
     incan_mutable_param_passed_as_rust_mut_ref,
 };
 use super::decl::FunctionParam;
-use super::expr::{IrExpr, IrExprKind, VarAccess};
+use super::expr::{IrExpr, IrExprKind, MethodCallArgPolicy, VarAccess, VarRefKind};
 use super::types::IrType;
 
 /// A typed sink/source boundary that needs an ownership/coercion decision.
@@ -71,6 +71,49 @@ pub enum ValueUseSite<'a> {
     MethodArg,
 }
 
+/// Receiver and lookup facts needed to choose the value-use site for one ordinary method-call argument.
+///
+/// This keeps clone-bound inference and method emission on the same method-argument boundary decision instead of
+/// letting each phase classify receiver ownership independently.
+#[derive(Debug, Clone, Copy)]
+pub struct RegularMethodArgumentContext {
+    pub arg_policy: MethodCallArgPolicy,
+    pub receiver_ref_kind: Option<VarRefKind>,
+    pub has_incan_method_signature: bool,
+    pub is_incan_owned_nominal_receiver: bool,
+    pub is_rusttype_alias_receiver: bool,
+    pub preserves_lookup_arg_shape: bool,
+    pub in_return: bool,
+}
+
+/// Choose the value-use site for an ordinary method-call argument from shared receiver facts.
+pub fn regular_method_argument_use_site<'a>(
+    context: RegularMethodArgumentContext,
+    callee_param: Option<&'a FunctionParam>,
+) -> ValueUseSite<'a> {
+    let target_ty = callee_param.map(|param| &param.ty);
+    if context.receiver_ref_kind != Some(VarRefKind::ExternalRustName)
+        && (context.has_incan_method_signature
+            || (context.is_incan_owned_nominal_receiver && !context.is_rusttype_alias_receiver))
+    {
+        ValueUseSite::IncanCallArg {
+            target_ty,
+            callee_param,
+            in_return: false,
+        }
+    } else if context.receiver_ref_kind == Some(VarRefKind::ExternalName) {
+        ValueUseSite::IncanCallArg {
+            target_ty,
+            callee_param,
+            in_return: context.in_return,
+        }
+    } else if matches!(context.arg_policy, MethodCallArgPolicy::PreserveShape) || context.preserves_lookup_arg_shape {
+        ValueUseSite::MethodArg
+    } else {
+        ValueUseSite::ExternalCallArg { target_ty }
+    }
+}
+
 /// Plan how one IR expression should be emitted at a specific ownership boundary.
 pub fn plan_value_use(expr: &IrExpr, site: ValueUseSite<'_>) -> OwnershipPlan {
     match site {
@@ -108,6 +151,16 @@ pub fn plan_value_use(expr: &IrExpr, site: ValueUseSite<'_>) -> OwnershipPlan {
         }
         ValueUseSite::MethodArg => determine_conversion(expr, None, ConversionContext::MethodArg),
     }
+}
+
+/// Return whether the shared value-use planner requires a backend `.clone()` at this use site.
+///
+/// Trait-bound inference uses this as a query-only view of the same ownership decision that expression emission uses
+/// before applying a conversion. Keep clone-bound inference going through this API instead of duplicating conversion
+/// heuristics in the inference pass.
+#[must_use]
+pub fn value_use_requires_clone_bound(expr: &IrExpr, site: ValueUseSite<'_>) -> bool {
+    matches!(plan_value_use(expr, site), OwnershipPlan::Clone)
 }
 
 /// Return the target type carried by a value-use site, if the site has one.
@@ -720,6 +773,35 @@ mod tests {
         let rendered = render(plan.apply_full(quote! { items }));
         assert!(rendered.contains("items).into_iter().map"));
         assert!(rendered.contains("Into::into(__incan_item)"));
+    }
+
+    #[test]
+    fn argument_plan_clone_bound_query_follows_shared_incan_arg_policy() {
+        let receiver = IrExpr::new(
+            IrExprKind::Var {
+                name: "other".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Struct("Wrapper".to_string()),
+        );
+        let expr = IrExpr::new(
+            IrExprKind::Field {
+                object: Box::new(receiver),
+                field: "_cursor".to_string(),
+            },
+            IrType::Generic("T".to_string()),
+        );
+
+        assert!(value_use_requires_clone_bound(
+            &expr,
+            ValueUseSite::IncanCallArg {
+                target_ty: Some(&IrType::Generic("T".to_string())),
+                callee_param: None,
+                in_return: false,
+            }
+        ));
+        assert!(!value_use_requires_clone_bound(&expr, ValueUseSite::MethodArg));
     }
 
     #[test]

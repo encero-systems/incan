@@ -6,16 +6,16 @@ This module owns the algorithm wrappers and value hashing paths. File and reader
 """
 
 from rust::incan_stdlib::errors import raise_value_error
-from rust::blake2 @ "0.10" import Blake2b512, Blake2s256
-from rust::blake3 @ "1" import Hasher as Blake3Hasher, hash as blake3_hash
-from rust::md5 @ "0.10" import Md5
-from rust::sha1 @ "0.10" import Sha1
-from rust::sha2 @ "0.10" import Digest, Sha224, Sha256, Sha384, Sha512
-from rust::sha3 @ "0.10" import Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256
-from rust::sha3::digest @ "0.10" import ExtendableOutputReset, Update, XofReader
-from rust::xxhash_rust::xxh3 @ "0.8" with ["xxh3"] import Xxh3Default, xxh3_64 as rust_xxh3_64, xxh3_128 as rust_xxh3_128
-from rust::xxhash_rust::xxh32 @ "0.8" with ["xxh32"] import Xxh32
-from rust::xxhash_rust::xxh64 @ "0.8" with ["xxh64"] import Xxh64
+from rust::blake2 import Blake2b512, Blake2s256
+from rust::blake3 import Hasher as Blake3Hasher, hash as blake3_hash
+from rust::md5 import Md5
+from rust::sha1 import Sha1
+from rust::sha2 import Digest, Sha224, Sha256, Sha384, Sha512
+from rust::sha3 import Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake128, Shake256
+from rust::sha3::digest import ExtendableOutputReset, Update, XofReader
+from rust::xxhash_rust::xxh3 with ["xxh3"] import Xxh3Default, xxh3_64 as rust_xxh3_64, xxh3_128 as rust_xxh3_128
+from rust::xxhash_rust::xxh32 with ["xxh32"] import Xxh32
+from rust::xxhash_rust::xxh64 with ["xxh64"] import Xxh64
 from std.traits.error import Error
 
 
