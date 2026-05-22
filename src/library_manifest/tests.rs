@@ -134,6 +134,53 @@ fn manifest_io_round_trip_preserves_rust_abi_metadata() -> Result<(), Box<dyn st
 }
 
 #[test]
+fn manifest_io_round_trip_preserves_package_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    let mut package = LibraryPackageMetadata::new("mylib", "0.1.0", "src/lib.incn");
+    package.registry = Some("incan-pub".to_string());
+    package.checksum = Some("sha256:local-fixture".to_string());
+    manifest.package = Some(package);
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("mylib.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn manifest_validation_rejects_package_metadata_identity_mismatch() {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.package = Some(LibraryPackageMetadata::new("otherlib", "0.1.0", "src/lib.incn"));
+
+    let err = manifest
+        .write_to_path(&tempfile::tempdir().expect("tempdir").path().join("mylib.incnlib"))
+        .expect_err("mismatched package metadata should fail validation");
+
+    assert!(
+        err.to_string().contains("package.package_name"),
+        "expected package identity validation error, got {err}"
+    );
+}
+
+#[test]
+fn manifest_validation_rejects_non_normalized_package_source_path() {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.package = Some(LibraryPackageMetadata::new("mylib", "0.1.0", "../lib.incn"));
+
+    let err = manifest
+        .write_to_path(&tempfile::tempdir().expect("tempdir").path().join("mylib.incnlib"))
+        .expect_err("non-normalized package source path should fail validation");
+
+    assert!(
+        err.to_string().contains("package.source_entrypoint"),
+        "expected package source path validation error, got {err}"
+    );
+}
+
+#[test]
 fn manifest_validation_rejects_invalid_partial_exports() -> Result<(), Box<dyn std::error::Error>> {
     let mut base = LibraryManifest::new("mylib", "0.1.0");
     base.exports.partials.push(PartialExport {

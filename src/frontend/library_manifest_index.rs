@@ -7,13 +7,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::library_manifest::{LibraryManifest, LibraryManifestError};
-use crate::manifest::{DependencySource, DependencySpec, ProjectManifest};
+use crate::manifest::{DependencySource, DependencySpec, MANIFEST_FILENAME, ProjectManifest};
 use incan_core::interop::RustItemMetadata;
 use incan_vocab::{CargoDependency, CargoDependencySource, KeywordActivation, KeywordRegistration, KeywordSpec};
 use serde::Deserialize;
 
 const LIBRARY_ARTIFACT_DIR: &str = "target/lib";
 const LIBRARY_CRATE_LIB_RS: &str = "src/lib.rs";
+const PACKAGE_SOURCE_ENTRYPOINT: &str = "src/lib.incn";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// Category for dependency manifest loading failures.
@@ -47,20 +48,33 @@ pub struct LibraryManifestLoadFailure {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-/// Contract metadata for a successfully loaded generated library artifact.
+/// Resolved package/artifact layout for a loaded library dependency.
+pub enum LibraryArtifactLayout {
+    /// Legacy generated Rust crate under `target/lib`.
+    GeneratedTargetLib,
+    /// Cargo-compatible Incan package root that carries source and `.incnlib` metadata.
+    PackageRoot,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+/// Contract metadata for a successfully loaded library artifact or package.
 pub struct LibraryArtifactMetadata {
     /// Dependency key as written by the consumer (for example `widgets` in `pub::widgets`).
     pub dependency_key: String,
     /// Declared producer manifest name (`manifest.name`), which can differ from dependency key aliases.
     pub manifest_name: String,
+    /// Loaded package/artifact layout.
+    pub layout: LibraryArtifactLayout,
     /// Resolved `.incnlib` path.
     pub manifest_path: PathBuf,
-    /// Root of generated library crate (typically `target/lib`).
+    /// Root of the generated library crate or package.
     pub crate_root: PathBuf,
-    /// Path to generated `Cargo.toml` for `pub::` crate wiring.
+    /// Path to `Cargo.toml` for package/artifact wiring.
     pub cargo_toml_path: PathBuf,
-    /// Path to generated crate entrypoint (`src/lib.rs`).
+    /// Path to generated crate entrypoint (`src/lib.rs`) or package source entrypoint.
     pub crate_lib_path: PathBuf,
+    /// Path to `incan.toml` when this entry came from a package root.
+    pub incan_toml_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -200,7 +214,9 @@ impl LibraryManifestIndex {
             let LibraryManifestIndexEntry::Loaded { metadata, .. } = entry else {
                 continue;
             };
-            dependencies.push(metadata.to_dependency_spec());
+            if let Some(spec) = metadata.to_dependency_spec() {
+                dependencies.push(spec);
+            }
         }
         dependencies
     }
@@ -443,6 +459,14 @@ fn normalize_keyword_registration(
 }
 
 fn load_library_manifest_entry(dependency_key: &str, dependency_root: &Path) -> LibraryManifestIndexEntry {
+    if looks_like_package_root(dependency_root) {
+        return load_package_manifest_entry(dependency_key, dependency_root);
+    }
+
+    load_generated_artifact_manifest_entry(dependency_key, dependency_root)
+}
+
+fn load_generated_artifact_manifest_entry(dependency_key: &str, dependency_root: &Path) -> LibraryManifestIndexEntry {
     let crate_root = dependency_crate_root(dependency_root);
     let manifest_path = match resolve_manifest_path(&crate_root, dependency_key) {
         Ok(path) => path,
@@ -458,6 +482,35 @@ fn load_library_manifest_entry(dependency_key: &str, dependency_root: &Path) -> 
     };
 
     let metadata = match validate_artifact_contract(dependency_key, &manifest, &manifest_path, &crate_root) {
+        Ok(metadata) => metadata,
+        Err(failure) => return LibraryManifestIndexEntry::Failed(failure),
+    };
+
+    LibraryManifestIndexEntry::Loaded {
+        manifest: Box::new(manifest),
+        metadata,
+    }
+}
+
+fn looks_like_package_root(dependency_root: &Path) -> bool {
+    dependency_root.join(MANIFEST_FILENAME).is_file() || dependency_root.join(PACKAGE_SOURCE_ENTRYPOINT).is_file()
+}
+
+fn load_package_manifest_entry(dependency_key: &str, package_root: &Path) -> LibraryManifestIndexEntry {
+    let manifest_path = match resolve_manifest_path(package_root, dependency_key) {
+        Ok(path) => path,
+        Err(failure) => return LibraryManifestIndexEntry::Failed(failure),
+    };
+
+    let manifest = match LibraryManifest::read_from_path(&manifest_path) {
+        Ok(loaded) => loaded,
+        Err(error) => {
+            let failure = LibraryManifestLoadFailure::from_manifest_error(manifest_path, error);
+            return LibraryManifestIndexEntry::Failed(failure);
+        }
+    };
+
+    let metadata = match validate_package_contract(dependency_key, &manifest, &manifest_path, package_root) {
         Ok(metadata) => metadata,
         Err(failure) => return LibraryManifestIndexEntry::Failed(failure),
     };
@@ -486,25 +539,11 @@ fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<Path
         return Ok(expected);
     }
 
-    let mut candidates = Vec::new();
-    let read_dir = fs::read_dir(crate_root).map_err(|error| LibraryManifestLoadFailure {
+    let mut candidates = root_manifest_candidates(crate_root).map_err(|error| LibraryManifestLoadFailure {
         path: crate_root.to_path_buf(),
         kind: LibraryManifestFailureKind::ArtifactInvalid,
         message: format!("failed to inspect `{}`: {error}", crate_root.display()),
     })?;
-    for entry in read_dir {
-        let entry = entry.map_err(|error| LibraryManifestLoadFailure {
-            path: crate_root.to_path_buf(),
-            kind: LibraryManifestFailureKind::ArtifactInvalid,
-            message: format!("failed to inspect `{}`: {error}", crate_root.display()),
-        })?;
-        let path = entry.path();
-        if path.extension().is_some_and(|ext| ext == "incnlib") {
-            candidates.push(path);
-        }
-    }
-
-    candidates.sort();
     if candidates.is_empty() {
         return Err(LibraryManifestLoadFailure {
             path: expected,
@@ -537,6 +576,19 @@ fn resolve_manifest_path(crate_root: &Path, dependency_key: &str) -> Result<Path
 
     // Alias case: dependency key differs from producer package/manifest name.
     Ok(candidates.remove(0))
+}
+
+fn root_manifest_candidates(root: &Path) -> Result<Vec<PathBuf>, std::io::Error> {
+    let mut candidates = Vec::new();
+    let read_dir = fs::read_dir(root)?;
+    for entry in read_dir {
+        let path = entry?.path();
+        if path.extension().is_some_and(|ext| ext == "incnlib") {
+            candidates.push(path);
+        }
+    }
+    candidates.sort();
+    Ok(candidates)
 }
 
 fn validate_artifact_contract(
@@ -618,6 +670,147 @@ fn validate_artifact_contract(
     ))
 }
 
+fn validate_package_contract(
+    dependency_key: &str,
+    manifest: &LibraryManifest,
+    manifest_path: &Path,
+    package_root: &Path,
+) -> Result<LibraryArtifactMetadata, LibraryManifestLoadFailure> {
+    let package = manifest.package.as_ref().ok_or_else(|| LibraryManifestLoadFailure {
+        path: manifest_path.to_path_buf(),
+        kind: LibraryManifestFailureKind::ArtifactInvalid,
+        message: "missing package metadata for Cargo-compatible Incan package".to_string(),
+    })?;
+
+    let cargo_toml_path = package_root.join("Cargo.toml");
+    if !cargo_toml_path.is_file() {
+        return Err(LibraryManifestLoadFailure {
+            path: cargo_toml_path,
+            kind: LibraryManifestFailureKind::ArtifactMissing,
+            message: "missing package Cargo.toml".to_string(),
+        });
+    }
+    let cargo_contract = parse_cargo_contract(&cargo_toml_path)?;
+    if cargo_contract.package_name != manifest.name {
+        return Err(LibraryManifestLoadFailure {
+            path: cargo_toml_path,
+            kind: LibraryManifestFailureKind::ArtifactMismatch,
+            message: format!(
+                "manifest name `{}` does not match Cargo package `{}`",
+                manifest.name, cargo_contract.package_name
+            ),
+        });
+    }
+    if cargo_contract.package_version.as_deref() != Some(manifest.version.as_str()) {
+        return Err(LibraryManifestLoadFailure {
+            path: cargo_toml_path,
+            kind: LibraryManifestFailureKind::ArtifactMismatch,
+            message: format!(
+                "manifest version `{}` does not match Cargo package version `{}`",
+                manifest.version,
+                cargo_contract.package_version.as_deref().unwrap_or("<missing>")
+            ),
+        });
+    }
+
+    let incan_toml_path = package_root.join(MANIFEST_FILENAME);
+    let incan_manifest_content = fs::read_to_string(&incan_toml_path).map_err(|error| LibraryManifestLoadFailure {
+        path: incan_toml_path.clone(),
+        kind: LibraryManifestFailureKind::ArtifactMissing,
+        message: format!("failed to read package {MANIFEST_FILENAME}: {error}"),
+    })?;
+    let incan_manifest = ProjectManifest::from_str(&incan_manifest_content, &incan_toml_path).map_err(|error| {
+        LibraryManifestLoadFailure {
+            path: incan_toml_path.clone(),
+            kind: LibraryManifestFailureKind::ArtifactInvalid,
+            message: format!("failed to parse package {MANIFEST_FILENAME}: {error}"),
+        }
+    })?;
+    let project = incan_manifest
+        .project
+        .as_ref()
+        .ok_or_else(|| LibraryManifestLoadFailure {
+            path: incan_toml_path.clone(),
+            kind: LibraryManifestFailureKind::ArtifactInvalid,
+            message: format!("package {MANIFEST_FILENAME} is missing `[project]`"),
+        })?;
+    if project.name.as_deref() != Some(manifest.name.as_str()) {
+        return Err(LibraryManifestLoadFailure {
+            path: incan_toml_path.clone(),
+            kind: LibraryManifestFailureKind::ArtifactMismatch,
+            message: format!(
+                "manifest name `{}` does not match Incan project `{}`",
+                manifest.name,
+                project.name.as_deref().unwrap_or("<missing>")
+            ),
+        });
+    }
+    if project.version.as_deref() != Some(manifest.version.as_str()) {
+        return Err(LibraryManifestLoadFailure {
+            path: incan_toml_path.clone(),
+            kind: LibraryManifestFailureKind::ArtifactMismatch,
+            message: format!(
+                "manifest version `{}` does not match Incan project version `{}`",
+                manifest.version,
+                project.version.as_deref().unwrap_or("<missing>")
+            ),
+        });
+    }
+
+    let source_entrypoint = package_root.join(&package.source_entrypoint);
+    if !source_entrypoint.is_file() {
+        return Err(LibraryManifestLoadFailure {
+            path: source_entrypoint,
+            kind: LibraryManifestFailureKind::ArtifactMissing,
+            message: "missing package source entrypoint".to_string(),
+        });
+    }
+
+    if let Some(vocab) = &manifest.vocab
+        && let Some(desugarer_artifact) = &vocab.desugarer_artifact
+    {
+        let artifact_path = package_root.join(&desugarer_artifact.relative_path);
+        if !artifact_path.is_file() {
+            return Err(LibraryManifestLoadFailure {
+                path: artifact_path,
+                kind: LibraryManifestFailureKind::ArtifactMissing,
+                message: "missing packaged vocab desugarer artifact".to_string(),
+            });
+        }
+    }
+
+    let expected_manifest_file = format!("{}.incnlib", manifest.name);
+    let actual_manifest_file = manifest_path
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_default();
+    if actual_manifest_file != expected_manifest_file {
+        return Err(LibraryManifestLoadFailure {
+            path: manifest_path.to_path_buf(),
+            kind: LibraryManifestFailureKind::ArtifactMismatch,
+            message: format!(
+                "manifest filename `{actual_manifest_file}` does not match manifest name `{}`",
+                manifest.name
+            ),
+        });
+    }
+    if package.package_name != manifest.name || package.version != manifest.version {
+        return Err(LibraryManifestLoadFailure {
+            path: manifest_path.to_path_buf(),
+            kind: LibraryManifestFailureKind::ArtifactMismatch,
+            message: "package metadata identity does not match manifest identity".to_string(),
+        });
+    }
+
+    Ok(LibraryArtifactMetadata::from_package_root(
+        dependency_key,
+        manifest.name.clone(),
+        manifest_path.to_path_buf(),
+        package_root.to_path_buf(),
+        package.source_entrypoint.clone(),
+    ))
+}
+
 #[derive(Debug, Deserialize)]
 struct CargoContractToml {
     package: Option<CargoContractPackage>,
@@ -627,6 +820,7 @@ struct CargoContractToml {
 #[derive(Debug, Deserialize)]
 struct CargoContractPackage {
     name: String,
+    version: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -636,6 +830,7 @@ struct CargoContractLib {
 
 struct ParsedCargoContract {
     package_name: String,
+    package_version: Option<String>,
     uses_default_lib_target: bool,
 }
 
@@ -654,7 +849,8 @@ fn parse_cargo_contract(path: &Path) -> Result<ParsedCargoContract, LibraryManif
 
     let package_name = parsed
         .package
-        .map(|package| package.name)
+        .as_ref()
+        .map(|package| package.name.clone())
         .filter(|name| !name.trim().is_empty())
         .ok_or_else(|| LibraryManifestLoadFailure {
             path: path.to_path_buf(),
@@ -668,6 +864,7 @@ fn parse_cargo_contract(path: &Path) -> Result<ParsedCargoContract, LibraryManif
 
     Ok(ParsedCargoContract {
         package_name,
+        package_version: parsed.package.and_then(|package| package.version),
         uses_default_lib_target,
     })
 }
@@ -685,10 +882,12 @@ impl LibraryArtifactMetadata {
         Self {
             dependency_key,
             manifest_name,
+            layout: LibraryArtifactLayout::GeneratedTargetLib,
             manifest_path,
             cargo_toml_path: crate_root.join("Cargo.toml"),
             crate_lib_path: crate_root.join(LIBRARY_CRATE_LIB_RS),
             crate_root,
+            incan_toml_path: None,
         }
     }
 
@@ -704,23 +903,51 @@ impl LibraryArtifactMetadata {
         Self::from_manifest_path(dependency_key, manifest_name, manifest_path, crate_root)
     }
 
-    fn to_dependency_spec(&self) -> DependencySpec {
-        DependencySpec {
-            crate_name: self.dependency_key.clone(),
-            version: None,
-            features: Vec::new(),
-            default_features: true,
-            source: DependencySource::Path {
-                path: self.crate_root.clone(),
-            },
-            optional: false,
-            package: if self.dependency_key == self.manifest_name {
-                None
-            } else {
-                Some(self.manifest_name.clone())
-            },
+    /// Build a Cargo path dependency only for legacy generated Rust artifacts.
+    fn to_dependency_spec(&self) -> Option<DependencySpec> {
+        if self.layout != LibraryArtifactLayout::GeneratedTargetLib {
+            return None;
         }
-        .normalized()
+
+        Some(
+            DependencySpec {
+                crate_name: self.dependency_key.clone(),
+                version: None,
+                features: Vec::new(),
+                default_features: true,
+                source: DependencySource::Path {
+                    path: self.crate_root.clone(),
+                },
+                optional: false,
+                package: if self.dependency_key == self.manifest_name {
+                    None
+                } else {
+                    Some(self.manifest_name.clone())
+                },
+            }
+            .normalized(),
+        )
+    }
+
+    fn from_package_root(
+        dependency_key: impl Into<String>,
+        manifest_name: impl Into<String>,
+        manifest_path: PathBuf,
+        package_root: PathBuf,
+        source_entrypoint: impl AsRef<str>,
+    ) -> Self {
+        let dependency_key = dependency_key.into();
+        let manifest_name = manifest_name.into();
+        Self {
+            dependency_key,
+            manifest_name,
+            layout: LibraryArtifactLayout::PackageRoot,
+            manifest_path,
+            cargo_toml_path: package_root.join("Cargo.toml"),
+            crate_lib_path: package_root.join(source_entrypoint.as_ref()),
+            incan_toml_path: Some(package_root.join(MANIFEST_FILENAME)),
+            crate_root: package_root,
+        }
     }
 }
 
@@ -791,6 +1018,121 @@ mylib = { path = "deps/mylib" }
         assert_eq!(specs[0].crate_name, "mylib");
         assert!(matches!(specs[0].source, DependencySource::Path { .. }));
         assert_eq!(specs[0].package, None);
+
+        Ok(())
+    }
+
+    #[test]
+    fn loads_package_root_manifest_without_generated_rust_artifact() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let dep_root = tmp.path().join("deps").join("mylib");
+        let dep_manifest_path = dep_root.join("mylib.incnlib");
+
+        std::fs::create_dir_all(dep_root.join("src"))?;
+        std::fs::write(
+            dep_root.join("Cargo.toml"),
+            "[package]\nname = \"mylib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(
+            dep_root.join("incan.toml"),
+            "[project]\nname = \"mylib\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(dep_root.join("src/lib.incn"), "pub def ready() -> int:\n    return 1\n")?;
+
+        let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+        manifest.package = Some(crate::library_manifest::LibraryPackageMetadata::new(
+            "mylib",
+            "0.1.0",
+            "src/lib.incn",
+        ));
+        manifest.write_to_path(&dep_manifest_path)?;
+
+        let manifest_content = r#"
+[dependencies]
+mylib = { path = "deps/mylib" }
+"#;
+        std::fs::write(&consumer_manifest_path, manifest_content)?;
+        let parsed = ProjectManifest::from_str(manifest_content, &consumer_manifest_path)?;
+
+        let index = LibraryManifestIndex::from_project_manifest(&parsed);
+        let entry = index.get("mylib").ok_or("missing mylib package entry")?;
+        match entry {
+            LibraryManifestIndexEntry::Loaded { manifest, metadata } => {
+                assert_eq!(manifest.name, "mylib");
+                assert_eq!(manifest.version, "0.1.0");
+                assert_eq!(metadata.layout, LibraryArtifactLayout::PackageRoot);
+                assert_eq!(metadata.crate_root, dep_root);
+                assert_eq!(metadata.manifest_path, dep_manifest_path);
+                assert_eq!(metadata.cargo_toml_path, metadata.crate_root.join("Cargo.toml"));
+                assert_eq!(metadata.crate_lib_path, metadata.crate_root.join("src/lib.incn"));
+                let expected_incan_toml = metadata.crate_root.join("incan.toml");
+                assert_eq!(metadata.incan_toml_path.as_deref(), Some(expected_incan_toml.as_path()));
+            }
+            LibraryManifestIndexEntry::Failed(failure) => {
+                return Err(format!("expected loaded package manifest, got failure: {}", failure.message).into());
+            }
+        }
+
+        assert!(
+            !dep_root.join("src/lib.rs").exists(),
+            "package-root layout should not require generated Rust as its public artifact"
+        );
+        assert!(
+            index.cargo_path_dependencies().is_empty(),
+            "package-root layout should not masquerade as a generated Rust path dependency"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn records_failure_for_package_root_identity_mismatch() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let consumer_manifest_path = tmp.path().join("incan.toml");
+        let dep_root = tmp.path().join("deps").join("mylib");
+
+        std::fs::create_dir_all(dep_root.join("src"))?;
+        std::fs::write(
+            dep_root.join("Cargo.toml"),
+            "[package]\nname = \"mylib\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        std::fs::write(
+            dep_root.join("incan.toml"),
+            "[project]\nname = \"mylib\"\nversion = \"0.2.0\"\n",
+        )?;
+        std::fs::write(dep_root.join("src/lib.incn"), "pub def ready() -> int:\n    return 1\n")?;
+
+        let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+        manifest.package = Some(crate::library_manifest::LibraryPackageMetadata::new(
+            "mylib",
+            "0.1.0",
+            "src/lib.incn",
+        ));
+        manifest.write_to_path(&dep_root.join("mylib.incnlib"))?;
+
+        let manifest_content = r#"
+[dependencies]
+mylib = { path = "deps/mylib" }
+"#;
+        std::fs::write(&consumer_manifest_path, manifest_content)?;
+        let parsed = ProjectManifest::from_str(manifest_content, &consumer_manifest_path)?;
+
+        let index = LibraryManifestIndex::from_project_manifest(&parsed);
+        let entry = index.get("mylib").ok_or("missing mylib package entry")?;
+        match entry {
+            LibraryManifestIndexEntry::Loaded { .. } => {
+                return Err("expected failed entry for package identity mismatch".into());
+            }
+            LibraryManifestIndexEntry::Failed(failure) => {
+                assert_eq!(failure.kind, LibraryManifestFailureKind::ArtifactMismatch);
+                assert!(
+                    failure.message.contains("does not match Incan project version"),
+                    "unexpected failure: {}",
+                    failure.message
+                );
+            }
+        }
 
         Ok(())
     }

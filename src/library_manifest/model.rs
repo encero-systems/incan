@@ -7,7 +7,8 @@ use super::type_refs::type_ref_from_resolved;
 use super::validation::validate_raw_manifest;
 use super::wire::RawLibraryManifest;
 use super::{
-    DslSurface, LIBRARY_MANIFEST_FORMAT, RUST_ABI_SCHEMA_VERSION, VocabKeywordRegistration, VocabProviderManifest,
+    DslSurface, LIBRARY_MANIFEST_FORMAT, PACKAGE_METADATA_SCHEMA_VERSION, RUST_ABI_SCHEMA_VERSION,
+    VocabKeywordRegistration, VocabProviderManifest,
 };
 use crate::frontend::api_metadata::CheckedApiMetadataPackage;
 use crate::frontend::contract_metadata::ContractMetadataPackage as ModelContractMetadataPackage;
@@ -65,6 +66,8 @@ pub struct LibraryManifest {
     pub contract_metadata: LibraryContractMetadata,
     /// Optional Rust-backed ABI metadata captured at library publication time.
     pub rust_abi: Option<LibraryRustAbi>,
+    /// Optional package metadata for Cargo-compatible Incan package archives.
+    pub package: Option<LibraryPackageMetadata>,
 }
 
 /// Public library exports grouped by declaration kind.
@@ -208,6 +211,60 @@ impl LibraryRustAbi {
         self.items.iter().find(|item| {
             item.canonical_path == canonical_path || item.definition_path.as_deref() == Some(canonical_path)
         })
+    }
+}
+
+/// Package identity and ABI metadata for Cargo-compatible Incan package archives.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LibraryPackageMetadata {
+    /// Serialized package metadata schema version.
+    #[serde(default = "default_package_metadata_schema_version")]
+    pub schema_version: u32,
+    /// Registry identity such as `incan-pub` when known at publication time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub registry: Option<String>,
+    /// Published Incan package name.
+    pub package_name: String,
+    /// Published Incan package version.
+    pub version: String,
+    /// Normalized relative path to the package source entrypoint.
+    pub source_entrypoint: String,
+    /// ABI contract version understood by this package.
+    pub abi_version: u32,
+    /// Rust-facing export surface schema version.
+    pub rust_surface_version: u32,
+    /// Runtime ABI version required by the package.
+    pub runtime_abi_version: u32,
+    /// Standard-library ABI version required by the package.
+    pub stdlib_abi_version: u32,
+    /// Optional package checksum or checksum-input digest.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub checksum: Option<String>,
+}
+
+fn default_package_metadata_schema_version() -> u32 {
+    PACKAGE_METADATA_SCHEMA_VERSION
+}
+
+impl LibraryPackageMetadata {
+    /// Build v-next package metadata for a Cargo-compatible Incan package archive.
+    pub fn new(
+        package_name: impl Into<String>,
+        version: impl Into<String>,
+        source_entrypoint: impl Into<String>,
+    ) -> Self {
+        Self {
+            schema_version: PACKAGE_METADATA_SCHEMA_VERSION,
+            registry: None,
+            package_name: package_name.into(),
+            version: version.into(),
+            source_entrypoint: source_entrypoint.into(),
+            abi_version: 1,
+            rust_surface_version: 1,
+            runtime_abi_version: 1,
+            stdlib_abi_version: 1,
+            checksum: None,
+        }
     }
 }
 
@@ -557,6 +614,7 @@ impl LibraryManifest {
             soft_keywords: SoftKeywordExports::default(),
             contract_metadata: LibraryContractMetadata::default(),
             rust_abi: None,
+            package: None,
         }
     }
 

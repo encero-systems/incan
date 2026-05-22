@@ -1493,6 +1493,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
         soft_keywords: Default::default(),
         contract_metadata: LibraryContractMetadata::default(),
         rust_abi: None,
+        package: None,
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
@@ -1546,6 +1547,7 @@ fn library_index_with_callable_alias_export() -> LibraryManifestIndex {
         soft_keywords: Default::default(),
         contract_metadata: LibraryContractMetadata::default(),
         rust_abi: None,
+        package: None,
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
@@ -1590,6 +1592,7 @@ fn library_index_with_trait_export() -> LibraryManifestIndex {
         soft_keywords: Default::default(),
         contract_metadata: LibraryContractMetadata::default(),
         rust_abi: None,
+        package: None,
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
@@ -1736,6 +1739,7 @@ fn library_index_with_rfc025_trait_adoptions() -> LibraryManifestIndex {
         soft_keywords: Default::default(),
         contract_metadata: LibraryContractMetadata::default(),
         rust_abi: None,
+        package: None,
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(
@@ -1965,6 +1969,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
         soft_keywords: Default::default(),
         contract_metadata: LibraryContractMetadata::default(),
         rust_abi: None,
+        package: None,
     };
 
     LibraryManifestIndex::from_entries(HashMap::from([(

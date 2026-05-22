@@ -12,8 +12,9 @@ use semver::Version;
 
 use super::wire::{RawLibraryExports, RawLibraryManifest};
 use super::{
-    EnumExport, EnumValueExport, EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport,
-    ParamKindExport, PartialExport, RUST_ABI_SCHEMA_VERSION, VocabProviderManifest,
+    EnumExport, EnumValueExport, EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError,
+    PACKAGE_METADATA_SCHEMA_VERSION, ParamExport, ParamKindExport, PartialExport, RUST_ABI_SCHEMA_VERSION,
+    VocabProviderManifest,
 };
 use crate::frontend::contract_metadata::CONTRACT_METADATA_SCHEMA_VERSION;
 
@@ -22,10 +23,81 @@ pub(super) fn validate_raw_manifest(raw: &RawLibraryManifest) -> Result<(), Libr
     validate_manifest_version(raw)?;
     validate_callable_param_exports(&raw.exports)?;
     validate_value_enum_exports(&raw.exports)?;
+    validate_package_metadata(raw)?;
     validate_contract_metadata(raw)?;
     validate_rust_abi(raw)?;
     validate_vocab_payload(raw)?;
     validate_soft_keyword_activations(raw)?;
+    Ok(())
+}
+
+/// Validate Cargo-compatible package metadata before consumers trust it as package identity.
+fn validate_package_metadata(raw: &RawLibraryManifest) -> Result<(), LibraryManifestError> {
+    let Some(package) = &raw.package else {
+        return Ok(());
+    };
+    if package.schema_version != PACKAGE_METADATA_SCHEMA_VERSION {
+        return Err(LibraryManifestError::Invalid(format!(
+            "package.schema_version {} is unsupported (expected {})",
+            package.schema_version, PACKAGE_METADATA_SCHEMA_VERSION
+        )));
+    }
+    if package.package_name.trim().is_empty() {
+        return Err(LibraryManifestError::Invalid(
+            "package.package_name cannot be empty".to_string(),
+        ));
+    }
+    if package.package_name != raw.name {
+        return Err(LibraryManifestError::Invalid(format!(
+            "package.package_name `{}` must match manifest name `{}`",
+            package.package_name, raw.name
+        )));
+    }
+    if package.version.trim().is_empty() {
+        return Err(LibraryManifestError::Invalid(
+            "package.version cannot be empty".to_string(),
+        ));
+    }
+    if package.version != raw.version {
+        return Err(LibraryManifestError::Invalid(format!(
+            "package.version `{}` must match manifest version `{}`",
+            package.version, raw.version
+        )));
+    }
+    if package
+        .registry
+        .as_ref()
+        .is_some_and(|registry| registry.trim().is_empty())
+    {
+        return Err(LibraryManifestError::Invalid(
+            "package.registry cannot be empty when present".to_string(),
+        ));
+    }
+    if package.source_entrypoint.trim().is_empty() {
+        return Err(LibraryManifestError::Invalid(
+            "package.source_entrypoint cannot be empty".to_string(),
+        ));
+    }
+    validate_normalized_relative_path("package.source_entrypoint", &package.source_entrypoint)?;
+    for (field, value) in [
+        ("package.abi_version", package.abi_version),
+        ("package.rust_surface_version", package.rust_surface_version),
+        ("package.runtime_abi_version", package.runtime_abi_version),
+        ("package.stdlib_abi_version", package.stdlib_abi_version),
+    ] {
+        if value == 0 {
+            return Err(LibraryManifestError::Invalid(format!("{field} must be >= 1")));
+        }
+    }
+    if package
+        .checksum
+        .as_ref()
+        .is_some_and(|checksum| checksum.trim().is_empty())
+    {
+        return Err(LibraryManifestError::Invalid(
+            "package.checksum cannot be empty when present".to_string(),
+        ));
+    }
     Ok(())
 }
 
@@ -983,10 +1055,14 @@ fn validate_soft_keyword_activations(raw: &RawLibraryManifest) -> Result<(), Lib
 /// Producer manifests must store a clean relative path so both producer-side validation and consumer-side artifact
 /// loading apply the same traversal and normalization rules.
 fn validate_relative_artifact_path(relative_path: &str) -> Result<(), LibraryManifestError> {
+    validate_normalized_relative_path("vocab desugarer_artifact.relative_path", relative_path)
+}
+
+fn validate_normalized_relative_path(field: &str, relative_path: &str) -> Result<(), LibraryManifestError> {
     let path = Path::new(relative_path);
     if path.is_absolute() {
         return Err(LibraryManifestError::Invalid(format!(
-            "vocab desugarer_artifact.relative_path `{relative_path}` must be relative"
+            "{field} `{relative_path}` must be relative"
         )));
     }
     if path.components().any(|component| {
@@ -996,7 +1072,7 @@ fn validate_relative_artifact_path(relative_path: &str) -> Result<(), LibraryMan
         )
     }) {
         return Err(LibraryManifestError::Invalid(format!(
-            "vocab desugarer_artifact.relative_path `{relative_path}` must be a normalized relative path"
+            "{field} `{relative_path}` must be a normalized relative path"
         )));
     }
     Ok(())
