@@ -46,6 +46,31 @@ fn strip_ansi_escapes(text: &str) -> String {
     out
 }
 
+/// Run inline Incan source through the debug CLI using the same offline policy as integration tests.
+fn run_inline_incan_source(source: &str) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+    Ok(Command::new(incan_debug_binary())
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?)
+}
+
+/// Parse JSON log records from stdout that may also contain human logging or ordinary print lines.
+fn parse_json_log_records(stdout: &str) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+    stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with('{'))
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
+}
+
+/// Find a JSON logging record by its string body.
+fn json_record_by_body<'a>(records: &'a [serde_json::Value], body: &str) -> Option<&'a serde_json::Value> {
+    records
+        .iter()
+        .find(|record| record["Body"]["StringValue"] == serde_json::json!(body))
+}
+
 static TEST_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
 
 /// Create a throwaway project name that does not collide under parallel nextest workers.
@@ -173,10 +198,15 @@ main = "src/main.incn"
 }
 
 #[test]
-fn std_logging_logger_surface_filters_and_preserves_bound_context() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import ColorPolicy, Level, LogStyle, basic_config, get_logger
+fn std_logging_runtime_surfaces_share_one_generated_run() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"from std.logging import ColorPolicy, Level, LogFormat, LogStyle, LoggerName, OutputTarget, basic_config, get_logger
+from std.telemetry.core import TelemetryValue
 
-def main() -> None:
+model LocalLog:
+  def info(self, message: str) -> None:
+    println(f"local:{message}")
+
+def logger_context_case() -> None:
   basic_config(level=Level.WARNING, style=LogStyle.VERBOSE, color=ColorPolicy.NEVER, target="stdout")
   root = get_logger("app").bind({"shared": "root"})
   child = root.child("loader").bind({"component": "loader"})
@@ -189,20 +219,81 @@ def main() -> None:
 
   root.error("root event")
   child.warning("child event", fields={"shared": "event"})
+
+def json_record_shape_case() -> None:
+  basic_config(level=Level.DEBUG, format=LogFormat.JSON, target="stdout")
+  log = get_logger()
+  log.debug("json works", fields={"request_id": "abc", "component": "loader"})
+
+def default_target_case() -> None:
+  basic_config(level=Level.INFO)
+  get_logger("app").info("stderr event")
+
+def shadow_case() -> None:
+  basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
+  log = LocalLog()
+  log.info("shadowed")
+
+def ambient_root_case() -> None:
+  basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
+  log.info("snippet ambient")
+
+def structured_fields_case() -> None:
+  basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
+  log.info("structured", fields={
+    "rows": 42,
+    "ok": true,
+    "ratio": 1.5,
+    "missing": None,
+    "items": TelemetryValue.array([TelemetryValue.int(1), TelemetryValue.bool(false)]),
+    "nested": TelemetryValue.map({"child": TelemetryValue.string("yes")}),
+  })
+
+def validator_case() -> None:
+  match LoggerName.from_underlying(""):
+    Ok(_) => println("unexpected accepted empty logger name")
+    Err(err) => println(f"validation:empty_logger:{err.to_string()}")
+  match LoggerName.from_underlying(".app"):
+    Ok(_) => println("unexpected accepted edge logger name")
+    Err(err) => println(f"validation:edge_logger:{err.to_string()}")
+  match LoggerName.from_underlying("app..db"):
+    Ok(_) => println("unexpected accepted segmented logger name")
+    Err(err) => println(f"validation:segmented_logger:{err.to_string()}")
+  match OutputTarget.from_underlying("bogus"):
+    Ok(_) => println("unexpected accepted output target")
+    Err(err) => println(f"validation:output_target:{err.to_string()}")
+
+def human_styles_case() -> None:
+  basic_config(level=Level.INFO, style=LogStyle.MINIMAL, target="stdout")
+  get_logger("app").info("minimal event")
+  basic_config(level=Level.INFO, style=LogStyle.SHORT, target="stdout")
+  get_logger("app").info("short event")
+  basic_config(level=Level.INFO, style=LogStyle.COMPLETE, target="stdout")
+  get_logger("app").info("complete event")
+  basic_config(level=Level.INFO, style=LogStyle.VERBOSE, target="stdout")
+  get_logger("app").info("verbose event")
+
+def main() -> None:
+  logger_context_case()
+  json_record_shape_case()
+  default_target_case()
+  shadow_case()
+  ambient_root_case()
+  structured_fields_case()
+  validator_case()
+  human_styles_case()
 "#;
 
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
+    let output = run_inline_incan_source(source)?;
 
     assert!(
         output.status.success(),
-        "expected std.logging source surface run to succeed.\nstdout:\n{}\nstderr:\n{}",
+        "expected combined std.logging source surface run to succeed.\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stdout.contains("silent info"),
         "expected INFO event to be filtered by source basic_config, got:\n{stdout}"
@@ -225,44 +316,34 @@ def main() -> None:
         stdout.contains("logger=app.loader"),
         "expected child logger name, got:\n{stdout}"
     );
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_source_json_renderer_preserves_record_shape() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, LogFormat, basic_config, get_logger
-
-def main() -> None:
-  basic_config(level=Level.DEBUG, format=LogFormat.JSON, target="stdout")
-  log = get_logger()
-  log.debug("json works", fields={"request_id": "abc", "component": "loader"})
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
     assert!(
-        output.status.success(),
-        "expected source-defined std.logging JSON run to succeed.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        !stdout.contains("stderr event") && stderr.contains("stderr event"),
+        "expected default logging target to route the event to stderr.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let records: Vec<serde_json::Value> = stdout
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(serde_json::from_str)
-        .collect::<Result<_, _>>()?;
-    assert_eq!(records.len(), 1, "expected one JSON log record, got:\n{stdout}");
-    let record = &records[0];
+    assert!(
+        stdout.contains("local:shadowed") && !stdout.contains(r#""Body":{"Type":"string","StringValue":"shadowed"}"#),
+        "expected local log binding to remain ordinary source, got:\n{stdout}"
+    );
+    for expected in [
+        "validation:empty_logger:std.logging logger names must not be empty",
+        "validation:edge_logger:std.logging logger names must not start or end with '.'",
+        "validation:segmented_logger:std.logging logger names must not contain empty segments",
+        "validation:output_target:std.logging target must be 'stdout' or 'stderr'",
+    ] {
+        assert!(stdout.contains(expected), "expected `{expected}`, got:\n{stdout}");
+    }
+    assert!(
+        !stdout.contains("unexpected accepted"),
+        "expected std.logging validators to reject invalid values, got:\n{stdout}"
+    );
+
+    let records = parse_json_log_records(&stdout)?;
+    let record = json_record_by_body(&records, "json works")
+        .ok_or_else(|| std::io::Error::other(format!("missing `json works` record in:\n{stdout}")))?;
     assert_eq!(record["SeverityText"], serde_json::json!("DEBUG"));
     assert_eq!(record["SeverityNumber"], serde_json::json!(5));
     assert_eq!(record["InstrumentationScope"]["Name"], serde_json::json!("root"));
     assert_eq!(record["Body"]["Type"], serde_json::json!("string"));
-    assert_eq!(record["Body"]["StringValue"], serde_json::json!("json works"));
     assert_eq!(record["Attributes"]["request_id"]["Type"], serde_json::json!("string"));
     assert_eq!(
         record["Attributes"]["request_id"]["StringValue"],
@@ -279,41 +360,62 @@ def main() -> None:
         "expected user fields to stay under Attributes, got:\n{record}"
     );
 
+    let ambient = json_record_by_body(&records, "snippet ambient")
+        .ok_or_else(|| std::io::Error::other(format!("missing `snippet ambient` record in:\n{stdout}")))?;
+    assert_eq!(ambient["InstrumentationScope"]["Name"], serde_json::json!("root"));
+
+    let structured = json_record_by_body(&records, "structured")
+        .ok_or_else(|| std::io::Error::other(format!("missing `structured` record in:\n{stdout}")))?;
+    let attributes = &structured["Attributes"];
+    assert_eq!(attributes["rows"]["Type"], serde_json::json!("int"));
+    assert_eq!(attributes["rows"]["IntValue"], serde_json::json!(42));
+    assert_eq!(attributes["ok"]["Type"], serde_json::json!("bool"));
+    assert_eq!(attributes["ok"]["BoolValue"], serde_json::json!(true));
+    assert_eq!(attributes["ratio"]["Type"], serde_json::json!("float"));
+    assert_eq!(attributes["ratio"]["FloatValue"], serde_json::json!(1.5));
+    assert_eq!(attributes["missing"]["Type"], serde_json::json!("none"));
+    assert_eq!(attributes["items"]["Type"], serde_json::json!("array"));
+    assert_eq!(attributes["nested"]["Type"], serde_json::json!("map"));
+    assert!(
+        structured.get("rows").is_none() && structured.get("nested").is_none(),
+        "expected structured fields to stay under Attributes, got:\n{structured}"
+    );
+
+    let log_lines: Vec<&str> = stdout.lines().filter(|line| line.contains("[INFO]")).collect();
+    let short_line = log_lines
+        .iter()
+        .copied()
+        .find(|line| line.contains("short event"))
+        .unwrap_or("");
+    let complete_line = log_lines
+        .iter()
+        .copied()
+        .find(|line| line.contains("complete event"))
+        .unwrap_or("");
+
+    assert!(
+        stdout.contains("[INFO] minimal event"),
+        "expected minimal line, got:\n{stdout}"
+    );
+    assert_eq!(
+        short_line.find(" [INFO] short event"),
+        Some(8),
+        "expected short style to use compact time-of-day timestamp, got:\n{stdout}"
+    );
+    assert!(
+        complete_line.contains('T') && complete_line.contains("Z [INFO] complete event"),
+        "expected complete style to use full datetime timestamp, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("[INFO] verbose event\n  logger=app"),
+        "expected verbose style to add logger metadata on a second line, got:\n{stdout}"
+    );
+
     Ok(())
 }
 
 #[test]
-fn std_logging_default_target_writes_stderr() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, basic_config, get_logger
-
-def main() -> None:
-  basic_config(level=Level.INFO)
-  get_logger("app").info("stderr event")
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected std.logging stderr target run to succeed.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stdout.contains("stderr event") && stderr.contains("stderr event"),
-        "expected default logging target to route the event to stderr.\nstdout:\n{stdout}\nstderr:\n{stderr}"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_default_logger_infers_source_module() -> Result<(), Box<dyn std::error::Error>> {
+fn std_logging_module_source_inference_uses_worker_module() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
@@ -327,20 +429,24 @@ version = "0.1.0"
     fs::write(
         src_dir.join("main.incn"),
         r#"from std.logging import Level, LogStyle, basic_config
-from worker import run_worker
+from worker import run_ambient_worker, run_get_logger_worker
 
 def main() -> None:
   basic_config(level=Level.INFO, style=LogStyle.VERBOSE, target="stdout")
-  run_worker()
+  run_get_logger_worker()
+  run_ambient_worker()
 "#,
     )?;
     fs::write(
         src_dir.join("worker.incn"),
         r#"from std.logging import get_logger
 
-pub def run_worker() -> None:
+pub def run_get_logger_worker() -> None:
   log = get_logger()
   log.info("worker ready")
+
+pub def run_ambient_worker() -> None:
+  log.info("worker ambient log ready")
 "#,
     )?;
 
@@ -359,56 +465,12 @@ pub def run_worker() -> None:
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
-        stdout.contains("worker ready") && stdout.contains("logger=worker") && !stdout.contains("logger=root"),
+        stdout.contains("worker ready")
+            && stdout.contains("logger=worker")
+            && !stdout.contains("logger=root")
+            && !stdout.contains("logger=std.logging"),
         "expected get_logger() in worker.incn to infer logger=worker, got:\n{stdout}"
     );
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_ambient_log_infers_source_module() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let src_dir = tmp.path().join("src");
-    fs::create_dir_all(&src_dir)?;
-    fs::write(
-        tmp.path().join("incan.toml"),
-        r#"[project]
-name = "std_logging_ambient_log"
-version = "0.1.0"
-"#,
-    )?;
-    fs::write(
-        src_dir.join("main.incn"),
-        r#"from std.logging import Level, LogStyle, basic_config
-from worker import run_worker
-
-def main() -> None:
-  basic_config(level=Level.INFO, style=LogStyle.VERBOSE, target="stdout")
-  run_worker()
-"#,
-    )?;
-    fs::write(
-        src_dir.join("worker.incn"),
-        r#"pub def run_worker() -> None:
-  log.info("worker ambient log ready")
-"#,
-    )?;
-
-    let output = Command::new(incan_debug_binary())
-        .arg("run")
-        .arg("src/main.incn")
-        .current_dir(tmp.path())
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected ambient std.logging log run to succeed.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("worker ambient log ready")
             && stdout.contains("logger=worker")
@@ -419,128 +481,6 @@ def main() -> None:
 
     Ok(())
 }
-
-#[test]
-fn std_logging_ambient_log_is_shadowable() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, LogFormat, basic_config
-
-model LocalLog:
-  def info(self, message: str) -> None:
-    println(f"local:{message}")
-
-def main() -> None:
-  basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
-  log = LocalLog()
-  log.info("shadowed")
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected local log binding to shadow ambient std.logging.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("local:shadowed") && !stdout.contains("InstrumentationScope"),
-        "expected local log binding to remain ordinary source, got:\n{stdout}"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_ambient_log_snippet_falls_back_to_root() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, LogFormat, basic_config
-
-def main() -> None:
-  basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
-  log.info("snippet ambient")
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected metadata-free ambient log to fall back to root.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains(r#""InstrumentationScope":{"Name":"root""#) && stdout.contains("snippet ambient"),
-        "expected ambient log in -c snippet to emit with root logger, got:\n{stdout}"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_rejects_invalid_logger_names() -> Result<(), Box<dyn std::error::Error>> {
-    let cases = [
-        (
-            "empty logger name",
-            r#"from std.logging import get_logger
-
-def main() -> None:
-  get_logger("").info("should not emit")
-"#,
-            "std.logging logger names must not be empty",
-        ),
-        (
-            "empty logger segment",
-            r#"from std.logging import get_logger
-
-def main() -> None:
-  get_logger("app..db").info("should not emit")
-"#,
-            "std.logging logger names must not contain empty segments",
-        ),
-        (
-            "invalid child suffix",
-            r#"from std.logging import get_logger
-
-def main() -> None:
-  get_logger("app").child(".db").info("should not emit")
-"#,
-            "std.logging logger names must not contain empty segments",
-        ),
-    ];
-
-    for (case, source, expected) in cases {
-        let output = Command::new(incan_debug_binary())
-            .args(["run", "-c", source])
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-
-        assert!(
-            !output.status.success(),
-            "expected {case} to fail.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let combined = format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(
-            combined.contains(expected),
-            "expected {case} validation message `{expected}`, got:\n{combined}"
-        );
-    }
-
-    Ok(())
-}
-
 #[test]
 fn std_logging_rejects_invalid_output_target() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"from std.logging import Level, basic_config, get_logger
@@ -575,60 +515,6 @@ def main() -> None:
 }
 
 #[test]
-fn std_logging_json_preserves_structured_field_values() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, LogFormat, basic_config
-from std.telemetry.core import TelemetryValue
-
-def main() -> None:
-  basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
-  log.info("structured", fields={
-    "rows": 42,
-    "ok": true,
-    "ratio": 1.5,
-    "missing": None,
-    "items": TelemetryValue.array([TelemetryValue.int(1), TelemetryValue.bool(false)]),
-    "nested": TelemetryValue.map({"child": TelemetryValue.string("yes")}),
-  })
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected structured std.logging fields to compile and emit JSON.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let records: Vec<serde_json::Value> = stdout
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(serde_json::from_str)
-        .collect::<Result<_, _>>()?;
-    assert_eq!(records.len(), 1, "expected one JSON log record, got:\n{stdout}");
-    let attributes = &records[0]["Attributes"];
-    assert_eq!(attributes["rows"]["Type"], serde_json::json!("int"));
-    assert_eq!(attributes["rows"]["IntValue"], serde_json::json!(42));
-    assert_eq!(attributes["ok"]["Type"], serde_json::json!("bool"));
-    assert_eq!(attributes["ok"]["BoolValue"], serde_json::json!(true));
-    assert_eq!(attributes["ratio"]["Type"], serde_json::json!("float"));
-    assert_eq!(attributes["ratio"]["FloatValue"], serde_json::json!(1.5));
-    assert_eq!(attributes["missing"]["Type"], serde_json::json!("none"));
-    assert_eq!(attributes["items"]["Type"], serde_json::json!("array"));
-    assert_eq!(attributes["nested"]["Type"], serde_json::json!("map"));
-    assert!(
-        records[0].get("rows").is_none() && records[0].get("nested").is_none(),
-        "expected structured fields to stay under Attributes, got:\n{}",
-        records[0]
-    );
-
-    Ok(())
-}
-
-#[test]
 fn std_traits_convert_usage_runs() -> Result<(), Box<dyn std::error::Error>> {
     let source = include_str!("codegen_snapshots/std_traits_convert_usage.incn");
 
@@ -644,66 +530,6 @@ fn std_traits_convert_usage_runs() -> Result<(), Box<dyn std::error::Error>> {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n3\n");
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_human_styles_render_distinct_shapes() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, LogStyle, basic_config, get_logger
-
-def main() -> None:
-  basic_config(level=Level.INFO, style=LogStyle.MINIMAL, target="stdout")
-  get_logger("app").info("minimal event")
-  basic_config(level=Level.INFO, style=LogStyle.SHORT, target="stdout")
-  get_logger("app").info("short event")
-  basic_config(level=Level.INFO, style=LogStyle.COMPLETE, target="stdout")
-  get_logger("app").info("complete event")
-  basic_config(level=Level.INFO, style=LogStyle.VERBOSE, target="stdout")
-  get_logger("app").info("verbose event")
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected std.logging human style run to succeed.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let log_lines: Vec<&str> = stdout.lines().filter(|line| line.contains("[INFO]")).collect();
-    let short_line = log_lines
-        .iter()
-        .copied()
-        .find(|line| line.contains("short event"))
-        .unwrap_or("");
-    let complete_line = log_lines
-        .iter()
-        .copied()
-        .find(|line| line.contains("complete event"))
-        .unwrap_or("");
-
-    assert!(
-        stdout.contains("[INFO] minimal event"),
-        "expected minimal line, got:\n{stdout}"
-    );
-    assert_eq!(
-        short_line.find(" [INFO] short event"),
-        Some(8),
-        "expected short style to use compact time-of-day timestamp, got:\n{stdout}"
-    );
-    assert!(
-        complete_line.contains("T") && complete_line.contains("Z [INFO] complete event"),
-        "expected complete style to use full datetime timestamp, got:\n{stdout}"
-    );
-    assert!(
-        stdout.contains("[INFO] verbose event\n  logger=app"),
-        "expected verbose style to add logger metadata on a second line, got:\n{stdout}"
-    );
 
     Ok(())
 }
