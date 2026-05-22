@@ -152,10 +152,10 @@ fn is_owned_string_type(ty: &IrType) -> bool {
 fn borrowed_str_tokens(ty: &IrType, emitted: TokenStream) -> TokenStream {
     match ty {
         IrType::StaticStr | IrType::StrRef => emitted,
-        IrType::FrozenStr => quote! { #emitted.as_str() },
+        IrType::FrozenStr => quote! { <_ as AsRef<str>>::as_ref(&#emitted) },
         IrType::Ref(inner) | IrType::RefMut(inner) => match peel_refs(inner) {
             IrType::StaticStr | IrType::StrRef => emitted,
-            IrType::FrozenStr => quote! { #emitted.as_str() },
+            IrType::FrozenStr => quote! { <_ as AsRef<str>>::as_ref(#emitted) },
             _ => quote! { <_ as AsRef<str>>::as_ref(#emitted) },
         },
         _ => quote! { <_ as AsRef<str>>::as_ref(&#emitted) },
