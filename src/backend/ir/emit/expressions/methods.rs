@@ -37,9 +37,9 @@ use string_methods::emit_string_method;
 ///
 /// This deduplicates the pattern of:
 /// - Detecting `FrozenStr` receivers
-/// - Unwrapping them via `.as_str()`
+/// - Viewing them through `AsRef<str>`
 pub(super) struct ReceiverInfo {
-    /// The receiver token stream (possibly wrapped in `.as_str()` for FrozenStr).
+    /// The receiver token stream, possibly viewed as `&str` for frozen/imported string values.
     pub(super) r: TokenStream,
     /// A borrow of the receiver: `&#r`.
     pub(super) r_borrow: TokenStream,
@@ -50,7 +50,7 @@ impl ReceiverInfo {
     fn new(receiver_ty: &IrType, emitted: TokenStream) -> Self {
         let is_frozen_str = matches!(receiver_ty, IrType::FrozenStr);
         let r = if is_frozen_str {
-            quote! { #emitted.as_str() }
+            quote! { <_ as AsRef<str>>::as_ref(&#emitted) }
         } else {
             emitted
         };
