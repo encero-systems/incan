@@ -175,6 +175,15 @@ impl AstLowering {
         format!("__incan_decorated_{name}")
     }
 
+    /// Return the span used for synthetic decorator callee nodes.
+    ///
+    /// The full decorator factory call keeps the source decorator span for typechecker handoff. Nested synthetic
+    /// callees must not reuse that span because expression metadata is span-keyed and the factory result type would
+    /// otherwise overwrite the callee's callable signature during lowering.
+    pub(in crate::backend::ir::lower) fn decorator_synthetic_callee_span() -> ast::Span {
+        ast::Span::default()
+    }
+
     /// Build an expression that resolves a decorator's path through ordinary expression lowering.
     pub(in crate::backend::ir::lower) fn decorator_path_expr(
         decorator: &ast::Decorator,
@@ -220,14 +229,15 @@ impl AstLowering {
                         is_absolute: decorator.node.path.is_absolute,
                         segments: path[..path.len() - 1].to_vec(),
                     };
-                    let base = Self::decorator_path_expr_from_import_path(&base_path, decorator.span);
+                    let base =
+                        Self::decorator_path_expr_from_import_path(&base_path, Self::decorator_synthetic_callee_span());
                     let method = path.last().cloned().unwrap_or_default();
                     Spanned::new(
                         Expr::MethodCall(Box::new(base), method, Vec::new(), args),
                         decorator.span,
                     )
                 } else {
-                    let callee = Self::decorator_path_expr(&decorator.node, decorator.span);
+                    let callee = Self::decorator_path_expr(&decorator.node, Self::decorator_synthetic_callee_span());
                     Spanned::new(Expr::Call(Box::new(callee), Vec::new(), args), decorator.span)
                 }
             } else {
