@@ -620,15 +620,32 @@ impl TypeChecker {
             }
             return Some(false);
         }
+        Some(self.rust_type_args_compatible(actual_args.as_slice(), expected_args.as_slice()))
+    }
+
+    fn rust_type_args_compatible(&self, actual_args: &[ResolvedType], expected_args: &[ResolvedType]) -> bool {
         if actual_args.len() != expected_args.len() {
-            return Some(actual_args.is_empty() && expected_args.is_empty());
+            return (actual_args.is_empty() && expected_args.iter().all(Self::rust_type_arg_is_unknown_placeholder))
+                || (expected_args.is_empty() && actual_args.iter().all(Self::rust_type_arg_is_unknown_placeholder));
         }
-        Some(
-            actual_args
-                .iter()
-                .zip(expected_args.iter())
-                .all(|(actual, expected)| self.types_compatible(actual, expected)),
-        )
+        actual_args.iter().zip(expected_args.iter()).all(|(actual, expected)| {
+            Self::rust_type_arg_is_unknown_placeholder(actual)
+                || Self::rust_type_arg_is_unknown_placeholder(expected)
+                || self.types_compatible(actual, expected)
+        })
+    }
+
+    fn rust_type_arg_is_unknown_placeholder(arg: &ResolvedType) -> bool {
+        match arg {
+            ResolvedType::Unknown => true,
+            ResolvedType::RustPath(path) => {
+                matches!(
+                    path.trim().as_bytes(),
+                    [b'?'] | [b'{', b'u', b'n', b'k', b'n', b'o', b'w', b'n', b'}']
+                )
+            }
+            _ => false,
+        }
     }
 
     /// Whether a Rust signature parameter is the implicit receiver (`self`/`&self`/`&mut self`).

@@ -1073,7 +1073,7 @@ pub fn collect_modules(entry_path: &str) -> CliResult<Vec<ParsedModule>> {
 /// This explicit sort guarantees each module appears only after its direct and transitive dependencies for acyclic
 /// portions of the graph. For cyclic components (for example stdlib prelude re-export loops), we keep deterministic
 /// fallback ordering rather than hard-failing in collection.
-fn topologically_sort_modules(
+pub(crate) fn topologically_sort_modules(
     modules: Vec<ParsedModule>,
     dependency_edges: &HashMap<String, HashSet<String>>,
 ) -> CliResult<Vec<ParsedModule>> {

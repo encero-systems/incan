@@ -117,6 +117,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
     normalize_codegen_output(&code)
 }
 
+#[cfg(feature = "rust_inspect")]
 fn generate_rust_with_substrait_probe(source: &str) -> String {
     let tmp = match tempfile::tempdir() {
         Ok(tmp) => tmp,
@@ -2358,6 +2359,7 @@ fn test_issue217_rust_enum_match_bindings_codegen() {
     insta::assert_snapshot!("issue217_rust_enum_match_bindings", rust_code);
 }
 
+#[cfg(feature = "rust_inspect")]
 #[test]
 fn test_issue459_rust_enum_pattern_import_codegen() {
     let source = load_test_file("issue459_rust_enum_pattern_import");

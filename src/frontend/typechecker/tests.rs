@@ -3721,6 +3721,15 @@ fn seed_async_rust_method_probe(
     checker: &mut TypeChecker,
     manifest_dir: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    seed_async_rust_method_probe_with_options_param(checker, manifest_dir, "demo::CsvReadOptions")
+}
+
+#[cfg(feature = "rust_inspect")]
+fn seed_async_rust_method_probe_with_options_param(
+    checker: &mut TypeChecker,
+    manifest_dir: &std::path::Path,
+    options_param_type: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     checker.rust_inspect_cache.insert_test_item(
         manifest_dir,
         RustItemMetadata {
@@ -3756,7 +3765,7 @@ fn seed_async_rust_method_probe(
                                 },
                                 RustParam {
                                     name: Some("options".to_string()),
-                                    type_display: "demo::CsvReadOptions".to_string(),
+                                    type_display: options_param_type.to_string(),
                                 },
                             ],
                             return_type: "Result<(), demo::DataFusionError>".to_string(),
@@ -3850,6 +3859,38 @@ pub async def register_csv_with_await() -> None:
     checker.check_program(&ast).map_err(|errs| {
         std::io::Error::other(format!(
             "expected awaited Rust async method call to typecheck: {errs:?}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_async_method_call_accepts_imported_type_with_unknown_generic_metadata()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+import std.async
+from rust::demo import SessionContext
+from rust::demo import CsvReadOptions
+from rust::demo import make_context
+from rust::demo import make_options
+
+pub async def register_csv_with_unknown_options_metadata() -> None:
+  ctx = make_context()
+  opts = make_options()
+  match await ctx.register_csv("orders", "orders.csv", opts):
+    Ok(_) => pass
+    Err(_) => pass
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    checker.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
+    seed_async_rust_method_probe_with_options_param(&mut checker, tmp.path(), "demo::CsvReadOptions<?>")?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected Rust async method to accept an imported Rust type when metadata has only unknown generic args: {errs:?}"
         ))
     })?;
     Ok(())
@@ -8227,6 +8268,7 @@ def f(w: Widget) -> None:
     Ok(())
 }
 
+#[cfg(feature = "rust_inspect")]
 #[test]
 fn test_rust_extension_trait_associated_call_records_param_shape() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
@@ -8314,6 +8356,7 @@ def f(encoded: bytes) -> None:
     Ok(())
 }
 
+#[cfg(feature = "rust_inspect")]
 #[test]
 fn test_rust_extension_trait_associated_call_records_param_shape_without_receiver_metadata()
 -> Result<(), Box<dyn std::error::Error>> {

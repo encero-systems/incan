@@ -1734,6 +1734,60 @@ def main() -> None:
 }
 
 #[test]
+fn test_accepts_public_alias_of_imported_item_issue631() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "public_alias_test_reexport", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        src_dir.join("helper.incn"),
+        r#"pub def target() -> int:
+    return 1
+"#,
+    )?;
+    fs::write(
+        src_dir.join("functions.incn"),
+        r#"from helper import target as target_builder
+
+pub public_target = alias target_builder
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from functions import public_target
+
+
+def main() -> None:
+    assert public_target() == 1
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_alias.incn"),
+        r#"from functions import public_target
+
+
+def test_alias() -> None:
+    assert public_target() == 1
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&build_output, "incan build for public alias issue631");
+
+    let test_path = tests_dir.join("test_alias.incn");
+    let test_output = run_incan(
+        tmp.path(),
+        &["test", test_path.to_str().ok_or("test path was not valid UTF-8")?],
+    )?;
+    assert_success(&test_output, "incan test for public alias issue631");
+    Ok(())
+}
+
+#[test]
 fn build_frozen_uses_existing_lockfile_without_network() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_frozen_existing_lock_project", "")?;
