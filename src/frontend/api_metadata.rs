@@ -560,10 +560,42 @@ fn api_function(
         docstring,
         decorators: decorators_metadata(&function.decorators, checker),
         type_params: type_params(&export.type_params),
-        params: params(&export.params),
-        return_type: type_ref_from_resolved(&export.return_type),
-        is_async: export.is_async,
+        params: source_function_params(function, checker),
+        return_type: source_function_return_type(function, checker),
+        is_async: function.is_async(),
     }
+}
+
+/// Build the source-declared callable parameter surface for API documentation metadata.
+///
+/// User-defined decorators can rebind a public function symbol to an ordinary callable value. That callable type is the
+/// right contract for lowering and invocation, but function API docs are attached to the source declaration and should
+/// validate against the declaration's named parameters instead of an anonymous function-type projection.
+fn source_function_params(function: &FunctionDecl, checker: &TypeChecker) -> Vec<ParamExport> {
+    function
+        .params
+        .iter()
+        .map(|param| ParamExport {
+            name: param.node.name.clone(),
+            ty: type_ref_from_resolved(&crate::frontend::symbols::resolve_type(
+                &param.node.ty.node,
+                &checker.symbols,
+            )),
+            kind: match param.node.kind {
+                crate::frontend::ast::ParamKind::Normal => ParamKindExport::Normal,
+                crate::frontend::ast::ParamKind::RestPositional => ParamKindExport::RestPositional,
+                crate::frontend::ast::ParamKind::RestKeyword => ParamKindExport::RestKeyword,
+            },
+            has_default: param.node.default.is_some(),
+        })
+        .collect()
+}
+
+fn source_function_return_type(function: &FunctionDecl, checker: &TypeChecker) -> TypeRef {
+    type_ref_from_resolved(&crate::frontend::symbols::resolve_type(
+        &function.return_type.node,
+        &checker.symbols,
+    ))
 }
 
 fn api_model(
@@ -1857,6 +1889,48 @@ pub def avg(values: List[float]) -> float:
                 .iter()
                 .any(|message| message.contains("documented decorator `rust.allow` does not exist")),
             "expected decorator drift diagnostic, got {messages:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_preserves_decorated_function_source_signature() -> Result<(), String> {
+        let source = r#"
+def keep(func: (int) -> int) -> (int) -> int:
+    return func
+
+@keep
+pub def decorated(value: int) -> int:
+    """Return the input value.
+
+    Args:
+        value: Input value.
+    """
+    return value
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let function = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Function(function) if function.name == "decorated" => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected decorated function metadata".to_string())?;
+
+        assert_eq!(function.params.len(), 1);
+        assert_eq!(function.params[0].name, "value");
+        assert_eq!(
+            function.params[0].ty,
+            TypeRef::Named {
+                name: "int".to_string(),
+            }
+        );
+
+        let diagnostics = validate_checked_api_docstrings(&[metadata]);
+        assert!(
+            diagnostics.is_empty(),
+            "expected decorated source signature to satisfy docstring validation, got {diagnostics:?}"
         );
         Ok(())
     }
