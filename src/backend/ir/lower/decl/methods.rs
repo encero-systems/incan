@@ -73,14 +73,15 @@ impl AstLowering {
                         is_absolute: decorator.node.path.is_absolute,
                         segments: path[..path.len() - 1].to_vec(),
                     };
-                    let base = Self::decorator_path_expr_from_import_path(&base_path, decorator.span);
+                    let base =
+                        Self::decorator_path_expr_from_import_path(&base_path, Self::decorator_synthetic_callee_span());
                     let method_name = path.last().cloned().unwrap_or_default();
                     Spanned::new(
                         ast::Expr::MethodCall(Box::new(base), method_name, Vec::new(), args),
                         decorator.span,
                     )
                 } else {
-                    let callee = Self::decorator_path_expr(&decorator.node, decorator.span);
+                    let callee = Self::decorator_path_expr(&decorator.node, Self::decorator_synthetic_callee_span());
                     Spanned::new(ast::Expr::Call(Box::new(callee), Vec::new(), args), decorator.span)
                 }
             } else {

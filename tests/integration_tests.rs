@@ -9108,6 +9108,72 @@ def test_imported_const_str_call_arguments_materialize() -> None:
     }
 
     #[test]
+    fn e2e_imported_decorator_factory_const_str_argument_materializes() {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "imported_decorator_const_str_materialization"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        let tests_dir = dir.join("tests");
+
+        if let Err(err) = std::fs::create_dir_all(&src_dir) {
+            panic!("failed to create src dir: {}", err);
+        }
+        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
+            panic!("failed to create tests dir: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            src_dir.join("registry.incn"),
+            r#"
+pub const TOKEN: str = "probe.value"
+
+def keep_int(func: (int) -> int) -> (int) -> int:
+    return func
+
+pub def registered(_name: str) -> Callable[(int) -> int, (int) -> int]:
+    return keep_int
+"#,
+        ) {
+            panic!("failed to write registry source: {}", err);
+        }
+        if let Err(err) = std::fs::write(
+            tests_dir.join("test_imported_decorator_const_str.incn"),
+            r#"
+from std.testing import assert_eq
+from registry import TOKEN, registered
+
+@registered(TOKEN)
+def increment(value: int) -> int:
+    return value + 1
+
+def test_imported_decorator_factory_const_str_argument_materializes() -> None:
+    assert_eq(increment(1), 2)
+"#,
+        ) {
+            panic!("failed to write imported decorator const string test: {}", err);
+        }
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected imported decorator factory const str materialization test to succeed.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            !stderr.contains("expected `String`, found `&str`"),
+            "decorator factory const str argument should materialize as an owned string.\nstderr:\n{}",
+            stderr,
+        );
+    }
+
+    #[test]
     fn e2e_empty_list_arguments_in_tests_preserve_string_element_type() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
             "incan.toml",
