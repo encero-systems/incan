@@ -1237,6 +1237,34 @@ fn test_collections_codegen() {
 }
 
 #[test]
+fn test_issue633_question_mark_list_comprehension_codegen_uses_loop() {
+    let source = r#"
+def parse_value(value: int) -> Result[int, str]:
+    return Ok(value)
+
+
+def parse_all(values: list[int]) -> Result[list[int], str]:
+    return Ok([parse_value(value)? for value in values])
+
+
+def main() -> None:
+    match parse_all([1, 2, 3]):
+        Ok(values) => println(values[0])
+        Err(err) => println(err)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.split_whitespace().collect::<String>();
+    assert!(
+        compact.contains("letmut__incan_list=Vec::new();forvaluein(values).iter().copied(){__incan_list.push(parse_value(value)?);}__incan_list"),
+        "expected issue633 comprehension to lower to an outer-function loop, got:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains(".map(|value|parse_value(value)?)"),
+        "question-mark comprehension must not lower into an element-returning Rust map closure:\n{rust_code}"
+    );
+}
+
+#[test]
 fn test_list_repeat_codegen() {
     let source = load_test_file("list_repeat");
     let rust_code = generate_rust(&source);

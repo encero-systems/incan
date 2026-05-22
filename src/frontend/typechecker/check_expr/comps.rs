@@ -94,6 +94,7 @@ impl TypeChecker {
 
         let prev_in_async_body = self.in_async_body;
         self.in_async_body = false;
+        let prev_return_error_type = self.current_return_error_type.take();
 
         let param_types: Vec<_> = params
             .iter()
@@ -114,6 +115,7 @@ impl TypeChecker {
             .collect();
 
         let return_ty = self.check_expr(body);
+        self.current_return_error_type = prev_return_error_type;
         self.in_async_body = prev_in_async_body;
         self.symbols.exit_scope();
 

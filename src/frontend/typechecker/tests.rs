@@ -5352,6 +5352,44 @@ def foo() -> Result[int, str]:
 }
 
 #[test]
+fn test_try_requires_result_return_type() {
+    let source = r#"
+def foo() -> int:
+  x: Result[int, str] = Ok(42)
+  return x?
+"#;
+    let errors = check_str_err(source, "try in non-Result function should fail typechecking");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("enclosing function does not return Result")),
+        "expected non-Result enclosing function diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_try_does_not_cross_closure_boundary() {
+    let source = r#"
+def parse_value() -> Result[int, str]:
+  return Ok(42)
+
+def foo() -> Result[int, str]:
+  callback = () => parse_value()?
+  return Ok(callback())
+"#;
+    let errors = check_str_err(
+        source,
+        "try in closure should not target enclosing Result-returning function",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("enclosing function does not return Result")),
+        "expected closure boundary diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
 fn test_sleep_requires_float() {
     let source = r#"
 from std.async.time import sleep
@@ -10189,10 +10227,12 @@ def main() -> None:
 fn test_stdlib_import_only_facades_reexport_imported_types() {
     let source = r#"
 from std.datetime.civil import Date, TimeDelta
+from std.datetime.error import DateTimeError
 
-def main() -> None:
+def main() -> Result[None, DateTimeError]:
   renewal = Date.fromisoformat("2026-04-14")? + TimeDelta.days(30)
   print(renewal.isoformat())
+  return Ok(None)
 "#;
     assert_check_ok(source);
 }

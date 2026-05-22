@@ -4134,6 +4134,80 @@ def main() -> None:
     }
 
     #[test]
+    fn test_question_mark_list_comprehension_propagates_result_issue633() -> Result<(), Box<dyn std::error::Error>> {
+        let output = run_incan_source(
+            r#"
+def parse_value(value: int) -> Result[int, str]:
+    if value == 2:
+        return Err("bad value")
+    return Ok(value)
+
+
+def parse_all(values: list[int]) -> Result[list[int], str]:
+    return Ok([parse_value(value)? for value in values])
+
+
+def main() -> None:
+    match parse_all([1, 2, 3]):
+        Ok(values) => println(values[0])
+        Err(err) => println(err)
+"#,
+        );
+        assert!(
+            output.status.success(),
+            "question-mark list comprehension regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(lines, vec!["bad value"], "unexpected issue633 output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_question_mark_dict_comprehension_propagates_result_issue633() -> Result<(), Box<dyn std::error::Error>> {
+        let output = run_incan_source(
+            r#"
+def parse_key(value: int) -> Result[str, str]:
+    if value == 2:
+        return Err("bad key")
+    return Ok(str(value))
+
+
+def parse_map(values: list[int]) -> Result[dict[str, int], str]:
+    return Ok({parse_key(value)?: value for value in values})
+
+
+def main() -> None:
+    match parse_map([1, 2, 3]):
+        Ok(values) => println(values["1"])
+        Err(err) => println(err)
+"#,
+        );
+        assert!(
+            output.status.success(),
+            "question-mark dict comprehension regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(lines, vec!["bad key"], "unexpected issue633 dict output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
     fn test_result_map_err_accepts_capturing_inline_closure() -> Result<(), Box<dyn std::error::Error>> {
         let output = Command::new(incan_debug_binary())
             .args([

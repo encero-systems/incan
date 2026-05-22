@@ -429,6 +429,15 @@ pub fn incompatible_error_type(expected: &str, found: &str, span: Span) -> Compi
     .with_hint("Use map_err to convert the error type, or add a From implementation")
 }
 
+pub fn try_without_result_return(span: Span) -> CompileError {
+    CompileError::type_error(
+        "Cannot use '?' here: the enclosing function does not return Result[_, E]".to_string(),
+        span,
+    )
+    .with_note("The '?' operator unwraps Ok(value) or returns early with Err(error)")
+    .with_hint("Change the enclosing function return type to Result[T, E], or handle the Result with match")
+}
+
 pub fn testing_marker_runtime_call_not_supported(name: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("'{}' is a test marker decorator and cannot be called at runtime", name),
