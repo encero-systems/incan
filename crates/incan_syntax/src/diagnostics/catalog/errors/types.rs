@@ -186,6 +186,11 @@ pub fn decorator_factory_not_callable(path: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("'{path}' does not return a callable"), span)
 }
 
+/// Report a decorator callable whose application result is not callable.
+pub fn decorator_result_not_callable(path: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("decorator '{path}' must return a callable"), span)
+}
+
 /// Report a type-valued decorator argument on a user-defined decorator factory.
 pub fn decorator_type_argument_not_supported(path: &str, span: Span) -> CompileError {
     CompileError::type_error(

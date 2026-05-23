@@ -5250,6 +5250,24 @@ def label() -> int:
             .any(|err| err.message.contains("'count_factory(...)' does not return a callable")),
         "expected non-callable factory diagnostic, got {bad_factory:?}"
     );
+
+    let bad_result = check_str_err(
+        r#"
+def count(func: () -> int) -> int:
+  return 1
+
+@count
+def label() -> int:
+  return 1
+"#,
+        "decorator returning non-callable should be rejected",
+    );
+    assert!(
+        bad_result
+            .iter()
+            .any(|err| err.message.contains("decorator 'count' must return a callable")),
+        "expected non-callable decorator result diagnostic, got {bad_result:?}"
+    );
 }
 
 #[test]

@@ -3948,7 +3948,7 @@ impl TypeChecker {
         self.check_expr(&factory_expr)
     }
 
-    /// Apply a callable decorator value to the decorated binding type and return the post-decoration binding type.
+    /// Apply a callable decorator value to the decorated binding type and return the post-decoration callable type.
     fn apply_decorator_callable(
         &mut self,
         display: &str,
@@ -3977,7 +3977,12 @@ impl TypeChecker {
         if self.errors.len() != error_count {
             return ResolvedType::Unknown;
         }
-        substitute_resolved_type(&ret, &type_bindings)
+        let result_ty = substitute_resolved_type(&ret, &type_bindings);
+        if !matches!(result_ty, ResolvedType::Function(_, _) | ResolvedType::Unknown) {
+            self.errors.push(errors::decorator_result_not_callable(display, span));
+            return ResolvedType::Unknown;
+        }
+        result_ty
     }
 
     /// Convert decorator arguments into ordinary call arguments for user-defined decorator factory checking.
