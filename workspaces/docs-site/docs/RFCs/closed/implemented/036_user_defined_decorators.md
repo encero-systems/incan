@@ -13,7 +13,7 @@
     - RFC 031 (Library system — enables decorator libraries to ship as `pub::` packages)
     - RFC 037 (Native web and HTTP stdlib redesign — consumer of `@app.get` / `@app.post`)
     - RFC 084 (RHS partial callable presets — future decorator factory ergonomics)
-- **Issue:** [#170](https://github.com/dannys-code-corner/incan/issues/170)
+- **Issue:** [#170](https://github.com/dannys-code-corner/incan/issues/170), [#640](https://github.com/dannys-code-corner/incan/issues/640)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3
@@ -279,6 +279,29 @@ After desugaring, the typechecker treats `f = D(f)` as a regular call expression
 
 For decorator factories, step 1 applies to `D(args)` — the factory expression must produce a callable-shaped value — and then steps 2 and 3 apply to that callable applied to `f`.
 
+### v0.3 amendment: generic decorator factories
+
+Issue #640 was accepted as an implementation amendment to this RFC because it naturally extends decorator factories rather than introducing a separate decorator model. A decorator factory may be generic over the decorated function type and return `((F) -> F)`, letting libraries write one registration helper instead of one helper per callable signature:
+
+```incan
+pub def registered[F](function_ref: str) -> ((F) -> F):
+    return (func) => func
+
+@registered("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+```
+
+The compiler infers `F` from the decorated function when applying the produced decorator. If inference needs an explicit call-site type, the decorator factory call accepts the same bracketed type-argument syntax as ordinary generic calls:
+
+```incan
+@registered[(str) -> ColumnExpr]("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+```
+
+This amendment preserves RFC 036's binding contract: later references, exports, imports, checked API metadata, and editor surfaces observe the concrete decorated function signature unless the decorator intentionally returns a different callable shape.
+
 ### Async decorators
 
 A decorator applied to an `async def` receives an async function value. The decorator is responsible for preserving async semantics correctly — typically by defining an `async def wrapper(...)` internally. The compiler does not automatically lift a synchronous wrapper to async; a sync decorator applied to an async function produces a sync-typed result, which is likely a type error at the call site.
@@ -296,7 +319,7 @@ A decorator applied to an `async def` receives an async function value. The deco
 
 ### Syntax
 
-No new decorator syntax is introduced. `@name` and `@name(args)` already parse. Unknown decorator names no longer produce an error on `def`, `async def`, or method declarations — they desugar instead.
+RFC 036 originally required no new decorator syntax beyond `@name` and `@name(args)`. The v0.3 implementation amendment also accepts explicit generic call-site arguments on decorator factory calls, as in `@name[T](args)`, using the same type-argument syntax as ordinary generic calls. Unknown decorator names no longer produce an error on `def`, `async def`, or method declarations — they desugar instead.
 
 Method decorator signatures use reference callable parameters for receivers. Immutable method receivers are written as `&Owner`, and mutable method receivers are written as `&mut Owner`, for example `(&Box, int) -> str` and `(&mut Counter, int) -> int`.
 

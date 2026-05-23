@@ -77,12 +77,15 @@ impl AstLowering {
                         Self::decorator_path_expr_from_import_path(&base_path, Self::decorator_synthetic_callee_span());
                     let method_name = path.last().cloned().unwrap_or_default();
                     Spanned::new(
-                        ast::Expr::MethodCall(Box::new(base), method_name, Vec::new(), args),
+                        ast::Expr::MethodCall(Box::new(base), method_name, decorator.node.type_args.clone(), args),
                         decorator.span,
                     )
                 } else {
                     let callee = Self::decorator_path_expr(&decorator.node, Self::decorator_synthetic_callee_span());
-                    Spanned::new(ast::Expr::Call(Box::new(callee), Vec::new(), args), decorator.span)
+                    Spanned::new(
+                        ast::Expr::Call(Box::new(callee), decorator.node.type_args.clone(), args),
+                        decorator.span,
+                    )
                 }
             } else {
                 Self::decorator_path_expr(&decorator.node, decorator.span)
@@ -94,7 +97,7 @@ impl AstLowering {
             };
             current = Spanned::new(
                 ast::Expr::Call(Box::new(callable), Vec::new(), vec![ast::CallArg::Positional(arg)]),
-                decorator.span,
+                Self::decorator_synthetic_callee_span(),
             );
         }
         Ok(current)

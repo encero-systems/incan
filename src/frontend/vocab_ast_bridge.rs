@@ -880,6 +880,12 @@ fn public_scoped_symbol_call_to_internal(
 fn public_decorator_from_internal(
     decorator: &ast::Spanned<ast::Decorator>,
 ) -> Result<incan_vocab::Decorator, VocabAstBridgeError> {
+    if !decorator.node.type_args.is_empty() {
+        return Err(VocabAstBridgeError::UnsupportedInternalExpression(
+            "typed decorator call-site arguments are not currently bridgeable",
+        ));
+    }
+
     let mut args = Vec::new();
     for arg in &decorator.node.args {
         match arg {

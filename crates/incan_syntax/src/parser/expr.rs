@@ -498,7 +498,7 @@ impl<'a> Parser<'a> {
     }
 
     /// Parse one call-site type argument: either a full [`Type`] or the inference placeholder `_`.
-    fn call_site_type_arg(&mut self) -> Result<Spanned<Type>, CompileError> {
+    pub(super) fn call_site_type_arg(&mut self) -> Result<Spanned<Type>, CompileError> {
         if let TokenKind::Ident(name) = &self.peek().kind
             && name == "_"
         {
@@ -512,7 +512,7 @@ impl<'a> Parser<'a> {
     /// Parse optional explicit call-site type arguments (`[T, U]`) without consuming non-call brackets.
     ///
     /// This is intentionally conservative: we only treat brackets as call-site type args when the matching `]` is followed immediately by `(`.
-    fn call_site_type_args(&mut self) -> Result<Vec<Spanned<Type>>, CompileError> {
+    pub(super) fn call_site_type_args(&mut self) -> Result<Vec<Spanned<Type>>, CompileError> {
         if !self.check(&TokenKind::Punctuation(PunctuationId::LBracket)) {
             return Ok(Vec::new());
         }

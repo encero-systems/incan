@@ -308,6 +308,27 @@ def main() -> None:
 
 Stacked decorators apply bottom-up, matching Python's declaration model: the decorator closest to `def` receives the original function value first, and the outer decorators receive each previous result. Decorator factories such as `@logged("name")` are checked by first evaluating the factory expression as a callable-producing expression and then applying the produced decorator to the function value.
 
+Decorator factories can be generic over the decorated function type. This is the usual shape for registry, catalog, routing, telemetry, and validation decorators that record metadata but return the original function unchanged:
+
+```incan
+def registered[F](function_ref: str) -> ((F) -> F):
+    return (func) => func
+
+@registered("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+```
+
+The compiler infers `F` from the decorated function when the factory result is applied. If inference needs help, pass the decorated function type explicitly on the decorator factory call:
+
+```incan
+@registered[(str) -> ColumnExpr]("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+```
+
+The post-decoration binding keeps the concrete callable signature of the decorated function unless the decorator deliberately returns a different callable shape. Checked API metadata and imports observe that concrete signature, not the generic helper's `F`.
+
 Method decorators receive an unbound callable shape with the receiver first. A decorator on `def label(self, value: int) -> str` sees `(&Box, int) -> str`; a decorator on `def bump(mut self, value: int) -> int` sees `(&mut Box, int) -> int`. The wrapper passes the actual receiver borrow through to the decorated callable, so method decorators do not require cloning the receiver.
 
 Class, model, trait, enum, newtype, field, alias, and module decorators remain limited to compiler-owned decorators. Compiler-owned decorators such as `@derive`, `@route`, `@rust.extern`, `@rust.allow`, `@staticmethod`, `@classmethod`, and `@requires` keep their existing special behavior.

@@ -3935,12 +3935,15 @@ impl TypeChecker {
             let base = Self::decorator_path_expr_from_import_path(&base_path, decorator.span);
             let method = path.last().cloned().unwrap_or_default();
             Spanned::new(
-                Expr::MethodCall(Box::new(base), method, Vec::new(), args),
+                Expr::MethodCall(Box::new(base), method, decorator.node.type_args.clone(), args),
                 decorator.span,
             )
         } else {
             let callee = Self::decorator_path_expr(&decorator.node, decorator.span);
-            Spanned::new(Expr::Call(Box::new(callee), Vec::new(), args), decorator.span)
+            Spanned::new(
+                Expr::Call(Box::new(callee), decorator.node.type_args.clone(), args),
+                decorator.span,
+            )
         };
         self.check_expr(&factory_expr)
     }
@@ -4001,7 +4004,11 @@ impl TypeChecker {
     fn decorator_display(decorator: &Decorator) -> String {
         let path = decorator.path.segments.join(".");
         if decorator.is_call {
-            format!("{path}(...)")
+            if decorator.type_args.is_empty() {
+                format!("{path}(...)")
+            } else {
+                format!("{path}[...](...)")
+            }
         } else {
             path
         }

@@ -1250,6 +1250,28 @@ async def create() -> None:
     }
 
     #[test]
+    fn test_parse_decorator_factory_with_explicit_type_args() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+@registered[(str) -> ColumnExpr]("inql.functions.col")
+def col(name: str) -> ColumnExpr:
+  pass
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+        let dec = &func.decorators[0].node;
+        assert_eq!(dec.path.segments, vec!["registered"]);
+        assert_eq!(dec.name, "registered");
+        assert!(dec.is_call);
+        assert_eq!(dec.type_args.len(), 1);
+        assert!(matches!(&dec.type_args[0].node, Type::Function(_, _)));
+        assert_eq!(dec.args.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_decorator_with_rust_namespace() -> Result<(), Vec<CompileError>> {
         // RFC 023: @rust.extern decorator must parse correctly (rust is a keyword)
         let source = r#"

@@ -8489,6 +8489,70 @@ module tests:
     }
 
     #[test]
+    fn e2e_imported_generic_decorator_factory_preserves_function_signatures() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "generic_decorator_factory"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        let tests_dir = dir.join("tests");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::write(
+            src_dir.join("registry.incn"),
+            r#"
+pub def registered[F](name: str) -> ((F) -> F):
+    return (func) => func
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("columns.incn"),
+            r#"
+from registry import registered
+
+pub model ColumnExpr:
+    pub name: str
+
+@registered[(str) -> ColumnExpr]("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+
+@registered("inql.functions.literal")
+pub def literal() -> ColumnExpr:
+    return ColumnExpr(name="literal")
+"#,
+        )?;
+        std::fs::write(
+            tests_dir.join("test_generic_decorator_factory.incn"),
+            r#"
+from std.testing import assert_eq
+from columns import col, literal
+
+def test_explicit_generic_decorator_factory_signature() -> None:
+    assert_eq(col("id").name, "id")
+
+def test_inferred_generic_decorator_factory_signature() -> None:
+    assert_eq(literal().name, "literal")
+"#,
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected imported generic decorator factory project to pass.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
     fn e2e_inline_module_parametrize_markers_strict_and_timeout() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
             "incan.toml",
