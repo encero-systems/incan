@@ -3935,17 +3935,20 @@ impl TypeChecker {
             let base = Self::decorator_path_expr_from_import_path(&base_path, decorator.span);
             let method = path.last().cloned().unwrap_or_default();
             Spanned::new(
-                Expr::MethodCall(Box::new(base), method, Vec::new(), args),
+                Expr::MethodCall(Box::new(base), method, decorator.node.type_args.clone(), args),
                 decorator.span,
             )
         } else {
             let callee = Self::decorator_path_expr(&decorator.node, decorator.span);
-            Spanned::new(Expr::Call(Box::new(callee), Vec::new(), args), decorator.span)
+            Spanned::new(
+                Expr::Call(Box::new(callee), decorator.node.type_args.clone(), args),
+                decorator.span,
+            )
         };
         self.check_expr(&factory_expr)
     }
 
-    /// Apply a callable decorator value to the decorated binding type and return the post-decoration binding type.
+    /// Apply a callable decorator value to the decorated binding type and return the post-decoration callable type.
     fn apply_decorator_callable(
         &mut self,
         display: &str,
@@ -3974,7 +3977,12 @@ impl TypeChecker {
         if self.errors.len() != error_count {
             return ResolvedType::Unknown;
         }
-        substitute_resolved_type(&ret, &type_bindings)
+        let result_ty = substitute_resolved_type(&ret, &type_bindings);
+        if !matches!(result_ty, ResolvedType::Function(_, _) | ResolvedType::Unknown) {
+            self.errors.push(errors::decorator_result_not_callable(display, span));
+            return ResolvedType::Unknown;
+        }
+        result_ty
     }
 
     /// Convert decorator arguments into ordinary call arguments for user-defined decorator factory checking.
@@ -4001,7 +4009,11 @@ impl TypeChecker {
     fn decorator_display(decorator: &Decorator) -> String {
         let path = decorator.path.segments.join(".");
         if decorator.is_call {
-            format!("{path}(...)")
+            if decorator.type_args.is_empty() {
+                format!("{path}(...)")
+            } else {
+                format!("{path}[...](...)")
+            }
         } else {
             path
         }

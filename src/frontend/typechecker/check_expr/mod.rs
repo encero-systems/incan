@@ -283,6 +283,9 @@ impl TypeChecker {
             (Expr::MethodCall(base, method, type_args, args), Some(expected_ty)) => {
                 self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty))
             }
+            (Expr::Closure(params, body), Some(ResolvedType::Function(expected_params, expected_ret))) => {
+                self.check_closure_with_expected(params, body, expected_params, expected_ret, expr.span)
+            }
             (Expr::List(elems), expected_ty) => self.check_list_with_expected(elems, expected_ty),
             (Expr::Dict(entries), expected_ty) => self.check_dict_with_expected(entries, expected_ty),
             (Expr::Loop(loop_expr), expected_ty) => self.check_loop_expr(loop_expr, expected_ty, expr.span),

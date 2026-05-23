@@ -5071,6 +5071,62 @@ def main() -> int:
 }
 
 #[test]
+fn test_generic_decorator_factory_with_explicit_function_type_arg_preserves_binding_type() {
+    let source = r#"
+model ColumnExpr:
+  name: str
+
+def registered[F](name: str) -> ((F) -> F):
+  return (func) => func
+
+@registered[(str) -> ColumnExpr]("inql.functions.col")
+def col(name: str) -> ColumnExpr:
+  return ColumnExpr(name=name)
+
+def main() -> ColumnExpr:
+  return col("id")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_generic_decorator_factory_infers_decorated_function_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model ColumnExpr:
+  name: str
+
+def registered[F](name: str) -> ((F) -> F):
+  return (func) => func
+
+@registered("inql.functions.col")
+def col(name: str) -> ColumnExpr:
+  return ColumnExpr(name=name)
+
+def main() -> ColumnExpr:
+  return col("id")
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+    let symbol = checker
+        .lookup_symbol("col")
+        .ok_or_else(|| "expected decorated col binding".to_string())?;
+    let SymbolKind::Variable(info) = &symbol.kind else {
+        return Err(format!("expected decorated binding to be a value, got {:?}", symbol.kind).into());
+    };
+    let ResolvedType::Function(params, ret) = &info.ty else {
+        return Err(format!("expected decorated binding to stay callable, got {:?}", info.ty).into());
+    };
+    assert_eq!(params.len(), 1);
+    assert_eq!(params[0].ty, ResolvedType::Str);
+    assert_eq!(**ret, ResolvedType::Named("ColumnExpr".to_string()));
+    Ok(())
+}
+
+#[test]
 fn test_user_defined_decorator_on_async_def_is_kept_as_candidate() {
     let source = r#"
 import std.async
@@ -5193,6 +5249,24 @@ def label() -> int:
             .iter()
             .any(|err| err.message.contains("'count_factory(...)' does not return a callable")),
         "expected non-callable factory diagnostic, got {bad_factory:?}"
+    );
+
+    let bad_result = check_str_err(
+        r#"
+def count(func: () -> int) -> int:
+  return 1
+
+@count
+def label() -> int:
+  return 1
+"#,
+        "decorator returning non-callable should be rejected",
+    );
+    assert!(
+        bad_result
+            .iter()
+            .any(|err| err.message.contains("decorator 'count' must return a callable")),
+        "expected non-callable decorator result diagnostic, got {bad_result:?}"
     );
 }
 

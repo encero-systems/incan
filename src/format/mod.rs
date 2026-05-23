@@ -451,6 +451,34 @@ def MixedName() -> int:
     }
 
     #[test]
+    fn test_format_source_decorator_factory_type_args() -> Result<(), FormatError> {
+        let source = r#"@registered[(str)->ColumnExpr]("inql.functions.col")
+def col(name: str) -> ColumnExpr:
+  return ColumnExpr(name=name)
+"#;
+        let formatted = format_source(source)?;
+        let expected = r#"@registered[(str) -> ColumnExpr]("inql.functions.col")
+def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+"#;
+        assert_eq!(formatted, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_preserves_untyped_closure_params() -> Result<(), FormatError> {
+        let source = r#"pub def registered[F](_function_ref: str) -> (F) -> F:
+    return (func) => func
+"#;
+        let formatted = format_source(source)?;
+        let expected = r#"pub def registered[F](_function_ref: str) -> (F) -> F:
+    return (func) => func
+"#;
+        assert_eq!(formatted, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_wraps_long_function_signature() -> Result<(), FormatError> {
         let source = r#"def append_node(store_id: int, kind: PrismNodeKind, input_ids: list[int], named_table: str, predicate: bool, limit_count: int) -> int:
   return 1

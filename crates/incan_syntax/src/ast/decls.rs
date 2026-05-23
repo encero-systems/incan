@@ -391,6 +391,8 @@ pub enum ParamKind {
 pub struct Decorator {
     pub path: ImportPath,
     pub name: Ident,
+    /// Explicit call-site type arguments for decorator factories, as in `@factory[T](...)`.
+    pub type_args: Vec<Spanned<Type>>,
     /// Whether the decorator was written with a call suffix, including zero-argument factory calls like `@factory()`.
     pub is_call: bool,
     pub args: Vec<DecoratorArg>,

@@ -233,19 +233,22 @@ impl AstLowering {
                         Self::decorator_path_expr_from_import_path(&base_path, Self::decorator_synthetic_callee_span());
                     let method = path.last().cloned().unwrap_or_default();
                     Spanned::new(
-                        Expr::MethodCall(Box::new(base), method, Vec::new(), args),
+                        Expr::MethodCall(Box::new(base), method, decorator.node.type_args.clone(), args),
                         decorator.span,
                     )
                 } else {
                     let callee = Self::decorator_path_expr(&decorator.node, Self::decorator_synthetic_callee_span());
-                    Spanned::new(Expr::Call(Box::new(callee), Vec::new(), args), decorator.span)
+                    Spanned::new(
+                        Expr::Call(Box::new(callee), decorator.node.type_args.clone(), args),
+                        decorator.span,
+                    )
                 }
             } else {
                 Self::decorator_path_expr(&decorator.node, decorator.span)
             };
             current = Spanned::new(
                 Expr::Call(Box::new(callable), Vec::new(), vec![ast::CallArg::Positional(current)]),
-                decorator.span,
+                Self::decorator_synthetic_callee_span(),
             );
         }
         Ok(current)

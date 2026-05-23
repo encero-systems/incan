@@ -11,6 +11,7 @@ impl<'a> Parser<'a> {
                 .last()
                 .cloned()
                 .ok_or_else(|| errors::decorator_path_expected(self.current_span()))?;
+            let type_args = self.call_site_type_args()?;
             let is_call = self.match_punct(PunctuationId::LParen);
             let args = if is_call {
                 let args = self.decorator_args()?;
@@ -24,6 +25,7 @@ impl<'a> Parser<'a> {
                 Decorator {
                     path,
                     name,
+                    type_args,
                     is_call,
                     args,
                 },

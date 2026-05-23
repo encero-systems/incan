@@ -289,7 +289,7 @@ impl Formatter {
             }
             Expr::Closure(params, body) => {
                 self.writer.write("(");
-                self.format_params(params);
+                self.format_closure_params(params);
                 self.writer.write(") => ");
                 self.format_expr(&body.node);
             }
@@ -542,6 +542,15 @@ impl Formatter {
     }
 
     // ---- Call args ----
+
+    fn format_closure_params(&mut self, params: &[Spanned<Param>]) {
+        for (i, param) in params.iter().enumerate() {
+            if i > 0 {
+                self.writer.write(", ");
+            }
+            self.writer.write(&param.node.name);
+        }
+    }
 
     fn format_call_args(&mut self, args: &[CallArg]) {
         for (i, arg) in args.iter().enumerate() {

@@ -1048,6 +1048,16 @@ impl Formatter {
     fn format_decorator(&mut self, dec: &Decorator) {
         self.writer.write("@");
         self.format_decorator_path(&dec.path);
+        if !dec.type_args.is_empty() {
+            self.writer.write("[");
+            for (idx, arg) in dec.type_args.iter().enumerate() {
+                if idx > 0 {
+                    self.writer.write(", ");
+                }
+                self.format_type(&arg.node);
+            }
+            self.writer.write("]");
+        }
         if dec.is_call {
             self.writer.write("(");
             for (i, arg) in dec.args.iter().enumerate() {

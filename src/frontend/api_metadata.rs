@@ -1936,6 +1936,57 @@ pub def decorated(value: int) -> int:
     }
 
     #[test]
+    fn checked_api_metadata_preserves_generic_decorator_factory_source_signature() -> Result<(), String> {
+        let source = r#"
+model ColumnExpr:
+    name: str
+
+def registered[F](name: str) -> ((F) -> F):
+    return (func) => func
+
+@registered("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    """Build a column expression.
+
+    Args:
+        name: Column name.
+    """
+    return ColumnExpr(name=name)
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let function = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Function(function) if function.name == "col" => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected decorated function metadata".to_string())?;
+
+        assert_eq!(function.params.len(), 1);
+        assert_eq!(function.params[0].name, "name");
+        assert_eq!(
+            function.params[0].ty,
+            TypeRef::Named {
+                name: "str".to_string(),
+            }
+        );
+        assert_eq!(
+            function.return_type,
+            TypeRef::Named {
+                name: "ColumnExpr".to_string(),
+            }
+        );
+
+        let diagnostics = validate_checked_api_docstrings(&[metadata]);
+        assert!(
+            diagnostics.is_empty(),
+            "expected generic decorator factory source signature to satisfy docstring validation, got {diagnostics:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn checked_api_docstring_validation_matches_overloaded_method_by_params() -> Result<(), String> {
         let source = r#"
 pub class Writer:

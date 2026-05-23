@@ -39,7 +39,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Symbol, method, and variant aliases | Syntax | 0.3 | None. | `pub average = alias avg`<br>`mean = avg`<br>`WARNING = alias WARN` | Aliases expose another resolved name for the same declaration, method, or enum variant without duplicating behavior. | Wrapper functions or duplicated enum variants used only for compatibility names. | [Symbol aliases](symbol_aliases.md), [Imports and modules](imports_and_modules.md), [Release 0.3](../../release_notes/0_3.md) |
 | Callable presets with `partial` | Syntax | 0.3 | None. | `pub get = partial route(method="GET")`<br>`set_alive = partial set_state(state=true)` | `partial` creates a callable surface from an existing callable by supplying named preset values. | Hand-written wrappers whose only job is to pass the same keyword defaults. | [Callable presets](callable_presets.md), [Callable presets explained](../explanation/callable_presets.md), [Release 0.3](../../release_notes/0_3.md) |
 | Rest parameters, unpacking, and spreads | Syntax | 0.3 | None. | `def log(*items: str, **fields: str) -> None:`<br>`f(*xs, **kw)`<br>`[*prefix, item]`<br>`{**base, "x": 1}` | Functions can capture `*args` / `**kwargs`; calls and literals support typed unpack/spread forms. | Manually spelling every forwarding arity or merging collections one element at a time. | [Functions and calls](functions.md), [Release 0.3](../../release_notes/0_3.md) |
-| User-defined decorators | Syntax | 0.3 | None for user-defined decorators; compiler-owned decorators keep their documented imports. | `@logged`<br>`@route("/users")`<br>`@trace(level=Level.INFO)` | Decorators are ordinary callable values applied to functions and methods, including decorator factories. | Boilerplate wrapper declarations around every function that needs the same callable transform. | [Language reference](language.md#decorators), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md) |
+| User-defined decorators | Syntax | 0.3 | None for user-defined decorators; compiler-owned decorators keep their documented imports. | `@logged`<br>`@registered("catalog.ref")`<br>`@registered[(str) -> ColumnExpr]("catalog.ref")` | Decorators are ordinary callable values applied to functions and methods, including generic decorator factories that infer or accept the decorated function type. | Boilerplate wrapper declarations around every function that needs the same callable transform. | [Language reference](language.md#decorators), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md) |
 | Generators | Syntax | 0.3 | None. | `def numbers() -> Generator[int]:`<br>`yield value`<br>`(x * 2 for x in values)` | `yield`-based functions and generator expressions produce lazy `Generator[T]` values. | Eager list construction when callers only need lazy iteration. | [Generators](generators.md), [Generators how-to](../how-to/generators.md), [Release 0.3](../../release_notes/0_3.md) |
 | Iterator adapters and terminal consumers | Stdlib | 0.3 | Use iterator values. | `values.iter().map(parse).filter(valid).collect()`<br>`items.enumerate().take(10)`<br>`numbers.fold(0, add)` | Iterator pipelines expose lazy adapters and explicit terminal consumers. | Manual loop accumulators for ordinary map/filter/fold pipeline shapes. | [Collection protocols](stdlib_traits/collection_protocols.md), [Release 0.3](../../release_notes/0_3.md) |
 | `Result[T, E]` combinators | Stdlib | 0.3 | Use `Result[T, E]` values. | `result.map(transform)`<br>`result.and_then(validate)`<br>`result.inspect(log_success)` | `Result` values support branch-local transforms, fallible chaining, recovery, and inspection taps. | Nested matches that only rewrap `Ok` / `Err` around one transformed branch. | [std.result](stdlib/result.md), [Fallible and infallible paths](../tutorials/fallible_and_infallible_paths.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -464,13 +464,13 @@ Canonical forms:
 - **Use instead of:** Boilerplate wrapper declarations around every function that needs the same callable transform.
 - **References:** [Language reference](language.md#decorators), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md)
 
-Decorators are ordinary callable values applied to functions and methods, including decorator factories.
+Decorators are ordinary callable values applied to functions and methods, including generic decorator factories that infer or accept the decorated function type.
 
 Canonical forms:
 
 - `@logged`
-- `@route("/users")`
-- `@trace(level=Level.INFO)`
+- `@registered("catalog.ref")`
+- `@registered[(str) -> ColumnExpr]("catalog.ref")`
 
 ### Generators
 

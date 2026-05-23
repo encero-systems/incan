@@ -13,7 +13,7 @@
     - RFC 031 (Library system — enables decorator libraries to ship as `pub::` packages)
     - RFC 037 (Native web and HTTP stdlib redesign — consumer of `@app.get` / `@app.post`)
     - RFC 084 (RHS partial callable presets — future decorator factory ergonomics)
-- **Issue:** [#170](https://github.com/dannys-code-corner/incan/issues/170)
+- **Issue:** [#170](https://github.com/dannys-code-corner/incan/issues/170), [#640](https://github.com/dannys-code-corner/incan/issues/640)
 - **RFC PR:** —
 - **Written against:** v0.2
 - **Shipped in:** v0.3
@@ -92,7 +92,7 @@ This desugars to the `@app.get`/`@app.post` decorator form, which itself desugar
 - Desugar user-defined decorators to ordinary callable application before type checking.
 - Apply stacked decorators bottom-up, matching Python's decorator ordering.
 - Type-check decorator application through the ordinary callable and assignment rules.
-- Allow decorator calls to change the visible type of the decorated binding.
+- Allow decorator calls to change the visible callable type of the decorated binding.
 - Keep decorator semantics compile-time and declaration-oriented; the language must not introduce arbitrary module-level statement execution or module-initialization side effects for decorators.
 - Provide the primitive needed for library-owned patterns such as `@app.get`, `@cache`, `@retry`, and `@validate`.
 
@@ -257,7 +257,7 @@ f = D2(f)
 f = D1(f)
 ```
 
-This means `D1` wraps `D2`'s result, which wraps `D3`'s result, which wraps the original `f`. Each step may change the type of `f`.
+This means `D1` wraps `D2`'s result, which wraps `D3`'s result, which wraps the original `f`. Each step may change the callable type of `f`.
 
 **Scope of desugaring** — user-defined decorators desugar on `def`, `async def`, and method declarations. Class, model, trait, newtype, enum, field, alias, and module declarations are out of scope for this RFC.
 
@@ -275,9 +275,34 @@ After desugaring, the typechecker treats `f = D(f)` as a regular call expression
 
 1. `D` must be a callable. If it is not, the compiler emits `decorator 'D' is not callable`.
 2. The argument type of `D`'s first parameter must be compatible with `f`'s declared type.
-3. The return type of `D(f)` becomes the new type of `f` in the enclosing scope. If `D` returns the same function type it received, `f`'s type is unchanged. If the return type cannot be inferred, an explicit return type annotation on `D` is required.
+3. The return type of `D(f)` must itself be callable and becomes the new callable type of `f` in the enclosing scope. If `D` returns the same function type it received, `f`'s type is unchanged. If the return type cannot be inferred, an explicit return type annotation on `D` is required.
 
 For decorator factories, step 1 applies to `D(args)` — the factory expression must produce a callable-shaped value — and then steps 2 and 3 apply to that callable applied to `f`.
+
+### v0.3 amendment: generic decorator factories
+
+Issue #640 was accepted as an implementation amendment to this RFC because it naturally extends decorator factories rather than introducing a separate decorator model. A decorator factory may be generic over the decorated function type and return `((F) -> F)`, letting libraries write one registration helper instead of one helper per callable signature:
+
+```incan
+pub def registered[F](function_ref: str) -> ((F) -> F):
+    return (func) => func
+
+@registered("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+```
+
+The compiler infers `F` from the decorated function when applying the produced decorator. If inference needs an explicit call-site type, the decorator factory call accepts the same bracketed type-argument syntax as ordinary generic calls:
+
+```incan
+@registered[(str) -> ColumnExpr]("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+```
+
+This amendment preserves RFC 036's binding contract: later references, exports, imports, checked API metadata, and editor surfaces observe the concrete decorated function signature unless the decorator intentionally returns a different callable shape.
+
+Python decorators can replace a function binding with an arbitrary object. Incan intentionally does not copy that dynamic part of Python's model: user-defined function and method decorators are callable-to-callable transforms. Python's `Callable[[A, B], R]` corresponds to Incan's `(A, B) -> R`; `=>` is only for closure expressions, not callable types. The common generic registry shape is `(F) -> F`; wrappers that intentionally change the callable signature should spell both the source callable type and replacement callable type explicitly.
 
 ### Async decorators
 
@@ -296,7 +321,7 @@ A decorator applied to an `async def` receives an async function value. The deco
 
 ### Syntax
 
-No new decorator syntax is introduced. `@name` and `@name(args)` already parse. Unknown decorator names no longer produce an error on `def`, `async def`, or method declarations — they desugar instead.
+RFC 036 originally required no new decorator syntax beyond `@name` and `@name(args)`. The v0.3 implementation amendment also accepts explicit generic call-site arguments on decorator factory calls, as in `@name[T](args)`, using the same type-argument syntax as ordinary generic calls. Unknown decorator names no longer produce an error on `def`, `async def`, or method declarations — they desugar instead.
 
 Method decorator signatures use reference callable parameters for receivers. Immutable method receivers are written as `&Owner`, and mutable method receivers are written as `&mut Owner`, for example `(&Box, int) -> str` and `(&mut Counter, int) -> int`.
 
