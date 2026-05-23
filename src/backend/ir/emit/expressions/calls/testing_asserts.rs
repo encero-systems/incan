@@ -27,11 +27,14 @@ impl<'a> IrEmitter<'a> {
         match helper_id {
             TestingAssertHelperId::Assert => {
                 let condition = Self::canonical_assert_arg(helper_id, args, 0)?;
-                let condition_tokens = self.emit_expr(condition)?;
                 let failure = self.emit_assert_failure(
                     Self::assert_failure_message(helper_id)?,
                     args.get(1).map(|arg| &arg.expr),
                 )?;
+                if Self::constant_bool(condition) == Some(false) {
+                    return Ok(Some(failure));
+                }
+                let condition_tokens = self.emit_expr(condition)?;
                 Ok(Some(quote! {
                     if !(#condition_tokens) {
                         #failure
@@ -40,11 +43,14 @@ impl<'a> IrEmitter<'a> {
             }
             TestingAssertHelperId::AssertFalse => {
                 let condition = Self::canonical_assert_arg(helper_id, args, 0)?;
-                let condition_tokens = self.emit_expr(condition)?;
                 let failure = self.emit_assert_failure(
                     Self::assert_failure_message(helper_id)?,
                     args.get(1).map(|arg| &arg.expr),
                 )?;
+                if Self::constant_bool(condition) == Some(true) {
+                    return Ok(Some(failure));
+                }
+                let condition_tokens = self.emit_expr(condition)?;
                 Ok(Some(quote! {
                     if #condition_tokens {
                         #failure
@@ -59,6 +65,14 @@ impl<'a> IrEmitter<'a> {
             TestingAssertHelperId::AssertIsOk => self.emit_assert_result_ok(args).map(Some),
             TestingAssertHelperId::AssertIsErr => self.emit_assert_result_err(args).map(Some),
             TestingAssertHelperId::AssertRaises => self.emit_assert_raises(args).map(Some),
+        }
+    }
+
+    fn constant_bool(expr: &TypedExpr) -> Option<bool> {
+        match &expr.kind {
+            IrExprKind::Bool(value) => Some(*value),
+            IrExprKind::InteropCoerce { expr, .. } => Self::constant_bool(expr),
+            _ => None,
         }
     }
 

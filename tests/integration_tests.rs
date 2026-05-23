@@ -1835,6 +1835,30 @@ fn runtime_error_canonicalization_cases() -> Result<(), Box<dyn std::error::Erro
 }
 
 #[test]
+fn assert_false_can_satisfy_typed_failure_path() -> Result<(), Box<dyn std::error::Error>> {
+    let cases = [
+        r#"
+def fail_int(message: str) -> int:
+  assert false, message
+
+def main() -> None:
+  _ = fail_int("boom")
+"#,
+        r#"
+def fail_as[T](message: str) -> T:
+  assert false, message
+
+def main() -> None:
+  _ = fail_as[int]("boom")
+"#,
+    ];
+    for source in cases {
+        assert_runtime_error_cli(source, "AssertionError", &["boom"])?;
+    }
+    Ok(())
+}
+
+#[test]
 fn test_fail_on_empty_collection() {
     let dir = make_temp_test_dir();
     let test_file = dir.join("test_empty.incn");
