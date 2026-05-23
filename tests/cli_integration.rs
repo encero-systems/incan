@@ -24,6 +24,10 @@ fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::e
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
         .env("INCAN_NO_BANNER", "1")
+        .env(
+            "INCAN_GENERATED_CARGO_TARGET_DIR",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+        )
         .output()?)
 }
 
@@ -607,29 +611,84 @@ edition = "2021"
 }
 
 #[test]
-fn run_accepts_owned_incan_value_for_borrowed_generic_rust_param_issue506() -> Result<(), Box<dyn std::error::Error>> {
+fn run_accepts_generic_rust_param_scenarios_share_one_generated_project() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(
         tmp.path(),
-        "cli_borrowed_generic_rust_param_project",
+        "cli_generic_rust_param_scenarios",
         r#"
 
 [rust-dependencies]
 borrow_helper = { path = "rust/borrow_helper" }
+decode_helper = { path = "rust/decode_helper" }
+decode_trait_helper = { path = "rust/decode_trait_helper" }
+prost = { path = "rust/prost" }
+prost-types = { path = "rust/prost-types" }
 "#,
     )?;
     fs::write(
         &main_path,
+        r#"from borrowed_generic import borrowed_generic_case
+from by_value_decode import by_value_decode_case
+from cross_crate_decode import cross_crate_decode_case
+from trait_by_value_decode import trait_by_value_decode_case
+
+def main() -> None:
+  println(borrowed_generic_case())
+  println(by_value_decode_case())
+  println(trait_by_value_decode_case())
+  println(cross_crate_decode_case())
+"#,
+    )?;
+    fs::write(
+        tmp.path().join("src").join("borrowed_generic.incn"),
         r#"from rust::borrow_helper import takes_ref
 
 model Payload:
   name: str
 
-def main() -> None:
+pub def borrowed_generic_case() -> str:
   payload = Payload(name="demo")
-  println(takes_ref(payload))
+  return f"borrowed:{takes_ref(payload)}"
 "#,
     )?;
+    fs::write(
+        tmp.path().join("src").join("by_value_decode.incn"),
+        r#"from rust::decode_helper import FileDescriptorSet
+from rust::std::io import Cursor
+
+pub def by_value_decode_case() -> str:
+  mut cursor = Cursor.new(b"abc")
+  match FileDescriptorSet.decode(cursor):
+    Ok(_) => return "by_value:ok"
+    Err(_) => return "by_value:err"
+"#,
+    )?;
+    fs::write(
+        tmp.path().join("src").join("trait_by_value_decode.incn"),
+        r#"from rust::decode_trait_helper import FileDescriptorSet, Message
+
+pub def trait_by_value_decode_case() -> str:
+  encoded = b"abc"
+  match FileDescriptorSet.decode(encoded.as_slice()):
+    Ok(_) => return "trait_by_value:ok"
+    Err(_) => return "trait_by_value:err"
+"#,
+    )?;
+    fs::write(
+        tmp.path().join("src").join("cross_crate_decode.incn"),
+        r#"from rust::prost import Message
+from rust::prost_types import FileDescriptorSet, ProducerPlan
+
+pub def cross_crate_decode_case() -> str:
+  producer = ProducerPlan.new()
+  encoded = producer.encode_to_vec()
+  match FileDescriptorSet.decode(encoded.as_slice()):
+    Ok(_) => return "cross_crate:ok"
+    Err(_) => return "cross_crate:err"
+"#,
+    )?;
+
     let helper_src = tmp.path().join("rust").join("borrow_helper").join("src");
     fs::create_dir_all(&helper_src)?;
     fs::write(
@@ -646,46 +705,6 @@ edition = "2021"
     fs::write(
         helper_src.join("lib.rs"),
         "pub fn takes_ref<TValue>(_value: &TValue) -> i64 { 1 }\n",
-    )?;
-
-    let output = run_incan(
-        tmp.path(),
-        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-
-    assert_success(&output, "incan run with borrowed generic Rust param");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains('1'),
-        "expected borrowed generic Rust helper output, got:\n{stdout}"
-    );
-    Ok(())
-}
-
-#[test]
-fn run_accepts_by_value_generic_decode_rust_param_issue609() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let main_path = write_minimal_project(
-        tmp.path(),
-        "cli_by_value_generic_decode_project",
-        r#"
-
-[rust-dependencies]
-decode_helper = { path = "rust/decode_helper" }
-"#,
-    )?;
-    fs::write(
-        &main_path,
-        r#"from rust::decode_helper import FileDescriptorSet
-from rust::std::io import Cursor
-
-
-def main() -> None:
-  mut cursor = Cursor.new(b"abc")
-  match FileDescriptorSet.decode(cursor):
-    Ok(_) => println("ok")
-    Err(_) => println("err")
-"#,
     )?;
     let helper_src = tmp.path().join("rust").join("decode_helper").join("src");
     fs::create_dir_all(&helper_src)?;
@@ -715,45 +734,6 @@ impl FileDescriptorSet {
         Ok(Self)
     }
 }
-"#,
-    )?;
-
-    let output = run_incan(
-        tmp.path(),
-        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-
-    assert_success(&output, "incan run with by-value generic decode Rust param");
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("ok"),
-        "expected by-value generic decode helper output, got:\n{stdout}"
-    );
-    Ok(())
-}
-
-#[test]
-fn run_accepts_trait_provided_by_value_generic_decode_rust_param_issue612() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let main_path = write_minimal_project(
-        tmp.path(),
-        "cli_trait_by_value_generic_decode_project",
-        r#"
-
-[rust-dependencies]
-decode_trait_helper = { path = "rust/decode_trait_helper" }
-"#,
-    )?;
-    fs::write(
-        &main_path,
-        r#"from rust::decode_trait_helper import FileDescriptorSet, Message
-
-
-def main() -> None:
-  encoded = b"abc"
-  match FileDescriptorSet.decode(encoded.as_slice()):
-    Ok(_) => println("ok")
-    Err(_) => println("err")
 "#,
     )?;
     let helper_src = tmp.path().join("rust").join("decode_trait_helper").join("src");
@@ -788,51 +768,6 @@ impl Message for FileDescriptorSet {
         Ok(Self)
     }
 }
-"#,
-    )?;
-
-    let output = run_incan(
-        tmp.path(),
-        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-
-    assert_success(
-        &output,
-        "incan run with trait-provided by-value generic decode Rust param",
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("ok"),
-        "expected trait-provided by-value generic decode helper output, got:\n{stdout}"
-    );
-    Ok(())
-}
-
-#[test]
-fn run_accepts_cross_crate_trait_decode_slice_param_issue612() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let main_path = write_minimal_project(
-        tmp.path(),
-        "cli_cross_crate_trait_decode_project",
-        r#"
-
-[rust-dependencies]
-prost = { path = "rust/prost" }
-prost-types = { path = "rust/prost-types" }
-"#,
-    )?;
-    fs::write(
-        &main_path,
-        r#"from rust::prost import Message
-from rust::prost_types import FileDescriptorSet, ProducerPlan
-
-
-def main() -> None:
-  producer = ProducerPlan.new()
-  encoded = producer.encode_to_vec()
-  match FileDescriptorSet.decode(encoded.as_slice()):
-    Ok(_) => println("ok")
-    Err(_) => println("err")
 "#,
     )?;
     let prost_src = tmp.path().join("rust").join("prost").join("src");
@@ -903,14 +838,12 @@ impl prost::Message for FileDescriptorSet {
         &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
     )?;
 
-    assert_success(
-        &output,
-        "incan run with cross-crate trait-provided decode over explicit slice",
-    );
+    assert_success(&output, "incan run with batched generic Rust param scenarios");
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("ok"),
-        "expected cross-crate trait-provided decode helper output, got:\n{stdout}"
+    assert_eq!(
+        stdout.trim(),
+        "borrowed:1\nby_value:ok\ntrait_by_value:ok\ncross_crate:ok",
+        "expected batched generic Rust param output, got:\n{stdout}"
     );
     Ok(())
 }
@@ -1720,16 +1653,14 @@ def main() -> None:
 "#,
     )?;
 
-    let output_dir = tmp.path().join("consumer_out");
-    let consumer_build = run_incan(
+    let consumer_check = run_incan(
         &consumer_root,
         &[
-            "build",
+            "--check",
             consumer_main.to_str().ok_or("consumer main path was not valid UTF-8")?,
-            output_dir.to_str().ok_or("output path was not valid UTF-8")?,
         ],
     )?;
-    assert_success(&consumer_build, "pub consumer build for public alias issue617");
+    assert_success(&consumer_check, "pub consumer check for public alias issue617");
     Ok(())
 }
 

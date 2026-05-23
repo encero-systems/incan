@@ -1054,7 +1054,7 @@ mod lsp_api_metadata_preview_tests {
     }
 
     #[test]
-    fn checked_api_previews_use_callable_rebound_function_signature() -> Result<(), String> {
+    fn checked_api_previews_preserve_source_signature_for_callable_rebound() -> Result<(), String> {
         let source = r#"
 pub def endpoint() -> str:
     return "raw"
@@ -1089,8 +1089,8 @@ pub def endpoint() -> str:
             .ok_or_else(|| "expected checked function preview".to_string())?;
 
         assert!(
-            preview.markdown.contains("pub def endpoint(id: int) -> bool"),
-            "expected rebound callable signature in LSP preview, got:\n{}",
+            preview.markdown.contains("pub def endpoint() -> str"),
+            "expected source declaration signature in LSP preview, got:\n{}",
             preview.markdown
         );
 

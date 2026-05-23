@@ -435,8 +435,23 @@ fn normalize_runner_assert_statements(ast: &mut Program) {
 /// By default this reuses the project's main `target/` so existing dependency artifacts are shared across regular
 /// builds and `incan test` runs for better DX.
 ///
+/// Set `INCAN_TEST_SHARED_TARGET_DIR` to force all generated test harnesses into a caller-provided target directory.
+/// This is primarily useful for integration tests that create many throwaway project roots but should still reuse the
+/// same compiled harness dependencies.
+///
 /// Set `INCAN_TEST_ISOLATED_TARGET_DIR` to one of `1|true|yes|on` to use `target/incan_test_runner` instead.
 fn shared_cargo_target_dir(project_root: &Path) -> PathBuf {
+    if let Ok(shared_target_dir) = std::env::var("INCAN_TEST_SHARED_TARGET_DIR") {
+        let shared_target_dir = PathBuf::from(shared_target_dir);
+        if shared_target_dir.is_absolute() {
+            return shared_target_dir;
+        }
+        if let Ok(cwd) = std::env::current_dir() {
+            return cwd.join(shared_target_dir);
+        }
+        return shared_target_dir;
+    }
+
     let absolute_project_root = if project_root.is_absolute() {
         project_root.to_path_buf()
     } else if let Ok(cwd) = std::env::current_dir() {

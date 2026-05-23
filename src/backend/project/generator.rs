@@ -14,8 +14,10 @@ use std::path::{Path, PathBuf};
 
 use crate::manifest::DependencySpec;
 use incan_core::lang::rust_keywords;
+use sha2::{Digest as _, Sha256};
 
 const MOD_INSERT_MARKER: &str = "// __INCAN_INSERT_MODS__";
+pub(crate) const GENERATED_CARGO_TARGET_DIR_ENV: &str = "INCAN_GENERATED_CARGO_TARGET_DIR";
 
 // ============================================================================
 // RFC 023: Stdlib module naming
@@ -149,6 +151,79 @@ impl ProjectGenerator {
     /// Set the cargo profile used for `incan run`.
     pub fn set_run_profile(&mut self, profile: RunProfile) {
         self.run_profile = profile;
+    }
+
+    /// Resolve the optional generated-project Cargo target override.
+    ///
+    /// This is primarily used by integration tests and smoke gates that compile many generated Rust projects from one
+    /// parent workspace. It lets those projects share dependency artifacts while keeping ordinary user invocations on
+    /// the parent-scoped default target directory.
+    pub(super) fn generated_cargo_target_dir_override() -> Option<PathBuf> {
+        let raw = std::env::var_os(GENERATED_CARGO_TARGET_DIR_ENV)?;
+        let raw = PathBuf::from(raw);
+        if raw.as_os_str().is_empty() {
+            return None;
+        }
+        Some(Self::resolve_target_dir(raw))
+    }
+
+    pub(super) fn resolve_target_dir(target_dir: PathBuf) -> PathBuf {
+        if target_dir.is_absolute() {
+            target_dir
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join(target_dir)
+        } else {
+            target_dir
+        }
+    }
+
+    /// Cargo target name used for the generated binary or library target.
+    ///
+    /// When a caller opts into a broad shared target directory, multiple unrelated generated projects can have the same
+    /// user-facing project name (`main`, `consumer`, etc.). Cargo writes root binaries and libraries at
+    /// `target/<profile>/<target-name>`, so shared target dirs need a unique target name to avoid stale binary reuse
+    /// and parallel build collisions. Library target names stay stable because native Rust consumers import them as
+    /// crate names from generated library artifacts.
+    pub(super) fn cargo_target_name(&self) -> String {
+        if self.is_binary && Self::generated_cargo_target_dir_override().is_some() {
+            Self::shared_target_safe_name(&self.name, &self.output_dir)
+        } else {
+            self.name.clone()
+        }
+    }
+
+    pub(super) fn shared_target_safe_name(name: &str, output_dir: &Path) -> String {
+        let mut normalized = name
+            .chars()
+            .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '_' })
+            .collect::<String>();
+        if normalized.is_empty() {
+            normalized.push_str("incan_project");
+        }
+        if !normalized
+            .as_bytes()
+            .first()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_')
+        {
+            normalized.insert(0, '_');
+        }
+
+        let absolute_output_dir = if output_dir.is_absolute() {
+            output_dir.to_path_buf()
+        } else if let Ok(cwd) = std::env::current_dir() {
+            cwd.join(output_dir)
+        } else {
+            output_dir.to_path_buf()
+        };
+
+        let mut hasher = Sha256::new();
+        hasher.update(name.as_bytes());
+        hasher.update(b"\0");
+        hasher.update(absolute_output_dir.to_string_lossy().as_bytes());
+        let digest_bytes = hasher.finalize();
+        let digest = hex::encode(&digest_bytes[..8]);
+
+        format!("{normalized}_{digest}")
     }
 
     /// Ensure the generated `src/` directory exists.

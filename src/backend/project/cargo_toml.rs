@@ -251,10 +251,11 @@ impl ProjectGenerator {
         };
 
         // ---- Build bin/lib target ----
+        let target_name = self.cargo_target_name();
         let (bin, lib) = if self.is_binary {
             (
                 vec![BinTarget {
-                    name: self.name.clone(),
+                    name: target_name,
                     path: "src/main.rs".into(),
                 }],
                 None,
@@ -263,7 +264,7 @@ impl ProjectGenerator {
             (
                 vec![],
                 Some(LibTarget {
-                    name: self.name.clone(),
+                    name: target_name,
                     path: "src/lib.rs".into(),
                 }),
             )

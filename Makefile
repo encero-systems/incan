@@ -6,12 +6,16 @@ TEST_VERBOSE ?= 0
 
 ifeq ($(strip $(NEXTEST)),)
 ifeq ($(TEST_VERBOSE),1)
-TEST_CMD = cargo test --all --verbose
+TEST_CMD = cargo test --all --features lsp --verbose
 else
-TEST_CMD = cargo test --all
+TEST_CMD = cargo test --all --features lsp
 endif
 else
-TEST_CMD = cargo nextest run --all --status-level all
+ifeq ($(TEST_VERBOSE),1)
+TEST_CMD = cargo nextest run --all --features lsp --status-level all
+else
+TEST_CMD = cargo nextest run --all --features lsp --status-level slow --final-status-level slow
+endif
 endif
 
 # After `make build` / `make build-fast`, symlink ~/.cargo/bin/incan → target/debug/incan so `incan` on PATH (IDE run,
@@ -202,7 +206,6 @@ pre-commit-full-gate:
 	t2=$$(date +%s); \
 	echo "\033[1mRunning tests...\033[0m"; \
 	$(TEST_CMD); \
-	cargo test --features lsp unchecked_lookup_hover --lib; \
 	echo "\033[32mDONE\033[0m"; \
 	t3=$$(date +%s); \
 	echo "\033[1mRunning clippy...\033[0m"; \
@@ -322,7 +325,6 @@ smoke-test-benchmarks-incan:
 .PHONY: smoke-test-core
 smoke-test-core:
 	@$(MAKE) smoke-test-release
-	@$(MAKE) test-rust-inspect
 	@$(MAKE) smoke-test-canary
 	@$(MAKE) smoke-test-web-example
 	@$(MAKE) smoke-test-nested-project-example

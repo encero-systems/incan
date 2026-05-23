@@ -28,6 +28,10 @@ fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::e
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
         .env("INCAN_NO_BANNER", "1")
+        .env(
+            "INCAN_GENERATED_CARGO_TARGET_DIR",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+        )
         .output()?)
 }
 
@@ -153,7 +157,7 @@ fn generated_application_artifact_matches_baseline() -> Result<(), Box<dyn std::
 }
 
 #[test]
-fn generated_library_artifact_matches_baseline() -> Result<(), Box<dyn std::error::Error>> {
+fn generated_library_and_pub_dependency_consumer_artifacts_match_baseline() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let project_root = tmp.path().join("artifact_widgets_project");
     let src_dir = project_root.join("src");
@@ -203,25 +207,6 @@ fn generated_library_artifact_matches_baseline() -> Result<(), Box<dyn std::erro
         toml_string_at(toml_table_at(&cargo_toml, "lib")?, "path")?,
         "src/lib.rs"
     );
-
-    Ok(())
-}
-
-#[test]
-fn generated_pub_dependency_consumer_artifact_matches_baseline() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let producer_root = tmp.path().join("artifact_widgets_project");
-    let producer_src = producer_root.join("src");
-    fs::create_dir_all(&producer_src)?;
-    fs::write(
-        producer_root.join("incan.toml"),
-        "[project]\nname = \"artifact_widgets_core\"\nversion = \"0.1.0\"\n",
-    )?;
-    write_fixture(&producer_src.join("widgets.incn"), "library_widgets.incn")?;
-    write_fixture(&producer_src.join("lib.incn"), "library_lib.incn")?;
-
-    let producer_build = run_incan(&producer_root, &["build", "--lib"])?;
-    assert_success(&producer_build, "incan build --lib producer artifact");
 
     let consumer_root = tmp.path().join("artifact_consumer_project");
     let consumer_src = consumer_root.join("src");

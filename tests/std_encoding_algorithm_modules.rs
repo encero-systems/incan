@@ -11,6 +11,10 @@ fn run_source_case(source: &str) -> Result<(), Box<dyn std::error::Error>> {
         .arg("run")
         .arg(&source_path)
         .env("CARGO_NET_OFFLINE", "true")
+        .env(
+            "INCAN_GENERATED_CARGO_TARGET_DIR",
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+        )
         .output()?;
 
     assert!(
