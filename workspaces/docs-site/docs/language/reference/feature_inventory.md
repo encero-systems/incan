@@ -464,13 +464,13 @@ Canonical forms:
 - **Use instead of:** Boilerplate wrapper declarations around every function that needs the same callable transform.
 - **References:** [Language reference](language.md#decorators), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md)
 
-Decorators are ordinary callable values applied to functions and methods, including decorator factories.
+Decorators are ordinary callable values applied to functions and methods, including generic decorator factories that infer or accept the decorated function type.
 
 Canonical forms:
 
 - `@logged`
-- `@route("/users")`
-- `@trace(level=Level.INFO)`
+- `@registered("catalog.ref")`
+- `@registered[(str) -> ColumnExpr]("catalog.ref")`
 
 ### Generators
 

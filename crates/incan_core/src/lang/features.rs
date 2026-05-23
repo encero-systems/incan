@@ -500,8 +500,12 @@ pub const FEATURES: &[FeatureDescriptor] = &[
         introduced_in_rfc: RFC::_036,
         stability: Stability::Stable,
         activation: "None for user-defined decorators; compiler-owned decorators keep their documented imports.",
-        summary: "Decorators are ordinary callable values applied to functions and methods, including decorator factories.",
-        canonical_forms: &["@logged", "@route(\"/users\")", "@trace(level=Level.INFO)"],
+        summary: "Decorators are ordinary callable values applied to functions and methods, including generic decorator factories that infer or accept the decorated function type.",
+        canonical_forms: &[
+            "@logged",
+            "@registered(\"catalog.ref\")",
+            "@registered[(str) -> ColumnExpr](\"catalog.ref\")",
+        ],
         prefer_over: "Boilerplate wrapper declarations around every function that needs the same callable transform.",
         references: links![
             ("Language reference", "language.md#decorators"),
