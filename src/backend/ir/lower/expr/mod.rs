@@ -370,49 +370,67 @@ impl AstLowering {
     /// This is a stepping stone toward fully typed lowering.
     pub fn lower_expr_spanned(&mut self, expr: &Spanned<ast::Expr>) -> Result<TypedExpr, LoweringError> {
         let mut lowered = self.lower_expr(&expr.node, expr.span)?;
-        if let Some(info) = &self.type_info {
-            if let Some(res_ty) = info.expr_type(expr.span) {
-                // Preserve reference wrappers introduced by lowering (e.g. mutable parameters are tracked as
-                // `RefMut(T)` in IR), while still benefiting from the typechecker's inner type information.
-                //
-                // The frontend type system does not model references, so `expr_type` typically returns `T` where
-                // lowering may have already marked the same binding as `Ref(T)`/`RefMut(T)`.
-                //
-                // Likewise, RFC-008 const lowering may have already refined `str`/`bytes` to their static IR forms.
-                // Keep those backend-specific const representations intact so later emission can materialize owned
-                // values only when required.
-                let inferred = self.lower_resolved_type(res_ty);
-                lowered.ty = match &lowered.ty {
-                    IrType::Ref(existing_inner) => {
-                        IrType::Ref(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred)))
-                    }
-                    IrType::RefMut(existing_inner) => {
-                        IrType::RefMut(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred)))
-                    }
-                    IrType::StaticStr => IrType::StaticStr,
-                    IrType::StaticBytes => IrType::StaticBytes,
-                    existing => Self::merge_inferred_ir_type(existing, inferred),
-                };
-            }
-            if let Some(kind) = info.ident_kind(expr.span) {
-                match (&expr.node, &mut lowered.kind) {
-                    (ast::Expr::Ident(name), _) if matches!(kind, IdentKind::Static) => {
-                        lowered.kind = IrExprKind::StaticRead { name: name.clone() };
-                    }
-                    (_, IrExprKind::Var { ref_kind, .. }) => {
-                        *ref_kind = match kind {
-                            IdentKind::Value => *ref_kind,
-                            IdentKind::Static => *ref_kind,
-                            IdentKind::TypeName => VarRefKind::TypeName,
-                            IdentKind::Variant => VarRefKind::TypeName,
-                            IdentKind::Module => VarRefKind::ExternalName,
-                            IdentKind::RustImport => VarRefKind::ExternalRustName,
-                            IdentKind::RustValue => VarRefKind::Value,
-                            IdentKind::Trait => VarRefKind::TypeName,
-                        };
-                    }
-                    _ => {}
+        if let Some(info) = &self.type_info
+            && let Some(res_ty) = info.expr_type(expr.span)
+        {
+            // Preserve reference wrappers introduced by lowering (e.g. mutable parameters are tracked as
+            // `RefMut(T)` in IR), while still benefiting from the typechecker's inner type information.
+            //
+            // The frontend type system does not model references, so `expr_type` typically returns `T` where
+            // lowering may have already marked the same binding as `Ref(T)`/`RefMut(T)`.
+            //
+            // Likewise, RFC-008 const lowering may have already refined `str`/`bytes` to their static IR forms.
+            // Keep those backend-specific const representations intact so later emission can materialize owned
+            // values only when required.
+            let inferred = self.lower_resolved_type(res_ty);
+            lowered.ty = match &lowered.ty {
+                IrType::Ref(existing_inner) => {
+                    IrType::Ref(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred)))
                 }
+                IrType::RefMut(existing_inner) => {
+                    IrType::RefMut(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred)))
+                }
+                IrType::StaticStr => IrType::StaticStr,
+                IrType::StaticBytes => IrType::StaticBytes,
+                existing => Self::merge_inferred_ir_type(existing, inferred),
+            };
+        }
+        if let Some(kind) = self.ident_kind_for_lowering(expr) {
+            match (&expr.node, &mut lowered.kind) {
+                (ast::Expr::Ident(name), _) if matches!(kind, IdentKind::Static) => {
+                    lowered.kind = IrExprKind::StaticRead { name: name.clone() };
+                }
+                (ast::Expr::Ident(name), IrExprKind::Var { ref_kind, .. }) => {
+                    *ref_kind = match kind {
+                        IdentKind::Value => *ref_kind,
+                        IdentKind::Static => *ref_kind,
+                        IdentKind::TypeName => VarRefKind::TypeName,
+                        IdentKind::Variant => VarRefKind::TypeName,
+                        IdentKind::Module => VarRefKind::ExternalName,
+                        IdentKind::RustImport => VarRefKind::ExternalRustName,
+                        IdentKind::RustValue => VarRefKind::Value,
+                        IdentKind::Trait => VarRefKind::TypeName,
+                    };
+                    if matches!(kind, IdentKind::TypeName | IdentKind::Variant | IdentKind::Trait)
+                        && matches!(lowered.ty, IrType::Unknown)
+                        && let Some(ty) = self.synthetic_type_ident_ir_type(name)
+                    {
+                        lowered.ty = ty;
+                    }
+                }
+                (_, IrExprKind::Var { ref_kind, .. }) => {
+                    *ref_kind = match kind {
+                        IdentKind::Value => *ref_kind,
+                        IdentKind::Static => *ref_kind,
+                        IdentKind::TypeName => VarRefKind::TypeName,
+                        IdentKind::Variant => VarRefKind::TypeName,
+                        IdentKind::Module => VarRefKind::ExternalName,
+                        IdentKind::RustImport => VarRefKind::ExternalRustName,
+                        IdentKind::RustValue => VarRefKind::Value,
+                        IdentKind::Trait => VarRefKind::TypeName,
+                    };
+                }
+                _ => {}
             }
         }
         // Apply any rusttype method return coercion recorded by the typechecker (e.g. &str → String).
@@ -420,6 +438,53 @@ impl AstLowering {
         // Apply RFC 017 implicit validated-newtype coercions at typechecker-approved destination sites.
         lowered = self.wrap_with_validated_newtype_coercion(lowered, expr.span)?;
         Ok(lowered)
+    }
+
+    /// Return the identifier classification that lowering should use for this expression.
+    ///
+    /// Most source expressions use span-keyed frontend metadata. Synthetic expressions created by lowering, such as
+    /// user-defined decorator factory calls, intentionally use the default span so they do not collide with call-site
+    /// expression types. Those synthetic nodes still need metadata-backed classification for type names and module
+    /// statics; otherwise they fall back to value-shaped Rust emission.
+    fn ident_kind_for_lowering(&self, expr: &Spanned<ast::Expr>) -> Option<IdentKind> {
+        if let Some(kind) = self.type_info.as_ref().and_then(|info| info.ident_kind(expr.span)) {
+            return Some(kind);
+        }
+        if expr.span != ast::Span::default() {
+            return None;
+        }
+        let ast::Expr::Ident(name) = &expr.node else {
+            return None;
+        };
+        if self
+            .type_info
+            .as_ref()
+            .is_some_and(|info| info.static_binding(name).is_some())
+        {
+            return Some(IdentKind::Static);
+        }
+        if self.synthetic_type_ident_ir_type(name).is_some() {
+            return Some(IdentKind::TypeName);
+        }
+        None
+    }
+
+    /// Return the known IR type for a synthetic type-like identifier.
+    fn synthetic_type_ident_ir_type(&self, name: &str) -> Option<IrType> {
+        self.struct_names
+            .get(name)
+            .cloned()
+            .or_else(|| self.enum_names.get(name).cloned())
+            .or_else(|| {
+                self.class_decls
+                    .contains_key(name)
+                    .then(|| IrType::Struct(name.to_string()))
+            })
+            .or_else(|| {
+                self.trait_decls
+                    .contains_key(name)
+                    .then(|| IrType::Struct(name.to_string()))
+            })
     }
 
     /// Lower an expression to IR.

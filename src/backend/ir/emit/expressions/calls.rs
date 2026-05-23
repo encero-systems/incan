@@ -628,6 +628,7 @@ impl<'a> IrEmitter<'a> {
         if let Some(sig) = function_sig
             && sig.params.iter().any(|param| param.kind != ParamKind::Normal)
         {
+            let f = Self::call_callee_tokens(func, f, type_args);
             let arg_tokens = self.emit_rest_aware_call_args(func, args, sig)?;
             return Ok(quote! { #f #turbofish (#(#arg_tokens),*) });
         }
@@ -792,7 +793,29 @@ impl<'a> IrEmitter<'a> {
             })
             .collect::<Result<_, _>>()?;
 
+        let f = Self::call_callee_tokens(func, f, type_args);
         Ok(quote! { #f #turbofish (#(#arg_tokens),*) })
+    }
+
+    /// Parenthesize call targets whose emitted Rust is an expression block rather than a path/call expression.
+    ///
+    /// Storage-rooted method calls materialize arguments and enter `StaticCell::with_ref` / `with_mut`, so their
+    /// emitted callee has block shape. Calling that result requires `({ ... })(arg)` in Rust.
+    fn call_callee_tokens(func: &TypedExpr, emitted: TokenStream, type_args: &[IrType]) -> TokenStream {
+        if !type_args.is_empty() {
+            return emitted;
+        }
+        match &func.kind {
+            IrExprKind::MethodCall { receiver, .. } if Self::expr_is_storage_rooted(receiver) => {
+                quote! { ({ #emitted }) }
+            }
+            IrExprKind::If { .. }
+            | IrExprKind::Match { .. }
+            | IrExprKind::Closure { .. }
+            | IrExprKind::Block { .. }
+            | IrExprKind::Loop { .. } => quote! { ({ #emitted }) },
+            _ => emitted,
+        }
     }
 
     pub(in super::super) fn emit_rest_aware_call_args(

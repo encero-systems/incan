@@ -8577,6 +8577,85 @@ def test_inferred_generic_decorator_factory_signature() -> None:
     }
 
     #[test]
+    fn e2e_method_call_decorator_factories_use_checked_receiver_lowering() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "method_call_decorator_factories"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("main.incn"),
+            r#"
+class Registry:
+    pub names: list[str]
+
+    @staticmethod
+    def new() -> Self:
+        return Registry(names=[])
+
+    @staticmethod
+    def add_static[F](name: str) -> (F) -> F:
+        FUNCTIONS.names.append(name)
+        return (func) => func
+
+    def add[F](mut self, name: str) -> (F) -> F:
+        self.names.append(name)
+        return (func) => func
+
+
+static FUNCTIONS: Registry = Registry.new()
+
+
+@Registry::add_static("static")
+def static_col(name: str) -> str:
+    return name
+
+
+@FUNCTIONS.add("instance")
+def instance_col(name: str) -> str:
+    return name
+
+
+def main() -> None:
+    println(static_col("amount"))
+    println(instance_col("price"))
+    println(len(FUNCTIONS.names))
+"#,
+        )?;
+
+        let out_dir = dir.join("out");
+        let output = run_incan_build(&src_dir.join("main.incn"), &out_dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected method-call decorator factories to build.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+
+        let generated = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        assert!(
+            generated.contains("Registry :: add_static")
+                || generated.contains("Registry::add_static")
+                || generated.contains("Registry :: add_static ::"),
+            "class static method decorator should lower as associated function syntax:\n{}",
+            generated,
+        );
+        assert!(
+            generated.contains(".with_mut(|__incan_static_value|")
+                && generated.contains("__incan_static_value.add(__incan_static_arg_0.to_string())"),
+            "static registry receiver should lower through static storage access:\n{}",
+            generated,
+        );
+        Ok(())
+    }
+
+    #[test]
     fn e2e_inline_module_parametrize_markers_strict_and_timeout() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
             "incan.toml",
