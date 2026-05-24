@@ -8916,6 +8916,185 @@ def main() -> None:
     }
 
     #[test]
+    fn e2e_directory_run_preserves_per_file_inline_test_modules_issue676() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "inline_directory_batch"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("alpha.incn"),
+            r#"
+const ALPHA_OFFSET: int = 10
+static alpha_runs: int = 0
+
+model AlphaRecord:
+    value: int
+    label: str
+
+def alpha_value() -> int:
+    return 1
+
+def alpha_record() -> AlphaRecord:
+    return AlphaRecord(value=alpha_value() + ALPHA_OFFSET, label="alpha")
+
+
+module tests:
+    def test_alpha_value() -> None:
+        alpha_runs += 1
+        record = alpha_record()
+        assert alpha_value() == 1
+        assert record.value == 11
+        assert record.label == "alpha"
+        assert alpha_runs == 1
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("beta.incn"),
+            r#"
+const BETA_OFFSET: int = 20
+static beta_runs: int = 0
+
+model BetaRecord:
+    value: int
+    label: str
+
+def beta_value() -> int:
+    return 2
+
+def beta_record() -> BetaRecord:
+    return BetaRecord(value=beta_value() + BETA_OFFSET, label="beta")
+
+
+module tests:
+    def test_beta_value() -> None:
+        beta_runs += 1
+        record = beta_record()
+        assert beta_value() == 2
+        assert record.value == 22
+        assert record.label == "beta"
+        assert beta_runs == 1
+"#,
+        )?;
+        let functions_dir = src_dir.join("functions");
+        std::fs::create_dir_all(&functions_dir)?;
+        std::fs::write(
+            functions_dir.join("columns.incn"),
+            r#"
+const COLUMN_OFFSET: int = 30
+static column_runs: int = 0
+
+model Column:
+    value: int
+    label: str
+
+pub def col() -> int:
+    return 3
+
+def column() -> Column:
+    return Column(value=col() + COLUMN_OFFSET, label="column")
+
+
+module tests:
+    def test_col() -> None:
+        column_runs += 1
+        item = column()
+        assert col() == 3
+        assert item.value == 33
+        assert item.label == "column"
+        assert column_runs == 1
+"#,
+        )?;
+        std::fs::write(
+            functions_dir.join("uses_columns.incn"),
+            r#"
+from functions.columns import col
+
+const USES_COLUMN_OFFSET: int = 40
+static uses_column_runs: int = 0
+
+model UsesColumn:
+    value: int
+    label: str
+
+def uses_col() -> int:
+    return col() + 1
+
+def uses_column() -> UsesColumn:
+    return UsesColumn(value=uses_col() + USES_COLUMN_OFFSET, label="uses-column")
+
+
+module tests:
+    def test_uses_col() -> None:
+        uses_column_runs += 1
+        item = uses_column()
+        assert uses_col() == 4
+        assert item.value == 44
+        assert item.label == "uses-column"
+        assert uses_column_runs == 1
+"#,
+        )?;
+
+        let alpha = run_incan_test_path(&src_dir.join("alpha.incn"));
+        assert!(
+            alpha.status.success(),
+            "expected direct alpha inline test run to pass.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&alpha.stdout),
+            String::from_utf8_lossy(&alpha.stderr),
+        );
+        let beta = run_incan_test_path(&src_dir.join("beta.incn"));
+        assert!(
+            beta.status.success(),
+            "expected direct beta inline test run to pass.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&beta.stdout),
+            String::from_utf8_lossy(&beta.stderr),
+        );
+        let uses_columns = run_incan_test_path(&functions_dir.join("uses_columns.incn"));
+        assert!(
+            uses_columns.status.success(),
+            "expected direct imported inline test run to pass.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&uses_columns.stdout),
+            String::from_utf8_lossy(&uses_columns.stderr),
+        );
+
+        let directory = run_incan_test_path(&src_dir);
+        let stdout = String::from_utf8_lossy(&directory.stdout);
+        let stderr = String::from_utf8_lossy(&directory.stderr);
+        assert!(
+            directory.status.success(),
+            "expected directory inline test run to keep per-file parser context.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("alpha.incn::test_alpha_value")
+                && stdout.contains("beta.incn::test_beta_value")
+                && stdout.contains("columns.incn::test_col")
+                && stdout.contains("uses_columns.incn::test_uses_col"),
+            "expected every inline source file to run from directory discovery.\nstdout:\n{}",
+            stdout,
+        );
+        assert!(
+            !stdout.contains("Only one `module tests:` block") && !stderr.contains("Only one `module tests:` block"),
+            "directory batching should not report duplicate inline modules across files.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            !stderr.contains("the name `col` is defined multiple times"),
+            "directory batching should keep imported names inside their source module scope.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn e2e_inline_module_parametrize_markers_strict_and_timeout() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
             "incan.toml",

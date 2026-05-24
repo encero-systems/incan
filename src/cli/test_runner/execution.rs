@@ -23,6 +23,7 @@ use crate::frontend::ast::{
 };
 use crate::frontend::decorator_resolution;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::module::logical_module_segments_from_file;
 use crate::frontend::testing_markers::{TestingMarkerKind, load_testing_marker_semantics, resolve_testing_marker_kind};
 use crate::frontend::vocab_desugar_pass;
 use crate::frontend::{lexer, parser};
@@ -33,7 +34,7 @@ use sha2::{Digest, Sha256};
 use super::module_graph::collect_source_modules_for_test;
 use super::types::{FixtureScope, TestInfo, TestResult};
 
-/// Generated `#[cfg(test)]` module that wraps Incan test functions as Rust `#[test]` cases, one `cargo test` per file.
+/// Generated `#[cfg(test)]` module that wraps Incan test functions as Rust `#[test]` cases.
 const INCAN_FILE_TEST_MOD: &str = "__incan_file_tests";
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -352,6 +353,226 @@ fn partition_collision_free_file_groups(
         .collect()
 }
 
+/// Parse each source file in a generated test batch independently, then merge declarations for the shared harness.
+///
+/// The parser's `module tests:` cardinality rule is intentionally per source file. A worker batch may contain several
+/// files, so the runner must not concatenate source text and ask the parser to treat that batch as one file.
+fn parse_test_batch_sources(
+    batch_sources: &[(PathBuf, String)],
+    library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+    library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
+) -> Result<Program, String> {
+    let mut declarations = Vec::new();
+    let mut warnings = Vec::new();
+    let mut rust_module_path = None;
+    let source_path = batch_sources
+        .first()
+        .map(|(path, _)| path.to_string_lossy().to_string());
+
+    for (path, source) in batch_sources {
+        let tokens = lexer::lex(source).map_err(|e| format!("Lexer error in {}: {:?}", path.display(), e))?;
+        let parsed = parser::parse_with_context_and_surfaces(
+            &tokens,
+            Some(path.to_string_lossy().as_ref()),
+            library_imported_vocab,
+            library_imported_dsl_surfaces,
+        )
+        .map_err(|e| format!("Parser error in {}: {:?}", path.display(), e))?;
+        if let Some(module_path) = parsed.rust_module_path {
+            if rust_module_path.is_some() {
+                return Err(format!(
+                    "Parser error in {}: duplicate rust.module() directives in test batch",
+                    path.display()
+                ));
+            }
+            rust_module_path = Some(module_path);
+        }
+        warnings.extend(parsed.warnings);
+        declarations.extend(parsed.declarations);
+    }
+
+    Ok(Program {
+        declarations,
+        source_path,
+        rust_module_path,
+        warnings,
+    })
+}
+
+struct InlineSourceModuleBatch {
+    ast: Program,
+    source_modules: Vec<ParsedModule>,
+    harnesses: Vec<PreparedModuleHarness>,
+}
+
+fn empty_test_batch_root(first_path: &Path) -> Program {
+    Program {
+        declarations: Vec::new(),
+        source_path: Some(first_path.to_string_lossy().to_string()),
+        rust_module_path: None,
+        warnings: Vec::new(),
+    }
+}
+
+fn program_has_inline_test_module(program: &Program) -> bool {
+    program
+        .declarations
+        .iter()
+        .any(|decl| matches!(decl.node, Declaration::TestModule(_)))
+}
+
+fn prepare_runner_program(ast: &Program) -> Result<(Program, HashMap<String, FixtureExecutionInfo>), String> {
+    let mut runner_ast = ast_with_inline_test_declarations(ast);
+    normalize_runner_assert_statements(&mut runner_ast);
+    prune_shadowed_fixture_declarations(&mut runner_ast);
+    dedupe_import_declarations(&mut runner_ast);
+    let mut fixtures = collect_fixture_execution_info(&runner_ast, &HashMap::new());
+    let fixture_teardowns = split_yield_fixture_declarations(&mut runner_ast)?;
+    apply_fixture_teardowns(&mut fixtures, &fixture_teardowns);
+    Ok((runner_ast, fixtures))
+}
+
+fn parse_and_desugar_test_sources(
+    batch_sources: &[(PathBuf, String)],
+    library_manifest_index: &LibraryManifestIndex,
+    library_imported_vocab: &parser::ImportedLibraryVocab,
+    library_imported_dsl_surfaces: &parser::ImportedLibraryDslSurfaces,
+) -> Result<Program, String> {
+    let mut ast = parse_test_batch_sources(
+        batch_sources,
+        Some(library_imported_vocab),
+        Some(library_imported_dsl_surfaces),
+    )?;
+    let path_display = batch_sources
+        .last()
+        .or_else(|| batch_sources.first())
+        .map(|(path, _)| path.to_string_lossy());
+    if let Err(errors) =
+        vocab_desugar_pass::desugar_program_vocab_blocks(&mut ast, path_display.as_deref(), library_manifest_index)
+    {
+        return Err(format!("Vocab desugar error: {:?}", errors));
+    }
+    Ok(ast)
+}
+
+fn module_name_for_segments(segments: &[String]) -> String {
+    segments.join("_")
+}
+
+fn read_conftest_sources(paths: &[PathBuf]) -> Result<Vec<(PathBuf, String)>, String> {
+    let mut sources = Vec::new();
+    for path in paths {
+        let source =
+            fs::read_to_string(path).map_err(|err| format!("Failed to read conftest {}: {}", path.display(), err))?;
+        sources.push((path.clone(), source));
+    }
+    Ok(sources)
+}
+
+fn prepare_inline_source_module_batch(
+    sources_by_file: &[(PathBuf, String)],
+    conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
+    source_root: &Path,
+    library_manifest_index: &LibraryManifestIndex,
+    library_imported_vocab: &parser::ImportedLibraryVocab,
+    library_imported_dsl_surfaces: &parser::ImportedLibraryDslSurfaces,
+) -> Result<Option<InlineSourceModuleBatch>, String> {
+    if sources_by_file.len() <= 1 {
+        return Ok(None);
+    }
+
+    let mut source_modules = Vec::new();
+    let mut harnesses = Vec::new();
+    let mut batch_files = HashSet::new();
+    let mut seen_module_paths = HashSet::new();
+    let mut parsed_sources = Vec::new();
+
+    for (path, source) in sources_by_file {
+        let Some(module_path) = logical_module_segments_from_file(source_root, path) else {
+            return Ok(None);
+        };
+        let ast = parse_and_desugar_test_sources(
+            &[(path.clone(), source.clone())],
+            library_manifest_index,
+            library_imported_vocab,
+            library_imported_dsl_surfaces,
+        )?;
+        if !program_has_inline_test_module(&ast) {
+            return Ok(None);
+        }
+        batch_files.insert(canonical_path_for_cache_key(path));
+        parsed_sources.push((path.clone(), source.clone(), module_path, ast));
+    }
+
+    let mut deferred_dependencies = Vec::new();
+    for (path, source, module_path, ast) in parsed_sources {
+        let mut module_sources =
+            read_conftest_sources(conftest_files_by_file.get(&path).map(Vec::as_slice).unwrap_or(&[]))?;
+        module_sources.push((path.clone(), source.clone()));
+        let combined_ast = if module_sources.len() == 1 {
+            ast
+        } else {
+            parse_and_desugar_test_sources(
+                &module_sources,
+                library_manifest_index,
+                library_imported_vocab,
+                library_imported_dsl_surfaces,
+            )?
+        };
+        let (runner_ast, fixtures) = prepare_runner_program(&combined_ast)?;
+        let module_name = module_name_for_segments(&module_path);
+        let module_source = module_sources
+            .iter()
+            .map(|(_, source)| source.as_str())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        for dependency in collect_source_modules_for_test(
+            &runner_ast,
+            source_root,
+            Some(library_imported_vocab),
+            Some(library_imported_dsl_surfaces),
+            Some(library_manifest_index),
+        )? {
+            deferred_dependencies.push(dependency);
+        }
+
+        if seen_module_paths.insert(module_path.clone()) {
+            source_modules.push(ParsedModule {
+                name: module_name,
+                path_segments: module_path.clone(),
+                file_path: path.clone(),
+                source: module_source,
+                ast: runner_ast,
+            });
+        }
+        harnesses.push(PreparedModuleHarness {
+            file_path: path,
+            module_path,
+            fixtures,
+        });
+    }
+
+    for dependency in deferred_dependencies {
+        if batch_files.contains(&canonical_path_for_cache_key(&dependency.file_path)) {
+            continue;
+        }
+        if seen_module_paths.insert(dependency.path_segments.clone()) {
+            source_modules.push(dependency);
+        }
+    }
+
+    let first_path = sources_by_file
+        .first()
+        .map(|(path, _)| path.as_path())
+        .unwrap_or_else(|| Path::new("."));
+    Ok(Some(InlineSourceModuleBatch {
+        ast: empty_test_batch_root(first_path),
+        source_modules,
+        harnesses,
+    }))
+}
+
 /// Resolve a dotted expression path using local import aliases collected from the runner AST.
 fn resolved_expr_path(expr: &Spanned<Expr>, aliases: &HashMap<String, Vec<String>>) -> Option<Vec<String>> {
     match &expr.node {
@@ -494,6 +715,7 @@ pub(super) struct PreparedTestFile {
     pub library_manifest_index: LibraryManifestIndex,
     pub ast: Program,
     pub fixtures: HashMap<String, FixtureExecutionInfo>,
+    pub module_harnesses: Vec<PreparedModuleHarness>,
     pub source_modules: Vec<ParsedModule>,
     pub project_root: PathBuf,
     pub resolved: ResolvedDependencies,
@@ -502,6 +724,13 @@ pub(super) struct PreparedTestFile {
     pub lock_payload: Option<String>,
     #[cfg(feature = "rust_inspect")]
     pub rust_inspect_manifest_dir: PathBuf,
+}
+
+/// Runner harness metadata for one inline source file emitted as its own Rust module.
+pub(super) struct PreparedModuleHarness {
+    pub file_path: PathBuf,
+    pub module_path: Vec<String>,
+    pub fixtures: HashMap<String, FixtureExecutionInfo>,
 }
 
 /// Parsed dependency context for the project lock-validation entry point, shared across test batches in one session.
@@ -1334,6 +1563,30 @@ fn test_runner_stdlib_features(
     features.into_iter().collect()
 }
 
+fn test_runner_stdlib_features_for_batch(
+    base: &[String],
+    tests: &[TestInfo],
+    fixtures: &HashMap<String, FixtureExecutionInfo>,
+    module_harnesses: &[PreparedModuleHarness],
+) -> Vec<String> {
+    if module_harnesses.is_empty() {
+        return test_runner_stdlib_features(base, tests, fixtures);
+    }
+
+    let mut features = base.iter().cloned().collect::<BTreeSet<_>>();
+    if module_harnesses.iter().any(|harness| {
+        let file_tests = tests
+            .iter()
+            .filter(|test| test.file_path == harness.file_path)
+            .cloned()
+            .collect::<Vec<_>>();
+        harness_needs_async_runtime(&file_tests, &harness.fixtures)
+    }) {
+        features.insert("async".to_string());
+    }
+    features.into_iter().collect()
+}
+
 /// Generate an expression that calls a fixture, recursively filling fixture dependencies.
 fn fixture_arg(
     name: &str,
@@ -1664,6 +1917,17 @@ fn inject_file_test_harness(
     project_root: &Path,
     fixtures: &HashMap<String, FixtureExecutionInfo>,
 ) -> String {
+    let test_indices = (0..tests.len()).collect::<Vec<_>>();
+    inject_file_test_harness_with_indices(rust_code, tests, &test_indices, project_root, fixtures)
+}
+
+fn inject_file_test_harness_with_indices(
+    rust_code: &str,
+    tests: &[TestInfo],
+    test_indices: &[usize],
+    project_root: &Path,
+    fixtures: &HashMap<String, FixtureExecutionInfo>,
+) -> String {
     let mut out = rust_code.to_string();
     let project_root_literal = project_root.to_string_lossy().to_string();
     out.push_str("\n\n#[cfg(test)]\nmod ");
@@ -1738,7 +2002,7 @@ fn inject_file_test_harness(
         );
     }
     let teardown_fixtures = ordered_teardown_fixtures(tests, fixtures);
-    for (index, t) in tests.iter().enumerate() {
+    for (index, t) in test_indices.iter().copied().zip(tests.iter()) {
         let fname = harness_fn_name(t, index);
         let call = harness_call(t, index, fixtures);
         out.push_str("    #[test]\n    fn ");
@@ -2311,10 +2575,11 @@ fn preheat_status_label(status: HarnessPreheatStatus) -> &'static str {
     }
 }
 
-/// Run every collected test in `tests` that lives in the same `.incn` file with **one** `cargo test` invocation (#271).
+/// Run one collected test execution unit with a single generated Cargo/libtest invocation.
 ///
-/// Returns an empty vector when `tests` is empty. Otherwise every entry must share the same [`TestInfo::file_path`].
-/// Skip/xfail handling stays in [`super::run_tests`].
+/// Ordinary test files still use the root harness shape. Cross-file inline source batches emit each tested source file
+/// as its own Rust module and inject the harness beside the file-local declarations, so imports and public declarations
+/// from different source files do not share one synthetic Rust scope.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_file_tests_batch(
     tests: &[TestInfo],
@@ -2335,6 +2600,7 @@ pub(super) fn run_file_tests_batch(
 
     // ---- Context: load test source, discover manifest, parse and vocab-desugar the test file ----
     let mut source_parts = Vec::new();
+    let mut batch_parse_sources = Vec::new();
     let mut sources_by_file = Vec::new();
     let mut seen_conftests = BTreeSet::new();
     let mut seen_files = BTreeSet::new();
@@ -2348,7 +2614,10 @@ pub(super) fn run_file_tests_batch(
                     continue;
                 }
                 match fs::read_to_string(conftest) {
-                    Ok(source) => source_parts.push(source),
+                    Ok(source) => {
+                        source_parts.push(source.clone());
+                        batch_parse_sources.push((conftest.clone(), source));
+                    }
                     Err(err) => {
                         let message = format!("Failed to read conftest {}: {}", conftest.display(), err);
                         return tests
@@ -2362,6 +2631,7 @@ pub(super) fn run_file_tests_batch(
         match fs::read_to_string(&test.file_path) {
             Ok(source) => {
                 sources_by_file.push((test.file_path.clone(), source.clone()));
+                batch_parse_sources.push((test.file_path.clone(), source.clone()));
                 source_parts.push(source);
             }
             Err(e) => {
@@ -2400,100 +2670,6 @@ pub(super) fn run_file_tests_batch(
     let library_imported_vocab = library_manifest_index.library_imported_vocab();
     let library_imported_dsl_surfaces = library_manifest_index.library_imported_dsl_surfaces();
 
-    if batch_has_cross_file_top_level_collision(&sources_by_file, Some(&library_imported_vocab)) {
-        let mut split_results = Vec::new();
-        for file_group in partition_collision_free_file_groups(&sources_by_file, Some(&library_imported_vocab)) {
-            let file_group = file_group.into_iter().collect::<BTreeSet<_>>();
-            let file_tests = tests
-                .iter()
-                .filter(|test| file_group.contains(&test.file_path))
-                .cloned()
-                .collect::<Vec<_>>();
-            split_results.extend(run_file_tests_batch(
-                &file_tests,
-                conftest_files_by_file,
-                prep_cache,
-                cargo_policy,
-                cargo_features,
-                cargo_no_default_features,
-                cargo_all_features,
-                options,
-            ));
-        }
-        return split_results;
-    }
-
-    let tokens = match lexer::lex(&source) {
-        Ok(t) => t,
-        Err(e) => {
-            return tests
-                .iter()
-                .map(|t| {
-                    (
-                        t.clone(),
-                        TestResult::Failed(start.elapsed(), format!("Lexer error: {:?}", e)),
-                    )
-                })
-                .collect();
-        }
-    };
-
-    let path_display = first.file_path.to_string_lossy();
-    let mut ast = match parser::parse_with_context_and_surfaces(
-        &tokens,
-        Some(path_display.as_ref()),
-        Some(&library_imported_vocab),
-        Some(&library_imported_dsl_surfaces),
-    ) {
-        Ok(a) => a,
-        Err(e) => {
-            return tests
-                .iter()
-                .map(|t| {
-                    (
-                        t.clone(),
-                        TestResult::Failed(start.elapsed(), format!("Parser error: {:?}", e)),
-                    )
-                })
-                .collect();
-        }
-    };
-    if let Err(errors) =
-        vocab_desugar_pass::desugar_program_vocab_blocks(&mut ast, Some(path_display.as_ref()), &library_manifest_index)
-    {
-        return tests
-            .iter()
-            .map(|t| {
-                (
-                    t.clone(),
-                    TestResult::Failed(start.elapsed(), format!("Vocab desugar error: {:?}", errors)),
-                )
-            })
-            .collect();
-    }
-    let mut runner_ast = ast_with_inline_test_declarations(&ast);
-    normalize_runner_assert_statements(&mut runner_ast);
-    prune_shadowed_fixture_declarations(&mut runner_ast);
-    dedupe_import_declarations(&mut runner_ast);
-    let mut fixtures = collect_fixture_execution_info(&runner_ast, &HashMap::new());
-    let fixture_teardowns = match split_yield_fixture_declarations(&mut runner_ast) {
-        Ok(teardowns) => teardowns,
-        Err(message) => {
-            return tests
-                .iter()
-                .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
-                .collect();
-        }
-    };
-    apply_fixture_teardowns(&mut fixtures, &fixture_teardowns);
-
-    let cargo_feature_selection = CargoFeatureSelection {
-        cargo_features: cargo_features.to_vec(),
-        cargo_no_default_features,
-        cargo_all_features,
-    }
-    .normalized();
-
     // ---- Context: resolve project paths and collect transitive Incan modules for the test ----
     let project_root = manifest
         .as_ref()
@@ -2501,26 +2677,102 @@ pub(super) fn run_file_tests_batch(
         .unwrap_or_else(|| infer_project_root_without_manifest(&first.file_path));
     let project_root = absolute_project_root(&project_root);
     let source_root = common::resolve_source_root(&project_root, manifest.as_ref());
-    let source_modules = match collect_source_modules_for_test(
-        &runner_ast,
+
+    let inline_module_batch = match prepare_inline_source_module_batch(
+        &sources_by_file,
+        conftest_files_by_file,
         &source_root,
-        Some(&library_imported_vocab),
-        Some(&library_imported_dsl_surfaces),
-        Some(&library_manifest_index),
+        &library_manifest_index,
+        &library_imported_vocab,
+        &library_imported_dsl_surfaces,
     ) {
-        Ok(m) => m,
-        Err(e) => {
+        Ok(batch) => batch,
+        Err(message) => {
             return tests
                 .iter()
-                .map(|t| {
-                    (
-                        t.clone(),
-                        TestResult::Failed(start.elapsed(), format!("Failed to collect source modules: {}", e)),
-                    )
-                })
+                .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
                 .collect();
         }
     };
+
+    let (runner_ast, fixtures, source_modules, module_harnesses) = if let Some(batch) = inline_module_batch {
+        (batch.ast, HashMap::new(), batch.source_modules, batch.harnesses)
+    } else {
+        if batch_has_cross_file_top_level_collision(&sources_by_file, Some(&library_imported_vocab)) {
+            let mut split_results = Vec::new();
+            for file_group in partition_collision_free_file_groups(&sources_by_file, Some(&library_imported_vocab)) {
+                let file_group = file_group.into_iter().collect::<BTreeSet<_>>();
+                let file_tests = tests
+                    .iter()
+                    .filter(|test| file_group.contains(&test.file_path))
+                    .cloned()
+                    .collect::<Vec<_>>();
+                split_results.extend(run_file_tests_batch(
+                    &file_tests,
+                    conftest_files_by_file,
+                    prep_cache,
+                    cargo_policy,
+                    cargo_features,
+                    cargo_no_default_features,
+                    cargo_all_features,
+                    options,
+                ));
+            }
+            return split_results;
+        }
+
+        let ast = match parse_and_desugar_test_sources(
+            &batch_parse_sources,
+            &library_manifest_index,
+            &library_imported_vocab,
+            &library_imported_dsl_surfaces,
+        ) {
+            Ok(ast) => ast,
+            Err(message) => {
+                return tests
+                    .iter()
+                    .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
+                    .collect();
+            }
+        };
+        let (runner_ast, fixtures) = match prepare_runner_program(&ast) {
+            Ok(prepared) => prepared,
+            Err(message) => {
+                return tests
+                    .iter()
+                    .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), message.clone())))
+                    .collect();
+            }
+        };
+        let source_modules = match collect_source_modules_for_test(
+            &runner_ast,
+            &source_root,
+            Some(&library_imported_vocab),
+            Some(&library_imported_dsl_surfaces),
+            Some(&library_manifest_index),
+        ) {
+            Ok(m) => m,
+            Err(e) => {
+                return tests
+                    .iter()
+                    .map(|t| {
+                        (
+                            t.clone(),
+                            TestResult::Failed(start.elapsed(), format!("Failed to collect source modules: {}", e)),
+                        )
+                    })
+                    .collect();
+            }
+        };
+        (runner_ast, fixtures, source_modules, Vec::new())
+    };
+
+    let cargo_feature_selection = CargoFeatureSelection {
+        cargo_features: cargo_features.to_vec(),
+        cargo_no_default_features,
+        cargo_all_features,
+    }
+    .normalized();
 
     // ---- Context: session prep cache — reuse deps / lock / rust-inspect when key matches ----
     let cache_key = compute_test_prep_cache_key(
@@ -2737,6 +2989,7 @@ pub(super) fn run_file_tests_batch(
             library_manifest_index,
             ast: runner_ast,
             fixtures,
+            module_harnesses,
             source_modules,
             project_root,
             resolved: cargo_resolved,
@@ -2764,7 +3017,26 @@ pub(super) fn run_file_tests_batch(
         codegen.add_module_with_path_segments(&module.name, &module.ast, module.path_segments.clone());
     }
     let fixtures = prepared.fixtures.clone();
-    codegen.set_externally_reachable_items(collect_harness_entrypoints(tests, &fixtures));
+    if prepared.module_harnesses.is_empty() {
+        codegen.set_externally_reachable_items(collect_harness_entrypoints(tests, &fixtures));
+    } else {
+        let reachable_by_module = prepared
+            .module_harnesses
+            .iter()
+            .map(|harness| {
+                let file_tests = tests
+                    .iter()
+                    .filter(|test| test.file_path == harness.file_path)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                (
+                    harness.module_path.clone(),
+                    collect_harness_entrypoints(&file_tests, &harness.fixtures),
+                )
+            })
+            .collect::<HashMap<_, _>>();
+        codegen.set_externally_reachable_items_by_module(reachable_by_module);
+    }
 
     let batch_file_paths = tests.iter().map(|test| test.file_path.clone()).collect::<Vec<_>>();
     let dir_suffix = file_batch_dir_suffix(&batch_file_paths);
@@ -2781,10 +3053,11 @@ pub(super) fn run_file_tests_batch(
 
     let mut generator = ProjectGenerator::new(&temp_dir, &runner_crate_name, false);
     generator.set_package_name(Some(prepared.project_name.clone()));
-    generator.set_stdlib_features(test_runner_stdlib_features(
+    generator.set_stdlib_features(test_runner_stdlib_features_for_batch(
         &prepared.project_requirements.stdlib_features,
         tests,
         &fixtures,
+        &prepared.module_harnesses,
     ));
     generator.set_cargo_lock_payload(prepared.lock_payload.clone());
     let cargo_flags = common::cargo_command_flags(cargo_policy, &cargo_feature_selection);
@@ -2822,11 +3095,40 @@ pub(super) fn run_file_tests_batch(
             .iter()
             .map(|m| m.path_segments.clone())
             .collect();
-        let (main_code, rust_modules) = match codegen.try_generate_multi_file_nested(&prepared.ast, &module_paths) {
-            Ok(result) => result,
-            Err(e) => return gen_err(format!("Code generation error: {}", e)),
-        };
-        let main_code = inject_file_test_harness(&main_code, tests, &prepared.project_root, &fixtures);
+        let (mut main_code, mut rust_modules) =
+            match codegen.try_generate_multi_file_nested(&prepared.ast, &module_paths) {
+                Ok(result) => result,
+                Err(e) => return gen_err(format!("Code generation error: {}", e)),
+            };
+        if prepared.module_harnesses.is_empty() {
+            main_code = inject_file_test_harness(&main_code, tests, &prepared.project_root, &fixtures);
+        } else {
+            for harness in &prepared.module_harnesses {
+                let tests_with_indices = tests
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, test)| test.file_path == harness.file_path)
+                    .collect::<Vec<_>>();
+                let file_tests = tests_with_indices
+                    .iter()
+                    .map(|(_, test)| (*test).clone())
+                    .collect::<Vec<_>>();
+                let test_indices = tests_with_indices.iter().map(|(index, _)| *index).collect::<Vec<_>>();
+                let Some(module_code) = rust_modules.get_mut(&harness.module_path) else {
+                    return gen_err(format!(
+                        "generated test harness module `{}` was not emitted",
+                        harness.module_path.join(".")
+                    ));
+                };
+                *module_code = inject_file_test_harness_with_indices(
+                    module_code,
+                    &file_tests,
+                    &test_indices,
+                    &prepared.project_root,
+                    &harness.fixtures,
+                );
+            }
+        }
         match generator.generate_nested(&main_code, &rust_modules) {
             Ok(changed) => changed,
             Err(e) => return gen_err(format!("Failed to generate project: {}", e)),
