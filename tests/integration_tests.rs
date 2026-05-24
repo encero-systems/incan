@@ -8782,8 +8782,75 @@ def main() -> None:
         );
         assert!(
             generated.contains(".with_mut(|__incan_static_value|")
-                && generated.contains("__incan_static_value.add(__incan_static_arg_0.to_string())"),
+                && (generated.contains("let __incan_static_arg_0 = \"instance\".to_string();")
+                    || generated.contains("let __incan_static_arg_0 = \"instance\".into();"))
+                && generated.contains("__incan_static_value.add(__incan_static_arg_0)"),
             "static registry receiver should lower through static storage access:\n{}",
+            generated,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn build_lib_imported_static_decorator_receiver_materializes_string_arg_issue671()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "imported_static_decorator_receiver"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("probe_registry.incn"),
+            r#"
+@derive(Clone)
+pub class ProbeRegistry:
+    @staticmethod
+    def new() -> Self:
+        return ProbeRegistry()
+
+    def add[F](mut self, name: str, value: int) -> (F) -> F:
+        return (func) => func
+
+
+pub static PROBE_REGISTRY: ProbeRegistry = ProbeRegistry.new()
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("probe_decorated.incn"),
+            r#"
+from probe_registry import PROBE_REGISTRY
+
+@PROBE_REGISTRY.add("decorated", 1)
+pub def decorated(value: int) -> int:
+    return value
+"#,
+        )?;
+        std::fs::write(src_dir.join("lib.incn"), "pub from probe_decorated import decorated\n")?;
+
+        let output = incan_command()
+            .args(["build", "--lib"])
+            .current_dir(&*dir)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected imported static decorator receiver project to build for #671.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+
+        let generated = std::fs::read_to_string(dir.join("target/lib/src/probe_decorated.rs"))?;
+        assert!(
+            (generated.contains("let __incan_static_arg_0 = \"decorated\".into();")
+                || generated.contains("let __incan_static_arg_0 = \"decorated\".to_string();"))
+                && !generated.contains("__incan_static_arg_0.clone()"),
+            "imported static decorator string argument should materialize as owned String:\n{}",
             generated,
         );
         Ok(())
