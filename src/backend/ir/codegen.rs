@@ -1187,6 +1187,38 @@ def main() -> int:
     }
 
     #[test]
+    fn top_level_keyword_named_callable_alias_uses_raw_identifier_reexport() {
+        let code = generate(
+            r#"
+pub def modulo_value(value: int) -> int:
+  return value
+
+pub mod = alias modulo_value
+
+def main() -> int:
+  return mod(10)
+"#,
+        );
+        assert!(code.contains("pub fn modulo_value(value: i64) -> i64"), "{code}");
+        assert!(code.contains("pub use modulo_value as r#mod;"), "{code}");
+        assert!(code.contains("return modulo_value(10);"), "{code}");
+    }
+
+    #[test]
+    fn top_level_alias_to_keyword_named_callable_uses_raw_identifier_target_path() {
+        let code = generate(
+            r#"
+pub def mod(value: int) -> int:
+  return value
+
+pub modulo = alias mod
+"#,
+        );
+        assert!(code.contains("pub fn r#mod(value: i64) -> i64"), "{code}");
+        assert!(code.contains("pub use r#mod as modulo;"), "{code}");
+    }
+
+    #[test]
     fn top_level_qualified_alias_preserves_target_path() {
         let code = generate(
             r#"

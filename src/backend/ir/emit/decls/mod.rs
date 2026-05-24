@@ -21,7 +21,7 @@ mod mutation_scan;
 mod structures;
 
 use proc_macro2::{Literal, TokenStream};
-use quote::{format_ident, quote};
+use quote::quote;
 
 use incan_core::lang::stdlib;
 
@@ -61,7 +61,7 @@ impl<'a> IrEmitter<'a> {
                 interop_edges: _,
             } => {
                 let vis = self.emit_visibility(visibility);
-                let name_ident = format_ident!("{}", name);
+                let name_ident = Self::rust_ident(name);
                 let ty_tokens = self.emit_type(ty);
                 let generics = self.emit_type_params(type_params);
                 Ok(quote! {
@@ -76,7 +76,7 @@ impl<'a> IrEmitter<'a> {
                 target_qualifier,
             } => {
                 let vis = self.emit_visibility(visibility);
-                let name_ident = format_ident!("{}", name);
+                let name_ident = Self::rust_ident(name);
                 let target =
                     self.emit_symbol_alias_target_path(target_origin.as_ref(), target_qualifier.as_ref(), target_path);
                 Ok(quote! {
@@ -145,7 +145,7 @@ impl<'a> IrEmitter<'a> {
         self.validate_const_emittable(name, ty, value)?;
 
         let vis = self.emit_visibility(visibility);
-        let name_ident = format_ident!("{}", name);
+        let name_ident = Self::rust_ident(name);
         let ty_tokens = self.emit_type(ty);
         let value_tokens = self.emit_const_value_for_type(ty, value)?;
 
@@ -352,7 +352,7 @@ impl<'a> IrEmitter<'a> {
             let target_segments = target_path
                 .iter()
                 .map(|segment| {
-                    let ident = format_ident!("{}", segment);
+                    let ident = Self::rust_ident(segment);
                     quote! { #ident }
                 })
                 .collect::<Vec<_>>();
@@ -362,7 +362,7 @@ impl<'a> IrEmitter<'a> {
             let target_segments = target_path
                 .iter()
                 .map(|segment| {
-                    let ident = format_ident!("{}", segment);
+                    let ident = Self::rust_ident(segment);
                     quote! { #ident }
                 })
                 .collect::<Vec<_>>();

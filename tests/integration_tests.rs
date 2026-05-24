@@ -4408,6 +4408,39 @@ pub def main_value() -> int:
     }
 
     #[test]
+    fn test_keyword_named_public_alias_compiles_issue669() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("keyword_named_public_alias_repro");
+        fs::create_dir_all(&project_root)?;
+        fs::write(
+            project_root.join("test_keyword_alias_probe.incn"),
+            r#"
+pub def modulo_value(value: int) -> int:
+    return value
+
+pub mod = alias modulo_value
+
+
+def test_keyword_alias_probe__can_call_alias() -> None:
+    assert mod(7) == 7, "keyword alias should call the implementation"
+"#,
+        )?;
+
+        let output = incan_command()
+            .args(["test", "test_keyword_alias_probe.incn"])
+            .current_dir(&project_root)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "expected keyword-named public alias test project to pass for #669.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_issue562_type_alias_dict_and_union_surfaces_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = incan_command()
             .args([
