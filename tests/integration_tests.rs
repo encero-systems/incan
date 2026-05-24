@@ -7848,21 +7848,7 @@ def test_sleep_b() -> None:
 "#,
         )?;
 
-        let sequential_start = std::time::Instant::now();
-        let sequential = run_incan_test_with_args(&dir, &["--jobs", "1"]);
-        let sequential_elapsed = sequential_start.elapsed();
-        let sequential_stdout = String::from_utf8_lossy(&sequential.stdout);
-        let sequential_stderr = String::from_utf8_lossy(&sequential.stderr);
-        assert!(
-            sequential.status.success(),
-            "expected sequential warm-up run to pass.\nstdout:\n{}\nstderr:\n{}",
-            sequential_stdout,
-            sequential_stderr,
-        );
-
-        let parallel_start = std::time::Instant::now();
         let parallel = run_incan_test_with_args(&dir, &["--jobs", "2"]);
-        let parallel_elapsed = parallel_start.elapsed();
         let parallel_stdout = String::from_utf8_lossy(&parallel.stdout);
         let parallel_stderr = String::from_utf8_lossy(&parallel.stderr);
         assert!(
@@ -7871,11 +7857,22 @@ def test_sleep_b() -> None:
             parallel_stdout,
             parallel_stderr,
         );
+        let running_a = parallel_stdout
+            .find("test_sleep_a.incn (1 item(s))")
+            .ok_or("expected parallel output to announce test_sleep_a.incn")?;
+        let running_b = parallel_stdout
+            .find("test_sleep_b.incn (1 item(s))")
+            .ok_or("expected parallel output to announce test_sleep_b.incn")?;
+        let passed_a = parallel_stdout
+            .find("test_sleep_a.incn::test_sleep_a PASSED")
+            .ok_or("expected parallel output to report test_sleep_a passing")?;
+        let passed_b = parallel_stdout
+            .find("test_sleep_b.incn::test_sleep_b PASSED")
+            .ok_or("expected parallel output to report test_sleep_b passing")?;
+        let first_pass = passed_a.min(passed_b);
         assert!(
-            parallel_elapsed + std::time::Duration::from_millis(250) < sequential_elapsed,
-            "expected --jobs 2 to run independent file batches concurrently; sequential={:?}, parallel={:?}\nparallel stdout:\n{}",
-            sequential_elapsed,
-            parallel_elapsed,
+            running_a < first_pass && running_b < first_pass,
+            "expected --jobs 2 to launch both independent file batches before either completed\nparallel stdout:\n{}",
             parallel_stdout,
         );
         Ok(())
