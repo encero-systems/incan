@@ -1996,6 +1996,110 @@ def main() -> None:
 }
 
 #[test]
+fn test_const_model_constructor_compile_and_run_issue658() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Version:
+  pub major: int
+  pub minor: int
+
+model Change:
+  pub version: Version
+  note [alias="message"]: FrozenStr
+
+model Lifecycle:
+  pub since: Version
+  pub changed: FrozenList[Change]
+  pub deprecated: Option[Version]
+
+pub const V0_1: Version = Version(major=0, minor=1)
+pub const V0_3: Version = Version(major=0, minor=3)
+pub const LIFECYCLE: Lifecycle = Lifecycle(
+  since=V0_1,
+  changed=[Change(version=V0_3, message="metadata")],
+  deprecated=None,
+)
+
+def main() -> None:
+  println(f"{V0_1.major}.{V0_1.minor}")
+  println(f"{LIFECYCLE.changed[0].version.major}.{LIFECYCLE.changed[0].version.minor}")
+  println(LIFECYCLE.changed[0].note)
+  match LIFECYCLE.deprecated:
+    None => println("active")
+    Some(version) => println(f"{version.major}.{version.minor}")
+"#;
+    let output = incan_command()
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "expected const model constructor program to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().any(|line| line.trim() == "0.1"),
+        "expected const model constructor output 0.1.\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.lines().any(|line| line.trim() == "0.3"),
+        "expected nested const model constructor output 0.3.\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.lines().any(|line| line.trim() == "metadata"),
+        "expected nested const model constructor output metadata.\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.lines().any(|line| line.trim() == "active"),
+        "expected const model option metadata output active.\nstdout:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_lowercase_imported_pub_static_compile_and_run_issue659() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let versions = dir.join("versions.incn");
+    let main = dir.join("main.incn");
+    std::fs::write(
+        &versions,
+        r#"
+pub static v0_1: int = 1
+pub static v0_2: int = 2
+"#,
+    )?;
+    std::fs::write(
+        &main,
+        r#"
+from versions import v0_1
+from versions import v0_2 as current_version
+
+def main() -> None:
+  println(v0_1)
+  println(current_version)
+"#,
+    )?;
+
+    let output = incan_command()
+        .args(["run", main.to_string_lossy().as_ref()])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "expected lowercase imported pub static program to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    assert_eq!(lines, ["1", "2"], "unexpected lowercase static output");
+    Ok(())
+}
+
+#[test]
 fn test_static_list_index_assignment_and_remove_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 static entries: list[int] = []

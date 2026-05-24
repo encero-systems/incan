@@ -173,6 +173,12 @@ pub struct IrRustTraitImport {
 pub struct IrImportItem {
     pub name: String,
     pub alias: Option<String>,
+    /// Whether this import item binds an Incan `static` storage cell.
+    ///
+    /// Static declarations use Rust global naming in generated code, so imported static items must emit the provider's
+    /// static identifier and, when aliased, the local static identifier instead of treating the source spelling as an
+    /// ordinary Rust value binding.
+    pub is_static: bool,
     /// Metadata provided when this item is a Rust trait import.
     ///
     /// Extension-trait imports can be used by Rust method lookup without appearing as identifiers in emitted tokens.
