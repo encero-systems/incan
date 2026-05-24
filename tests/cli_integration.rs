@@ -333,6 +333,14 @@ fn lock_preheats_dependency_graph_for_path_dependencies() -> Result<(), Box<dyn 
 path = "preheat_helper"
 "#,
     )?;
+    fs::write(
+        &main_path,
+        r#"from rust::preheat_helper import value
+
+def main() -> None:
+  println(str(value()))
+"#,
+    )?;
 
     let output = run_incan(
         tmp.path(),
@@ -870,6 +878,14 @@ main = "src/main.incn"
 
 [rust-dependencies.serde]
 version = "1.0"
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::serde import Serialize
+
+def main() -> None:
+  println("cli lifecycle ok")
 "#,
     )?;
 

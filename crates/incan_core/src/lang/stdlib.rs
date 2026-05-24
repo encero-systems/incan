@@ -593,6 +593,12 @@ pub fn find_extra_crate_dep(crate_name: &str) -> Option<&'static StdlibExtraCrat
     extra_crate_deps().find(|dep| dep.crate_name == crate_name)
 }
 
+/// Return whether a crate is supplied by the workspace as a stdlib-managed path dependency.
+#[must_use]
+pub fn is_path_extra_crate_dep(crate_name: &str) -> bool {
+    find_extra_crate_dep(crate_name).is_some_and(|dep| matches!(dep.source, StdlibExtraCrateSource::Path(_)))
+}
+
 /// Return the published Cargo package name when a stdlib-managed Rust crate imports under a different crate key.
 #[must_use]
 pub fn extra_crate_package_alias(crate_name: &str) -> Option<&'static str> {
@@ -1044,6 +1050,8 @@ mod tests {
             macros.map(|dep| dep.source),
             Some(StdlibExtraCrateSource::Path("crates/incan_web_macros"))
         );
+        assert!(is_path_extra_crate_dep("incan_web_macros"));
+        assert!(!is_path_extra_crate_dep("axum"));
 
         assert!(find_extra_crate_dep("not_a_stdlib_dependency").is_none());
     }

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::backend::{IrCodegen, ProjectGenerator, RunProfile};
 use crate::cli::{CliError, CliResult, ExitCode};
-use crate::dependency_resolver::resolve_dependencies;
+use crate::dependency_resolver::{resolve_dependencies, resolve_reachable_dependencies};
 use crate::frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
     collect_checked_api_metadata, validate_checked_api_docstrings,
@@ -28,8 +28,8 @@ use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::ProjectManifest;
 
 use super::common::{
-    CargoPolicy, build_source_map, cargo_command_flags, collect_inline_rust_imports, collect_modules,
-    collect_project_requirements, enforce_project_toolchain_constraint, format_dependency_error,
+    CargoPolicy, build_source_map, cargo_command_flags, collect_modules, collect_project_requirements,
+    collect_rust_dependency_uses, enforce_project_toolchain_constraint, format_dependency_error,
     imported_module_deps_for_with_index, merge_project_requirement_dependencies, module_key_index,
     resolve_project_root, typecheck_modules_with_import_graph, validate_output_dir,
 };
@@ -544,9 +544,9 @@ fn prepare_project(
             .and_then(|m| m.build.as_ref().and_then(|b| b.rust_edition.clone())),
     );
 
-    let mut inline_imports = collect_inline_rust_imports(main_module, false);
+    let mut inline_imports = collect_rust_dependency_uses(main_module, false);
     for module in dep_modules {
-        inline_imports.extend(collect_inline_rust_imports(module, false));
+        inline_imports.extend(collect_rust_dependency_uses(module, false));
     }
     // RFC 023: Stdlib modules should not have inline rust imports (they use rust.module() + @rust.extern instead),
     // so we skip collecting from them.
@@ -558,7 +558,7 @@ fn prepare_project(
     }
     .normalized();
 
-    let mut resolved = match resolve_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_features) {
+    let mut resolved = match resolve_reachable_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_features) {
         Ok(resolved) => resolved,
         Err(errors) => {
             let mut msg = String::new();
@@ -720,9 +720,9 @@ pub fn build_library(
     let rust_extern_contexts = collect_rust_extern_contexts(&modules);
     let dep_modules = &modules[..modules.len() - 1];
 
-    let mut inline_imports = collect_inline_rust_imports(lib_module, false);
+    let mut inline_imports = collect_rust_dependency_uses(lib_module, false);
     for module in dep_modules {
-        inline_imports.extend(collect_inline_rust_imports(module, false));
+        inline_imports.extend(collect_rust_dependency_uses(module, false));
     }
     let project_name = manifest
         .project
@@ -771,10 +771,8 @@ pub fn build_library(
         rust_inspect_query_paths: &metadata_query_paths,
     })?;
     #[cfg(feature = "rust_inspect")]
-    let rust_inspect_manifest_dir = project_root.join("target").join("incan_lock");
-    #[cfg(feature = "rust_inspect")]
-    {
-        ensure_rust_inspect_workspace(
+    let rust_inspect_manifest_dir = {
+        let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
             &project_root,
             project_name.as_str(),
             manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
@@ -783,7 +781,8 @@ pub fn build_library(
             lock_payload_for_typecheck.clone(),
         )?;
         prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths)?;
-    }
+        rust_inspect_manifest_dir
+    };
 
     let mut all_errors = String::new();
     let mut checked_exports_by_module: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
@@ -1114,6 +1113,52 @@ mod tests {
         };
         assert!(rendered.contains("Rust backing item"));
         assert!(rendered.contains("incan_stdlib::testing::fail"));
+    }
+
+    #[test]
+    fn run_entrypoint_omits_unused_manifest_rust_dependencies() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path();
+        let scripts_dir = project_root.join("scripts");
+        std::fs::create_dir_all(&scripts_dir)?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"unused_rust_dep_run_repro\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\ndatafusion = \"53\"\n",
+        )?;
+        std::fs::write(
+            scripts_dir.join("check.incn"),
+            "def main() -> None:\n    println(\"ok\")\n",
+        )?;
+
+        let cargo_lock_payload = std::fs::read_to_string(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.lock"))?;
+        let fingerprint = compute_deps_fingerprint(&[], &[], &CargoFeatureSelection::default(), Some(project_root));
+        let incan_lock = IncanLock::new(fingerprint, CargoFeatureSelection::default(), cargo_lock_payload);
+        incan_lock.write(&project_root.join("incan.lock"))?;
+
+        let entry_path = scripts_dir.join("check.incn");
+        let output_dir = project_root.join("target").join("incan").join("check");
+        let entry_arg = entry_path
+            .to_str()
+            .ok_or("entry path should be valid utf-8 for prepare_project test")?;
+        let output_arg = output_dir
+            .to_str()
+            .ok_or("output path should be valid utf-8 for prepare_project test")?;
+
+        prepare_project(
+            entry_arg,
+            Some(output_arg),
+            &CargoPolicy::default(),
+            Vec::new(),
+            false,
+            false,
+        )?;
+
+        let generated_manifest = std::fs::read_to_string(output_dir.join("Cargo.toml"))?;
+        assert!(
+            !generated_manifest.contains("datafusion"),
+            "unused package-level rust dependencies should not be emitted for a script run:\n{generated_manifest}"
+        );
+        Ok(())
     }
 
     #[cfg(feature = "rust_inspect")]

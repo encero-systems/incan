@@ -15,7 +15,7 @@ use crate::cli::commands::common::{
     collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace,
 };
 use crate::cli::prelude::ParsedModule;
-use crate::dependency_resolver::resolve_dependencies;
+use crate::dependency_resolver::resolve_reachable_dependencies;
 use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies};
 use crate::frontend::ast::{
     AssertKind, AssertStmt, CallArg, Declaration, DictEntry, Expr, ImportItem, ImportKind, ListEntry, ParamKind,
@@ -67,9 +67,9 @@ fn collect_test_dependency_inline_imports(
     test_module: &ParsedModule,
     source_modules: &[ParsedModule],
 ) -> Vec<crate::dependency_resolver::InlineRustImport> {
-    let mut inline_imports = common::collect_inline_rust_imports(test_module, true);
+    let mut inline_imports = common::collect_rust_dependency_uses(test_module, true);
     for module in source_modules {
-        inline_imports.extend(common::collect_inline_rust_imports(module, false));
+        inline_imports.extend(common::collect_rust_dependency_uses(module, false));
     }
     inline_imports
 }
@@ -1008,9 +1008,9 @@ fn compute_test_prep_cache_key(
 
 /// Merge stdlib feature flags from previously prepared files with the current file requirements.
 ///
-/// The rust-inspect workspace lives under one shared `target/incan_lock` directory per package. If files in a single
-/// `incan test` session require different stdlib features, a non-monotonic feature set can cause workspace
-/// fingerprint churn and expensive mid-run rewrites. Keeping a session-local feature union avoids that churn.
+/// Rust-inspect workspaces are keyed by dependency fingerprint under `target/incan_lock`. If files in a single
+/// `incan test` session require different stdlib features, a non-monotonic feature set can fan out into extra
+/// workspaces. Keeping a session-local feature union avoids that churn.
 fn merge_rust_inspect_stdlib_features<'a>(
     existing_feature_sets: impl Iterator<Item = &'a [String]>,
     current_features: &[String],
@@ -1045,7 +1045,7 @@ fn prepare_lock_entry(
     let modules = common::collect_modules(&lock_entry_arg).map_err(|err| err.message.clone())?;
     let mut inline_imports = Vec::new();
     for module in &modules {
-        inline_imports.extend(common::collect_inline_rust_imports(module, false));
+        inline_imports.extend(common::collect_rust_dependency_uses(module, false));
     }
     let project_requirements =
         common::collect_project_requirements(&modules, library_manifest_index).map_err(|err| err.message.clone())?;
@@ -1064,34 +1064,7 @@ fn merge_lock_project_requirements(
     current: &ProjectRequirements,
     lock_entry: &ProjectRequirements,
 ) -> Result<ProjectRequirements, String> {
-    let stdlib_features = current
-        .stdlib_features
-        .iter()
-        .chain(lock_entry.stdlib_features.iter())
-        .cloned()
-        .collect::<BTreeSet<_>>()
-        .into_iter()
-        .collect();
-
-    let mut dependencies = current.dependencies.clone();
-    for candidate in &lock_entry.dependencies {
-        if let Some(existing) = dependencies.iter().find(|dep| dep.crate_name == candidate.crate_name) {
-            if existing != candidate {
-                return Err(format!(
-                    "dependency requirement `{}` conflicts between test batch and lock entry context",
-                    candidate.crate_name
-                ));
-            }
-            continue;
-        }
-        dependencies.push(candidate.clone());
-    }
-    dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
-
-    Ok(ProjectRequirements {
-        stdlib_features,
-        dependencies,
-    })
+    common::merge_project_requirements(current, lock_entry).map_err(|err| err.message)
 }
 
 /// Promote project dev dependencies into ordinary dependencies for generated test-runner crates.
@@ -2598,7 +2571,7 @@ pub(super) fn run_file_tests_batch(
             };
 
         let mut resolved =
-            match resolve_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_feature_selection) {
+            match resolve_reachable_dependencies(manifest.as_ref(), &inline_imports, true, &cargo_feature_selection) {
                 Ok(resolved) => resolved,
                 Err(errors) => {
                     let mut sources = HashMap::new();
@@ -2649,21 +2622,25 @@ pub(super) fn run_file_tests_batch(
                             .collect();
                     }
                 };
-            lock_resolved =
-                match resolve_dependencies(manifest.as_ref(), &lock_inline_imports, true, &cargo_feature_selection) {
-                    Ok(resolved) => resolved,
-                    Err(errors) => {
-                        let sources = common::build_source_map(&lock_dependency_modules);
-                        let mut msg = String::new();
-                        for err in &errors {
-                            msg.push_str(&common::format_dependency_error(err, &sources));
-                        }
-                        return tests
-                            .iter()
-                            .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), msg.clone())))
-                            .collect();
+            lock_resolved = match resolve_reachable_dependencies(
+                manifest.as_ref(),
+                &lock_inline_imports,
+                true,
+                &cargo_feature_selection,
+            ) {
+                Ok(resolved) => resolved,
+                Err(errors) => {
+                    let sources = common::build_source_map(&lock_dependency_modules);
+                    let mut msg = String::new();
+                    for err in &errors {
+                        msg.push_str(&common::format_dependency_error(err, &sources));
                     }
-                };
+                    return tests
+                        .iter()
+                        .map(|t| (t.clone(), TestResult::Failed(start.elapsed(), msg.clone())))
+                        .collect();
+                }
+            };
             if let Err(err) =
                 common::merge_project_requirement_dependencies(&mut lock_resolved, &lock_project_requirements)
             {

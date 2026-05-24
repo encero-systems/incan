@@ -54,6 +54,12 @@ pub struct ResolvedDependencies {
     pub dev_dependencies: Vec<DependencySpec>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ManifestDependencyScope {
+    All,
+    ReachableOnly,
+}
+
 fn with_rust_import_context(error: CompileError, import: &InlineRustImport) -> CompileError {
     error
         .with_note(format!("import site: `{}`", import.import_path))
@@ -65,6 +71,37 @@ pub fn resolve_dependencies(
     inline_imports: &[InlineRustImport],
     include_dev_dependencies: bool,
     cargo_features: &CargoFeatureSelection,
+) -> Result<ResolvedDependencies, Vec<DependencyError>> {
+    resolve_dependencies_with_scope(
+        manifest,
+        inline_imports,
+        include_dev_dependencies,
+        cargo_features,
+        ManifestDependencyScope::All,
+    )
+}
+
+pub fn resolve_reachable_dependencies(
+    manifest: Option<&ProjectManifest>,
+    inline_imports: &[InlineRustImport],
+    include_dev_dependencies: bool,
+    cargo_features: &CargoFeatureSelection,
+) -> Result<ResolvedDependencies, Vec<DependencyError>> {
+    resolve_dependencies_with_scope(
+        manifest,
+        inline_imports,
+        include_dev_dependencies,
+        cargo_features,
+        ManifestDependencyScope::ReachableOnly,
+    )
+}
+
+fn resolve_dependencies_with_scope(
+    manifest: Option<&ProjectManifest>,
+    inline_imports: &[InlineRustImport],
+    include_dev_dependencies: bool,
+    cargo_features: &CargoFeatureSelection,
+    scope: ManifestDependencyScope,
 ) -> Result<ResolvedDependencies, Vec<DependencyError>> {
     let mut errors = Vec::new();
 
@@ -100,14 +137,24 @@ pub fn resolve_dependencies(
     );
 
     // Combine manifest deps with resolved inline specs.
-    let mut resolved_deps: HashMap<String, DependencySpec> = manifest_deps.clone();
+    let mut resolved_deps: HashMap<String, DependencySpec> = match scope {
+        ManifestDependencyScope::All => manifest_deps.clone(),
+        ManifestDependencyScope::ReachableOnly => {
+            select_manifest_dependencies(&manifest_deps, &inline_merge.manifest_dependency_keys)
+        }
+    };
     let mut resolved_dev_deps: HashMap<String, DependencySpec> = if include_dev_dependencies {
-        manifest_dev_deps.clone()
+        match scope {
+            ManifestDependencyScope::All => manifest_dev_deps.clone(),
+            ManifestDependencyScope::ReachableOnly => {
+                select_manifest_dependencies(&manifest_dev_deps, &inline_merge.manifest_dev_dependency_keys)
+            }
+        }
     } else {
         HashMap::new()
     };
 
-    for (crate_name, inline) in inline_merge {
+    for (crate_name, inline) in inline_merge.inline_specs {
         if inline.is_test_only {
             if include_dev_dependencies {
                 resolved_dev_deps.insert(crate_name, inline.spec);
@@ -141,6 +188,13 @@ pub fn resolve_dependencies(
 // Inline merge + validation
 // ============================================================================
 
+#[derive(Default)]
+struct InlineMergeResult {
+    inline_specs: HashMap<String, InlineMergedSpec>,
+    manifest_dependency_keys: HashSet<String>,
+    manifest_dev_dependency_keys: HashSet<String>,
+}
+
 struct InlineMergedSpec {
     spec: DependencySpec,
     is_test_only: bool,
@@ -162,8 +216,10 @@ fn merge_inline_imports(
     manifest_dev_deps: &HashMap<String, DependencySpec>,
     library_dep_names: &HashSet<String>,
     errors: &mut Vec<DependencyError>,
-) -> HashMap<String, InlineMergedSpec> {
+) -> InlineMergeResult {
     let mut merged: HashMap<String, InlineMergedSpec> = HashMap::new();
+    let mut manifest_dependency_keys = HashSet::new();
+    let mut manifest_dev_dependency_keys = HashSet::new();
 
     for import in inline_imports {
         if import.crate_name == stdlib::STDLIB_ROOT {
@@ -227,6 +283,13 @@ fn merge_inline_imports(
                 ),
             });
             continue;
+        }
+
+        if let Some((key, _)) = manifest_dep_match {
+            manifest_dependency_keys.insert(key.clone());
+        }
+        if let Some((key, _)) = manifest_dev_dep_match {
+            manifest_dev_dependency_keys.insert(key.clone());
         }
 
         if manifest_dep_match.is_some() || manifest_dev_dep_match.is_some() {
@@ -335,7 +398,21 @@ fn merge_inline_imports(
         resolved.insert(crate_name, merged_spec);
     }
 
-    resolved
+    InlineMergeResult {
+        inline_specs: resolved,
+        manifest_dependency_keys,
+        manifest_dev_dependency_keys,
+    }
+}
+
+fn select_manifest_dependencies(
+    deps: &HashMap<String, DependencySpec>,
+    selected_keys: &HashSet<String>,
+) -> HashMap<String, DependencySpec> {
+    deps.iter()
+        .filter(|(key, _)| selected_keys.contains(*key))
+        .map(|(key, spec)| (key.clone(), spec.clone()))
+        .collect()
 }
 
 /// Convert one inline `rust::` import annotation into the dependency spec emitted to generated Cargo manifests.
@@ -590,6 +667,16 @@ mod tests {
             .map_err(|errors| std::io::Error::other(format!("{errors:?}")).into())
     }
 
+    fn resolve_reachable_ok(
+        manifest: Option<&ProjectManifest>,
+        inline_imports: &[InlineRustImport],
+        include_dev_dependencies: bool,
+        cargo_features: &CargoFeatureSelection,
+    ) -> TestResult<ResolvedDependencies> {
+        resolve_reachable_dependencies(manifest, inline_imports, include_dev_dependencies, cargo_features)
+            .map_err(|errors| std::io::Error::other(format!("{errors:?}")).into())
+    }
+
     fn dependency<'a>(deps: &'a [DependencySpec], crate_name: &str) -> TestResult<&'a DependencySpec> {
         deps.iter()
             .find(|dep| dep.crate_name == crate_name)
@@ -705,6 +792,41 @@ serde = "1.0"
         let imports = vec![inline("serde", None, &[], false)];
 
         let resolved = resolve_ok(Some(&manifest), &imports, false, &default_cargo_features())?;
+        let serde = dependency(&resolved.dependencies, "serde")?;
+        assert_eq!(serde.version.as_deref(), Some("1.0"));
+        Ok(())
+    }
+
+    #[test]
+    fn reachable_resolution_omits_unused_manifest_dependency() -> TestResult {
+        let toml_str = r#"
+[rust-dependencies]
+datafusion = "53"
+"#;
+        let manifest = parse_manifest(toml_str)?;
+
+        let resolved = resolve_reachable_ok(Some(&manifest), &[], false, &default_cargo_features())?;
+
+        assert!(
+            !resolved
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.crate_name == "datafusion"),
+            "reachable resolution should not emit unused manifest dependencies: {resolved:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reachable_resolution_keeps_imported_manifest_dependency() -> TestResult {
+        let toml_str = r#"
+[rust-dependencies]
+serde = "1.0"
+"#;
+        let manifest = parse_manifest(toml_str)?;
+        let imports = vec![inline("serde", None, &[], false)];
+
+        let resolved = resolve_reachable_ok(Some(&manifest), &imports, false, &default_cargo_features())?;
         let serde = dependency(&resolved.dependencies, "serde")?;
         assert_eq!(serde.version.as_deref(), Some("1.0"));
         Ok(())

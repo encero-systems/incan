@@ -16,16 +16,17 @@ use sha2::{Digest, Sha256};
 use crate::backend::ProjectGenerator;
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
-use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve_dependencies};
+use crate::dependency_resolver::{InlineRustImport, ResolvedDependencies, resolve_reachable_dependencies};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::{diagnostics, lexer, parser};
 use crate::lockfile::{CargoFeatureSelection, IncanLock, compute_deps_fingerprint};
 use crate::manifest::ProjectManifest;
 
 use super::common::{
-    CargoPolicy, ProjectRequirements, build_source_map, cargo_command_flags, cargo_lockfile_flags,
-    collect_inline_rust_imports, collect_modules, collect_project_requirements, enforce_project_toolchain_constraint,
-    format_dependency_error, merge_project_requirement_dependencies,
+    CargoPolicy, ProjectRequirements, build_source_map, cargo_command_flags, cargo_lockfile_flags, collect_modules,
+    collect_project_requirements, collect_rust_dependency_uses, enforce_project_toolchain_constraint,
+    format_dependency_error, merge_project_requirement_dependencies, merge_project_requirements,
+    merge_resolved_dependencies,
 };
 #[cfg(feature = "rust_inspect")]
 use super::common::{collect_rust_inspect_query_paths, ensure_rust_inspect_workspace, prewarm_rust_inspect_workspace};
@@ -135,11 +136,18 @@ pub(crate) fn resolve_lock_payload(request: LockResolutionRequest<'_>) -> CliRes
     } else {
         None
     };
-    let (resolved, project_requirements) = if let Some(context) = project_context.as_ref() {
-        (&context.resolved, &context.project_requirements)
+    let lock_inputs = if let Some(context) = project_context.as_ref() {
+        Some((
+            merge_resolved_dependencies(resolved, &context.resolved)?,
+            merge_project_requirements(project_requirements, &context.project_requirements)?,
+        ))
     } else {
-        (resolved, project_requirements)
+        None
     };
+    let (resolved, project_requirements) = lock_inputs
+        .as_ref()
+        .map(|(resolved, requirements)| (resolved, requirements))
+        .unwrap_or((resolved, project_requirements));
     #[cfg(feature = "rust_inspect")]
     let rust_inspect_query_paths = project_context
         .as_ref()
@@ -269,12 +277,12 @@ fn collect_project_lock_context(
 
     let mut inline_imports = Vec::new();
     for module in &modules {
-        inline_imports.extend(collect_inline_rust_imports(module, false));
+        inline_imports.extend(collect_rust_dependency_uses(module, false));
     }
     inline_imports.extend(test_inputs.inline_imports);
 
     let mut resolved =
-        resolve_dependencies(Some(manifest), &inline_imports, true, cargo_features).map_err(|errors| {
+        resolve_reachable_dependencies(Some(manifest), &inline_imports, true, cargo_features).map_err(|errors| {
             let mut msg = String::new();
             let sources = build_source_map(&project_requirement_modules);
             for err in errors {
@@ -674,7 +682,7 @@ fn collect_test_lock_inputs(
             source: source.clone(),
             ast: ast.clone(),
         };
-        inline_imports.extend(collect_inline_rust_imports(&test_module, true));
+        inline_imports.extend(collect_rust_dependency_uses(&test_module, true));
         project_requirement_modules.push(test_module);
 
         let source_modules = crate::cli::test_runner::collect_source_modules_for_test(
@@ -686,7 +694,7 @@ fn collect_test_lock_inputs(
         )
         .map_err(CliError::failure)?;
         for module in &source_modules {
-            inline_imports.extend(collect_inline_rust_imports(module, false));
+            inline_imports.extend(collect_rust_dependency_uses(module, false));
         }
         project_requirement_modules.extend(source_modules);
     }

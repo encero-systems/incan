@@ -467,6 +467,109 @@ pub(crate) fn merge_project_requirement_dependencies(
     Ok(())
 }
 
+pub(crate) fn merge_project_requirements(
+    current: &ProjectRequirements,
+    extra: &ProjectRequirements,
+) -> CliResult<ProjectRequirements> {
+    let stdlib_features = current
+        .stdlib_features
+        .iter()
+        .chain(extra.stdlib_features.iter())
+        .cloned()
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+
+    let mut dependencies = current.dependencies.clone();
+    for candidate in &extra.dependencies {
+        if let Some(existing) = dependencies.iter().find(|dep| dep.crate_name == candidate.crate_name) {
+            if existing != candidate {
+                return Err(CliError::failure(format!(
+                    "dependency requirement `{}` conflicts between project requirement contexts",
+                    candidate.crate_name
+                )));
+            }
+            continue;
+        }
+        dependencies.push(candidate.clone());
+    }
+    dependencies.sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+
+    Ok(ProjectRequirements {
+        stdlib_features,
+        dependencies,
+    })
+}
+
+pub(crate) fn merge_resolved_dependencies(
+    current: &ResolvedDependencies,
+    extra: &ResolvedDependencies,
+) -> CliResult<ResolvedDependencies> {
+    let mut merged = current.clone();
+    for candidate in &extra.dependencies {
+        merge_resolved_dependency(&mut merged.dependencies, &mut merged.dev_dependencies, candidate, false)?;
+    }
+    for candidate in &extra.dev_dependencies {
+        merge_resolved_dependency(&mut merged.dependencies, &mut merged.dev_dependencies, candidate, true)?;
+    }
+    merged
+        .dependencies
+        .sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    merged
+        .dev_dependencies
+        .sort_by(|left, right| left.crate_name.cmp(&right.crate_name));
+    Ok(merged)
+}
+
+fn merge_resolved_dependency(
+    dependencies: &mut Vec<DependencySpec>,
+    dev_dependencies: &mut Vec<DependencySpec>,
+    candidate: &DependencySpec,
+    dev_only: bool,
+) -> CliResult<()> {
+    if let Some(existing) = dependencies.iter().find(|dep| dep.crate_name == candidate.crate_name) {
+        if existing != candidate {
+            return Err(CliError::failure(format!(
+                "dependency `{}` conflicts between resolved dependency contexts",
+                candidate.crate_name
+            )));
+        }
+        return Ok(());
+    }
+
+    if dev_only {
+        if let Some(existing) = dev_dependencies
+            .iter()
+            .find(|dep| dep.crate_name == candidate.crate_name)
+        {
+            if existing != candidate {
+                return Err(CliError::failure(format!(
+                    "dev dependency `{}` conflicts between resolved dependency contexts",
+                    candidate.crate_name
+                )));
+            }
+            return Ok(());
+        }
+        dev_dependencies.push(candidate.clone());
+        return Ok(());
+    }
+
+    if let Some(existing_idx) = dev_dependencies
+        .iter()
+        .position(|dep| dep.crate_name == candidate.crate_name)
+    {
+        if dev_dependencies[existing_idx] != *candidate {
+            return Err(CliError::failure(format!(
+                "dependency `{}` conflicts between dependency and dev-dependency contexts",
+                candidate.crate_name
+            )));
+        }
+        dev_dependencies.remove(existing_idx);
+    }
+    dependencies.push(candidate.clone());
+    Ok(())
+}
+
 #[cfg(feature = "rust_inspect")]
 const RUST_INSPECT_WORKSPACE_FINGERPRINT_FILE: &str = ".incan_rust_inspect_fingerprint";
 
@@ -575,7 +678,7 @@ fn hash_dependency_spec_for_rust_inspect(hasher: &mut Sha256, spec: &DependencyS
     hasher.update(b"|dep|\0");
 }
 
-/// Stable fingerprint for inputs that define the generated rust-inspect Cargo workspace under `target/incan_lock`.
+/// Stable fingerprint for inputs that define one generated rust-inspect Cargo workspace.
 #[cfg(feature = "rust_inspect")]
 fn rust_inspect_workspace_fingerprint(
     project_name: &str,
@@ -643,14 +746,42 @@ fn rust_inspect_workspace_fingerprint(
     )
 }
 
+#[cfg(feature = "rust_inspect")]
+fn rust_inspect_workspace_dir(project_root: &Path, project_name: &str, fingerprint: &str) -> PathBuf {
+    let mut safe_name = project_name
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if safe_name.is_empty() {
+        safe_name.push_str("project");
+    }
+    let suffix = fingerprint
+        .rsplit_once(':')
+        .map(|(_, hash)| hash)
+        .unwrap_or(fingerprint)
+        .chars()
+        .take(16)
+        .collect::<String>();
+    project_root
+        .join("target")
+        .join("incan_lock")
+        .join("rust_inspect")
+        .join(format!("{safe_name}-{suffix}"))
+}
+
 /// Generate the rust-inspect workspace that semantic Rust extraction should query for this project.
 ///
 /// The generated workspace intentionally uses the Rust import spelling for dependency keys, while preserving the
 /// published Cargo package name separately when the two differ.
 ///
 /// When the same inputs are seen again (for example across multiple `incan test` cases in one package), regeneration is
-/// skipped if `target/incan_lock/.incan_rust_inspect_fingerprint` matches the computed digest and expected artifacts
-/// exist.
+/// skipped if the namespaced workspace fingerprint matches the computed digest and expected artifacts exist.
 #[cfg(feature = "rust_inspect")]
 pub(crate) fn ensure_rust_inspect_workspace(
     project_root: &Path,
@@ -660,16 +791,6 @@ pub(crate) fn ensure_rust_inspect_workspace(
     project_requirements: &ProjectRequirements,
     cargo_lock_payload: Option<String>,
 ) -> CliResult<PathBuf> {
-    let base_rust_inspect_manifest_dir = project_root.join("target").join("incan_lock");
-    let rust_inspect_manifest_dir = if project_name.starts_with("incan_cmd_") {
-        base_rust_inspect_manifest_dir.join(project_name)
-    } else {
-        base_rust_inspect_manifest_dir
-    };
-    let fingerprint_path = rust_inspect_manifest_dir.join(RUST_INSPECT_WORKSPACE_FINGERPRINT_FILE);
-    let cargo_toml_path = rust_inspect_manifest_dir.join("Cargo.toml");
-    let main_rs_path = rust_inspect_manifest_dir.join("src").join("main.rs");
-
     let fingerprint = rust_inspect_workspace_fingerprint(
         project_name,
         rust_edition.as_deref(),
@@ -677,6 +798,10 @@ pub(crate) fn ensure_rust_inspect_workspace(
         &project_requirements.stdlib_features,
         cargo_lock_payload.as_deref(),
     );
+    let rust_inspect_manifest_dir = rust_inspect_workspace_dir(project_root, project_name, &fingerprint);
+    let fingerprint_path = rust_inspect_manifest_dir.join(RUST_INSPECT_WORKSPACE_FINGERPRINT_FILE);
+    let cargo_toml_path = rust_inspect_manifest_dir.join("Cargo.toml");
+    let main_rs_path = rust_inspect_manifest_dir.join("src").join("main.rs");
 
     let fingerprint_matches = match fs::read_to_string(&fingerprint_path) {
         Ok(existing) => existing.trim() == fingerprint.as_str(),
@@ -1332,6 +1457,31 @@ pub(crate) fn collect_inline_rust_imports(module: &ParsedModule, is_test_context
     imports
 }
 
+/// Extract all Rust dependency uses from a parsed module.
+pub(crate) fn collect_rust_dependency_uses(module: &ParsedModule, is_test_context: bool) -> Vec<InlineRustImport> {
+    let mut imports = collect_inline_rust_imports(module, is_test_context);
+    let Some(rust_module_path) = &module.ast.rust_module_path else {
+        return imports;
+    };
+    let Some(crate_name) = rust_module_path.node.split("::").next().filter(|name| !name.is_empty()) else {
+        return imports;
+    };
+    if crate_name == stdlib::STDLIB_ROOT || stdlib::is_path_extra_crate_dep(crate_name) {
+        return imports;
+    }
+
+    imports.push(build_inline_rust_import(
+        crate_name,
+        format!("rust.module(\"{}\")", rust_module_path.node),
+        &None,
+        &[],
+        rust_module_path.span,
+        &module.file_path,
+        is_test_context,
+    ));
+    imports
+}
+
 /// Build a map of file paths to source contents for error reporting.
 pub(crate) fn build_source_map(modules: &[ParsedModule]) -> HashMap<PathBuf, String> {
     let mut sources = HashMap::new();
@@ -1572,6 +1722,18 @@ mod tests {
         })
     }
 
+    fn registry_dependency(crate_name: &str, version: &str) -> DependencySpec {
+        DependencySpec {
+            crate_name: crate_name.to_string(),
+            version: Some(version.to_string()),
+            features: Vec::new(),
+            default_features: true,
+            source: DependencySource::Registry,
+            optional: false,
+            package: None,
+        }
+    }
+
     fn write_minimal_library_artifact(
         root: &Path,
         dependency_key: &str,
@@ -1587,6 +1749,80 @@ mod tests {
         std::fs::write(artifact_root.join("src/lib.rs"), "")?;
         manifest.write_to_path(&artifact_root.join(format!("{manifest_name}.incnlib")))?;
         Ok(())
+    }
+
+    #[test]
+    fn collect_rust_dependency_uses_includes_rust_module_root() -> Result<(), Box<dyn std::error::Error>> {
+        let module = parsed_module_for_test("rust.module(\"datafusion::prelude\")\n\ndef main() -> None:\n  pass\n")?;
+
+        let imports = collect_rust_dependency_uses(&module, false);
+
+        assert!(
+            imports.iter().any(|import| import.crate_name == "datafusion"
+                && import.import_path == "rust.module(\"datafusion::prelude\")"),
+            "rust.module roots should participate in dependency resolution: {imports:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn collect_rust_dependency_uses_skips_stdlib_path_extra_crate_roots() -> Result<(), Box<dyn std::error::Error>> {
+        let module = parsed_module_for_test("rust.module(\"incan_web_macros\")\n\ndef main() -> None:\n  pass\n")?;
+
+        let imports = collect_rust_dependency_uses(&module, false);
+
+        assert!(
+            imports.iter().all(|import| import.crate_name != "incan_web_macros"),
+            "stdlib-managed path crates should come from project requirements, not rust.module dependency uses: {imports:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn merge_resolved_dependencies_unions_dependency_contexts() -> Result<(), Box<dyn std::error::Error>> {
+        let current = ResolvedDependencies {
+            dependencies: vec![registry_dependency("serde", "1")],
+            dev_dependencies: vec![registry_dependency("tokio", "1")],
+        };
+        let extra = ResolvedDependencies {
+            dependencies: vec![
+                registry_dependency("tokio", "1"),
+                registry_dependency("datafusion", "53"),
+            ],
+            dev_dependencies: Vec::new(),
+        };
+
+        let merged = merge_resolved_dependencies(&current, &extra)?;
+
+        assert_eq!(
+            merged
+                .dependencies
+                .iter()
+                .map(|dependency| dependency.crate_name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["datafusion", "serde", "tokio"]
+        );
+        assert!(merged.dev_dependencies.is_empty());
+        Ok(())
+    }
+
+    #[test]
+    fn merge_resolved_dependencies_rejects_conflicting_contexts() {
+        let current = ResolvedDependencies {
+            dependencies: vec![registry_dependency("serde", "1")],
+            dev_dependencies: Vec::new(),
+        };
+        let extra = ResolvedDependencies {
+            dependencies: vec![registry_dependency("serde", "2")],
+            dev_dependencies: Vec::new(),
+        };
+
+        let error = match merge_resolved_dependencies(&current, &extra) {
+            Ok(merged) => panic!("expected conflict, got merged dependencies: {merged:?}"),
+            Err(error) => error,
+        };
+        assert!(error.message.contains("serde"));
+        assert!(error.message.contains("conflicts"));
     }
 
     #[test]
@@ -2635,6 +2871,18 @@ pub def main() -> int:
             Some("lock-b"),
         );
         assert_ne!(fp_one, fp_two);
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn rust_inspect_workspace_dir_is_namespaced_by_input_fingerprint() {
+        let root = Path::new("/workspace");
+        let first = super::rust_inspect_workspace_dir(root, "demo", "v1:aaaaaaaaaaaaaaaaaaaaaaaa");
+        let second = super::rust_inspect_workspace_dir(root, "demo", "v1:bbbbbbbbbbbbbbbbbbbbbbbb");
+
+        assert_ne!(first, second);
+        assert!(first.ends_with(Path::new("target/incan_lock/rust_inspect/demo-aaaaaaaaaaaaaaaa")));
+        assert!(second.ends_with(Path::new("target/incan_lock/rust_inspect/demo-bbbbbbbbbbbbbbbb")));
     }
 
     #[cfg(feature = "rust_inspect")]
