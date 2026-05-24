@@ -20,17 +20,21 @@ fn main() {
             }
         }),
     );
-    let __incan_static_arg_0 = 1;
     {
-        SHARED_ITEMS
-            .with_mut(|__incan_static_value| {
-                __incan_static_value.push(__incan_static_arg_0)
-            })
+        let __incan_static_arg_0 = 1;
+        {
+            SHARED_ITEMS
+                .with_mut(|__incan_static_value| {
+                    __incan_static_value.push(__incan_static_arg_0)
+                })
+        }
     };
     let mut live = { incan_stdlib::storage::StaticBinding::from_static(&SHARED_ITEMS) };
-    let __incan_static_arg_0 = 2;
-    live.with_mut(|__incan_static_value| {
-        __incan_static_value.push(__incan_static_arg_0)
-    });
+    {
+        let __incan_static_arg_0 = 2;
+        live.with_mut(|__incan_static_value| {
+            __incan_static_value.push(__incan_static_arg_0)
+        })
+    };
     println!("{}", ::std::convert::identity({ SHARED_ITEMS.get() } .len() as i64));
 }

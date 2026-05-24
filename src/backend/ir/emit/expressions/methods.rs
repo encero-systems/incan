@@ -605,6 +605,14 @@ impl<'a> IrEmitter<'a> {
         Ok((bindings, rewritten))
     }
 
+    /// Combine pre-lock argument materialization with the storage access expression as one Rust expression block.
+    fn storage_rooted_method_expr(arg_bindings: Vec<TokenStream>, wrapped: TokenStream) -> TokenStream {
+        quote! {{
+            #(#arg_bindings)*
+            #wrapped
+        }}
+    }
+
     /// Return the callable parameter matched by one original call argument before storage-lock materialization.
     fn signature_param_for_original_call_arg<'sig>(
         args: &[IrCallArg],
@@ -746,10 +754,7 @@ impl<'a> IrEmitter<'a> {
                 let arg_exprs: Vec<TypedExpr> = rewritten_args.iter().map(|a| a.expr.clone()).collect();
                 let inner = self.emit_static_collection_get(&rewritten_receiver, &arg_exprs)?;
                 let wrapped = self.emit_storage_with_ref(receiver, inner)?;
-                return Ok(quote! {
-                    #(#arg_bindings)*
-                    #wrapped
-                });
+                return Ok(Self::storage_rooted_method_expr(arg_bindings, wrapped));
             }
 
             let use_mut = super::method_kind_uses_mutable_receiver(kind);
@@ -764,10 +769,7 @@ impl<'a> IrEmitter<'a> {
             } else {
                 self.emit_storage_with_ref(receiver, inner)
             }?;
-            return Ok(quote! {
-                #(#arg_bindings)*
-                #wrapped
-            });
+            return Ok(Self::storage_rooted_method_expr(arg_bindings, wrapped));
         }
 
         let r0 = self.emit_expr(receiver)?;
@@ -924,10 +926,7 @@ impl<'a> IrEmitter<'a> {
             } else {
                 self.emit_storage_with_ref(receiver, inner)
             }?;
-            return Ok(quote! {
-                #(#arg_bindings)*
-                #wrapped
-            });
+            return Ok(Self::storage_rooted_method_expr(arg_bindings, wrapped));
         }
 
         let inferred_receiver = self.receiver_with_known_field_type(receiver);

@@ -8857,6 +8857,65 @@ pub def decorated(value: int) -> int:
     }
 
     #[test]
+    fn build_static_receiver_option_model_lookup_issue674() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "main.incn",
+            r#"
+@derive(Clone)
+model Entry:
+    value: int
+
+
+@derive(Clone)
+class Registry:
+    entries: list[Entry]
+
+    @staticmethod
+    def new() -> Self:
+        return Registry(entries=[Entry(value=1)])
+
+    def entry(self, name: str) -> Option[Entry]:
+        if len(self.entries) == 0:
+            return None
+        return Some(self.entries[0])
+
+
+static REGISTRY: Registry = Registry.new()
+
+
+pub def lookup() -> int:
+    match REGISTRY.entry("decorated"):
+        Some(entry) => return entry.value
+        None => return 0
+
+
+def main() -> None:
+    println(lookup())
+"#,
+        );
+
+        let out_dir = dir.join("out");
+        let output = run_incan_build(&dir.join("main.incn"), &out_dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected static receiver Option model lookup to build for #674.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+
+        let generated = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        assert!(
+            generated.contains("match {\n        let __incan_static_arg_0 = \"decorated\".to_string();")
+                || generated.contains("match {\n        let __incan_static_arg_0 = \"decorated\".into();"),
+            "static receiver match scrutinee should materialize args inside an expression block:\n{}",
+            generated,
+        );
+        Ok(())
+    }
+
+    #[test]
     fn e2e_inline_module_parametrize_markers_strict_and_timeout() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
             "incan.toml",
