@@ -15,6 +15,7 @@
 //! - `stdlib_loader` — RFC 023: Stdlib module loading for compilation
 //! - `tools` — Local toolchain inspection and metadata helpers
 
+pub mod architect;
 pub mod build;
 pub mod common;
 pub mod debug;
@@ -27,6 +28,7 @@ pub mod tools;
 pub(crate) mod vocab_extraction;
 
 // Re-export public API so callers can use `commands::build_file()` etc.
+pub use architect::{ArchitectFormat, architect_project};
 pub use build::{build_file, build_library, run_file};
 pub use common::{collect_modules, read_source};
 pub use debug::{check_file, emit_rust, lex_file, parse_file};
@@ -35,8 +37,8 @@ pub use init::init_project;
 pub use lifecycle::{env_list, env_run, env_show, version_project};
 pub use lock::lock_project;
 pub use tools::{
-    ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat, tools_doctor, tools_metadata_api,
-    tools_metadata_model,
+    ToolsCodegraphFormat, ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat, tools_codegraph_export,
+    tools_doctor, tools_metadata_api, tools_metadata_model,
 };
 
 // Crate-internal API (used by test_runner and other CLI modules)

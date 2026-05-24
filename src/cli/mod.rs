@@ -44,9 +44,10 @@ use std::process;
 
 use crate::manifest::ProjectManifest;
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+use commands::architect::ArchitectFormat;
 use commands::common::{CargoPolicy, CargoPolicyCliFlags};
 use commands::lifecycle::{EnvOutputFormat, VersionBumpArg};
-use commands::tools::{ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat};
+use commands::tools::{ToolsCodegraphFormat, ToolsDoctorFormat, ToolsMetadataFormat, ToolsModelMetadataFormat};
 
 // ============================================================================
 // CLI Error handling
@@ -301,6 +302,16 @@ pub enum Command {
         command: ToolsCommand,
     },
 
+    /// Experimental architecture-advice scan
+    Architect {
+        /// Incan source file or project directory to inspect
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "text")]
+        format: ArchitectFormat,
+    },
+
     /// Run tests (pytest-style)
     Test {
         /// Path to test file or directory
@@ -520,6 +531,27 @@ pub enum ToolsCommand {
     Metadata {
         #[command(subcommand)]
         command: ToolsMetadataCommand,
+    },
+    /// Export compiler-backed codegraph facts for downstream code indexers
+    Codegraph {
+        #[command(subcommand)]
+        command: ToolsCodegraphCommand,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum ToolsCodegraphCommand {
+    /// Export Incan code-index facts as JSON or JSONL
+    Export {
+        /// Incan source file or project directory to inspect
+        #[arg(value_name = "PATH", default_value = ".")]
+        path: PathBuf,
+        /// Output format
+        #[arg(long = "format", value_enum, default_value = "jsonl")]
+        format: ToolsCodegraphFormat,
+        /// Continue after type-check errors and emit the unchecked source graph
+        #[arg(long = "allow-errors")]
+        allow_errors: bool,
     },
 }
 
@@ -791,6 +823,13 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
         },
         Some(Command::Tools { command }) => match command {
             ToolsCommand::Doctor { format } => commands::tools_doctor(format),
+            ToolsCommand::Codegraph { command } => match command {
+                ToolsCodegraphCommand::Export {
+                    path,
+                    format,
+                    allow_errors,
+                } => commands::tools_codegraph_export(&path, format, allow_errors),
+            },
             ToolsCommand::Metadata { command } => match command {
                 ToolsMetadataCommand::Api { path, format } => commands::tools_metadata_api(&path, format),
                 ToolsMetadataCommand::Model { path, model, format } => {
@@ -798,6 +837,7 @@ fn execute(cli: Cli, use_color: bool) -> CliResult<ExitCode> {
                 }
             },
         },
+        Some(Command::Architect { path, format }) => commands::architect_project(&path, format),
         Some(Command::New {
             name,
             dir,
@@ -1403,6 +1443,67 @@ mod tests {
         };
         assert_eq!(path, std::path::PathBuf::from("src/lib.incn"));
         assert_eq!(format, ToolsMetadataFormat::Markdown);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_tools_codegraph_export_jsonl() -> Result<(), clap::Error> {
+        let cli = parse_cli([
+            "incan",
+            "tools",
+            "codegraph",
+            "export",
+            "src/lib.incn",
+            "--format",
+            "jsonl",
+        ])?;
+        let Some(Command::Tools {
+            command:
+                ToolsCommand::Codegraph {
+                    command:
+                        ToolsCodegraphCommand::Export {
+                            path,
+                            format,
+                            allow_errors,
+                        },
+                },
+        }) = cli.command
+        else {
+            return Err(expected_command("tools codegraph export"));
+        };
+        assert_eq!(path, std::path::PathBuf::from("src/lib.incn"));
+        assert_eq!(format, ToolsCodegraphFormat::Jsonl);
+        assert!(!allow_errors);
+        Ok(())
+    }
+
+    #[test]
+    fn test_cli_parse_tools_codegraph_export_allow_errors() -> Result<(), clap::Error> {
+        let cli = parse_cli([
+            "incan",
+            "tools",
+            "codegraph",
+            "export",
+            "src/lib.incn",
+            "--allow-errors",
+        ])?;
+        let Some(Command::Tools {
+            command:
+                ToolsCommand::Codegraph {
+                    command:
+                        ToolsCodegraphCommand::Export {
+                            path,
+                            format,
+                            allow_errors,
+                        },
+                },
+        }) = cli.command
+        else {
+            return Err(expected_command("tools codegraph export"));
+        };
+        assert_eq!(path, std::path::PathBuf::from("src/lib.incn"));
+        assert_eq!(format, ToolsCodegraphFormat::Jsonl);
+        assert!(allow_errors);
         Ok(())
     }
 

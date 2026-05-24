@@ -25,6 +25,7 @@ Commands:
 - `version` - Update the project version in `incan.toml`
 - `env` - List, inspect, or run configured project environments
 - `lock` - Generate or update `incan.lock`
+- `architect` - Report deterministic architecture-advice findings
 - `tools` - Inspect local toolchain, editor integration state, and checked metadata
 
 ## Global options
@@ -408,6 +409,35 @@ The generated `incan.lock` contains an embedded `Cargo.lock` payload and a finge
 
 See: [Managing dependencies](../how-to/dependencies.md) for practical guidance.
 
+### `incan architect`
+
+Usage:
+
+```text
+incan architect [PATH] [OPTIONS]
+```
+
+Scans an Incan source file or source tree for deterministic architecture-advice findings. Directory inputs scan `.incn` files recursively and de-duplicate imported modules by source path, so unreferenced source files are still included in project-wide reports.
+
+Options:
+
+- `--format text`: Output a human-readable report (default).
+- `--format json`: Output machine-readable findings for agents and editor tooling.
+
+The first implemented signals are deterministic graph checks:
+
+- `arch.fail_fast_boundary_call`: reports fail-fast calls such as `unwrap`, `expect`, `panic`, `todo`, or `unreachable` inside source boundaries. Public API boundaries are `P1`; internal boundaries are `P2`.
+- `arch.repeated_match_dispatch`: reports repeated match expressions that dispatch over the same syntactic domain and share multiple arms. It reports shared-arm overlap against the largest explicit pattern set and suppresses tiny-overlap matches when a narrower site mostly relies on a wildcard/default fallback. Repeated raw string dispatch across three or more sites is `P2`; lower-pressure repeated dispatch remains `P3`.
+
+The command consumes body facts from the compiler-backed codegraph exporter rather than walking command-private AST state. Project-wide scans de-duplicate identical findings by rule and evidence location before printing.
+
+Examples:
+
+```bash
+incan architect src/lib.incn
+incan architect . --format json
+```
+
 ### `incan tools doctor`
 
 Usage:
@@ -441,6 +471,49 @@ Examples:
 ```bash
 incan tools doctor
 incan tools doctor --format json
+```
+
+### `incan tools codegraph export`
+
+Usage:
+
+```text
+incan tools codegraph export [PATH] [OPTIONS]
+```
+
+Exports compiler-backed code-index facts for an Incan source file or directory. By default, the command parses and type-checks the target before producing output, so downstream indexers receive facts from Incan's own module/import/typechecking pipeline rather than a syntax-only scrape.
+
+If `PATH` is omitted, the current directory is inspected. If `PATH` is a directory, every `.incn` file under that directory is exported in deterministic path order.
+
+Options:
+
+- `--format jsonl`: Output newline-delimited codegraph records (default).
+- `--format json`: Output one pretty JSON document.
+- `--allow-errors`: Continue after type-check errors and emit the unchecked source graph. Checked API member facts are omitted for modules that failed type-checking.
+
+The export includes:
+
+- project/package identity from `incan.toml`, when available
+- file and module nodes
+- declaration nodes for top-level functions, models, classes, traits, enums, newtypes, type aliases, consts, statics, aliases, partials, and inline test modules
+- RFC 048 checked API metadata facts on public declaration nodes, including metadata anchor ids and source-like signatures
+- `api_member` nodes for checked public API members such as model fields, class fields, trait requirements, methods, enum variants, and enum variant aliases
+- import nodes and import-target edges
+- body fact nodes for match dispatches, call sites, and references
+- match-dispatch facts for explicit pattern counts, source arm counts, and wildcard/default-arm context
+- containment and definition edges
+- call-site and reference-target edges for syntactic targets
+- source byte spans for source-backed facts
+
+This command is a code-intelligence export for tools and agents. It extends the RFC 048 metadata surface with graph topology: checked API metadata remains the source of truth for public API contracts, while codegraph records make packages easier to navigate by file, module, import, declaration, and member relationships. It is separate from `std.graph` and RFC 047, which define runtime graph data structures for Incan programs. It does not embed CodeGraph storage, embeddings, MCP behavior, or tree-sitter parsing into the compiler.
+
+Examples:
+
+```bash
+incan tools codegraph export
+incan tools codegraph export src/lib.incn --format json
+incan tools codegraph export crates/incan_stdlib/stdlib --format jsonl
+incan tools codegraph export src --format jsonl --allow-errors
 ```
 
 ### `incan tools metadata api`

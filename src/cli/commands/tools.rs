@@ -1,19 +1,30 @@
 //! Local toolchain inspection commands.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use clap::ValueEnum;
+use incan_codegraph::{
+    CodegraphDocument, CodegraphEdge, CodegraphEdgeKind, CodegraphNode, CodegraphNodeKind, CodegraphPackage,
+    CodegraphSpan,
+};
 use serde_json::json;
 
 use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::api_metadata::{
-    ApiDeclaration, ApiFunction, ApiPartial, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage,
-    CheckedApiPackageIdentity, collect_checked_api_metadata, validate_checked_api_docstrings,
+    ApiDeclaration, ApiFunction, ApiMethod, ApiPartial, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadata,
+    CheckedApiMetadataPackage, CheckedApiPackageIdentity, SourceAnchor, collect_checked_api_metadata,
+    validate_checked_api_docstrings,
+};
+use crate::frontend::ast::{
+    AliasDecl, AssertKind, CallArg, ClassDecl, ComprehensionClause, Condition, ConstDecl, Declaration, DecoratorArg,
+    DecoratorArgValue, DictEntry, EnumDecl, Expr, FStringPart, FunctionDecl, ImportDecl, ImportItem, ImportKind,
+    ImportPath, Literal, MatchBody, ModelDecl, NewtypeDecl, PartialDecl, Pattern, RaceForBody, Span, Spanned,
+    Statement, StaticDecl, TestModuleDecl, TraitDecl, TypeAliasDecl, Visibility,
 };
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, read_model_bundles_from_json, read_project_model_bundles,
@@ -21,7 +32,7 @@ use crate::frontend::contract_metadata::{
 use crate::frontend::diagnostics;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::typechecker;
-use crate::library_manifest::{LibraryManifest, ParamExport, ParamKindExport, TypeRef};
+use crate::library_manifest::{FieldExport, LibraryManifest, ParamExport, ParamKindExport, ReceiverExport, TypeRef};
 use crate::manifest::ProjectManifest;
 
 use super::common::{collect_modules, imported_module_deps_for_with_index, module_key_index, resolve_project_root};
@@ -33,6 +44,15 @@ pub enum ToolsDoctorFormat {
     Text,
     /// Machine-readable JSON report for editor integrations and issue templates.
     Json,
+}
+
+/// Output format for `incan tools codegraph export`.
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolsCodegraphFormat {
+    /// Stable pretty JSON document.
+    Json,
+    /// Newline-delimited graph records.
+    Jsonl,
 }
 
 /// Output format for `incan tools metadata api`.
@@ -59,6 +79,26 @@ pub fn tools_doctor(format: ToolsDoctorFormat) -> CliResult<ExitCode> {
     match format {
         ToolsDoctorFormat::Text => report.print_text(),
         ToolsDoctorFormat::Json => report.print_json()?,
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// Emit compiler-backed codegraph facts for a source file or project directory.
+pub fn tools_codegraph_export(path: &Path, format: ToolsCodegraphFormat, allow_errors: bool) -> CliResult<ExitCode> {
+    let document = collect_codegraph_document(path, allow_errors)?;
+    match format {
+        ToolsCodegraphFormat::Json => {
+            let output = document
+                .to_pretty_json()
+                .map_err(|error| CliError::failure(format!("failed to serialize codegraph document: {error}")))?;
+            println!("{output}");
+        }
+        ToolsCodegraphFormat::Jsonl => {
+            let output = document
+                .to_jsonl()
+                .map_err(|error| CliError::failure(format!("failed to serialize codegraph records: {error}")))?;
+            print!("{output}");
+        }
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -363,6 +403,1955 @@ fn absolute_path(path: &Path) -> CliResult<PathBuf> {
     }
 }
 
+/// Type-check a codegraph input path and collect deterministic source graph facts.
+pub(crate) fn collect_codegraph_document(path: &Path, allow_errors: bool) -> CliResult<CodegraphDocument> {
+    collect_codegraph_document_with_diagnostics(path, allow_errors, true)
+}
+
+/// Collect codegraph facts without printing type-check diagnostics when unchecked source is allowed.
+pub(crate) fn collect_codegraph_document_suppressing_diagnostics(
+    path: &Path,
+    allow_errors: bool,
+) -> CliResult<CodegraphDocument> {
+    collect_codegraph_document_with_diagnostics(path, allow_errors, false)
+}
+
+/// Type-check a codegraph input path and collect deterministic source graph facts.
+fn collect_codegraph_document_with_diagnostics(
+    path: &Path,
+    allow_errors: bool,
+    emit_diagnostics: bool,
+) -> CliResult<CodegraphDocument> {
+    let input = collect_codegraph_input(path)?;
+    let manifest =
+        ProjectManifest::discover(&input.project_root).map_err(|error| CliError::failure(error.to_string()))?;
+    let declared = manifest.as_ref().map(ProjectManifest::declared_rust_crate_names);
+    let library_manifest_index = manifest
+        .as_ref()
+        .map(LibraryManifestIndex::from_project_manifest)
+        .unwrap_or_default();
+    let module_idx_by_key = module_key_index(&input.modules);
+    let mut all_errors = String::new();
+    let mut metadata_modules = Vec::new();
+
+    for (idx, module) in input.modules.iter().enumerate() {
+        let deps_for_module = imported_module_deps_for_with_index(&input.modules, idx, &module_idx_by_key);
+        let mut checker = typechecker::TypeChecker::new();
+        if let Some(names) = declared.clone() {
+            checker.set_declared_crate_names(names);
+        }
+        checker.set_library_manifest_index(library_manifest_index.clone());
+
+        match checker.check_with_imports(&module.ast, &deps_for_module) {
+            Ok(()) => {
+                if emit_diagnostics {
+                    for warn in checker.warnings() {
+                        eprint!(
+                            "{}",
+                            diagnostics::format_error(
+                                module.file_path.to_string_lossy().as_ref(),
+                                &module.source,
+                                warn
+                            )
+                        );
+                    }
+                }
+                metadata_modules.push(collect_checked_api_metadata(
+                    &module.ast,
+                    &checker,
+                    codegraph_module_path(module, input.entry_path.as_deref()),
+                ));
+            }
+            Err(errs) => {
+                for err in &errs {
+                    all_errors.push_str(&diagnostics::format_error(
+                        module.file_path.to_string_lossy().as_ref(),
+                        &module.source,
+                        err,
+                    ));
+                }
+            }
+        }
+    }
+
+    if !all_errors.is_empty() && !allow_errors {
+        return Err(CliError::failure(all_errors.trim_end()));
+    }
+    if !all_errors.is_empty() && emit_diagnostics {
+        eprintln!("warning: codegraph export continuing with unchecked source graph after type-check errors");
+        eprint!("{all_errors}");
+    }
+
+    Ok(build_codegraph_document(
+        &input.modules,
+        manifest.as_ref(),
+        &input.project_root,
+        input.entry_path.as_deref(),
+        &metadata_modules,
+    ))
+}
+
+/// Collected codegraph input modules plus the path context used to render stable facts.
+struct CodegraphInput {
+    modules: Vec<ParsedModule>,
+    project_root: PathBuf,
+    entry_path: Option<PathBuf>,
+}
+
+/// Collect codegraph modules from a file, project directory, or arbitrary source directory.
+fn collect_codegraph_input(path: &Path) -> CliResult<CodegraphInput> {
+    let absolute = absolute_path(path)?;
+    if absolute.is_file() {
+        let modules = collect_modules(&absolute.to_string_lossy())?;
+        let project_root = resolve_project_root(&absolute);
+        return Ok(CodegraphInput {
+            modules,
+            project_root,
+            entry_path: Some(absolute),
+        });
+    }
+
+    if absolute.is_dir() {
+        let project_root = fs::canonicalize(&absolute).unwrap_or(absolute);
+        let entry_paths = collect_codegraph_directory_entries(&project_root)?;
+        let modules = collect_codegraph_directory_modules(&project_root, &entry_paths)?;
+        return Ok(CodegraphInput {
+            modules,
+            project_root,
+            entry_path: None,
+        });
+    }
+
+    Err(CliError::failure(format!(
+        "codegraph export path does not exist: {}",
+        absolute.display()
+    )))
+}
+
+/// Return every `.incn` source file under a directory in deterministic order.
+fn collect_codegraph_directory_entries(root: &Path) -> CliResult<Vec<PathBuf>> {
+    let mut entries = Vec::new();
+    collect_codegraph_directory_entries_into(root, &mut entries)?;
+    entries.sort();
+    if entries.is_empty() {
+        return Err(CliError::failure(format!(
+            "codegraph export found no `.incn` files under directory: {}",
+            root.display()
+        )));
+    }
+    Ok(entries)
+}
+
+/// Recursively collect `.incn` source files under a directory.
+fn collect_codegraph_directory_entries_into(dir: &Path, entries: &mut Vec<PathBuf>) -> CliResult<()> {
+    for entry in fs::read_dir(dir).map_err(|error| {
+        CliError::failure(format!(
+            "failed to read codegraph export directory {}: {error}",
+            dir.display()
+        ))
+    })? {
+        let entry = entry.map_err(|error| {
+            CliError::failure(format!(
+                "failed to read codegraph export directory entry under {}: {error}",
+                dir.display()
+            ))
+        })?;
+        let path = entry.path();
+        let file_type = entry.file_type().map_err(|error| {
+            CliError::failure(format!(
+                "failed to inspect codegraph export path {}: {error}",
+                path.display()
+            ))
+        })?;
+        if file_type.is_dir() {
+            collect_codegraph_directory_entries_into(&path, entries)?;
+        } else if file_type.is_file() && path.extension().is_some_and(|extension| extension == "incn") {
+            entries.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Collect and deduplicate modules reached by every directory entry source.
+fn collect_codegraph_directory_modules(root: &Path, entry_paths: &[PathBuf]) -> CliResult<Vec<ParsedModule>> {
+    let mut modules_by_path: BTreeMap<PathBuf, ParsedModule> = BTreeMap::new();
+    for entry_path in entry_paths {
+        let collected = collect_modules(&entry_path.to_string_lossy())?;
+        for mut module in collected {
+            module.file_path = fs::canonicalize(&module.file_path).unwrap_or(module.file_path);
+            if module.file_path.starts_with(root) {
+                module.path_segments = codegraph_module_segments_for_path(&module.file_path, root)?;
+                module.name = module.path_segments.join("_");
+            }
+            modules_by_path.entry(module.file_path.clone()).or_insert(module);
+        }
+    }
+    Ok(modules_by_path.into_values().collect())
+}
+
+/// Derive a module path from a source file's path relative to a globbed codegraph root.
+fn codegraph_module_segments_for_path(path: &Path, root: &Path) -> CliResult<Vec<String>> {
+    let relative = path.strip_prefix(root).map_err(|error| {
+        CliError::failure(format!(
+            "failed to derive codegraph module path for {} relative to {}: {error}",
+            path.display(),
+            root.display()
+        ))
+    })?;
+    let mut segments = Vec::new();
+    for component in relative.components() {
+        let value = component.as_os_str().to_string_lossy();
+        if value.ends_with(".incn") {
+            segments.push(value.trim_end_matches(".incn").to_string());
+        } else {
+            segments.push(value.to_string());
+        }
+    }
+    Ok(segments)
+}
+
+/// Build a codegraph document from parsed and checked modules.
+fn build_codegraph_document(
+    modules: &[ParsedModule],
+    manifest: Option<&ProjectManifest>,
+    project_root: &Path,
+    entry_path: Option<&Path>,
+    metadata_modules: &[CheckedApiMetadata],
+) -> CodegraphDocument {
+    let package = Some(CodegraphPackage {
+        name: manifest
+            .and_then(|manifest| manifest.project.as_ref())
+            .and_then(|project| project.name.clone()),
+        version: manifest
+            .and_then(|manifest| manifest.project.as_ref())
+            .and_then(|project| project.version.clone()),
+        root_path: Some(".".to_string()),
+    });
+    let mut document = CodegraphDocument::new(package);
+    let package_id = "package:root".to_string();
+    document.push_node(CodegraphNode {
+        id: package_id.clone(),
+        kind: CodegraphNodeKind::Package,
+        label: manifest
+            .and_then(|manifest| manifest.project.as_ref())
+            .and_then(|project| project.name.clone())
+            .unwrap_or_else(|| "package".to_string()),
+        file_path: None,
+        module_path: Vec::new(),
+        span: None,
+        facts: BTreeMap::new(),
+    });
+
+    for module in modules {
+        push_module_codegraph(
+            &mut document,
+            module,
+            project_root,
+            entry_path,
+            &package_id,
+            metadata_modules,
+        );
+    }
+    document
+}
+
+/// Add file, module, declaration, and import facts for one parsed module.
+fn push_module_codegraph(
+    document: &mut CodegraphDocument,
+    module: &ParsedModule,
+    project_root: &Path,
+    entry_path: Option<&Path>,
+    package_id: &str,
+    metadata_modules: &[CheckedApiMetadata],
+) {
+    let rel_path = codegraph_path(&module.file_path, project_root);
+    let file_id = format!("file:{rel_path}");
+    document.push_node(CodegraphNode {
+        id: file_id.clone(),
+        kind: CodegraphNodeKind::File,
+        label: rel_path.clone(),
+        file_path: Some(rel_path.clone()),
+        module_path: Vec::new(),
+        span: None,
+        facts: BTreeMap::new(),
+    });
+    document.push_edge(codegraph_edge(
+        package_id,
+        &file_id,
+        CodegraphEdgeKind::Contains,
+        None,
+        "package_contains_file",
+    ));
+
+    let module_path = codegraph_module_path(module, entry_path);
+    let metadata = metadata_modules
+        .iter()
+        .find(|metadata| metadata.module_path == module_path);
+    let module_id = format!("module:{}", module_path.join("::"));
+    document.push_node(CodegraphNode {
+        id: module_id.clone(),
+        kind: CodegraphNodeKind::Module,
+        label: module_path.join("::"),
+        file_path: Some(rel_path.clone()),
+        module_path: module_path.clone(),
+        span: Some(CodegraphSpan {
+            start: 0,
+            end: module.source.len(),
+        }),
+        facts: BTreeMap::new(),
+    });
+    document.push_edge(codegraph_edge(
+        &file_id,
+        &module_id,
+        CodegraphEdgeKind::Contains,
+        None,
+        "file_contains_module",
+    ));
+
+    for declaration in &module.ast.declarations {
+        match &declaration.node {
+            Declaration::Import(import) => {
+                push_import_codegraph(document, import, declaration.span, &module_id, &module_path, &rel_path);
+            }
+            Declaration::Docstring(_) => {}
+            other => {
+                if let Some((kind, name, visibility)) = declaration_codegraph_info(other) {
+                    let decl_id = format!("decl:{}::{name}:{}", module_path.join("::"), declaration.span.start);
+                    let mut facts = BTreeMap::new();
+                    facts.insert("declaration_kind".to_string(), kind.to_string());
+                    facts.insert("visibility".to_string(), visibility.to_string());
+                    let checked_declaration =
+                        metadata.and_then(|metadata| find_api_metadata_declaration(metadata, &name, declaration.span));
+                    if let Some(api_declaration) = checked_declaration {
+                        facts.extend(api_declaration_facts(api_declaration));
+                    }
+                    document.push_node(CodegraphNode {
+                        id: decl_id.clone(),
+                        kind: CodegraphNodeKind::Declaration,
+                        label: name,
+                        file_path: Some(rel_path.clone()),
+                        module_path: module_path.clone(),
+                        span: Some(CodegraphSpan {
+                            start: declaration.span.start,
+                            end: declaration.span.end,
+                        }),
+                        facts,
+                    });
+                    document.push_edge(codegraph_edge(
+                        &module_id,
+                        &decl_id,
+                        CodegraphEdgeKind::Contains,
+                        Some(CodegraphSpan {
+                            start: declaration.span.start,
+                            end: declaration.span.end,
+                        }),
+                        "module_contains_declaration",
+                    ));
+                    document.push_edge(codegraph_edge(
+                        &module_id,
+                        &decl_id,
+                        CodegraphEdgeKind::Defines,
+                        Some(CodegraphSpan {
+                            start: declaration.span.start,
+                            end: declaration.span.end,
+                        }),
+                        "module_defines_declaration",
+                    ));
+                    if let Some(api_declaration) = checked_declaration {
+                        push_api_member_codegraph(document, api_declaration, &decl_id, &rel_path, &module_path);
+                    }
+                    push_declaration_body_facts(
+                        document,
+                        declaration,
+                        &decl_id,
+                        &rel_path,
+                        &module_path,
+                        &module.source,
+                    );
+                }
+            }
+        }
+    }
+}
+
+/// Context needed to turn parsed body syntax into source-backed graph facts.
+#[derive(Clone)]
+struct BodyFactContext<'a> {
+    parent_id: &'a str,
+    rel_path: &'a str,
+    module_path: &'a [String],
+    source: &'a str,
+    owner: String,
+}
+
+impl<'a> BodyFactContext<'a> {
+    fn with_owner(&self, owner: impl Into<String>) -> Self {
+        Self {
+            parent_id: self.parent_id,
+            rel_path: self.rel_path,
+            module_path: self.module_path,
+            source: self.source,
+            owner: owner.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PatternLabel {
+    family: PatternFamily,
+    label: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum PatternFamily {
+    Constructor,
+    StringLiteral,
+    Literal,
+}
+
+impl PatternFamily {
+    fn as_fact(self) -> &'static str {
+        match self {
+            Self::Constructor => "constructor",
+            Self::StringLiteral => "string_literal",
+            Self::Literal => "literal",
+        }
+    }
+}
+
+/// Add deterministic body-level graph facts contained by one declaration.
+fn push_declaration_body_facts(
+    document: &mut CodegraphDocument,
+    declaration: &Spanned<Declaration>,
+    declaration_id: &str,
+    rel_path: &str,
+    module_path: &[String],
+    source: &str,
+) {
+    collect_declaration_body_facts(
+        document,
+        declaration,
+        BodyFactContext {
+            parent_id: declaration_id,
+            rel_path,
+            module_path,
+            source,
+            owner: "<module>".to_string(),
+        },
+    );
+}
+
+fn collect_declaration_body_facts(
+    document: &mut CodegraphDocument,
+    declaration: &Spanned<Declaration>,
+    context: BodyFactContext<'_>,
+) {
+    match &declaration.node {
+        Declaration::Import(_)
+        | Declaration::Alias(_)
+        | Declaration::Partial(_)
+        | Declaration::TypeAlias(_)
+        | Declaration::Docstring(_) => {}
+        Declaration::Const(const_decl) => {
+            collect_expr_body_facts(document, &const_decl.value, context.with_owner(&const_decl.name));
+        }
+        Declaration::Static(static_decl) => {
+            collect_expr_body_facts(document, &static_decl.value, context.with_owner(&static_decl.name));
+        }
+        Declaration::Function(function) => {
+            let context = context.with_owner(&function.name);
+            collect_decorator_body_facts(document, &function.decorators, context.clone());
+            collect_param_body_facts(document, &function.params, context.clone());
+            collect_body_facts(document, &function.body, context);
+        }
+        Declaration::Model(model) => {
+            collect_type_body_facts(
+                document,
+                &model.name,
+                &model.decorators,
+                &model.fields,
+                &model.properties,
+                &model.methods,
+                context,
+            );
+        }
+        Declaration::Class(class) => {
+            collect_type_body_facts(
+                document,
+                &class.name,
+                &class.decorators,
+                &class.fields,
+                &class.properties,
+                &class.methods,
+                context,
+            );
+        }
+        Declaration::Trait(trait_decl) => {
+            collect_decorator_body_facts(document, &trait_decl.decorators, context.with_owner(&trait_decl.name));
+            for property in &trait_decl.properties {
+                let owner = format!("{}.{}", trait_decl.name, property.node.name);
+                if let Some(body) = &property.node.body {
+                    collect_body_facts(document, body, context.with_owner(owner));
+                }
+            }
+            for method in &trait_decl.methods {
+                collect_method_body_facts(document, &trait_decl.name, method, context.clone());
+            }
+        }
+        Declaration::Newtype(newtype_decl) => {
+            collect_decorator_body_facts(
+                document,
+                &newtype_decl.decorators,
+                context.with_owner(&newtype_decl.name),
+            );
+            for rebinding in &newtype_decl.rebindings {
+                let owner = format!("{}.{}", newtype_decl.name, rebinding.node.name);
+                collect_expr_body_facts(document, &rebinding.node.target, context.with_owner(owner));
+            }
+            for interop_edge in &newtype_decl.interop_edges {
+                let owner = format!("{}.interop", newtype_decl.name);
+                collect_expr_body_facts(document, &interop_edge.node.adapter, context.with_owner(owner));
+            }
+            for method in &newtype_decl.methods {
+                collect_method_body_facts(document, &newtype_decl.name, method, context.clone());
+            }
+        }
+        Declaration::Enum(enum_decl) => {
+            collect_decorator_body_facts(document, &enum_decl.decorators, context.with_owner(&enum_decl.name));
+            for method in &enum_decl.methods {
+                collect_method_body_facts(document, &enum_decl.name, method, context.clone());
+            }
+        }
+        Declaration::TestModule(test_module) => {
+            let context = context.with_owner(format!("module {}", test_module.name));
+            for nested in &test_module.body {
+                collect_declaration_body_facts(document, nested, context.clone());
+            }
+        }
+    }
+}
+
+fn collect_type_body_facts(
+    document: &mut CodegraphDocument,
+    type_name: &str,
+    decorators: &[Spanned<crate::frontend::ast::Decorator>],
+    fields: &[Spanned<crate::frontend::ast::FieldDecl>],
+    properties: &[Spanned<crate::frontend::ast::PropertyDecl>],
+    methods: &[Spanned<crate::frontend::ast::MethodDecl>],
+    context: BodyFactContext<'_>,
+) {
+    collect_decorator_body_facts(document, decorators, context.with_owner(type_name));
+    for field in fields {
+        if let Some(default) = &field.node.default {
+            let owner = format!("{type_name}.{}", field.node.name);
+            collect_expr_body_facts(document, default, context.with_owner(owner));
+        }
+    }
+    for property in properties {
+        let owner = format!("{type_name}.{}", property.node.name);
+        if let Some(body) = &property.node.body {
+            collect_body_facts(document, body, context.with_owner(owner));
+        }
+    }
+    for method in methods {
+        collect_method_body_facts(document, type_name, method, context.clone());
+    }
+}
+
+fn collect_method_body_facts(
+    document: &mut CodegraphDocument,
+    type_name: &str,
+    method: &Spanned<crate::frontend::ast::MethodDecl>,
+    context: BodyFactContext<'_>,
+) {
+    let context = context.with_owner(format!("{type_name}.{}", method.node.name));
+    collect_decorator_body_facts(document, &method.node.decorators, context.clone());
+    collect_param_body_facts(document, &method.node.params, context.clone());
+    if let Some(body) = &method.node.body {
+        collect_body_facts(document, body, context);
+    }
+}
+
+fn collect_decorator_body_facts(
+    document: &mut CodegraphDocument,
+    decorators: &[Spanned<crate::frontend::ast::Decorator>],
+    context: BodyFactContext<'_>,
+) {
+    for decorator in decorators {
+        for arg in &decorator.node.args {
+            match arg {
+                DecoratorArg::Positional(value) => collect_expr_body_facts(document, value, context.clone()),
+                DecoratorArg::Named(_, DecoratorArgValue::Expr(value)) => {
+                    collect_expr_body_facts(document, value, context.clone());
+                }
+                DecoratorArg::Named(_, DecoratorArgValue::Type(_)) => {}
+            }
+        }
+    }
+}
+
+fn collect_param_body_facts(
+    document: &mut CodegraphDocument,
+    params: &[Spanned<crate::frontend::ast::Param>],
+    context: BodyFactContext<'_>,
+) {
+    for param in params {
+        if let Some(default) = &param.node.default {
+            collect_expr_body_facts(document, default, context.clone());
+        }
+    }
+}
+
+fn collect_body_facts(document: &mut CodegraphDocument, body: &[Spanned<Statement>], context: BodyFactContext<'_>) {
+    for statement in body {
+        collect_statement_body_facts(document, statement, context.clone());
+    }
+}
+
+fn collect_statement_body_facts(
+    document: &mut CodegraphDocument,
+    statement: &Spanned<Statement>,
+    context: BodyFactContext<'_>,
+) {
+    match &statement.node {
+        Statement::Assignment(stmt) => collect_expr_body_facts(document, &stmt.value, context),
+        Statement::FieldAssignment(stmt) => {
+            collect_expr_body_facts(document, &stmt.object, context.clone());
+            collect_expr_body_facts(document, &stmt.value, context);
+        }
+        Statement::IndexAssignment(stmt) => {
+            collect_expr_body_facts(document, &stmt.object, context.clone());
+            collect_expr_body_facts(document, &stmt.index, context.clone());
+            collect_expr_body_facts(document, &stmt.value, context);
+        }
+        Statement::Return(Some(expr)) | Statement::Expr(expr) | Statement::Break(Some(expr)) => {
+            collect_expr_body_facts(document, expr, context);
+        }
+        Statement::CompoundAssignment(stmt) => collect_expr_body_facts(document, &stmt.value, context),
+        Statement::TupleUnpack(stmt) => collect_expr_body_facts(document, &stmt.value, context),
+        Statement::TupleAssign(stmt) => {
+            for target in &stmt.targets {
+                collect_expr_body_facts(document, target, context.clone());
+            }
+            collect_expr_body_facts(document, &stmt.value, context);
+        }
+        Statement::ChainedAssignment(stmt) => collect_expr_body_facts(document, &stmt.value, context),
+        Statement::Assert(assert_stmt) => collect_assert_body_facts(document, assert_stmt, context),
+        Statement::Surface(surface_stmt) => match &surface_stmt.payload {
+            crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(args) => {
+                for arg in args {
+                    collect_expr_body_facts(document, arg, context.clone());
+                }
+            }
+        },
+        Statement::VocabBlock(block) => {
+            collect_decorator_body_facts(document, &block.decorators, context.clone());
+            for arg in &block.header_args {
+                collect_expr_body_facts(document, arg, context.clone());
+            }
+            collect_body_facts(document, &block.body, context);
+        }
+        Statement::If(stmt) => {
+            collect_condition_body_facts(document, &stmt.condition, context.clone());
+            collect_body_facts(document, &stmt.then_body, context.clone());
+            for (condition, body) in &stmt.elif_branches {
+                collect_expr_body_facts(document, condition, context.clone());
+                collect_body_facts(document, body, context.clone());
+            }
+            if let Some(else_body) = &stmt.else_body {
+                collect_body_facts(document, else_body, context);
+            }
+        }
+        Statement::Loop(stmt) => collect_body_facts(document, &stmt.body, context),
+        Statement::While(stmt) => {
+            collect_condition_body_facts(document, &stmt.condition, context.clone());
+            collect_body_facts(document, &stmt.body, context);
+        }
+        Statement::For(stmt) => {
+            collect_expr_body_facts(document, &stmt.iter, context.clone());
+            collect_body_facts(document, &stmt.body, context);
+        }
+        Statement::Return(None) | Statement::Break(None) | Statement::Pass | Statement::Continue => {}
+    }
+}
+
+fn collect_assert_body_facts(
+    document: &mut CodegraphDocument,
+    assert_stmt: &crate::frontend::ast::AssertStmt,
+    context: BodyFactContext<'_>,
+) {
+    match &assert_stmt.kind {
+        AssertKind::Condition(condition) => collect_expr_body_facts(document, condition, context.clone()),
+        AssertKind::IsPattern { value, .. } => collect_expr_body_facts(document, value, context.clone()),
+        AssertKind::Raises { call, .. } => collect_expr_body_facts(document, call, context.clone()),
+    }
+    if let Some(message) = &assert_stmt.message {
+        collect_expr_body_facts(document, message, context);
+    }
+}
+
+fn collect_condition_body_facts(document: &mut CodegraphDocument, condition: &Condition, context: BodyFactContext<'_>) {
+    match condition {
+        Condition::Expr(expr) | Condition::Let { value: expr, .. } => collect_expr_body_facts(document, expr, context),
+    }
+}
+
+fn collect_expr_body_facts(document: &mut CodegraphDocument, expr: &Spanned<Expr>, context: BodyFactContext<'_>) {
+    match &expr.node {
+        Expr::Ident(_) | Expr::SelfExpr => push_reference_fact(document, expr.span, &expr.node, context),
+        Expr::Literal(_) => {}
+        Expr::Binary(left, _, right) | Expr::Index(left, right) => {
+            collect_expr_body_facts(document, left, context.clone());
+            collect_expr_body_facts(document, right, context);
+        }
+        Expr::Unary(_, operand) | Expr::Try(operand) | Expr::Paren(operand) => {
+            collect_expr_body_facts(document, operand, context);
+        }
+        Expr::Field(operand, _) => {
+            collect_expr_body_facts(document, operand, context.clone());
+            push_reference_fact(document, expr.span, &expr.node, context);
+        }
+        Expr::Call(callee, _type_args, args) => {
+            push_call_fact(document, expr.span, &expr.node, context.clone());
+            collect_expr_body_facts(document, callee, context.clone());
+            collect_call_arg_body_facts(document, args, context);
+        }
+        Expr::MethodCall(base, _, _type_args, args) => {
+            push_call_fact(document, expr.span, &expr.node, context.clone());
+            collect_expr_body_facts(document, base, context.clone());
+            collect_call_arg_body_facts(document, args, context);
+        }
+        Expr::Constructor(_, args) => {
+            push_call_fact(document, expr.span, &expr.node, context.clone());
+            collect_call_arg_body_facts(document, args, context);
+        }
+        Expr::Partial(partial) => {
+            collect_expr_body_facts(document, &partial.target, context.clone());
+            for arg in &partial.args {
+                collect_expr_body_facts(document, &arg.value, context.clone());
+            }
+        }
+        Expr::Slice(base, slice) => {
+            collect_expr_body_facts(document, base, context.clone());
+            if let Some(start) = &slice.start {
+                collect_expr_body_facts(document, start, context.clone());
+            }
+            if let Some(end) = &slice.end {
+                collect_expr_body_facts(document, end, context.clone());
+            }
+            if let Some(step) = &slice.step {
+                collect_expr_body_facts(document, step, context);
+            }
+        }
+        Expr::Match(scrutinee, arms) => {
+            push_match_dispatch_fact(document, expr.span, scrutinee, arms, context.clone());
+            collect_expr_body_facts(document, scrutinee, context.clone());
+            for arm in arms {
+                if let Some(guard) = &arm.node.guard {
+                    collect_expr_body_facts(document, guard, context.clone());
+                }
+                match &arm.node.body {
+                    MatchBody::Expr(value) => collect_expr_body_facts(document, value, context.clone()),
+                    MatchBody::Block(body) => collect_body_facts(document, body, context.clone()),
+                }
+            }
+        }
+        Expr::If(if_expr) => {
+            collect_expr_body_facts(document, &if_expr.condition, context.clone());
+            collect_body_facts(document, &if_expr.then_body, context.clone());
+            if let Some(else_body) = &if_expr.else_body {
+                collect_body_facts(document, else_body, context);
+            }
+        }
+        Expr::Loop(loop_expr) => collect_body_facts(document, &loop_expr.body, context),
+        Expr::ListComp(comp) => {
+            collect_expr_body_facts(document, &comp.expr, context.clone());
+            collect_expr_body_facts(document, &comp.iter, context.clone());
+            if let Some(filter) = &comp.filter {
+                collect_expr_body_facts(document, filter, context.clone());
+            }
+            collect_comprehension_clause_body_facts(document, &comp.clauses, context);
+        }
+        Expr::DictComp(comp) => {
+            collect_expr_body_facts(document, &comp.key, context.clone());
+            collect_expr_body_facts(document, &comp.value, context.clone());
+            collect_expr_body_facts(document, &comp.iter, context.clone());
+            if let Some(filter) = &comp.filter {
+                collect_expr_body_facts(document, filter, context.clone());
+            }
+            collect_comprehension_clause_body_facts(document, &comp.clauses, context);
+        }
+        Expr::Generator(generator) => {
+            collect_expr_body_facts(document, &generator.expr, context.clone());
+            collect_comprehension_clause_body_facts(document, &generator.clauses, context);
+        }
+        Expr::Closure(params, body) => {
+            collect_param_body_facts(document, params, context.clone());
+            collect_expr_body_facts(document, body, context);
+        }
+        Expr::Tuple(items) | Expr::Set(items) => {
+            for item in items {
+                collect_expr_body_facts(document, item, context.clone());
+            }
+        }
+        Expr::List(entries) => {
+            for entry in entries {
+                match entry {
+                    crate::frontend::ast::ListEntry::Element(value)
+                    | crate::frontend::ast::ListEntry::Spread(value) => {
+                        collect_expr_body_facts(document, value, context.clone());
+                    }
+                }
+            }
+        }
+        Expr::Dict(entries) => {
+            for entry in entries {
+                match entry {
+                    DictEntry::Pair(key, value) => {
+                        collect_expr_body_facts(document, key, context.clone());
+                        collect_expr_body_facts(document, value, context.clone());
+                    }
+                    DictEntry::Spread(value) => collect_expr_body_facts(document, value, context.clone()),
+                }
+            }
+        }
+        Expr::FString(parts) => {
+            for part in parts {
+                if let FStringPart::Expr { expr, .. } = part {
+                    collect_expr_body_facts(document, expr, context.clone());
+                }
+            }
+        }
+        Expr::Yield(Some(value)) => collect_expr_body_facts(document, value, context),
+        Expr::Yield(None) => {}
+        Expr::Range { start, end, .. } => {
+            collect_expr_body_facts(document, start, context.clone());
+            collect_expr_body_facts(document, end, context);
+        }
+        Expr::Surface(surface_expr) => match &surface_expr.payload {
+            crate::frontend::ast::SurfaceExprPayload::PrefixUnary(value) => {
+                collect_expr_body_facts(document, value, context);
+            }
+            crate::frontend::ast::SurfaceExprPayload::RaceFor(race) => {
+                for arm in &race.arms {
+                    collect_expr_body_facts(document, &arm.awaitable, context.clone());
+                    match &arm.body {
+                        RaceForBody::Expr(value) => collect_expr_body_facts(document, value, context.clone()),
+                        RaceForBody::Block(body) => collect_body_facts(document, body, context.clone()),
+                    }
+                }
+            }
+            crate::frontend::ast::SurfaceExprPayload::LeadingDotPath { .. } => {}
+            crate::frontend::ast::SurfaceExprPayload::ScopedGlyph { left, right, .. } => {
+                collect_expr_body_facts(document, left, context.clone());
+                collect_expr_body_facts(document, right, context);
+            }
+            crate::frontend::ast::SurfaceExprPayload::ScopedSymbolCall { args, .. } => {
+                push_call_fact(document, expr.span, &expr.node, context.clone());
+                collect_call_arg_body_facts(document, args, context);
+            }
+        },
+    }
+}
+
+fn collect_comprehension_clause_body_facts(
+    document: &mut CodegraphDocument,
+    clauses: &[ComprehensionClause],
+    context: BodyFactContext<'_>,
+) {
+    for clause in clauses {
+        match clause {
+            ComprehensionClause::For { iter, .. } | ComprehensionClause::If(iter) => {
+                collect_expr_body_facts(document, iter, context.clone());
+            }
+        }
+    }
+}
+
+fn collect_call_arg_body_facts(document: &mut CodegraphDocument, args: &[CallArg], context: BodyFactContext<'_>) {
+    for arg in args {
+        match arg {
+            CallArg::Positional(value)
+            | CallArg::Named(_, value)
+            | CallArg::PositionalUnpack(value)
+            | CallArg::KeywordUnpack(value) => collect_expr_body_facts(document, value, context.clone()),
+        }
+    }
+}
+
+fn push_match_dispatch_fact(
+    document: &mut CodegraphDocument,
+    span: Span,
+    scrutinee: &Spanned<Expr>,
+    arms: &[Spanned<crate::frontend::ast::MatchArm>],
+    context: BodyFactContext<'_>,
+) {
+    let patterns = collect_match_patterns(arms);
+    if patterns.len() < 2 {
+        return;
+    }
+    let Some((domain_key, domain_label)) = domain_key_and_label(&scrutinee.node, &context.owner) else {
+        return;
+    };
+    let pattern_labels = patterns.iter().map(|pattern| pattern.label.clone()).collect::<Vec<_>>();
+    let pattern_families = patterns
+        .iter()
+        .map(|pattern| pattern.family.as_fact().to_string())
+        .collect::<Vec<_>>();
+    let mut facts = BTreeMap::new();
+    facts.insert("domain_key".to_string(), domain_key);
+    facts.insert("domain_label".to_string(), domain_label.clone());
+    facts.insert("arm_count".to_string(), arms.len().to_string());
+    facts.insert("explicit_pattern_count".to_string(), patterns.len().to_string());
+    facts.insert("has_default_arm".to_string(), match_has_default_arm(arms).to_string());
+    facts.insert("pattern_labels".to_string(), json_string_list(&pattern_labels));
+    facts.insert("pattern_families".to_string(), json_string_list(&pattern_families));
+
+    push_body_fact_node(
+        document,
+        BodyFactNodeInput {
+            context,
+            span,
+            kind: CodegraphNodeKind::MatchDispatch,
+            fact_kind: "match_dispatch",
+            label: format!("match {domain_label}"),
+            facts,
+            contains_relation: "declaration_contains_match_dispatch",
+        },
+    );
+}
+
+fn push_call_fact(document: &mut CodegraphDocument, span: Span, expr: &Expr, context: BodyFactContext<'_>) {
+    let Some((callee_key, callee_label)) = call_site_key_and_label(expr, &context.owner) else {
+        return;
+    };
+    let mut facts = BTreeMap::new();
+    facts.insert("callee_key".to_string(), callee_key.clone());
+    facts.insert("callee_label".to_string(), callee_label.clone());
+    let node_id = push_body_fact_node(
+        document,
+        BodyFactNodeInput {
+            context,
+            span,
+            kind: CodegraphNodeKind::CallSite,
+            fact_kind: "call_site",
+            label: format!("call {callee_label}"),
+            facts,
+            contains_relation: "declaration_contains_call_site",
+        },
+    );
+    push_body_external_target(
+        document,
+        BodyExternalTargetInput {
+            source_id: &node_id,
+            span,
+            edge_kind: CodegraphEdgeKind::Calls,
+            relation: "call_site_targets_callee",
+            target_kind: "call_target",
+            target_key: &callee_key,
+            target_label: &callee_label,
+        },
+    );
+}
+
+fn push_reference_fact(document: &mut CodegraphDocument, span: Span, expr: &Expr, context: BodyFactContext<'_>) {
+    let Some((reference_key, reference_label, reference_kind)) = reference_key_and_label(expr, &context.owner) else {
+        return;
+    };
+    let mut facts = BTreeMap::new();
+    facts.insert("reference_key".to_string(), reference_key.clone());
+    facts.insert("reference_label".to_string(), reference_label.clone());
+    facts.insert("reference_kind".to_string(), reference_kind.to_string());
+    let node_id = push_body_fact_node(
+        document,
+        BodyFactNodeInput {
+            context,
+            span,
+            kind: CodegraphNodeKind::Reference,
+            fact_kind: "reference",
+            label: reference_label.clone(),
+            facts,
+            contains_relation: "declaration_contains_reference",
+        },
+    );
+    push_body_external_target(
+        document,
+        BodyExternalTargetInput {
+            source_id: &node_id,
+            span,
+            edge_kind: CodegraphEdgeKind::References,
+            relation: "reference_targets_symbol",
+            target_kind: "reference_target",
+            target_key: &reference_key,
+            target_label: &reference_label,
+        },
+    );
+}
+
+struct BodyFactNodeInput<'a> {
+    context: BodyFactContext<'a>,
+    span: Span,
+    kind: CodegraphNodeKind,
+    fact_kind: &'static str,
+    label: String,
+    facts: BTreeMap<String, String>,
+    contains_relation: &'static str,
+}
+
+fn push_body_fact_node(document: &mut CodegraphDocument, input: BodyFactNodeInput<'_>) -> String {
+    let mut facts = input.facts;
+    let (line, column) = line_column(input.context.source, input.span);
+    facts.insert("body_fact_kind".to_string(), input.fact_kind.to_string());
+    facts.insert("owner".to_string(), input.context.owner.clone());
+    facts.insert("line".to_string(), line.to_string());
+    facts.insert("column".to_string(), column.to_string());
+
+    let node_id = format!(
+        "body-fact:{}:{}:{}:{}-{}",
+        input.fact_kind,
+        stable_id_piece(&input.context.module_path.join("::")),
+        stable_id_piece(&input.context.owner),
+        input.span.start,
+        input.span.end
+    );
+    let span = Some(CodegraphSpan {
+        start: input.span.start,
+        end: input.span.end,
+    });
+    document.push_node(CodegraphNode {
+        id: node_id.clone(),
+        kind: input.kind,
+        label: input.label,
+        file_path: Some(input.context.rel_path.to_string()),
+        module_path: input.context.module_path.to_vec(),
+        span,
+        facts,
+    });
+    document.push_edge(codegraph_edge(
+        input.context.parent_id,
+        &node_id,
+        CodegraphEdgeKind::Contains,
+        span,
+        input.contains_relation,
+    ));
+    node_id
+}
+
+struct BodyExternalTargetInput<'a> {
+    source_id: &'a str,
+    span: Span,
+    edge_kind: CodegraphEdgeKind,
+    relation: &'a str,
+    target_kind: &'a str,
+    target_key: &'a str,
+    target_label: &'a str,
+}
+
+fn push_body_external_target(document: &mut CodegraphDocument, input: BodyExternalTargetInput<'_>) {
+    let target_id = format!("external:{}:{}", input.target_kind, stable_id_piece(input.target_key));
+    if !codegraph_document_has_node(document, &target_id) {
+        let mut facts = BTreeMap::new();
+        facts.insert("target_kind".to_string(), input.target_kind.to_string());
+        facts.insert("target_key".to_string(), input.target_key.to_string());
+        document.push_node(CodegraphNode {
+            id: target_id.clone(),
+            kind: CodegraphNodeKind::External,
+            label: input.target_label.to_string(),
+            file_path: None,
+            module_path: Vec::new(),
+            span: None,
+            facts,
+        });
+    }
+    document.push_edge(codegraph_edge(
+        input.source_id,
+        &target_id,
+        input.edge_kind,
+        Some(CodegraphSpan {
+            start: input.span.start,
+            end: input.span.end,
+        }),
+        input.relation,
+    ));
+}
+
+fn collect_match_patterns(arms: &[Spanned<crate::frontend::ast::MatchArm>]) -> BTreeSet<PatternLabel> {
+    let mut labels = BTreeSet::new();
+    for arm in arms {
+        collect_pattern_labels(&arm.node.pattern.node, &mut labels);
+    }
+    labels
+}
+
+fn collect_pattern_labels(pattern: &Pattern, labels: &mut BTreeSet<PatternLabel>) {
+    match pattern {
+        Pattern::Wildcard | Pattern::Binding(_) => {}
+        Pattern::Literal(literal) => {
+            let (family, label) = literal_label(literal);
+            labels.insert(PatternLabel { family, label });
+        }
+        Pattern::Constructor(name, _args) => {
+            labels.insert(PatternLabel {
+                family: PatternFamily::Constructor,
+                label: format!("{}(...)", incan_source_path_label(name)),
+            });
+        }
+        Pattern::Tuple(items) | Pattern::Or(items) => {
+            for item in items {
+                collect_pattern_labels(&item.node, labels);
+            }
+        }
+        Pattern::Group(inner) => collect_pattern_labels(&inner.node, labels),
+    }
+}
+
+fn match_has_default_arm(arms: &[Spanned<crate::frontend::ast::MatchArm>]) -> bool {
+    arms.iter().any(|arm| pattern_is_default(&arm.node.pattern.node))
+}
+
+fn pattern_is_default(pattern: &Pattern) -> bool {
+    match pattern {
+        Pattern::Wildcard | Pattern::Binding(_) => true,
+        Pattern::Group(inner) => pattern_is_default(&inner.node),
+        Pattern::Or(items) => items.iter().any(|item| pattern_is_default(&item.node)),
+        Pattern::Literal(_) | Pattern::Constructor(_, _) | Pattern::Tuple(_) => false,
+    }
+}
+
+fn literal_label(literal: &Literal) -> (PatternFamily, String) {
+    match literal {
+        Literal::String(value) => (PatternFamily::StringLiteral, format!("\"{}\"", compact(value))),
+        Literal::Int(value) => (PatternFamily::Literal, value.repr.clone()),
+        Literal::Float(value) => (PatternFamily::Literal, value.repr.clone()),
+        Literal::Decimal(value) => (PatternFamily::Literal, value.repr.clone()),
+        Literal::Bool(value) => (PatternFamily::Literal, value.to_string()),
+        Literal::None => (PatternFamily::Literal, "None".to_string()),
+        Literal::Bytes(value) => (PatternFamily::Literal, format!("bytes[{}]", value.len())),
+    }
+}
+
+fn call_site_key_and_label(expr: &Expr, owner: &str) -> Option<(String, String)> {
+    match expr {
+        Expr::Call(callee, _, _) => {
+            let (callee_key, callee_label) = domain_key_and_label(&callee.node, owner)?;
+            Some((format!("call:{callee_key}"), format!("{callee_label}(...)")))
+        }
+        Expr::MethodCall(base, method, _, _) => {
+            let key = match &base.node {
+                Expr::SelfExpr => owner_type(owner)
+                    .map(|type_name| format!("method:self:{type_name}:{method}"))
+                    .unwrap_or_else(|| format!("method:self:{method}")),
+                _ => format!("method:{method}"),
+            };
+            let label = match &base.node {
+                Expr::SelfExpr => format!("self.{method}()"),
+                _ => format!(".{method}()"),
+            };
+            Some((key, label))
+        }
+        Expr::Constructor(name, _) => Some((
+            format!("constructor:{name}"),
+            format!("{}(...)", incan_source_path_label(name)),
+        )),
+        Expr::Surface(surface_expr) => match &surface_expr.payload {
+            crate::frontend::ast::SurfaceExprPayload::ScopedSymbolCall { symbol, .. } => {
+                Some((format!("surface_symbol:{symbol}"), format!("{symbol}(...)")))
+            }
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn incan_source_path_label(name: &str) -> String {
+    name.replace("::", ".")
+}
+
+fn reference_key_and_label(expr: &Expr, owner: &str) -> Option<(String, String, &'static str)> {
+    match expr {
+        Expr::Ident(name) => Some((format!("ident:{name}"), name.clone(), "identifier")),
+        Expr::SelfExpr => {
+            let key = owner_type(owner)
+                .map(|type_name| format!("self:{type_name}"))
+                .unwrap_or_else(|| "self".to_string());
+            let label = owner_type(owner)
+                .map(|type_name| format!("self ({type_name})"))
+                .unwrap_or_else(|| "self".to_string());
+            Some((key, label, "self"))
+        }
+        Expr::Field(base, field) => {
+            let key = match &base.node {
+                Expr::SelfExpr => owner_type(owner)
+                    .map(|type_name| format!("field:self:{type_name}:{field}"))
+                    .unwrap_or_else(|| format!("field:self:{field}")),
+                _ => format!("field:{field}"),
+            };
+            let label = match &base.node {
+                Expr::SelfExpr => format!("self.{field}"),
+                _ => format!(".{field}"),
+            };
+            Some((key, label, "field"))
+        }
+        _ => None,
+    }
+}
+
+fn domain_key_and_label(expr: &Expr, owner: &str) -> Option<(String, String)> {
+    match expr {
+        Expr::SelfExpr => {
+            let key = owner_type(owner)
+                .map(|type_name| format!("self:{type_name}"))
+                .unwrap_or_else(|| "self".to_string());
+            let label = owner_type(owner)
+                .map(|type_name| format!("self ({type_name})"))
+                .unwrap_or_else(|| "self".to_string());
+            Some((key, label))
+        }
+        Expr::Ident(name) => Some((format!("ident:{name}"), name.clone())),
+        Expr::Field(base, field) => {
+            let key = match &base.node {
+                Expr::SelfExpr => owner_type(owner)
+                    .map(|type_name| format!("field:self:{type_name}:{field}"))
+                    .unwrap_or_else(|| format!("field:self:{field}")),
+                _ => format!("field:{field}"),
+            };
+            let label = match &base.node {
+                Expr::SelfExpr => format!("self.{field}"),
+                _ => format!(".{field}"),
+            };
+            Some((key, label))
+        }
+        Expr::MethodCall(_, method, _, _) => Some((format!("method:{method}"), format!(".{method}()"))),
+        Expr::Call(callee, _, _) => {
+            let (callee_key, callee_label) = domain_key_and_label(&callee.node, owner)?;
+            Some((format!("call:{callee_key}"), format!("{callee_label}(...)")))
+        }
+        _ => None,
+    }
+}
+
+fn owner_type(owner: &str) -> Option<&str> {
+    let (type_name, method_name) = owner.split_once('.')?;
+    if type_name.is_empty() || method_name.is_empty() {
+        None
+    } else {
+        Some(type_name)
+    }
+}
+
+fn json_string_list(values: &[String]) -> String {
+    serde_json::to_string(values).unwrap_or_else(|_| "[]".to_string())
+}
+
+fn line_column(source: &str, span: Span) -> (usize, usize) {
+    let offset = span.start.min(source.len());
+    let mut line = 1usize;
+    let mut column = 1usize;
+    for ch in source[..offset].chars() {
+        if ch == '\n' {
+            line += 1;
+            column = 1;
+        } else {
+            column += 1;
+        }
+    }
+    (line, column)
+}
+
+fn compact(value: &str) -> String {
+    const LIMIT: usize = 48;
+    if value.chars().count() <= LIMIT {
+        return value.to_string();
+    }
+    let mut compacted = value.chars().take(LIMIT - 3).collect::<String>();
+    compacted.push_str("...");
+    compacted
+}
+
+/// Find a checked API declaration by exported name and exact source anchor.
+fn find_api_metadata_declaration<'a>(
+    metadata: &'a CheckedApiMetadata,
+    name: &str,
+    span: crate::frontend::ast::Span,
+) -> Option<&'a ApiDeclaration> {
+    metadata.declarations.iter().find(|declaration| {
+        let anchor = api_declaration_anchor(declaration);
+        api_declaration_name(declaration) == name && anchor.span.start == span.start && anchor.span.end == span.end
+    })
+}
+
+/// Add RFC 048 API metadata facts to a source declaration node.
+fn api_declaration_facts(declaration: &ApiDeclaration) -> BTreeMap<String, String> {
+    let mut facts = BTreeMap::new();
+    let anchor = api_declaration_anchor(declaration);
+    facts.insert("checked_api_anchor_id".to_string(), anchor.id.clone());
+    facts.insert(
+        "checked_api_schema_version".to_string(),
+        CHECKED_API_METADATA_SCHEMA_VERSION.to_string(),
+    );
+    facts.insert(
+        "checked_api_kind".to_string(),
+        api_declaration_kind(declaration).to_string(),
+    );
+    facts.insert(
+        "checked_api_signature".to_string(),
+        api_declaration_signature(declaration),
+    );
+    if let Some(summary) = api_declaration_doc_summary(declaration) {
+        facts.insert("checked_api_doc_summary".to_string(), summary);
+    }
+    facts
+}
+
+/// Add checked API child nodes that are useful for package exploration but are not top-level declarations.
+fn push_api_member_codegraph(
+    document: &mut CodegraphDocument,
+    declaration: &ApiDeclaration,
+    declaration_id: &str,
+    rel_path: &str,
+    module_path: &[String],
+) {
+    match declaration {
+        ApiDeclaration::Model(model) => {
+            for field in &model.fields {
+                push_api_field_member(document, declaration_id, &model.anchor, rel_path, module_path, field);
+            }
+            for method in &model.methods {
+                push_api_method_member(document, declaration_id, &model.anchor, rel_path, module_path, method);
+            }
+        }
+        ApiDeclaration::Class(class) => {
+            for field in &class.fields {
+                push_api_field_member(document, declaration_id, &class.anchor, rel_path, module_path, field);
+            }
+            for method in &class.methods {
+                push_api_method_member(document, declaration_id, &class.anchor, rel_path, module_path, method);
+            }
+        }
+        ApiDeclaration::Trait(trait_decl) => {
+            for field in &trait_decl.requires {
+                push_api_field_member(
+                    document,
+                    declaration_id,
+                    &trait_decl.anchor,
+                    rel_path,
+                    module_path,
+                    field,
+                );
+            }
+            for method in &trait_decl.methods {
+                push_api_method_member(
+                    document,
+                    declaration_id,
+                    &trait_decl.anchor,
+                    rel_path,
+                    module_path,
+                    method,
+                );
+            }
+        }
+        ApiDeclaration::Enum(enum_decl) => {
+            for variant in &enum_decl.variants {
+                let mut facts = BTreeMap::new();
+                facts.insert("member_kind".to_string(), "enum_variant".to_string());
+                facts.insert("checked_api_parent_anchor_id".to_string(), enum_decl.anchor.id.clone());
+                if !variant.fields.is_empty() {
+                    facts.insert(
+                        "checked_api_signature".to_string(),
+                        format!(
+                            "{}({})",
+                            variant.name,
+                            variant
+                                .fields
+                                .iter()
+                                .map(format_api_type_ref)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ),
+                    );
+                }
+                push_api_member_node(
+                    document,
+                    ApiMemberNodeInput {
+                        declaration_id,
+                        parent_anchor: &enum_decl.anchor,
+                        rel_path,
+                        module_path,
+                        member_kind: "enum_variant",
+                        label: &variant.name,
+                        span: None,
+                        facts,
+                    },
+                );
+            }
+            for alias in &enum_decl.variant_aliases {
+                let mut facts = BTreeMap::new();
+                facts.insert("member_kind".to_string(), "enum_variant_alias".to_string());
+                facts.insert("checked_api_parent_anchor_id".to_string(), enum_decl.anchor.id.clone());
+                facts.insert("target".to_string(), alias.target.clone());
+                push_api_member_node(
+                    document,
+                    ApiMemberNodeInput {
+                        declaration_id,
+                        parent_anchor: &enum_decl.anchor,
+                        rel_path,
+                        module_path,
+                        member_kind: "enum_variant_alias",
+                        label: &alias.name,
+                        span: None,
+                        facts,
+                    },
+                );
+            }
+        }
+        ApiDeclaration::Newtype(newtype) => {
+            for method in &newtype.methods {
+                push_api_method_member(document, declaration_id, &newtype.anchor, rel_path, module_path, method);
+            }
+        }
+        ApiDeclaration::Function(_)
+        | ApiDeclaration::TypeAlias(_)
+        | ApiDeclaration::Const(_)
+        | ApiDeclaration::Static(_)
+        | ApiDeclaration::Alias(_)
+        | ApiDeclaration::Partial(_) => {}
+    }
+}
+
+/// Add a field-like API member node.
+fn push_api_field_member(
+    document: &mut CodegraphDocument,
+    declaration_id: &str,
+    parent_anchor: &SourceAnchor,
+    rel_path: &str,
+    module_path: &[String],
+    field: &FieldExport,
+) {
+    let mut facts = BTreeMap::new();
+    facts.insert("member_kind".to_string(), "field".to_string());
+    facts.insert("checked_api_parent_anchor_id".to_string(), parent_anchor.id.clone());
+    facts.insert("checked_api_type".to_string(), format_api_type_ref(&field.ty));
+    facts.insert("has_default".to_string(), field.has_default.to_string());
+    if let Some(alias) = &field.alias {
+        facts.insert("alias".to_string(), alias.clone());
+    }
+    if let Some(description) = &field.description {
+        facts.insert("description".to_string(), description.clone());
+    }
+    push_api_member_node(
+        document,
+        ApiMemberNodeInput {
+            declaration_id,
+            parent_anchor,
+            rel_path,
+            module_path,
+            member_kind: "field",
+            label: &field.name,
+            span: None,
+            facts,
+        },
+    );
+}
+
+/// Add a method API member node.
+fn push_api_method_member(
+    document: &mut CodegraphDocument,
+    declaration_id: &str,
+    parent_anchor: &SourceAnchor,
+    rel_path: &str,
+    module_path: &[String],
+    method: &ApiMethod,
+) {
+    let mut facts = BTreeMap::new();
+    facts.insert("member_kind".to_string(), "method".to_string());
+    facts.insert("checked_api_anchor_id".to_string(), method.anchor.id.clone());
+    facts.insert("checked_api_parent_anchor_id".to_string(), parent_anchor.id.clone());
+    facts.insert("checked_api_signature".to_string(), api_method_signature(method));
+    if let Some(summary) = compact_api_doc_summary(
+        method
+            .docstring_sections
+            .as_ref()
+            .and_then(|docstring| docstring.summary.as_deref()),
+    ) {
+        facts.insert("checked_api_doc_summary".to_string(), summary);
+    }
+    push_api_member_node(
+        document,
+        ApiMemberNodeInput {
+            declaration_id,
+            parent_anchor,
+            rel_path,
+            module_path,
+            member_kind: "method",
+            label: &method.name,
+            span: Some(CodegraphSpan {
+                start: method.anchor.span.start,
+                end: method.anchor.span.end,
+            }),
+            facts,
+        },
+    );
+}
+
+/// Inputs for adding one checked API member graph node.
+struct ApiMemberNodeInput<'a> {
+    declaration_id: &'a str,
+    parent_anchor: &'a SourceAnchor,
+    rel_path: &'a str,
+    module_path: &'a [String],
+    member_kind: &'a str,
+    label: &'a str,
+    span: Option<CodegraphSpan>,
+    facts: BTreeMap<String, String>,
+}
+
+/// Add one checked API member node and containment edge.
+fn push_api_member_node(document: &mut CodegraphDocument, input: ApiMemberNodeInput<'_>) {
+    let member_id = format!(
+        "api-member:{}:{}:{}",
+        stable_id_piece(&input.parent_anchor.id),
+        input.member_kind,
+        stable_id_piece(input.label)
+    );
+    document.push_node(CodegraphNode {
+        id: member_id.clone(),
+        kind: CodegraphNodeKind::ApiMember,
+        label: input.label.to_string(),
+        file_path: Some(input.rel_path.to_string()),
+        module_path: input.module_path.to_vec(),
+        span: input.span,
+        facts: input.facts,
+    });
+    document.push_edge(codegraph_edge(
+        input.declaration_id,
+        &member_id,
+        CodegraphEdgeKind::Contains,
+        input.span,
+        "declaration_contains_api_member",
+    ));
+}
+
+/// Return the source anchor attached to a checked API declaration.
+fn api_declaration_anchor(declaration: &ApiDeclaration) -> &SourceAnchor {
+    match declaration {
+        ApiDeclaration::Function(function) => &function.anchor,
+        ApiDeclaration::Model(model) => &model.anchor,
+        ApiDeclaration::Class(class) => &class.anchor,
+        ApiDeclaration::Trait(trait_decl) => &trait_decl.anchor,
+        ApiDeclaration::Enum(enum_decl) => &enum_decl.anchor,
+        ApiDeclaration::Newtype(newtype) => &newtype.anchor,
+        ApiDeclaration::TypeAlias(alias) => &alias.anchor,
+        ApiDeclaration::Const(konst) => &konst.anchor,
+        ApiDeclaration::Static(static_decl) => &static_decl.anchor,
+        ApiDeclaration::Alias(alias) => &alias.anchor,
+        ApiDeclaration::Partial(partial) => &partial.anchor,
+    }
+}
+
+/// Return the exported source name attached to a checked API declaration.
+fn api_declaration_name(declaration: &ApiDeclaration) -> &str {
+    match declaration {
+        ApiDeclaration::Function(function) => &function.name,
+        ApiDeclaration::Model(model) => &model.name,
+        ApiDeclaration::Class(class) => &class.name,
+        ApiDeclaration::Trait(trait_decl) => &trait_decl.name,
+        ApiDeclaration::Enum(enum_decl) => &enum_decl.name,
+        ApiDeclaration::Newtype(newtype) => &newtype.name,
+        ApiDeclaration::TypeAlias(alias) => &alias.name,
+        ApiDeclaration::Const(konst) => &konst.name,
+        ApiDeclaration::Static(static_decl) => &static_decl.name,
+        ApiDeclaration::Alias(alias) => &alias.name,
+        ApiDeclaration::Partial(partial) => &partial.name,
+    }
+}
+
+/// Return the RFC 048 declaration kind label used by graph facts.
+fn api_declaration_kind(declaration: &ApiDeclaration) -> &'static str {
+    match declaration {
+        ApiDeclaration::Function(_) => "function",
+        ApiDeclaration::Model(_) => "model",
+        ApiDeclaration::Class(_) => "class",
+        ApiDeclaration::Trait(_) => "trait",
+        ApiDeclaration::Enum(_) => "enum",
+        ApiDeclaration::Newtype(newtype) if newtype.is_rusttype => "rusttype",
+        ApiDeclaration::Newtype(_) => "newtype",
+        ApiDeclaration::TypeAlias(_) => "type_alias",
+        ApiDeclaration::Const(_) => "const",
+        ApiDeclaration::Static(_) => "static",
+        ApiDeclaration::Alias(_) => "alias",
+        ApiDeclaration::Partial(_) => "partial",
+    }
+}
+
+/// Return a compact source-like signature for checked API graph facts.
+fn api_declaration_signature(declaration: &ApiDeclaration) -> String {
+    match declaration {
+        ApiDeclaration::Function(function) => {
+            let prefix = if function.is_async { "pub async def" } else { "pub def" };
+            format!(
+                "{prefix} {}({}) -> {}",
+                function.name,
+                format_api_params(&function.params),
+                format_api_type_ref(&function.return_type)
+            )
+        }
+        ApiDeclaration::Model(model) => format!("pub model {}", model.name),
+        ApiDeclaration::Class(class) => format!("pub class {}", class.name),
+        ApiDeclaration::Trait(trait_decl) => format!("pub trait {}", trait_decl.name),
+        ApiDeclaration::Enum(enum_decl) => format!("pub enum {}", enum_decl.name),
+        ApiDeclaration::Newtype(newtype) => {
+            let keyword = if newtype.is_rusttype { "rusttype" } else { "newtype" };
+            format!(
+                "pub {keyword} {} = {}",
+                newtype.name,
+                format_api_type_ref(&newtype.underlying)
+            )
+        }
+        ApiDeclaration::TypeAlias(alias) => {
+            format!(
+                "pub type {} = {}",
+                alias.name,
+                format_api_type_ref(&alias.type_alias.target)
+            )
+        }
+        ApiDeclaration::Const(konst) => format!("pub const {}: {}", konst.name, format_api_type_ref(&konst.ty)),
+        ApiDeclaration::Static(static_decl) => {
+            format!(
+                "pub static {}: {}",
+                static_decl.name,
+                format_api_type_ref(&static_decl.ty)
+            )
+        }
+        ApiDeclaration::Alias(alias) => format!("pub {} = alias {}", alias.name, alias.target_path.join("::")),
+        ApiDeclaration::Partial(partial) => {
+            let prefix = if partial.is_async {
+                "pub async partial"
+            } else {
+                "pub partial"
+            };
+            format!(
+                "{prefix} {}({}) -> {}",
+                partial.name,
+                format_api_params(&partial.params),
+                format_api_type_ref(&partial.return_type)
+            )
+        }
+    }
+}
+
+/// Return a compact source-like signature for a checked API method.
+fn api_method_signature(method: &ApiMethod) -> String {
+    let prefix = if method.is_async { "async def" } else { "def" };
+    let mut params = Vec::new();
+    if let Some(receiver) = &method.receiver {
+        params.push(match receiver {
+            ReceiverExport::Immutable => "self".to_string(),
+            ReceiverExport::Mutable => "mut self".to_string(),
+        });
+    }
+    params.extend(method.params.iter().map(format_api_param));
+    format!(
+        "{prefix} {}({}) -> {}",
+        method.name,
+        params.join(", "),
+        format_api_type_ref(&method.return_type)
+    )
+}
+
+/// Return the parsed docstring summary attached to a checked API declaration.
+fn api_declaration_doc_summary(declaration: &ApiDeclaration) -> Option<String> {
+    let summary = match declaration {
+        ApiDeclaration::Function(function) => function
+            .docstring_sections
+            .as_ref()
+            .and_then(|docstring| docstring.summary.as_deref()),
+        ApiDeclaration::Model(model) => model
+            .docstring_sections
+            .as_ref()
+            .and_then(|docstring| docstring.summary.as_deref()),
+        ApiDeclaration::Class(class) => class
+            .docstring_sections
+            .as_ref()
+            .and_then(|docstring| docstring.summary.as_deref()),
+        ApiDeclaration::Trait(trait_decl) => trait_decl
+            .docstring_sections
+            .as_ref()
+            .and_then(|docstring| docstring.summary.as_deref()),
+        ApiDeclaration::Enum(enum_decl) => enum_decl
+            .docstring_sections
+            .as_ref()
+            .and_then(|docstring| docstring.summary.as_deref()),
+        ApiDeclaration::Newtype(newtype) => newtype
+            .docstring_sections
+            .as_ref()
+            .and_then(|docstring| docstring.summary.as_deref()),
+        ApiDeclaration::TypeAlias(_)
+        | ApiDeclaration::Const(_)
+        | ApiDeclaration::Static(_)
+        | ApiDeclaration::Alias(_)
+        | ApiDeclaration::Partial(_) => None,
+    };
+    compact_api_doc_summary(summary)
+}
+
+/// Keep graph doc facts small enough for indexing and previews.
+fn compact_api_doc_summary(summary: Option<&str>) -> Option<String> {
+    let trimmed = summary?.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let paragraph = trimmed.split("\n\n").next().unwrap_or(trimmed);
+    let mut compact = paragraph.split_whitespace().collect::<Vec<_>>().join(" ");
+    if compact.chars().count() > 240 {
+        compact = compact.chars().take(237).collect::<String>();
+        compact.push_str("...");
+    }
+    Some(compact)
+}
+
+/// Add an import declaration and its textual target as graph facts.
+fn push_import_codegraph(
+    document: &mut CodegraphDocument,
+    import: &ImportDecl,
+    span: crate::frontend::ast::Span,
+    module_id: &str,
+    module_path: &[String],
+    rel_path: &str,
+) {
+    let import_label = import_label(import);
+    let import_id = format!("import:{}:{}:{}", module_path.join("::"), span.start, span.end);
+    let mut facts = BTreeMap::new();
+    facts.insert(
+        "visibility".to_string(),
+        visibility_label(import.visibility).to_string(),
+    );
+    facts.insert("target".to_string(), import_label.clone());
+    document.push_node(CodegraphNode {
+        id: import_id.clone(),
+        kind: CodegraphNodeKind::Import,
+        label: import_label.clone(),
+        file_path: Some(rel_path.to_string()),
+        module_path: module_path.to_vec(),
+        span: Some(CodegraphSpan {
+            start: span.start,
+            end: span.end,
+        }),
+        facts,
+    });
+    document.push_edge(codegraph_edge(
+        module_id,
+        &import_id,
+        CodegraphEdgeKind::Contains,
+        Some(CodegraphSpan {
+            start: span.start,
+            end: span.end,
+        }),
+        "module_contains_import",
+    ));
+
+    let external_id = format!("external:{}", stable_id_piece(&import_label));
+    if !codegraph_document_has_node(document, &external_id) {
+        document.push_node(CodegraphNode {
+            id: external_id.clone(),
+            kind: CodegraphNodeKind::External,
+            label: import_label,
+            file_path: None,
+            module_path: Vec::new(),
+            span: None,
+            facts: BTreeMap::new(),
+        });
+    }
+    document.push_edge(codegraph_edge(
+        &import_id,
+        &external_id,
+        CodegraphEdgeKind::Imports,
+        Some(CodegraphSpan {
+            start: span.start,
+            end: span.end,
+        }),
+        "import_targets_external",
+    ));
+}
+
+/// Return the codegraph kind, name, and visibility for declarations with stable source identity.
+fn declaration_codegraph_info(declaration: &Declaration) -> Option<(&'static str, String, &'static str)> {
+    match declaration {
+        Declaration::Const(ConstDecl { visibility, name, .. }) => {
+            Some(("const", name.clone(), visibility_label(*visibility)))
+        }
+        Declaration::Static(StaticDecl { visibility, name, .. }) => {
+            Some(("static", name.clone(), visibility_label(*visibility)))
+        }
+        Declaration::Model(ModelDecl { visibility, name, .. }) => {
+            Some(("model", name.clone(), visibility_label(*visibility)))
+        }
+        Declaration::Class(ClassDecl { visibility, name, .. }) => {
+            Some(("class", name.clone(), visibility_label(*visibility)))
+        }
+        Declaration::Trait(TraitDecl { visibility, name, .. }) => {
+            Some(("trait", name.clone(), visibility_label(*visibility)))
+        }
+        Declaration::Alias(AliasDecl { visibility, name, .. }) => {
+            Some(("alias", name.clone(), visibility_label(*visibility)))
+        }
+        Declaration::Partial(PartialDecl { visibility, name, .. }) => {
+            Some(("partial", name.clone(), visibility_label(*visibility)))
+        }
+        Declaration::TypeAlias(TypeAliasDecl { visibility, name, .. }) => {
+            Some(("type_alias", name.clone(), visibility_label(*visibility)))
+        }
+        Declaration::Newtype(NewtypeDecl {
+            visibility,
+            name,
+            is_rusttype,
+            ..
+        }) => {
+            let kind = if *is_rusttype { "rusttype" } else { "newtype" };
+            Some((kind, name.clone(), visibility_label(*visibility)))
+        }
+        Declaration::Enum(EnumDecl { visibility, name, .. }) => {
+            Some(("enum", name.clone(), visibility_label(*visibility)))
+        }
+        Declaration::Function(FunctionDecl { visibility, name, .. }) => {
+            Some(("function", name.clone(), visibility_label(*visibility)))
+        }
+        Declaration::TestModule(TestModuleDecl { name, .. }) => Some(("test_module", name.clone(), "private")),
+        Declaration::Import(_) | Declaration::Docstring(_) => None,
+    }
+}
+
+/// Format one import declaration as a stable target label.
+fn import_label(import: &ImportDecl) -> String {
+    match &import.kind {
+        ImportKind::Module(path) => {
+            let mut label = format_import_path(path);
+            if let Some(alias) = &import.alias {
+                label.push_str(" as ");
+                label.push_str(alias);
+            }
+            label
+        }
+        ImportKind::From { module, items } => {
+            format!(
+                "from {} import {}",
+                format_import_path(module),
+                format_import_items(items)
+            )
+        }
+        ImportKind::PubLibrary { library } => format!("pub::{library}"),
+        ImportKind::PubFrom { library, items } => {
+            format!("from pub::{library} import {}", format_import_items(items))
+        }
+        ImportKind::Python(module) => format!("python:{module}"),
+        ImportKind::RustCrate {
+            crate_name,
+            path,
+            version,
+            features,
+        } => format_rust_import(crate_name, path, version.as_deref(), features),
+        ImportKind::RustFrom {
+            crate_name,
+            path,
+            version,
+            features,
+            items,
+        } => format!(
+            "from {} import {}",
+            format_rust_import(crate_name, path, version.as_deref(), features),
+            format_import_items(items)
+        ),
+    }
+}
+
+/// Format one source import path.
+fn format_import_path(path: &ImportPath) -> String {
+    path.to_rust_path()
+}
+
+/// Format one imported item list.
+fn format_import_items(items: &[ImportItem]) -> String {
+    items
+        .iter()
+        .map(|item| {
+            if let Some(alias) = &item.alias {
+                format!("{} as {}", item.name, alias)
+            } else {
+                item.name.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// Format one Rust-origin import path with optional dependency metadata.
+fn format_rust_import(crate_name: &str, path: &[String], version: Option<&str>, features: &[String]) -> String {
+    let mut parts = vec!["rust".to_string(), crate_name.to_string()];
+    parts.extend(path.iter().cloned());
+    let mut label = parts.join("::");
+    if let Some(version) = version {
+        label.push_str(&format!("@{version}"));
+    }
+    if !features.is_empty() {
+        label.push_str("[features=");
+        label.push_str(&features.join(","));
+        label.push(']');
+    }
+    label
+}
+
+/// Return a stable visibility label.
+fn visibility_label(visibility: Visibility) -> &'static str {
+    match visibility {
+        Visibility::Private => "private",
+        Visibility::Public => "public",
+    }
+}
+
+/// Build one edge with a deterministic id.
+fn codegraph_edge(
+    source_id: &str,
+    target_id: &str,
+    kind: CodegraphEdgeKind,
+    span: Option<CodegraphSpan>,
+    relation: &str,
+) -> CodegraphEdge {
+    let mut facts = BTreeMap::new();
+    facts.insert("relation".to_string(), relation.to_string());
+    CodegraphEdge {
+        id: format!(
+            "edge:{}:{relation}:{}",
+            stable_id_piece(source_id),
+            stable_id_piece(target_id)
+        ),
+        kind,
+        source_id: source_id.to_string(),
+        target_id: target_id.to_string(),
+        span,
+        facts,
+    }
+}
+
+/// Render a path relative to the project root when possible so exported facts are shareable.
+fn codegraph_path(path: &Path, project_root: &Path) -> String {
+    path.strip_prefix(project_root).unwrap_or(path).display().to_string()
+}
+
+/// Sanitize a string for use inside stable ids.
+fn stable_id_piece(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| match ch {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '_' | '-' | '.' => ch,
+            _ => '_',
+        })
+        .collect()
+}
+
+/// Return whether a document already contains a node id.
+fn codegraph_document_has_node(document: &CodegraphDocument, id: &str) -> bool {
+    document.nodes.iter().any(|node| node.id == id)
+}
+
 /// Type-check a metadata entry path and collect checked API metadata for all local modules.
 fn collect_api_metadata_package(path: &Path) -> CliResult<CheckedApiMetadataPackage> {
     let entry_path = resolve_metadata_entry_path(path)?;
@@ -473,6 +2462,17 @@ fn metadata_module_path(module: &ParsedModule, entry_path: &Path) -> Vec<String>
     module.path_segments.clone()
 }
 
+/// Return the logical module path used in codegraph facts for one parsed module.
+fn codegraph_module_path(module: &ParsedModule, entry_path: Option<&Path>) -> Vec<String> {
+    if let Some(entry_path) = entry_path
+        && module.file_path == entry_path
+        && let Some(stem) = entry_path.file_stem().and_then(|stem| stem.to_str())
+    {
+        return vec![stem.to_string()];
+    }
+    module.path_segments.clone()
+}
+
 /// Resolve a file or project directory to the source file used as the metadata entry point.
 fn resolve_metadata_entry_path(path: &Path) -> CliResult<PathBuf> {
     let absolute = if path.is_absolute() {
@@ -496,13 +2496,13 @@ fn resolve_metadata_entry_path(path: &Path) -> CliResult<PathBuf> {
             return Ok(main);
         }
         return Err(CliError::failure(format!(
-            "metadata API extraction requires an Incan source file, or a project directory with `src/lib.incn` or `src/main.incn`: {}",
+            "tool export requires an Incan source file, or a project directory with `src/lib.incn` or `src/main.incn`: {}",
             absolute.display()
         )));
     }
 
     Err(CliError::failure(format!(
-        "metadata API extraction path does not exist: {}",
+        "tool export path does not exist: {}",
         absolute.display()
     )))
 }
@@ -1242,6 +3242,7 @@ fn display_option_path(path: &Option<PathBuf>) -> String {
 mod tests {
     use super::*;
     use crate::frontend::api_metadata::ApiDeclaration;
+    use incan_codegraph::{CODEGRAPH_SCHEMA_VERSION, CodegraphEdgeKind, CodegraphNodeKind};
 
     #[test]
     fn collect_api_metadata_package_extracts_project_lib() -> Result<(), Box<dyn std::error::Error>> {
@@ -1292,6 +3293,230 @@ pub quick_label = partial label(prefix=LABEL)
             markdown.contains("pub quick_label = partial label(prefix: str = ..., suffix: str = ...) -> str")
                 && markdown.contains("- Presets: `prefix`"),
             "expected generated API Markdown to render partial signatures and provenance, got:\n{markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn collect_codegraph_document_exports_modules_declarations_and_imports() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src");
+        fs::create_dir_all(&src)?;
+        fs::write(
+            tmp.path().join("incan.toml"),
+            r#"
+[project]
+name = "codegraph_demo"
+version = "0.1.0"
+"#,
+        )?;
+        fs::write(
+            src.join("helper.incn"),
+            r#"
+pub def helper() -> int:
+    return 1
+"#,
+        )?;
+        fs::write(
+            src.join("lib.incn"),
+            r#"
+from helper import helper
+
+pub model User:
+    id: int
+
+pub def load() -> int:
+    return helper()
+
+pub def label(kind: str) -> str:
+    match kind:
+        "create" => "Create"
+        "update" => "Update"
+        _ => "Other"
+"#,
+        )?;
+
+        let document = collect_codegraph_document(tmp.path(), false)?;
+
+        assert_eq!(document.schema_version, CODEGRAPH_SCHEMA_VERSION);
+        assert!(
+            document
+                .nodes
+                .iter()
+                .any(|node| node.kind == CodegraphNodeKind::Declaration
+                    && node.label == "User"
+                    && node.facts.get("declaration_kind").is_some_and(|kind| kind == "model")
+                    && node
+                        .facts
+                        .get("checked_api_anchor_id")
+                        .is_some_and(|anchor| anchor == "src::lib::User")),
+            "expected model declaration node to carry checked API metadata facts: {document:?}"
+        );
+        assert!(
+            document
+                .nodes
+                .iter()
+                .any(|node| node.kind == CodegraphNodeKind::ApiMember
+                    && node.label == "id"
+                    && node.facts.get("member_kind").is_some_and(|kind| kind == "field")
+                    && node.facts.get("checked_api_type").is_some_and(|ty| ty == "int")),
+            "expected model field API member node in codegraph export: {document:?}"
+        );
+        assert!(
+            document
+                .nodes
+                .iter()
+                .any(|node| node.kind == CodegraphNodeKind::Declaration
+                    && node.label == "load"
+                    && node
+                        .facts
+                        .get("checked_api_signature")
+                        .is_some_and(|signature| signature == "pub def load() -> int")),
+            "expected function declaration node to carry checked API signature: {document:?}"
+        );
+        assert!(
+            document
+                .nodes
+                .iter()
+                .any(|node| node.kind == CodegraphNodeKind::Import && node.label == "from helper import helper"),
+            "expected import node in codegraph export: {document:?}"
+        );
+        assert!(
+            document
+                .edges
+                .iter()
+                .any(|edge| edge.kind == CodegraphEdgeKind::Imports),
+            "expected import edge in codegraph export: {document:?}"
+        );
+        assert!(
+            document
+                .nodes
+                .iter()
+                .any(|node| node.kind == CodegraphNodeKind::CallSite
+                    && node
+                        .facts
+                        .get("callee_key")
+                        .is_some_and(|callee| callee == "call:ident:helper")),
+            "expected function call site node in codegraph export: {document:?}"
+        );
+        assert!(
+            document
+                .nodes
+                .iter()
+                .any(|node| node.kind == CodegraphNodeKind::Reference
+                    && node
+                        .facts
+                        .get("reference_key")
+                        .is_some_and(|reference| reference == "ident:helper")),
+            "expected identifier reference node in codegraph export: {document:?}"
+        );
+        assert!(
+            document.nodes.iter().any(|node| {
+                node.kind == CodegraphNodeKind::MatchDispatch
+                    && node
+                        .facts
+                        .get("domain_key")
+                        .is_some_and(|domain| domain == "ident:kind")
+                    && node
+                        .facts
+                        .get("explicit_pattern_count")
+                        .is_some_and(|count| count == "2")
+                    && node.facts.get("arm_count").is_some_and(|count| count == "3")
+                    && node
+                        .facts
+                        .get("has_default_arm")
+                        .is_some_and(|has_default| has_default == "true")
+                    && node.facts.get("pattern_labels").is_some_and(|patterns| {
+                        patterns.contains("\\\"create\\\"") && patterns.contains("\\\"update\\\"")
+                    })
+            }),
+            "expected match dispatch node in codegraph export: {document:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn collect_codegraph_document_globs_directory_sources() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let nested = tmp.path().join("nested");
+        fs::create_dir_all(&nested)?;
+        fs::write(
+            tmp.path().join("alpha.incn"),
+            r#"
+pub def alpha() -> int:
+    return 1
+"#,
+        )?;
+        fs::write(
+            nested.join("beta.incn"),
+            r#"
+pub model Beta:
+    id: int
+"#,
+        )?;
+
+        let document = collect_codegraph_document(tmp.path(), false)?;
+
+        assert!(
+            document
+                .nodes
+                .iter()
+                .any(|node| node.kind == CodegraphNodeKind::File && node.file_path.as_deref() == Some("alpha.incn")),
+            "expected directory export to include top-level .incn file: {document:?}"
+        );
+        assert!(
+            document
+                .nodes
+                .iter()
+                .any(|node| node.kind == CodegraphNodeKind::File
+                    && node.file_path.as_deref() == Some("nested/beta.incn")),
+            "expected directory export to include nested .incn file: {document:?}"
+        );
+        assert!(
+            document.nodes.iter().any(|node| node.kind == CodegraphNodeKind::Module
+                && node.module_path == vec!["nested".to_string(), "beta".to_string()]),
+            "expected nested directory source to get path-derived module facts: {document:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn collect_codegraph_document_allow_errors_exports_unchecked_source_graph() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        fs::write(
+            tmp.path().join("broken.incn"),
+            r#"
+pub def broken() -> int:
+    return "wrong"
+"#,
+        )?;
+
+        assert!(
+            collect_codegraph_document(tmp.path(), false).is_err(),
+            "expected checked codegraph export to fail on type errors"
+        );
+
+        let document = collect_codegraph_document(tmp.path(), true)?;
+
+        assert!(
+            document
+                .nodes
+                .iter()
+                .any(|node| node.kind == CodegraphNodeKind::Declaration
+                    && node.label == "broken"
+                    && node
+                        .facts
+                        .get("declaration_kind")
+                        .is_some_and(|kind| kind == "function")),
+            "expected unchecked source graph to keep declaration facts: {document:?}"
+        );
+        assert!(
+            !document
+                .nodes
+                .iter()
+                .any(|node| node.facts.contains_key("checked_api_signature")),
+            "expected unchecked export to omit checked API facts for failing modules: {document:?}"
         );
         Ok(())
     }

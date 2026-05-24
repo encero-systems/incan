@@ -1487,6 +1487,7 @@ dependencies = [
  "clap",
  "flate2",
  "hex",
+ "incan_codegraph",
  "incan_core",
  "incan_semantics_core",
  "incan_semantics_stdlib",
@@ -1523,6 +1524,14 @@ dependencies = [
  "xxhash-rust",
  "xz2",
  "zstd",
+]
+
+[[package]]
+name = "incan_codegraph"
+version = "0.3.0-rc10"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
