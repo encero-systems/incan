@@ -84,6 +84,10 @@ impl AstLowering {
                 super::super::super::decl::IrImportItem {
                     name: item.name.clone(),
                     alias: item.alias.clone(),
+                    is_static: self
+                        .type_info
+                        .as_ref()
+                        .is_some_and(|info| info.static_binding(binding_name).is_some()),
                     rust_trait_import,
                 }
             })

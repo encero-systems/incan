@@ -217,6 +217,7 @@ impl<'a> IrEmitter<'a> {
                 let elems = elems?;
                 Ok(quote! { (#(#elems),*) })
             }
+            (T::Struct(_), IrExprKind::Struct { name, fields }) => self.emit_const_struct_value(name, fields),
             (T::FrozenStr, IrExprKind::String(s)) => Ok(quote! { incan_stdlib::frozen::FrozenStr::new(#s) }),
             (T::FrozenBytes, IrExprKind::Bytes(bytes)) => {
                 let lit = Literal::byte_string(bytes);
@@ -224,6 +225,55 @@ impl<'a> IrEmitter<'a> {
             }
             _ => self.emit_expr(value),
         }
+    }
+
+    /// Emit a struct/model literal in a Rust const initializer without applying runtime ownership conversions.
+    fn emit_const_struct_value(
+        &self,
+        name: &str,
+        fields: &[(String, super::super::TypedExpr)],
+    ) -> Result<TokenStream, EmitError> {
+        let n = Self::rust_ident(name);
+        let Some(metadata) = self.struct_constructor_metadata_for_fields(name, fields) else {
+            let field_tokens: Result<Vec<_>, EmitError> = fields
+                .iter()
+                .map(|(field_name, field_value)| {
+                    let field_ident = Self::rust_ident(field_name);
+                    let value = self.emit_const_value_for_type(&field_value.ty, field_value)?;
+                    Ok(quote! { #field_ident: #value })
+                })
+                .collect();
+            let field_tokens = field_tokens?;
+            return Ok(quote! { #n { #(#field_tokens),* } });
+        };
+
+        let mut provided: std::collections::HashMap<&str, &super::super::TypedExpr> = std::collections::HashMap::new();
+        for (field_name, field_value) in fields {
+            if let Some(canonical) = metadata.canonical_field_name(field_name) {
+                provided.insert(canonical, field_value);
+            }
+        }
+
+        let mut out_fields = Vec::new();
+        for field_name in &metadata.fields {
+            let field_ident = Self::rust_ident(field_name);
+            let Some(target_ty) = metadata.field_types.get(field_name) else {
+                return Err(EmitError::Unsupported(format!(
+                    "missing field type metadata for const field '{}.{}'",
+                    name, field_name
+                )));
+            };
+            let Some(field_value) = provided.get(field_name.as_str()) else {
+                return Err(EmitError::Unsupported(format!(
+                    "const model constructor '{}' must provide field '{}' explicitly",
+                    name, field_name
+                )));
+            };
+            let value = self.emit_const_value_for_type(target_ty, field_value)?;
+            out_fields.push(quote! { #field_ident: #value });
+        }
+
+        Ok(quote! { #n { #(#out_fields),* } })
     }
 
     // ---- Import emission ----
@@ -438,12 +488,20 @@ impl<'a> IrEmitter<'a> {
                             && item.name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
                 })
                 .map(|item| {
-                    let name_ident = Self::rust_ident(&item.name);
+                    let name_ident = if item.is_static {
+                        Self::rust_static_ident(&item.name)
+                    } else {
+                        Self::rust_ident(&item.name)
+                    };
                     let path_tokens_clone = path_tokens.clone();
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     let absolute_path = matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import;
                     if let Some(alias) = &item.alias {
-                        let alias_ident = Self::rust_ident(alias);
+                        let alias_ident = if item.is_static {
+                            Self::rust_static_ident(alias)
+                        } else {
+                            Self::rust_ident(alias)
+                        };
                         if should_reexport_item(item) {
                             if absolute_path {
                                 quote! { pub use :: #path_ts_clone :: #name_ident as #alias_ident; }
