@@ -220,14 +220,27 @@ fn dedupe_import_declarations(ast: &mut Program) {
     ast.declarations = declarations;
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 struct TopLevelNames {
     types: HashSet<String>,
     values: HashSet<String>,
+    imported_types: HashSet<String>,
+    imported_values: HashSet<String>,
+}
+
+#[derive(Debug, Clone)]
+struct TopLevelNameSummary {
+    path: PathBuf,
+    names: TopLevelNames,
 }
 
 /// Collect top-level Rust item names that would collide if multiple Incan files were concatenated.
 fn collect_top_level_decl_names(program: &Program) -> TopLevelNames {
+    fn add_import_binding(name: &str, names: &mut TopLevelNames) {
+        names.imported_types.insert(name.to_string());
+        names.imported_values.insert(name.to_string());
+    }
+
     /// Add the Rust type/value namespace names contributed by one declaration.
     fn collect_from_decl(decl: &Declaration, names: &mut TopLevelNames) {
         match decl {
@@ -269,7 +282,40 @@ fn collect_top_level_decl_names(program: &Program) -> TopLevelNames {
                     collect_from_decl(&nested.node, names);
                 }
             }
-            Declaration::Import(_) | Declaration::Partial(_) | Declaration::Docstring(_) => {}
+            Declaration::Import(decl) => match &decl.kind {
+                ImportKind::Module(path) => {
+                    let local = decl
+                        .alias
+                        .as_ref()
+                        .or_else(|| path.segments.last())
+                        .map(String::as_str)
+                        .unwrap_or("module");
+                    add_import_binding(local, names);
+                }
+                ImportKind::From { items, .. }
+                | ImportKind::PubFrom { items, .. }
+                | ImportKind::RustFrom { items, .. } => {
+                    for item in items {
+                        add_import_binding(item.alias.as_deref().unwrap_or(&item.name), names);
+                    }
+                }
+                ImportKind::PubLibrary { library } => {
+                    add_import_binding(decl.alias.as_deref().unwrap_or(library), names);
+                }
+                ImportKind::Python(pkg) => {
+                    add_import_binding(decl.alias.as_deref().unwrap_or(pkg), names);
+                }
+                ImportKind::RustCrate { crate_name, path, .. } => {
+                    let local = decl
+                        .alias
+                        .as_ref()
+                        .or_else(|| path.last())
+                        .map(String::as_str)
+                        .unwrap_or(crate_name);
+                    add_import_binding(local, names);
+                }
+            },
+            Declaration::Partial(_) | Declaration::Docstring(_) => {}
         }
     }
 
@@ -280,10 +326,91 @@ fn collect_top_level_decl_names(program: &Program) -> TopLevelNames {
     names
 }
 
+fn collect_top_level_name_summary(
+    path: &Path,
+    source: &str,
+    library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+) -> Option<TopLevelNameSummary> {
+    let tokens = lexer::lex(source).ok()?;
+    let ast =
+        parser::parse_with_context(&tokens, Some(path.to_string_lossy().as_ref()), library_imported_vocab).ok()?;
+    let names = collect_top_level_decl_names(&ast_with_inline_test_declarations(&ast));
+    Some(TopLevelNameSummary {
+        path: path.to_path_buf(),
+        names,
+    })
+}
+
+fn collect_top_level_name_summaries(
+    sources_by_file: &[(PathBuf, String)],
+    library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+) -> Option<Vec<TopLevelNameSummary>> {
+    sources_by_file
+        .iter()
+        .map(|(path, source)| collect_top_level_name_summary(path, source, library_imported_vocab))
+        .collect()
+}
+
+fn top_level_summaries_have_collision<'a>(summaries: impl IntoIterator<Item = &'a TopLevelNameSummary>) -> bool {
+    let mut type_owner: HashMap<String, PathBuf> = HashMap::new();
+    let mut value_owner: HashMap<String, PathBuf> = HashMap::new();
+    let mut imported_type_owner: HashMap<String, PathBuf> = HashMap::new();
+    let mut imported_value_owner: HashMap<String, PathBuf> = HashMap::new();
+    for summary in summaries {
+        for name in &summary.names.types {
+            if imported_type_owner
+                .get(name)
+                .is_some_and(|owner| owner != &summary.path)
+            {
+                return true;
+            }
+            if type_owner
+                .insert(name.clone(), summary.path.clone())
+                .is_some_and(|owner| owner != summary.path)
+            {
+                return true;
+            }
+        }
+        for name in &summary.names.values {
+            if imported_value_owner
+                .get(name)
+                .is_some_and(|owner| owner != &summary.path)
+            {
+                return true;
+            }
+            if value_owner
+                .insert(name.clone(), summary.path.clone())
+                .is_some_and(|owner| owner != summary.path)
+            {
+                return true;
+            }
+        }
+        for name in &summary.names.imported_types {
+            if type_owner.get(name).is_some_and(|owner| owner != &summary.path) {
+                return true;
+            }
+            imported_type_owner
+                .entry(name.clone())
+                .or_insert_with(|| summary.path.clone());
+        }
+        for name in &summary.names.imported_values {
+            if value_owner.get(name).is_some_and(|owner| owner != &summary.path) {
+                return true;
+            }
+            imported_value_owner
+                .entry(name.clone())
+                .or_insert_with(|| summary.path.clone());
+        }
+    }
+
+    false
+}
+
 /// Return whether concatenating source files into one worker harness would collide at Rust module scope.
 ///
 /// Worker batches can share one process only when their source files can coexist in the generated crate. If two files
-/// define the same model, function, or other top-level Rust item, the runner falls back to per-file harnesses.
+/// define the same model, function, or another top-level Rust item, or when one file imports a name another file
+/// declares, the runner falls back to per-file harnesses.
 fn batch_has_cross_file_top_level_collision(
     sources_by_file: &[(PathBuf, String)],
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
@@ -291,38 +418,8 @@ fn batch_has_cross_file_top_level_collision(
     if sources_by_file.len() <= 1 {
         return false;
     }
-
-    let mut type_owner: HashMap<String, PathBuf> = HashMap::new();
-    let mut value_owner: HashMap<String, PathBuf> = HashMap::new();
-    for (path, source) in sources_by_file {
-        let Ok(tokens) = lexer::lex(source) else {
-            return false;
-        };
-        let Ok(ast) =
-            parser::parse_with_context(&tokens, Some(path.to_string_lossy().as_ref()), library_imported_vocab)
-        else {
-            return false;
-        };
-        let names = collect_top_level_decl_names(&ast_with_inline_test_declarations(&ast));
-        for name in names.types {
-            if type_owner
-                .insert(name, path.clone())
-                .is_some_and(|owner| owner != *path)
-            {
-                return true;
-            }
-        }
-        for name in names.values {
-            if value_owner
-                .insert(name, path.clone())
-                .is_some_and(|owner| owner != *path)
-            {
-                return true;
-            }
-        }
-    }
-
-    false
+    collect_top_level_name_summaries(sources_by_file, library_imported_vocab)
+        .is_some_and(|summaries| top_level_summaries_have_collision(&summaries))
 }
 
 /// Partition files into greedy groups that can still share a generated Rust module scope.
@@ -334,22 +431,26 @@ fn partition_collision_free_file_groups(
     sources_by_file: &[(PathBuf, String)],
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
 ) -> Vec<Vec<PathBuf>> {
-    let mut groups: Vec<Vec<(PathBuf, String)>> = Vec::new();
-    'source: for (path, source) in sources_by_file {
+    let Some(summaries) = collect_top_level_name_summaries(sources_by_file, library_imported_vocab) else {
+        return vec![sources_by_file.iter().map(|(path, _)| path.clone()).collect()];
+    };
+
+    let mut groups: Vec<Vec<TopLevelNameSummary>> = Vec::new();
+    'source: for summary in summaries {
         for group in &mut groups {
             let mut candidate = group.clone();
-            candidate.push((path.clone(), source.clone()));
-            if !batch_has_cross_file_top_level_collision(&candidate, library_imported_vocab) {
-                group.push((path.clone(), source.clone()));
+            candidate.push(summary.clone());
+            if !top_level_summaries_have_collision(&candidate) {
+                group.push(summary);
                 continue 'source;
             }
         }
-        groups.push(vec![(path.clone(), source.clone())]);
+        groups.push(vec![summary]);
     }
 
     groups
         .into_iter()
-        .map(|group| group.into_iter().map(|(path, _)| path).collect())
+        .map(|group| group.into_iter().map(|summary| summary.path).collect())
         .collect()
 }
 
@@ -456,7 +557,18 @@ fn parse_and_desugar_test_sources(
 }
 
 fn module_name_for_segments(segments: &[String]) -> String {
-    segments.join("_")
+    let mut hasher = Sha256::new();
+    for segment in segments {
+        hasher.update(segment.as_bytes());
+        hasher.update([0]);
+    }
+    let digest = hex::encode(hasher.finalize());
+    let stem = if segments.is_empty() {
+        "module".to_string()
+    } else {
+        segments.join("_")
+    };
+    format!("{stem}_{}", &digest[..8])
 }
 
 fn read_conftest_sources(paths: &[PathBuf]) -> Result<Vec<(PathBuf, String)>, String> {
@@ -3757,6 +3869,52 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
     fn runner_crate_name_is_derived_from_batch_suffix() {
         let name = runner_crate_name_for_batch_suffix("batch_76001490ba86f677");
         assert_eq!(name, "test_runner_76001490ba86f677");
+    }
+
+    #[test]
+    fn partition_collision_free_file_groups_considers_import_bindings() {
+        let sources = vec![
+            (
+                PathBuf::from("tests/test_imports_col.incn"),
+                "from helpers import col\n\ndef test_imported_col() -> None:\n    assert col() == 1\n".to_string(),
+            ),
+            (
+                PathBuf::from("tests/test_declares_col.incn"),
+                "def col() -> int:\n    return 2\n\ndef test_local_col() -> None:\n    assert col() == 2\n".to_string(),
+            ),
+        ];
+
+        let groups = partition_collision_free_file_groups(&sources, None);
+
+        assert_eq!(groups.len(), 2);
+    }
+
+    #[test]
+    fn partition_collision_free_file_groups_allows_repeated_import_bindings() {
+        let sources = vec![
+            (
+                PathBuf::from("tests/test_a.incn"),
+                "from std.testing import assert_eq\n\ndef test_a() -> None:\n    assert_eq(1, 1)\n".to_string(),
+            ),
+            (
+                PathBuf::from("tests/test_b.incn"),
+                "from std.testing import assert_eq\n\ndef test_b() -> None:\n    assert_eq(2, 2)\n".to_string(),
+            ),
+        ];
+
+        let groups = partition_collision_free_file_groups(&sources, None);
+
+        assert_eq!(groups.len(), 1);
+    }
+
+    #[test]
+    fn module_name_for_segments_disambiguates_join_collisions() {
+        let flat = module_name_for_segments(&["a_b".to_string()]);
+        let nested = module_name_for_segments(&["a".to_string(), "b".to_string()]);
+
+        assert_ne!(flat, nested);
+        assert!(flat.starts_with("a_b_"));
+        assert!(nested.starts_with("a_b_"));
     }
 
     #[test]

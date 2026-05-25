@@ -1661,6 +1661,11 @@ impl AstLowering {
         if let ast::Expr::Ident(name) = &f.node
             && let Some(builtin) = BuiltinFn::from_name(name)
             && imported_callee_path.is_none()
+            && self
+                .type_info
+                .as_ref()
+                .is_none_or(|info| info.ident_kind(f.span).is_none())
+            && self.callable_signature_for_call_span(call_span).is_none()
             && !matches!(func.ty, IrType::Function { .. })
         {
             let args_ir = self.lower_call_args(args)?.into_iter().map(|a| a.expr).collect();

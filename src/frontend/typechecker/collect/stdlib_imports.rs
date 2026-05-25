@@ -21,6 +21,7 @@ use crate::library_manifest::{
 };
 use incan_core::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
+use incan_core::lang::surface::functions as surface_functions;
 use incan_core::lang::surface::types as surface_types;
 use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
@@ -122,16 +123,12 @@ impl StdlibFromImportContext {
         })
     }
 
-    /// Return `true` when a surface type import is legal from this stdlib module.
-    fn allows_surface_type_import(&self, item_name: &str) -> bool {
-        let Some(id) = surface_types::from_str(item_name) else {
-            return false;
-        };
-        let Some(expected_module_path) = surface_types::stdlib_module_path(id) else {
-            return false;
-        };
+    /// Return the imported surface type when it is legal from this stdlib module.
+    fn allowed_surface_type_import(&self, item_name: &str) -> Option<surface_types::SurfaceTypeId> {
+        let id = surface_types::from_str(item_name)?;
+        let expected_module_path = surface_types::stdlib_module_path(id)?;
 
-        match expected_module_path {
+        let allowed = match expected_module_path {
             "std.web" => self.is_web_namespace,
             "std.reflection" => self.is_reflection_module,
             _ if expected_module_path.starts_with("std.async.") => {
@@ -140,7 +137,8 @@ impl StdlibFromImportContext {
                 self.is_async_namespace && (async_root_or_prelude || self.module_path_str == expected_module_path)
             }
             _ => false,
-        }
+        };
+        allowed.then_some(id)
     }
 }
 
@@ -384,8 +382,12 @@ impl TypeChecker {
         if self.materialize_typechecker_only_stdlib_import(context.module, item, span) {
             return true;
         }
-        if stdlib_context.allows_surface_type_import(&item.name) {
-            self.define_from_import_symbol(item, SymbolKind::Type(TypeInfo::Builtin), span);
+        if let Some(surface_type) = stdlib_context.allowed_surface_type_import(&item.name) {
+            let local_name = Self::import_item_local_name(item);
+            let symbol_id =
+                self.define_named_import_symbol(local_name.clone(), SymbolKind::Type(TypeInfo::Builtin), span);
+            self.surface_type_import_bindings
+                .insert(local_name, (surface_type, symbol_id));
             return true;
         }
         if self.materialize_stdlib_submodule_import(context.module, item, span) {
@@ -451,8 +453,13 @@ impl TypeChecker {
     ) -> bool {
         if let Some(info) = self.stdlib_cache.lookup_function(&context.module.segments, &item.name) {
             let local_name = Self::import_item_local_name(item);
+            let surface_function = surface_functions::from_str(&item.name);
             self.record_testing_marker_import(context, item, &local_name, testing_semantics);
-            self.define_named_import_symbol(local_name, SymbolKind::Function(info), span);
+            let symbol_id = self.define_named_import_symbol(local_name.clone(), SymbolKind::Function(info), span);
+            if let Some(surface_function) = surface_function {
+                self.surface_function_import_bindings
+                    .insert(local_name, (surface_function, symbol_id));
+            }
             return true;
         }
 
@@ -565,14 +572,14 @@ impl TypeChecker {
     }
 
     /// Define one already named imported symbol after root namespace validation.
-    fn define_named_import_symbol(&mut self, name: Ident, kind: SymbolKind, span: Span) {
+    fn define_named_import_symbol(&mut self, name: Ident, kind: SymbolKind, span: Span) -> SymbolId {
         self.validate_root_namespace(&name, span);
         self.symbols.define(Symbol {
             name,
             kind,
             span,
             scope: 0,
-        });
+        })
     }
 
     fn validate_pub_library_entry(&mut self, library: &str, span: Span) {
@@ -1658,8 +1665,7 @@ impl TypeChecker {
     fn existing_from_import_symbol_kind(&self, name: &str) -> Option<SymbolKind> {
         let id = self.symbols.lookup(name)?;
         let sym = self.symbols.get(id)?;
-        let is_implicit_builtin = sym.scope == 0 && sym.span == Span::default();
-        if is_implicit_builtin {
+        if Self::is_implicit_builtin_symbol(sym) {
             return None;
         }
         Some(sym.kind.clone())

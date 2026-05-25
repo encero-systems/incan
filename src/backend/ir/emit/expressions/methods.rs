@@ -432,7 +432,7 @@ impl<'a> IrEmitter<'a> {
     /// Return the explicitly registered compatibility borrow policy for a metadata-free external method argument.
     ///
     /// Signature metadata remains the source of truth for Rust-boundary borrowing. These policies are only for
-    /// default-build interop surfaces that v0.3 already emits without rust-inspect metadata.
+    /// default-build interop surfaces emitted without rust-inspect metadata.
     fn metadata_free_method_arg_borrow_policy(
         receiver: &TypedExpr,
         method: &str,

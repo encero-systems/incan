@@ -134,7 +134,7 @@ The 1.0 milestone consolidates the post-cutover compiler architecture, ABI/packa
 ## Status by Area
 
 - Core language: see [RFC 000] / [RFC 008].
-- Testing surface: see [RFC 001] / [RFC 002] / [RFC 004] / [RFC 007].
+- Testing surface: see [RFC 018] / [RFC 019] / [RFC 004].
 - Tooling and first-contact: install, starter, diagnostics, explain, codegraph, artifact inspection, and build reports are the immediate release surface.
 - Rust interop: see [RFC 005] / [RFC 013] and the [Rust Interop guide](language/how-to/rust_interop.md). Rust-hosted consumption should be reframed through ABI and Cargo-native package direction instead of generated Rust as the public semantic path.
 - Web and interactive runtime: see the [Web Framework guide](language/tutorials/web_framework.md), [RFC 092](RFCs/092_interactive_runtime_stdlib_contracts.md), and related runtime/DSL RFCs.
@@ -144,12 +144,9 @@ The 1.0 milestone consolidates the post-cutover compiler architecture, ABI/packa
 
 The following items remain intentionally deferred until they have a focused RFC or implementation lane:
 
-- SSR/SSG for frontend: Server-Side Rendering / Static Site Generation for the WASM/UI stack (render pages ahead of time
-    or on the server, then hydrate).
-- Desktop/mobile via wgpu: using the wgpu graphics stack to run Incan apps as native desktop/mobile apps (instead of
-    browser-only).
-- CRDT/collab features: real-time collaboration primitives (Conflict-free Replicated Data Types) for things like
-    collaborative editing, shared state, etc.
+- SSR/SSG for frontend: Server-Side Rendering / Static Site Generation for the WASM/UI stack (render pages ahead of time or on the server, then hydrate).
+- Desktop/mobile via wgpu: using the wgpu graphics stack to run Incan apps as native desktop/mobile apps instead of browser-only.
+- CRDT/collab features: real-time collaboration primitives (Conflict-free Replicated Data Types) for collaborative editing, shared state, and similar workflows.
 
 ### Guides
 

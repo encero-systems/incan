@@ -904,14 +904,15 @@ impl<'a> IrCodegen<'a> {
 
         // Generate module files by path
         let mut lowered_modules = Vec::new();
-        for (name, ast, _) in &self.dependency_modules {
-            // Find matching path by comparing joined segments with module name
-            // Module name is path segments joined with "_" (e.g., "db_models")
-            for path in module_paths {
-                let path_name = path.join("_");
-                if path_name != *name {
-                    continue;
-                }
+        for (name, ast, stored_path_segments) in &self.dependency_modules {
+            let matching_path = if let Some(stored_path_segments) = stored_path_segments {
+                module_paths.iter().find(|path| *path == stored_path_segments)
+            } else {
+                // Legacy callers may still register only a flat module name. Prefer explicit path segments when they
+                // exist because distinct paths such as `a_b` and `a/b` share the same underscore-joined fallback.
+                module_paths.iter().find(|path| path.join("_") == *name)
+            };
+            if let Some(path) = matching_path {
                 let module_type_info = {
                     use crate::frontend::typechecker::TypeChecker;
                     let mut tc = TypeChecker::new();
@@ -931,7 +932,6 @@ impl<'a> IrCodegen<'a> {
                 // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
                 super::trait_bound_inference::infer_trait_bounds(&mut ir);
                 lowered_modules.push((path.clone(), ir));
-                break;
             }
         }
         for idx in 0..lowered_modules.len() {

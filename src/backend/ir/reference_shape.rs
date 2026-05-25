@@ -1,7 +1,7 @@
 //! Predicates for IR expressions that already emit Rust reference-shaped values.
 //!
 //! Ownership and coercion planning may still see these expressions as ordinary Incan surface types. Keep the
-//! reference-shape predicate here so conversions, method emission, and future argument planners do not drift.
+//! reference-shape predicate here so conversions, method emission, and argument planning do not drift.
 
 use super::expr::{IrExpr, IrExprKind};
 use super::types::IrType;

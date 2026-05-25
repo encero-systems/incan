@@ -98,7 +98,8 @@ fn has_web_route_passthrough_decorator(
     })
 }
 
-/// Collect dependency-module declarations that are referenced through imports.
+/// Collect dependency-module declarations that must remain reachable from externally visible roots such as imports,
+/// ambient logging, and web route registration.
 pub(super) fn collect_externally_reachable_items_by_module(
     main: &Program,
     dependency_modules: &[(&str, &Program, Option<Vec<String>>)],

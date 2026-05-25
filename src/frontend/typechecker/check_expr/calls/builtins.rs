@@ -8,7 +8,7 @@ use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty
 use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::constructors::{self as surface_constructors, ConstructorId};
-use incan_core::lang::surface::functions::{self as surface_functions, SurfaceFnId};
+use incan_core::lang::surface::functions::SurfaceFnId;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_core::lang::types::collections::CollectionTypeId;
 
@@ -118,10 +118,19 @@ impl TypeChecker {
         call_span: Span,
         respect_shadowing: bool,
     ) -> Option<ResolvedType> {
-        let has_function_symbol = respect_shadowing && self.has_non_builtin_function_definition(name);
+        let has_call_root_binding = respect_shadowing && self.has_non_builtin_call_root_binding(name);
+        let surface_function_binding = respect_shadowing
+            .then(|| self.active_surface_function_import(name))
+            .flatten();
+        let surface_type_binding = respect_shadowing
+            .then(|| self.active_surface_type_import(name))
+            .flatten();
 
         // Constructors (variant-like)
         if let Some(cid) = surface_constructors::from_str(name) {
+            if has_call_root_binding {
+                return None;
+            }
             return match cid {
                 ConstructorId::Ok | ConstructorId::Err => {
                     let arg_types = self.check_call_arg_types(args);
@@ -178,7 +187,7 @@ impl TypeChecker {
 
         // Core builtin functions (registry-driven)
         if let Some(bid) = core_builtins::from_str(name) {
-            if has_function_symbol {
+            if has_call_root_binding {
                 return None;
             }
             return match bid {
@@ -459,10 +468,7 @@ impl TypeChecker {
         }
 
         // Surface/runtime functions (registry-driven)
-        if let Some(fid) = surface_functions::from_str(name) {
-            if !has_function_symbol {
-                return None;
-            }
+        if let Some(fid) = surface_function_binding {
             return match fid {
                 SurfaceFnId::SleepMs => {
                     if let Some(arg) = args.first() {
@@ -542,7 +548,17 @@ impl TypeChecker {
         }
 
         // Surface types that behave like constructors and whose result type depends on args.
-        if let Some(tid) = surface_types::from_str(name) {
+        let surface_type = surface_type_binding.or_else(|| {
+            if has_call_root_binding {
+                None
+            } else {
+                surface_types::from_str(name)
+            }
+        });
+        if let Some(tid) = surface_type {
+            if has_call_root_binding {
+                debug_assert_eq!(surface_type_binding, Some(tid));
+            }
             return match tid {
                 SurfaceTypeId::Json | SurfaceTypeId::Query => {
                     Some(self.check_json_query_constructor_call(tid, args, call_span))
@@ -587,6 +603,9 @@ impl TypeChecker {
 
         // Python-like type conversion helpers (surface). These are not part of `lang::builtins`.
         if let Some(cid) = collection_type_id(name) {
+            if has_call_root_binding {
+                return None;
+            }
             return match cid {
                 CollectionTypeId::Dict => {
                     let (key_ty, val_ty) = if let Some(arg) = args.first() {
