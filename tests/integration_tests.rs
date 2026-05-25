@@ -647,6 +647,26 @@ fn incan_command() -> Command {
     command
 }
 
+fn run_incan_command_with_timeout(
+    mut command: Command,
+    timeout: std::time::Duration,
+) -> std::io::Result<(std::process::Output, bool)> {
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    let mut child = command.spawn()?;
+    let start = std::time::Instant::now();
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output().map(|output| (output, false));
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            return child.wait_with_output().map(|output| (output, true));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+}
+
 fn is_incan_fixture(path: &Path) -> bool {
     matches!(path.extension().and_then(|e| e.to_str()), Some("incn") | Some("incan"))
 }
@@ -2096,6 +2116,122 @@ def main() -> None:
     let stdout = String::from_utf8_lossy(&output.stdout);
     let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
     assert_eq!(lines, ["1", "2"], "unexpected lowercase static output");
+    Ok(())
+}
+
+#[test]
+fn test_imported_static_initializer_does_not_deadlock_issue680() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let project_name = unique_test_project_name("imported_static_deadlock");
+    std::fs::write(
+        dir.join("incan.toml"),
+        format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
+    )?;
+    let src_dir = dir.join("src");
+    std::fs::create_dir_all(&src_dir)?;
+    let state = src_dir.join("state.incn");
+    let facade = src_dir.join("facade.incn");
+    let direct_user = src_dir.join("direct_user.incn");
+    let reexport_user = src_dir.join("reexport_user.incn");
+    let main = src_dir.join("main.incn");
+    std::fs::write(
+        &state,
+        r#"
+pub class Registry:
+  pub entries: list[int]
+
+  @staticmethod
+  def new() -> Self:
+    return Registry(entries=[])
+
+
+pub static registry: Registry = Registry.new()
+
+
+pub def registry_len() -> int:
+  return len(registry.entries)
+"#,
+    )?;
+    std::fs::write(&facade, "pub from state import registry\n")?;
+    std::fs::write(
+        &direct_user,
+        r#"
+from state import registry
+
+
+pub def add_direct() -> None:
+  registry.entries.append(1)
+"#,
+    )?;
+    std::fs::write(
+        &reexport_user,
+        r#"
+from facade import registry
+
+
+pub def add_reexport() -> None:
+  registry.entries.append(1)
+"#,
+    )?;
+    std::fs::write(
+        &main,
+        r#"
+from direct_user import add_direct
+from reexport_user import add_reexport
+from state import registry_len
+
+
+def main() -> None:
+  add_direct()
+  add_reexport()
+  assert registry_len() == 2
+  println("ok")
+"#,
+    )?;
+
+    let mut command = incan_command();
+    command
+        .arg("run")
+        .arg(main.strip_prefix(&dir)?)
+        .current_dir(&dir)
+        .env("CARGO_NET_OFFLINE", "true");
+    let (output, timed_out) = run_incan_command_with_timeout(command, std::time::Duration::from_secs(30))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !timed_out,
+        "imported static init repro timed out; likely deadlocked.\nstdout:\n{}\nstderr:\n{}",
+        stdout, stderr
+    );
+    assert!(
+        output.status.success(),
+        "expected imported static init repro to run.\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.lines().any(|line| line.trim() == "ok"),
+        "expected imported static init repro to print ok.\nstdout:\n{stdout}"
+    );
+
+    let generated_src_dir = dir.join("target/incan").join(project_name).join("src");
+    let generated_direct_user = std::fs::read_to_string(generated_src_dir.join("direct_user.rs"))?;
+    assert!(
+        generated_direct_user
+            .contains("use crate::state::__incan_init_module_statics as __incan_init_imported_static_registry;")
+            && generated_direct_user.contains("__incan_init_imported_static_registry();"),
+        "direct imported static access should call the defining module init guard before forcing REGISTRY:\n{}",
+        generated_direct_user
+    );
+    let generated_facade = std::fs::read_to_string(generated_src_dir.join("facade.rs"))?;
+    assert!(
+        generated_facade
+            .contains("use crate::state::__incan_init_module_statics as __incan_init_imported_static_registry;")
+            && generated_facade.contains("pub(crate) fn __incan_init_module_statics()")
+            && generated_facade.contains("__incan_init_imported_static_registry();"),
+        "static re-export modules should chain the defining module init guard:\n{}",
+        generated_facade
+    );
     Ok(())
 }
 

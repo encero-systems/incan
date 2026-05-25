@@ -592,7 +592,7 @@ impl<'a> IrEmitter<'a> {
         match Self::expr_storage_root(expr) {
             Some(StorageRoot::Static(name)) => {
                 let ident = Self::rust_static_ident(&name);
-                let init_call = self.emit_module_static_init_call();
+                let init_call = self.emit_static_init_call_for_static(&name);
                 Ok(quote! {{
                     #init_call
                     #ident.with_ref(|#local_name| { #body })
@@ -611,7 +611,7 @@ impl<'a> IrEmitter<'a> {
         match Self::expr_storage_root(expr) {
             Some(StorageRoot::Static(name)) => {
                 let ident = Self::rust_static_ident(&name);
-                let init_call = self.emit_module_static_init_call();
+                let init_call = self.emit_static_init_call_for_static(&name);
                 Ok(quote! {{
                     #init_call
                     #ident.with_mut(|#local_name| { #body })
@@ -694,10 +694,10 @@ impl<'a> IrEmitter<'a> {
 
             IrExprKind::StaticRead { name } => {
                 let n = Self::rust_static_ident(name);
-                if *self.in_static_initializer.borrow() {
+                if *self.in_static_initializer.borrow() && !self.static_needs_imported_init_call(name) {
                     Ok(quote! { #n.get() })
                 } else {
-                    let init_call = self.emit_module_static_init_call();
+                    let init_call = self.emit_static_init_call_for_static(name);
                     Ok(quote! {{
                         #init_call
                         #n.get()
@@ -707,10 +707,10 @@ impl<'a> IrEmitter<'a> {
 
             IrExprKind::StaticBinding { name } => {
                 let n = Self::rust_static_ident(name);
-                if *self.in_static_initializer.borrow() {
+                if *self.in_static_initializer.borrow() && !self.static_needs_imported_init_call(name) {
                     Ok(quote! { incan_stdlib::storage::StaticBinding::from_static(&#n) })
                 } else {
-                    let init_call = self.emit_module_static_init_call();
+                    let init_call = self.emit_static_init_call_for_static(name);
                     Ok(quote! {{
                         #init_call
                         incan_stdlib::storage::StaticBinding::from_static(&#n)
