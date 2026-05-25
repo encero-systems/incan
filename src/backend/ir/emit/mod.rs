@@ -286,6 +286,11 @@ pub struct IrEmitter<'a> {
     newtype_checked_ctor: HashMap<String, String>,
     /// Whether the currently emitted module contains any local `static` declarations.
     module_has_local_statics: RefCell<bool>,
+    /// Imported static bindings that need their defining module's static-init guard before use.
+    imported_static_init_bindings: RefCell<HashSet<String>>,
+    /// Imported static bindings re-exported by this module whose defining module's static-init guard should be
+    /// chained from this module's init helper.
+    imported_static_module_init_bindings: RefCell<Vec<String>>,
     /// Whether expression emission is currently inside a static initializer.
     ///
     /// Used to avoid recursively forcing the module-wide static init helper while generating static initializer code.
@@ -362,6 +367,8 @@ impl<'a> IrEmitter<'a> {
             rust_import_paths: RefCell::new(std::collections::HashMap::new()),
             newtype_checked_ctor: HashMap::new(),
             module_has_local_statics: RefCell::new(false),
+            imported_static_init_bindings: RefCell::new(HashSet::new()),
+            imported_static_module_init_bindings: RefCell::new(Vec::new()),
             in_static_initializer: RefCell::new(false),
             qualify_internal_canonical_paths: RefCell::new(false),
             qualify_union_types_from_crate: false,
@@ -436,11 +443,53 @@ impl<'a> IrEmitter<'a> {
     }
 
     pub(super) fn emit_module_static_init_call(&self) -> TokenStream {
-        if *self.module_has_local_statics.borrow() {
+        if *self.module_has_local_statics.borrow() || !self.imported_static_module_init_bindings.borrow().is_empty() {
             let init_fn = Self::rust_ident("__incan_init_module_statics");
             quote! { #init_fn(); }
         } else {
             quote! {}
+        }
+    }
+
+    pub(super) fn set_imported_static_init_bindings(&self, bindings: HashSet<String>) {
+        *self.imported_static_init_bindings.borrow_mut() = bindings;
+    }
+
+    pub(super) fn set_imported_static_module_init_bindings(&self, bindings: Vec<String>) {
+        *self.imported_static_module_init_bindings.borrow_mut() = bindings;
+    }
+
+    pub(super) fn imported_static_init_ident(name: &str) -> proc_macro2::Ident {
+        let mut rendered = String::from("__incan_init_imported_static_");
+        for ch in name.chars() {
+            if ch.is_ascii_alphanumeric() {
+                rendered.push(ch.to_ascii_lowercase());
+            } else {
+                rendered.push('_');
+            }
+        }
+        proc_macro2::Ident::new(&rendered, proc_macro2::Span::call_site())
+    }
+
+    pub(super) fn static_needs_imported_init_call(&self, name: &str) -> bool {
+        self.imported_static_init_bindings.borrow().contains(name)
+    }
+
+    pub(super) fn static_needs_imported_init_import(&self, name: &str) -> bool {
+        self.static_needs_imported_init_call(name)
+            || self
+                .imported_static_module_init_bindings
+                .borrow()
+                .iter()
+                .any(|binding| binding == name)
+    }
+
+    pub(super) fn emit_static_init_call_for_static(&self, name: &str) -> TokenStream {
+        if self.static_needs_imported_init_call(name) {
+            let init_fn = Self::imported_static_init_ident(name);
+            quote! { #init_fn(); }
+        } else {
+            self.emit_module_static_init_call()
         }
     }
 

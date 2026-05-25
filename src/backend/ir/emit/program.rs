@@ -1088,6 +1088,44 @@ impl<'program> GeneratedUseAnalyzer<'program> {
 }
 
 impl<'a> IrEmitter<'a> {
+    fn collect_imported_static_init_bindings(&self, declarations: &[&IrDecl]) -> (HashSet<String>, Vec<String>) {
+        let mut access_bindings = HashSet::new();
+        let mut module_init_bindings = HashSet::new();
+        for decl in declarations {
+            let IrDeclKind::Import {
+                visibility,
+                origin,
+                qualifier,
+                path,
+                items,
+                ..
+            } = &decl.kind
+            else {
+                continue;
+            };
+            if matches!(origin, IrImportOrigin::PubLibrary { .. }) || matches!(qualifier, IrImportQualifier::None) {
+                continue;
+            }
+            let is_incan_source_stdlib = Self::is_incan_source_stdlib_import(origin, qualifier, path);
+            let is_public_reexport = !matches!(visibility, Visibility::Private);
+            for item in items {
+                if !item.is_static {
+                    continue;
+                }
+                let binding = item.alias.as_ref().unwrap_or(&item.name);
+                if self.should_emit_import_binding(binding) {
+                    access_bindings.insert(binding.clone());
+                }
+                if is_public_reexport && !(is_incan_source_stdlib && binding.starts_with('_')) {
+                    module_init_bindings.insert(binding.clone());
+                }
+            }
+        }
+        let mut module_init_bindings: Vec<_> = module_init_bindings.into_iter().collect();
+        module_init_bindings.sort();
+        (access_bindings, module_init_bindings)
+    }
+
     /// Return whether the current emitted module defines one registry-backed temporary capability trait contract.
     fn emitted_declarations_define_capability_trait(
         program: &IrProgram,
@@ -2252,6 +2290,10 @@ impl<'a> IrEmitter<'a> {
             })
             .collect();
         *self.module_has_local_statics.borrow_mut() = !static_names.is_empty();
+        let (imported_static_init_bindings, imported_static_module_init_bindings) =
+            self.collect_imported_static_init_bindings(&emitted_declarations);
+        self.set_imported_static_init_bindings(imported_static_init_bindings);
+        self.set_imported_static_module_init_bindings(imported_static_module_init_bindings);
 
         if self.emit_strict_generated_lint_denies {
             items.push(quote! {
@@ -2338,7 +2380,16 @@ impl<'a> IrEmitter<'a> {
         }
 
         // RFC 052: force declaration-order static initialization once per module before any static access helper call.
-        if !static_names.is_empty() {
+        let imported_static_init_calls: Vec<TokenStream> = self
+            .imported_static_module_init_bindings
+            .borrow()
+            .iter()
+            .map(|name| {
+                let ident = Self::imported_static_init_ident(name);
+                quote! { #ident(); }
+            })
+            .collect();
+        if !static_names.is_empty() || !imported_static_init_calls.is_empty() {
             let force_calls: Vec<TokenStream> = static_names
                 .iter()
                 .map(|name| {
@@ -2348,7 +2399,7 @@ impl<'a> IrEmitter<'a> {
                 .collect();
             items.push(quote! {
                 #[inline(always)]
-                fn __incan_init_module_statics() {
+                pub(crate) fn __incan_init_module_statics() {
                     static __INCAN_STATIC_INIT_RUNNING: std::sync::atomic::AtomicBool =
                         std::sync::atomic::AtomicBool::new(false);
                     if __INCAN_STATIC_INIT_RUNNING.load(std::sync::atomic::Ordering::Acquire) {
@@ -2364,6 +2415,7 @@ impl<'a> IrEmitter<'a> {
                         }
                         __INCAN_STATIC_INIT_RUNNING.store(true, std::sync::atomic::Ordering::Release);
                         let _guard = __IncanStaticInitGuard(&__INCAN_STATIC_INIT_RUNNING);
+                        #(#imported_static_init_calls)*
                         #(#force_calls)*
                     });
                 }

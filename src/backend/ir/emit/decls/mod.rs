@@ -279,7 +279,11 @@ impl<'a> IrEmitter<'a> {
     // ---- Import emission ----
 
     /// Return whether an import path refers to the source-authored Incan stdlib namespace.
-    fn is_incan_source_stdlib_import(origin: &IrImportOrigin, qualifier: &IrImportQualifier, path: &[String]) -> bool {
+    pub(super) fn is_incan_source_stdlib_import(
+        origin: &IrImportOrigin,
+        qualifier: &IrImportQualifier,
+        path: &[String],
+    ) -> bool {
         !matches!(origin, IrImportOrigin::PubLibrary { .. })
             && !matches!(qualifier, IrImportQualifier::None)
             && stdlib::is_any_stdlib_path(path)
@@ -488,6 +492,7 @@ impl<'a> IrEmitter<'a> {
                             && item.name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
                 })
                 .map(|item| {
+                    let binding = item.alias.as_ref().unwrap_or(&item.name);
                     let name_ident = if item.is_static {
                         Self::rust_static_ident(&item.name)
                     } else {
@@ -496,7 +501,18 @@ impl<'a> IrEmitter<'a> {
                     let path_tokens_clone = path_tokens.clone();
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     let absolute_path = matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import;
-                    if let Some(alias) = &item.alias {
+                    let static_init_import = if item.is_static && self.static_needs_imported_init_import(binding) {
+                        let init_ident = Self::rust_ident("__incan_init_module_statics");
+                        let init_alias = Self::imported_static_init_ident(binding);
+                        if absolute_path {
+                            quote! { use :: #path_ts_clone :: #init_ident as #init_alias; }
+                        } else {
+                            quote! { use #path_ts_clone :: #init_ident as #init_alias; }
+                        }
+                    } else {
+                        quote! {}
+                    };
+                    let item_import = if let Some(alias) = &item.alias {
                         let alias_ident = if item.is_static {
                             Self::rust_static_ident(alias)
                         } else {
@@ -529,7 +545,8 @@ impl<'a> IrEmitter<'a> {
                                 quote! { use #path_ts_clone :: #name_ident; }
                             }
                         }
-                    }
+                    };
+                    quote! { #static_init_import #item_import }
                 })
                 .collect();
             Ok(quote! { #(#item_stmts)* })

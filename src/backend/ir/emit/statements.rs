@@ -1093,8 +1093,10 @@ impl<'a> IrEmitter<'a> {
             IrStmtKind::Assign { target, value } => {
                 if let AssignTarget::Static(name) = target {
                     let n = Self::rust_static_ident(name);
+                    let init_call = self.emit_static_init_call_for_static(name);
                     let v = self.emit_assignment_value(value, None)?;
                     return Ok(quote! {
+                        #init_call
                         let __incan_static_rhs = #v;
                         #n.with_mut(|__incan_static_value| {
                             *__incan_static_value = __incan_static_rhs.into();
