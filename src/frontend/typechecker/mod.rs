@@ -84,8 +84,9 @@ use incan_core::interop::{
 };
 use incan_core::lang::conventions;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
+use incan_core::lang::surface::functions::SurfaceFnId;
 use incan_core::lang::surface::types as surface_types;
-use incan_core::lang::surface::types::SurfaceTypeKind;
+use incan_core::lang::surface::types::{SurfaceTypeId, SurfaceTypeKind};
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics::{self, NumericFamily, NumericTypeId};
@@ -232,6 +233,16 @@ pub struct TypeChecker {
     /// These names are disallowed in runtime call expressions; markers are decorator-only semantics consumed by the
     /// test runner.
     pub(crate) testing_marker_import_bindings: HashSet<String>,
+    /// Local names bound to stdlib surface helpers that still need compiler-known call typing.
+    ///
+    /// The stored symbol id must remain the active lookup binding; later local declarations or user imports with the
+    /// same name shadow these helper semantics.
+    pub(crate) surface_function_import_bindings: HashMap<String, (SurfaceFnId, SymbolId)>,
+    /// Local names bound to stdlib surface types that still need compiler-known constructor typing.
+    ///
+    /// The stored symbol id must remain the active lookup binding; later local declarations or user imports with the
+    /// same name shadow these constructor semantics.
+    pub(crate) surface_type_import_bindings: HashMap<String, (SurfaceTypeId, SymbolId)>,
     /// Fixture function names collected before body checking so dependency metadata is order-independent.
     pub(crate) testing_fixture_names: HashSet<String>,
     /// Import aliases collected from `import` / `from ... import` declarations.
@@ -303,6 +314,8 @@ impl TypeChecker {
             declared_crate_names: None,
             stdlib_cache: stdlib_loader::StdlibAstCache::new(),
             testing_marker_import_bindings: HashSet::new(),
+            surface_function_import_bindings: HashMap::new(),
+            surface_type_import_bindings: HashMap::new(),
             testing_fixture_names: HashSet::new(),
             import_aliases: HashMap::new(),
             surface_context: SurfaceContext::default(),
@@ -3309,6 +3322,8 @@ impl TypeChecker {
         self.warnings.clear();
         self.errors.clear();
         self.testing_marker_import_bindings.clear();
+        self.surface_function_import_bindings.clear();
+        self.surface_type_import_bindings.clear();
         self.testing_fixture_names.clear();
         self.surface_context = SurfaceContext::from_program(program);
         self.import_aliases = self.surface_context.import_aliases().clone();

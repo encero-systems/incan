@@ -9403,6 +9403,69 @@ def foo() -> str:
 }
 
 #[test]
+fn test_local_function_named_sleep_ms_shadows_surface_helper() {
+    let source = r#"
+def sleep_ms(value: str) -> str:
+  return value
+
+def foo() -> str:
+  return sleep_ms("ok")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_local_function_named_some_shadows_option_constructor() {
+    let source = r#"
+def Some(value: str) -> str:
+  return value
+
+def foo() -> str:
+  return Some("ok")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_local_function_named_list_shadows_collection_helper() {
+    let source = r#"
+def list(value: str) -> str:
+  return value
+
+def foo() -> str:
+  return list("ok")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_decorated_function_named_sum_shadows_builtin_sum_in_inline_module_tests() {
+    let source = r#"
+model IntExpr:
+  value: int
+
+model Measure:
+  kind: str
+
+def registered[F](function_ref: str) -> ((F) -> F):
+  return (func) => func
+
+def expr(value: int) -> IntExpr:
+  return IntExpr(value=value)
+
+@registered("demo.sum")
+def sum(value: IntExpr) -> Measure:
+  return Measure(kind="local")
+
+module tests:
+  def test_inline_sum() -> None:
+    measure = sum(expr(1))
+    assert measure.kind == "local"
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
 fn test_explicit_std_builtins_sum_call() {
     let source = r#"
 def foo() -> int:
