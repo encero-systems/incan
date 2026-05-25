@@ -454,6 +454,24 @@ fn partition_collision_free_file_groups(
         .collect()
 }
 
+fn rebase_token_spans(tokens: &mut [lexer::Token], source_offset: usize) {
+    if source_offset == 0 {
+        return;
+    }
+
+    for token in tokens {
+        token.span.start = token.span.start.saturating_add(source_offset);
+        token.span.end = token.span.end.saturating_add(source_offset);
+        if let lexer::TokenKind::FString(parts) = &mut token.kind {
+            for part in parts {
+                if let lexer::FStringPart::Expr { offset, .. } = part {
+                    *offset = offset.saturating_add(source_offset);
+                }
+            }
+        }
+    }
+}
+
 /// Parse each source file in a generated test batch independently, then merge declarations for the shared harness.
 ///
 /// The parser's `module tests:` cardinality rule is intentionally per source file. A worker batch may contain several
@@ -466,12 +484,14 @@ fn parse_test_batch_sources(
     let mut declarations = Vec::new();
     let mut warnings = Vec::new();
     let mut rust_module_path = None;
+    let mut source_offset = 0usize;
     let source_path = batch_sources
         .first()
         .map(|(path, _)| path.to_string_lossy().to_string());
 
     for (path, source) in batch_sources {
-        let tokens = lexer::lex(source).map_err(|e| format!("Lexer error in {}: {:?}", path.display(), e))?;
+        let mut tokens = lexer::lex(source).map_err(|e| format!("Lexer error in {}: {:?}", path.display(), e))?;
+        rebase_token_spans(&mut tokens, source_offset);
         let parsed = parser::parse_with_context_and_surfaces(
             &tokens,
             Some(path.to_string_lossy().as_ref()),
@@ -490,6 +510,7 @@ fn parse_test_batch_sources(
         }
         warnings.extend(parsed.warnings);
         declarations.extend(parsed.declarations);
+        source_offset = source_offset.saturating_add(source.len()).saturating_add(1);
     }
 
     Ok(Program {

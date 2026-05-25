@@ -7455,6 +7455,57 @@ def test_b() -> None:
     }
 
     #[test]
+    fn e2e_cross_file_batch_rebases_spans_for_type_info_issue692() -> Result<(), Box<dyn std::error::Error>> {
+        fn source_with_call_offset(header: &str, call_prefix: &str, call_and_tail: &str, offset: usize) -> String {
+            let fixed_len = header.len() + call_prefix.len();
+            assert!(
+                offset >= fixed_len + 6,
+                "test fixture offset leaves no room for padding"
+            );
+            let padding = format!("    #{}\n", "x".repeat(offset - fixed_len - 6));
+            format!("{header}{padding}{call_prefix}{call_and_tail}")
+        }
+
+        let target_offset = 320;
+        let dir = write_test_project(
+            "test_constructor_marker.incn",
+            &source_with_call_offset(
+                "model Box:\n    value: int\n\ndef test_type_constructor() -> None:\n",
+                "    item = ",
+                "Box(value=1)\n    assert item.value == 1\n",
+                target_offset,
+            ),
+        );
+        std::fs::write(
+            dir.join("test_zero_arg_call.incn"),
+            source_with_call_offset(
+                "def tap() -> str:\n    return \"ok\"\n\ndef test_zero_arg_call_in_list() -> None:\n",
+                "    values = [",
+                "tap()]\n    assert values[0] == \"ok\"\n",
+                target_offset,
+            ),
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected same-span constructor and zero-argument calls from different files not to share type-info facts.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_constructor_marker.incn::test_type_constructor")
+                && stdout.contains("test_zero_arg_call.incn::test_zero_arg_call_in_list"),
+            "expected both files to run in one directory test batch.\nstdout:\n{}",
+            stdout,
+        );
+        Ok(())
+    }
+
+    #[test]
     fn e2e_imported_default_expression_expands_with_required_scope_issue395() -> Result<(), Box<dyn std::error::Error>>
     {
         let dir = write_test_project(
