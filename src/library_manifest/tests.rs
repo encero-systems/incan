@@ -241,6 +241,67 @@ fn manifest_validation_rejects_unsupported_rust_abi_schema_version() {
 }
 
 #[test]
+fn manifest_validation_rejects_unsupported_api_metadata_package_schema_version() {
+    let raw = format!(
+        r#"{{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "{}",
+  "manifest_format": {},
+  "exports": {{}},
+  "soft_keywords": {{}},
+  "contract_metadata": {{
+    "api": {{
+      "schema_version": {},
+      "package": null,
+      "modules": []
+    }}
+  }}
+}}"#,
+        crate::version::INCAN_VERSION,
+        LIBRARY_MANIFEST_FORMAT,
+        crate::frontend::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION + 1
+    );
+
+    let err = LibraryManifest::from_json_str(&raw);
+    assert!(err.is_err(), "expected unsupported API metadata schema to fail");
+}
+
+#[test]
+fn manifest_validation_rejects_unsupported_api_metadata_module_schema_version() {
+    let raw = format!(
+        r#"{{
+  "name": "mylib",
+  "version": "0.1.0",
+  "incan_version": "{}",
+  "manifest_format": {},
+  "exports": {{}},
+  "soft_keywords": {{}},
+  "contract_metadata": {{
+    "api": {{
+      "schema_version": {},
+      "package": null,
+      "modules": [
+        {{
+          "schema_version": {},
+          "module_path": ["lib"],
+          "declarations": []
+        }}
+      ]
+    }}
+  }}
+}}"#,
+        crate::version::INCAN_VERSION,
+        LIBRARY_MANIFEST_FORMAT,
+        crate::frontend::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION,
+        crate::frontend::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION + 1
+    );
+
+    let err = LibraryManifest::from_json_str(&raw);
+    assert!(err.is_err(), "expected unsupported API metadata module schema to fail");
+}
+
+#[test]
 fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<dyn std::error::Error>> {
     let mut manifest = LibraryManifest::new("mylib", "0.1.0");
     manifest.exports.functions.push(FunctionExport {

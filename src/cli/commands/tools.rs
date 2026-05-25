@@ -13,7 +13,8 @@ use crate::cli::prelude::ParsedModule;
 use crate::cli::{CliError, CliResult, ExitCode};
 use crate::frontend::api_metadata::{
     ApiDeclaration, ApiFunction, ApiPartial, CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage,
-    CheckedApiPackageIdentity, collect_checked_api_metadata, validate_checked_api_docstrings,
+    CheckedApiPackageIdentity, collect_checked_api_metadata, materialize_api_alias_projections,
+    validate_checked_api_docstrings,
 };
 use crate::frontend::contract_metadata::{
     CanonicalModelBundle, read_model_bundles_from_json, read_project_model_bundles,
@@ -416,6 +417,8 @@ fn collect_api_metadata_package(path: &Path) -> CliResult<CheckedApiMetadataPack
     if !all_errors.is_empty() {
         return Err(CliError::failure(all_errors.trim_end()));
     }
+
+    materialize_api_alias_projections(&mut metadata_modules);
 
     for diagnostic in validate_checked_api_docstrings(&metadata_modules) {
         if let Some((module, _)) = modules
@@ -1292,6 +1295,96 @@ pub quick_label = partial label(prefix=LABEL)
             markdown.contains("pub quick_label = partial label(prefix: str = ..., suffix: str = ...) -> str")
                 && markdown.contains("- Presets: `prefix`"),
             "expected generated API Markdown to render partial signatures and provenance, got:\n{markdown}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn collect_api_metadata_package_materializes_facade_decorator_projection_issue695()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src = tmp.path().join("src");
+        let operators = src.join("functions").join("operators");
+        fs::create_dir_all(&operators)?;
+        fs::write(
+            tmp.path().join("incan.toml"),
+            r#"
+[project]
+name = "metadata_registry"
+version = "0.1.0"
+"#,
+        )?;
+        fs::write(
+            src.join("registry.incn"),
+            r#"
+pub def registered[F](spec: str) -> ((F) -> F):
+    return (func) => func
+"#,
+        )?;
+        fs::write(
+            operators.join("eq.incn"),
+            r#"
+from registry import registered
+
+pub model ColumnExpr:
+    pub name: str
+
+@registered("equal")
+pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
+    return left
+"#,
+        )?;
+        fs::write(
+            operators.join("mod.incn"),
+            "pub from functions.operators.eq import eq\n",
+        )?;
+        fs::write(src.join("lib.incn"), "pub from functions.operators.mod import eq\n")?;
+
+        let package = collect_api_metadata_package(tmp.path())?;
+        let lib_alias = package
+            .modules
+            .iter()
+            .find(|module| module.module_path == vec!["lib".to_string()])
+            .and_then(|module| {
+                module.declarations.iter().find_map(|decl| match decl {
+                    ApiDeclaration::Alias(alias) if alias.name == "eq" => Some(alias),
+                    _ => None,
+                })
+            })
+            .ok_or("expected lib facade alias")?;
+        let projection = lib_alias
+            .projected_function
+            .as_ref()
+            .ok_or("expected projected function metadata on facade alias")?;
+
+        assert_eq!(projection.callable.name, "eq");
+        assert_eq!(
+            projection.source_path,
+            vec![
+                "functions".to_string(),
+                "operators".to_string(),
+                "eq".to_string(),
+                "eq".to_string(),
+            ]
+        );
+        assert_eq!(
+            projection
+                .callable
+                .params
+                .iter()
+                .map(|param| param.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["left", "right"]
+        );
+        assert!(
+            projection.decorators.iter().any(|decorator| {
+                decorator.path == vec!["registry".to_string(), "registered".to_string()]
+                    && decorator
+                        .decorated_callable
+                        .as_ref()
+                        .is_some_and(|callable| callable.name == "eq")
+            }),
+            "expected projected decorator metadata with decorated callable context, got {projection:?}"
         );
         Ok(())
     }

@@ -163,12 +163,16 @@ The metadata is derived from parsed and typechecked semantics. Public declaratio
 - public partial callable presets with target provenance, preset metadata, projected callable parameters, return type, and async status
 - raw docstring text when the declaration or method has a docstring
 - parsed docstring sections in `docstring_sections`, including summary, parameters, returns, fields, aliases, and decorators
-- decorator metadata with resolved decorator paths
+- decorator metadata with resolved decorator paths, safe argument projections, and decorated callable context when the decorator is attached to a callable declaration
 - safe const values for public consts and safe decorator arguments
 
 Types use the same structural `TypeRef` encoding as library manifest exports. For example, a non-generic type is encoded as `{"Named": {"name": "str"}}`, while a generic application is encoded as `{"Applied": {"name": "List", "args": [...]}}`.
 
-When decorator processing exposes a public function as a callable-valued binding, metadata follows that checked binding. In that case, function metadata reports the callable binding's parameters and return type rather than the original source signature. Existing decorator metadata remains attached separately through `decorators`, so consumers that inspect marker decorators, safe decorator arguments, or docstring `Decorators:` sections can keep using that lane without inferring binding types from it.
+Function metadata keeps the source declaration's public callable surface. For a decorated callable, each decorator entry also carries `decorated_callable`, which contains the decorated declaration's checked public identity, source anchor, type parameters, parameter names and types, return type, receiver when applicable, and async marker. Registry and catalog tooling should read that field instead of asking authors to repeat the decorated function name or signature in decorator arguments.
+
+Decorator arguments are represented structurally when the compiler can do so without executing user code. Literals, checked const references, symbolic references, lists, dicts, constructors, and ordinary calls can appear as metadata values. Unsupported expressions remain explicit `unsupported` entries.
+
+Public import aliases can include `projected_function` when the alias target resolves to a public function or callable-valued decorated binding. The projection includes the source declaration path, the callable signature under the alias name, and the source decorators. This lets reexport-only facades expose declaration metadata without no-op loader functions or runtime module initialization hooks.
 
 Public partial declarations use `kind: "partial"`. A partial declaration remains distinct from a hand-written function or alias:
 
@@ -198,7 +202,7 @@ Metadata only carries values that the compiler can expose without executing user
 | `bytes`  | Bytes literal or frozen bytes const   |
 | `none`   | Literal `None`                        |
 
-Decorator arguments that are not literals, type arguments, or const references are reported as `unsupported` metadata values instead of being evaluated.
+Decorator arguments that are not declaration-safe literals, const references, symbolic references, lists, dicts, constructors, or ordinary call trees are reported as `unsupported` metadata values instead of being evaluated.
 
 ## Docstrings
 
@@ -242,4 +246,4 @@ The metadata JSON describes public declarations from checked Incan source and ma
 
 Checked API metadata extraction does not inspect built `.incnlib` artifacts. Artifact inspection remains a separate tooling surface from source/project metadata extraction.
 
-The extractor exposes only checked compiler facts and safe literal/const values. Unsupported decorator expressions are reported as `unsupported` metadata rather than evaluated, and consumers should not treat docstrings or decorator payloads as trusted executable input.
+The extractor exposes only checked compiler facts and declaration-safe metadata values. Unsupported decorator expressions are reported as `unsupported` metadata rather than evaluated, and consumers should not treat docstrings or decorator payloads as trusted executable input.

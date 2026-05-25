@@ -6,9 +6,12 @@
 use std::collections::HashMap;
 
 use crate::frontend::ast::{
-    AliasDecl, ClassDecl, Declaration, DictEntry, EnumDecl, Expr, FunctionDecl, ListEntry, Literal, ModelDecl,
-    NewtypeDecl, PartialDecl, Program, Spanned, TraitBound, TraitDecl, TypeAliasDecl, TypeParam, Visibility,
+    AliasDecl, ClassDecl, Declaration, DictEntry, EnumDecl, Expr, FunctionDecl, ImportDecl, ImportItem, ImportKind,
+    ListEntry, Literal, ModelDecl, NewtypeDecl, PartialDecl, Program, Spanned, TraitBound, TraitDecl, TypeAliasDecl,
+    TypeParam, Visibility,
 };
+use crate::frontend::decorator_resolution;
+use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::symbols::{
     CallableParam, ClassInfo, FieldInfo, FunctionInfo, MethodInfo, ModelInfo, NewtypeInfo, ResolvedType, SymbolKind,
     TraitInfo, TypeBoundInfo, TypeInfo, ValueEnumBacking, ValueEnumValue, VariableInfo, resolve_type,
@@ -307,6 +310,9 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                     exports.push(export);
                 }
             }
+            Declaration::Import(import) if matches!(import.visibility, Visibility::Public) => {
+                exports.extend(checked_import_exports(import, checker));
+            }
             Declaration::Partial(partial) if matches!(partial.visibility, Visibility::Public) => {
                 if let Some(export) = checked_partial_export(partial, checker) {
                     exports.push(CheckedNamedExport {
@@ -326,10 +332,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
 /// Build a checked public export entry for a module-level alias.
 fn checked_alias_export(alias: &AliasDecl, checker: &TypeChecker) -> Option<CheckedNamedExport> {
     let symbol = checker.lookup_symbol(alias.name.as_str())?;
-    let projected_function = match &symbol.kind {
-        SymbolKind::Function(info) => Some(checked_alias_function_export(&alias.name, info)),
-        _ => None,
-    };
+    let projected_function = checked_projected_function_export(&alias.name, &symbol.kind);
     Some(CheckedNamedExport {
         name: alias.name.clone(),
         kind: CheckedExportKind::Alias(CheckedAliasExport {
@@ -340,6 +343,57 @@ fn checked_alias_export(alias: &AliasDecl, checker: &TypeChecker) -> Option<Chec
     })
 }
 
+fn checked_import_exports(import: &ImportDecl, checker: &TypeChecker) -> Vec<CheckedNamedExport> {
+    match &import.kind {
+        ImportKind::From { module, items } => {
+            let base_path =
+                canonicalize_source_module_segments(&decorator_resolution::path_segments_with_prefix(module));
+            checked_import_item_exports(items, base_path, checker)
+        }
+        ImportKind::RustFrom {
+            crate_name,
+            path,
+            items,
+            ..
+        } => {
+            let mut base_path = vec!["rust".to_string(), crate_name.clone()];
+            base_path.extend(path.iter().cloned());
+            checked_import_item_exports(items, base_path, checker)
+        }
+        ImportKind::PubFrom { library, items } => {
+            let base_path = vec!["pub".to_string(), library.clone()];
+            checked_import_item_exports(items, base_path, checker)
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn checked_import_item_exports(
+    items: &[ImportItem],
+    base_path: Vec<String>,
+    checker: &TypeChecker,
+) -> Vec<CheckedNamedExport> {
+    items
+        .iter()
+        .map(|item| {
+            let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
+            let mut target_path = base_path.clone();
+            target_path.push(item.name.clone());
+            let projected_function = checker
+                .lookup_symbol(exported_name.as_str())
+                .and_then(|symbol| checked_projected_function_export(&exported_name, &symbol.kind));
+            CheckedNamedExport {
+                name: exported_name.clone(),
+                kind: CheckedExportKind::Alias(CheckedAliasExport {
+                    name: exported_name,
+                    target_path,
+                    projected_function,
+                }),
+            }
+        })
+        .collect()
+}
+
 /// Build manifest-ready callable metadata for an alias that projects a function.
 fn checked_alias_function_export(name: &str, info: &FunctionInfo) -> CheckedFunctionExport {
     CheckedFunctionExport {
@@ -348,6 +402,23 @@ fn checked_alias_function_export(name: &str, info: &FunctionInfo) -> CheckedFunc
         params: info.params.clone(),
         return_type: info.return_type.clone(),
         is_async: info.is_async,
+    }
+}
+
+fn checked_projected_function_export(name: &str, kind: &SymbolKind) -> Option<CheckedFunctionExport> {
+    match kind {
+        SymbolKind::Function(info) => Some(checked_alias_function_export(name, info)),
+        SymbolKind::Variable(VariableInfo {
+            ty: ResolvedType::Function(params, return_type),
+            ..
+        }) => Some(CheckedFunctionExport {
+            name: name.to_string(),
+            type_params: Vec::new(),
+            params: params.clone(),
+            return_type: return_type.as_ref().clone(),
+            is_async: false,
+        }),
+        _ => None,
     }
 }
 
@@ -499,6 +570,9 @@ fn checked_preset_path(expr: &Expr) -> Vec<String> {
         Expr::Ident(name) => vec![name.clone()],
         Expr::Field(base, field) => {
             let mut path = checked_preset_path(&base.node);
+            if path.is_empty() {
+                return Vec::new();
+            }
             path.push(field.clone());
             path
         }
@@ -896,4 +970,28 @@ fn method_signature_sort_key(method: &CheckedMethod) -> String {
 fn sorted_vec(mut values: Vec<String>) -> Vec<String> {
     values.sort();
     values
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frontend::ast::{Span, Spanned};
+
+    fn spanned(expr: Expr) -> Spanned<Expr> {
+        Spanned::new(expr, Span::default())
+    }
+
+    #[test]
+    fn checked_preset_value_rejects_non_symbolic_field_paths() {
+        let value = Expr::Field(
+            Box::new(spanned(Expr::Call(
+                Box::new(spanned(Expr::Ident("defaults".to_string()))),
+                Vec::new(),
+                Vec::new(),
+            ))),
+            "method".to_string(),
+        );
+
+        assert_eq!(checked_preset_value(&value), CheckedPresetValue::Unsupported);
+    }
 }

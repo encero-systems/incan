@@ -1681,6 +1681,101 @@ def main() -> None:
 }
 
 #[test]
+fn build_lib_materializes_facade_decorator_metadata_projection_issue695() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let producer_root = tmp.path().join("metadata_registry");
+    let src = producer_root.join("src");
+    let operators = src.join("functions").join("operators");
+    fs::create_dir_all(&operators)?;
+    fs::write(
+        producer_root.join("incan.toml"),
+        r#"[project]
+name = "metadata_registry"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        src.join("registry.incn"),
+        r#"pub def registered[F](spec: str) -> ((F) -> F):
+    return (func) => func
+"#,
+    )?;
+    fs::write(
+        operators.join("eq.incn"),
+        r#"from registry import registered
+
+pub model ColumnExpr:
+    pub name: str
+
+@registered("equal")
+pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
+    return left
+"#,
+    )?;
+    fs::write(
+        operators.join("mod.incn"),
+        "pub from functions.operators.eq import eq\n",
+    )?;
+    fs::write(src.join("lib.incn"), "pub from functions.operators.mod import eq\n")?;
+
+    let producer_build = run_incan(&producer_root, &["build", "--lib"])?;
+    assert_success(
+        &producer_build,
+        "producer build --lib for decorator metadata projection issue695",
+    );
+
+    let manifest_path = producer_root
+        .join("target")
+        .join("lib")
+        .join("metadata_registry.incnlib");
+    let manifest: serde_json::Value = serde_json::from_str(&fs::read_to_string(&manifest_path)?)?;
+    assert!(
+        manifest.pointer("/exports/aliases/0/projected_function").is_some(),
+        "reexport-only facade should materialize callable alias projection in manifest exports, got:\n{manifest}"
+    );
+    let api_modules = manifest
+        .pointer("/contract_metadata/api/modules")
+        .and_then(|value| value.as_array())
+        .ok_or("expected checked API modules in manifest")?;
+    let lib_alias = api_modules
+        .iter()
+        .flat_map(|module| {
+            module
+                .pointer("/declarations")
+                .and_then(|value| value.as_array())
+                .into_iter()
+                .flatten()
+        })
+        .find(|decl| {
+            decl.pointer("/kind").and_then(|value| value.as_str()) == Some("alias")
+                && decl.pointer("/name").and_then(|value| value.as_str()) == Some("eq")
+                && decl.pointer("/projected_function").is_some()
+        })
+        .ok_or("expected projected eq alias declaration in checked API metadata")?;
+    assert_eq!(
+        lib_alias
+            .pointer("/projected_function/callable/name")
+            .and_then(|value| value.as_str()),
+        Some("eq")
+    );
+    assert_eq!(
+        lib_alias
+            .pointer("/projected_function/source_path")
+            .and_then(|value| value.as_array())
+            .map(|values| values.iter().filter_map(|value| value.as_str()).collect::<Vec<_>>()),
+        Some(vec!["functions", "operators", "eq", "eq"])
+    );
+    assert!(
+        lib_alias
+            .pointer("/projected_function/decorators/0/decorated_callable/name")
+            .and_then(|value| value.as_str())
+            == Some("eq"),
+        "projected decorator metadata should carry decorated callable identity/signature, got:\n{lib_alias}"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_accepts_public_alias_of_imported_item_issue631() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "public_alias_test_reexport", "")?;

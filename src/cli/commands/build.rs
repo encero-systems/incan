@@ -13,7 +13,7 @@ use crate::cli::{CliError, CliResult, ExitCode};
 use crate::dependency_resolver::{resolve_dependencies, resolve_reachable_dependencies};
 use crate::frontend::api_metadata::{
     CHECKED_API_METADATA_SCHEMA_VERSION, CheckedApiMetadataPackage, CheckedApiPackageIdentity,
-    collect_checked_api_metadata, validate_checked_api_docstrings,
+    collect_checked_api_metadata, materialize_api_alias_projections, validate_checked_api_docstrings,
 };
 use crate::frontend::ast::{Declaration, Decorator, ImportKind, Span, Spanned};
 use crate::frontend::contract_metadata::{ContractMetadataPackage, read_project_model_bundles};
@@ -834,6 +834,8 @@ pub fn build_library(
     if !all_errors.is_empty() {
         return Err(CliError::failure(all_errors.trim_end()));
     }
+
+    materialize_api_alias_projections(&mut api_metadata_modules);
 
     for diagnostic in validate_checked_api_docstrings(&api_metadata_modules) {
         if let Some(module) = modules

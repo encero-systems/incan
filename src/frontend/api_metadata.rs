@@ -9,9 +9,9 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use serde::{Deserialize, Serialize};
 
 use crate::frontend::ast::{
-    ClassDecl, Declaration, Decorator, DecoratorArg, DecoratorArgValue, EnumDecl, Expr, FieldDecl, FunctionDecl,
-    ImportDecl, ImportItem, ImportKind, MethodDecl, ModelDecl, NewtypeDecl, Program, Span, Spanned, Statement,
-    TraitDecl, TypeAliasDecl, Visibility,
+    CallArg, ClassDecl, Declaration, Decorator, DecoratorArg, DecoratorArgValue, DictEntry, EnumDecl, Expr, FieldDecl,
+    FunctionDecl, ImportDecl, ImportItem, ImportKind, ListEntry, MethodDecl, ModelDecl, NewtypeDecl, Program, Span,
+    Spanned, Statement, TraitDecl, TypeAliasDecl, Visibility,
 };
 use crate::frontend::decorator_resolution;
 use crate::frontend::diagnostics::CompileError;
@@ -21,6 +21,7 @@ use crate::frontend::library_exports::{
     CheckedPartialTargetKind, CheckedPresetValue, CheckedTraitExport, CheckedTypeAliasExport, CheckedTypeBound,
     CheckedTypeParam, collect_checked_public_exports,
 };
+use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::{ConstValue, TypeChecker};
 use crate::library_manifest::{
     EnumValueExport, EnumValueTypeExport, FieldExport, ParamExport, ParamKindExport, PartialPresetExport,
@@ -208,6 +209,8 @@ pub struct ApiAlias {
     pub name: String,
     pub anchor: SourceAnchor,
     pub target_path: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub projected_function: Option<ApiProjectedFunction>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -244,7 +247,30 @@ pub struct DecoratorMetadata {
     pub path: Vec<String>,
     pub source_name: String,
     pub anchor: SourceSpan,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub type_args: Vec<TypeRef>,
     pub args: Vec<DecoratorArgMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decorated_callable: Option<ApiCallableMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiProjectedFunction {
+    pub source_path: Vec<String>,
+    pub callable: ApiCallableMetadata,
+    pub decorators: Vec<DecoratorMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ApiCallableMetadata {
+    pub name: String,
+    pub anchor: SourceAnchor,
+    pub type_params: Vec<TypeParamExport>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub receiver: Option<ReceiverExport>,
+    pub params: Vec<ParamExport>,
+    pub return_type: TypeRef,
+    pub is_async: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -264,12 +290,41 @@ pub enum DecoratorValue {
         name: String,
         value: Option<SafeMetadataValue>,
     },
+    SymbolRef {
+        path: Vec<String>,
+    },
+    List {
+        items: Vec<DecoratorValue>,
+    },
+    Dict {
+        entries: Vec<DecoratorDictEntry>,
+    },
+    Call {
+        callee: Vec<String>,
+        type_args: Vec<TypeRef>,
+        args: Vec<DecoratorCallArgMetadata>,
+    },
     Type {
         ty: TypeRef,
     },
     Unsupported {
         reason: String,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DecoratorDictEntry {
+    pub key: DecoratorValue,
+    pub value: DecoratorValue,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum DecoratorCallArgMetadata {
+    Positional { value: DecoratorValue },
+    Named { name: String, value: DecoratorValue },
+    PositionalUnpack { value: DecoratorValue },
+    KeywordUnpack { value: DecoratorValue },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -443,6 +498,7 @@ pub fn collect_checked_api_metadata(
                     name: alias.name.clone(),
                     anchor: anchor(&module_path, &alias.name, decl.span),
                     target_path: alias.target.segments.clone(),
+                    projected_function: None,
                 }));
             }
             Declaration::Partial(partial) if public(partial.visibility) => {
@@ -466,6 +522,106 @@ pub fn collect_checked_api_metadata(
         module_path,
         declarations,
     }
+}
+
+/// Attach checked function projections to public aliases that target decorated or ordinary public functions.
+///
+/// Metadata package consumers should not need to force producer module initialization just to discover declaration-side
+/// decorator facts. This projection pass resolves aliases across the already checked API package and carries the target
+/// function's decorators and checked callable shape onto facade aliases.
+pub fn materialize_api_alias_projections(modules: &mut [CheckedApiMetadata]) {
+    let mut projections = HashMap::new();
+    let mut aliases = Vec::new();
+
+    for module in modules.iter() {
+        for declaration in &module.declarations {
+            match declaration {
+                ApiDeclaration::Function(function) => {
+                    projections.insert(
+                        declaration_path(&module.module_path, &function.name),
+                        ApiProjectedFunction {
+                            source_path: declaration_path(&module.module_path, &function.name),
+                            callable: callable_from_function(function),
+                            decorators: function.decorators.clone(),
+                        },
+                    );
+                }
+                ApiDeclaration::Alias(alias) => aliases.push(ApiAliasProjectionRequest {
+                    path: declaration_path(&module.module_path, &alias.name),
+                    target_path: normalized_api_target_path(&alias.target_path),
+                    name: alias.name.clone(),
+                    anchor: alias.anchor.clone(),
+                }),
+                _ => {}
+            }
+        }
+    }
+
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for alias in &aliases {
+            if projections.contains_key(&alias.path) {
+                continue;
+            }
+            if let Some(target) = projections.get(&alias.target_path) {
+                projections.insert(alias.path.clone(), projected_function_for_alias(alias, target));
+                changed = true;
+            }
+        }
+    }
+
+    for module in modules {
+        for declaration in &mut module.declarations {
+            if let ApiDeclaration::Alias(alias) = declaration {
+                let alias_path = declaration_path(&module.module_path, &alias.name);
+                alias.projected_function = projections.get(&alias_path).cloned();
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct ApiAliasProjectionRequest {
+    path: Vec<String>,
+    target_path: Vec<String>,
+    name: String,
+    anchor: SourceAnchor,
+}
+
+fn declaration_path(module_path: &[String], name: &str) -> Vec<String> {
+    let mut path = module_path.to_vec();
+    path.push(name.to_string());
+    path
+}
+
+fn normalized_api_target_path(path: &[String]) -> Vec<String> {
+    if path.first().is_some_and(|segment| segment == "crate") {
+        return path[1..].to_vec();
+    }
+    path.to_vec()
+}
+
+fn callable_from_function(function: &ApiFunction) -> ApiCallableMetadata {
+    ApiCallableMetadata {
+        name: function.name.clone(),
+        anchor: function.anchor.clone(),
+        type_params: function.type_params.clone(),
+        receiver: None,
+        params: function.params.clone(),
+        return_type: function.return_type.clone(),
+        is_async: function.is_async,
+    }
+}
+
+fn projected_function_for_alias(
+    alias: &ApiAliasProjectionRequest,
+    target: &ApiProjectedFunction,
+) -> ApiProjectedFunction {
+    let mut projected = target.clone();
+    projected.callable.name = alias.name.clone();
+    projected.callable.anchor = alias.anchor.clone();
+    projected
 }
 
 fn checked_kind<'a>(exports: &'a HashMap<String, CheckedNamedExport>, name: &str) -> Option<&'a CheckedExportKind> {
@@ -553,13 +709,32 @@ fn api_function(
     module_path: &[String],
 ) -> ApiFunction {
     let docstring = function_docstring(&function.body);
+    let callable = api_callable_for_function(function, span, export, checker, module_path);
     ApiFunction {
-        name: export.name.clone(),
-        anchor: anchor(module_path, &export.name, span),
+        name: callable.name.clone(),
+        anchor: callable.anchor.clone(),
         docstring_sections: parse_docstring(docstring.as_deref()),
         docstring,
-        decorators: decorators_metadata(&function.decorators, checker),
+        decorators: decorators_metadata(&function.decorators, checker, Some(&callable)),
+        type_params: callable.type_params,
+        params: callable.params,
+        return_type: callable.return_type,
+        is_async: callable.is_async,
+    }
+}
+
+fn api_callable_for_function(
+    function: &FunctionDecl,
+    span: Span,
+    export: &CheckedFunctionExport,
+    checker: &TypeChecker,
+    module_path: &[String],
+) -> ApiCallableMetadata {
+    ApiCallableMetadata {
+        name: export.name.clone(),
+        anchor: anchor(module_path, &export.name, span),
         type_params: type_params(&export.type_params),
+        receiver: None,
         params: source_function_params(function, checker),
         return_type: source_function_return_type(function, checker),
         is_async: function.is_async(),
@@ -611,7 +786,7 @@ fn api_model(
         anchor: anchor(module_path, &export.name, span),
         docstring_sections: parse_docstring(docstring.as_deref()),
         docstring,
-        decorators: decorators_metadata(&model.decorators, checker),
+        decorators: decorators_metadata(&model.decorators, checker, None),
         type_params: type_params(&export.type_params),
         traits: export.traits.clone(),
         derives: export.derives.clone(),
@@ -633,7 +808,7 @@ fn api_class(
         anchor: anchor(module_path, &export.name, span),
         docstring_sections: parse_docstring(docstring.as_deref()),
         docstring,
-        decorators: decorators_metadata(&class.decorators, checker),
+        decorators: decorators_metadata(&class.decorators, checker, None),
         type_params: type_params(&export.type_params),
         extends: export.extends.clone(),
         traits: export.traits.clone(),
@@ -657,7 +832,7 @@ fn api_trait(
         anchor: anchor(module_path, &export.name, span),
         docstring_sections: parse_docstring(docstring.as_deref()),
         docstring,
-        decorators: decorators_metadata(&trait_decl.decorators, checker),
+        decorators: decorators_metadata(&trait_decl.decorators, checker, None),
         type_params: type_params(&export.type_params),
         supertraits: export.supertraits.iter().map(type_bound).collect(),
         requires: export
@@ -689,7 +864,7 @@ fn api_enum(
         anchor: anchor(module_path, &export.name, span),
         docstring_sections: parse_docstring(docstring.as_deref()),
         docstring,
-        decorators: decorators_metadata(&enum_decl.decorators, checker),
+        decorators: decorators_metadata(&enum_decl.decorators, checker, None),
         type_params: type_params(&export.type_params),
         value_type: export.value_type.map(|value_type| match value_type {
             crate::frontend::symbols::ValueEnumBacking::Str => EnumValueTypeExport::Str,
@@ -732,7 +907,7 @@ fn api_newtype(
         anchor: anchor(module_path, &export.name, span),
         docstring_sections: parse_docstring(docstring.as_deref()),
         docstring,
-        decorators: decorators_metadata(&newtype.decorators, checker),
+        decorators: decorators_metadata(&newtype.decorators, checker, None),
         type_params: type_params(&export.type_params),
         is_rusttype: export.is_rusttype,
         underlying: type_ref_from_resolved(&export.underlying),
@@ -775,7 +950,8 @@ fn api_const(
 fn api_aliases(import: &ImportDecl, span: Span, module_path: &[String]) -> Vec<ApiAlias> {
     match &import.kind {
         ImportKind::From { module, items } => {
-            let base_path = decorator_resolution::path_segments_with_prefix(module);
+            let base_path =
+                canonicalize_source_module_segments(&decorator_resolution::path_segments_with_prefix(module));
             aliases_from_items(items, base_path, span, module_path)
         }
         ImportKind::RustFrom {
@@ -812,6 +988,7 @@ fn aliases_from_items(
                 anchor: anchor(module_path, &name, span),
                 name,
                 target_path,
+                projected_function: None,
             }
         })
         .collect()
@@ -841,12 +1018,9 @@ fn methods(
             continue;
         };
         let docstring = method.node.body.as_ref().and_then(|body| function_docstring(body));
-        out.push(ApiMethod {
+        let callable = ApiCallableMetadata {
             name: checked.name.clone(),
             anchor: anchor(module_path, &format!("{owner}.{}", checked.name), method.span),
-            docstring_sections: parse_docstring(docstring.as_deref()),
-            docstring,
-            decorators: decorators_metadata(&method.node.decorators, checker),
             type_params: type_params(&checked.type_params),
             receiver: checked.receiver.map(|receiver| match receiver {
                 crate::frontend::ast::Receiver::Immutable => ReceiverExport::Immutable,
@@ -855,6 +1029,18 @@ fn methods(
             params: params(&checked.params),
             return_type: type_ref_from_resolved(&checked.return_type),
             is_async: checked.is_async,
+        };
+        out.push(ApiMethod {
+            name: callable.name.clone(),
+            anchor: callable.anchor.clone(),
+            docstring_sections: parse_docstring(docstring.as_deref()),
+            docstring,
+            decorators: decorators_metadata(&method.node.decorators, checker, Some(&callable)),
+            type_params: callable.type_params,
+            receiver: callable.receiver,
+            params: callable.params,
+            return_type: callable.return_type,
+            is_async: callable.is_async,
             has_body: checked.has_body,
         });
     }
@@ -1001,7 +1187,11 @@ fn fields_in_source_order(ast_fields: &[Spanned<FieldDecl>], checked_fields: &[C
     out
 }
 
-fn decorators_metadata(decorators: &[Spanned<Decorator>], checker: &TypeChecker) -> Vec<DecoratorMetadata> {
+fn decorators_metadata(
+    decorators: &[Spanned<Decorator>],
+    checker: &TypeChecker,
+    decorated_callable: Option<&ApiCallableMetadata>,
+) -> Vec<DecoratorMetadata> {
     decorators
         .iter()
         .map(|decorator| {
@@ -1010,12 +1200,24 @@ fn decorators_metadata(decorators: &[Spanned<Decorator>], checker: &TypeChecker)
                 path: resolved,
                 source_name: decorator.node.path.segments.join("."),
                 anchor: source_span(decorator.span),
+                type_args: decorator
+                    .node
+                    .type_args
+                    .iter()
+                    .map(|type_arg| {
+                        type_ref_from_resolved(&crate::frontend::symbols::resolve_type(
+                            &type_arg.node,
+                            &checker.symbols,
+                        ))
+                    })
+                    .collect(),
                 args: decorator
                     .node
                     .args
                     .iter()
                     .map(|arg| decorator_arg_metadata(arg, checker))
                     .collect(),
+                decorated_callable: decorated_callable.cloned(),
             }
         })
         .collect()
@@ -1048,9 +1250,131 @@ fn decorator_expr_value(expr: &Spanned<Expr>, checker: &TypeChecker) -> Decorato
             name: name.clone(),
             value: checker.type_info().const_value(name).map(safe_value_from_const),
         },
+        Expr::Field(base, field) => {
+            let mut path = decorator_expr_path(&base.node);
+            if path.is_empty() {
+                DecoratorValue::Unsupported {
+                    reason: "decorator field expression is not a symbolic path".to_string(),
+                }
+            } else {
+                path.push(field.clone());
+                DecoratorValue::SymbolRef { path }
+            }
+        }
+        Expr::List(entries) => DecoratorValue::List {
+            items: entries
+                .iter()
+                .map(|entry| match entry {
+                    ListEntry::Element(value) => decorator_expr_value(value, checker),
+                    ListEntry::Spread(value) => DecoratorValue::Unsupported {
+                        reason: format!(
+                            "decorator list spread `{}` is not declaration-safe metadata",
+                            decorator_expr_label(&value.node)
+                        ),
+                    },
+                })
+                .collect(),
+        },
+        Expr::Dict(entries) => {
+            let mut metadata_entries = Vec::new();
+            for entry in entries {
+                match entry {
+                    DictEntry::Pair(key, value) => metadata_entries.push(DecoratorDictEntry {
+                        key: decorator_expr_value(key, checker),
+                        value: decorator_expr_value(value, checker),
+                    }),
+                    DictEntry::Spread(value) => metadata_entries.push(DecoratorDictEntry {
+                        key: DecoratorValue::Unsupported {
+                            reason: "decorator dict spread has no declaration-safe key".to_string(),
+                        },
+                        value: decorator_expr_value(value, checker),
+                    }),
+                }
+            }
+            DecoratorValue::Dict {
+                entries: metadata_entries,
+            }
+        }
+        Expr::Call(callee, type_args, args) => {
+            let path = decorator_expr_path(&callee.node);
+            if path.is_empty() {
+                return DecoratorValue::Unsupported {
+                    reason: "decorator call callee is not a symbolic path".to_string(),
+                };
+            }
+            DecoratorValue::Call {
+                callee: path,
+                type_args: type_args
+                    .iter()
+                    .map(|type_arg| {
+                        type_ref_from_resolved(&crate::frontend::symbols::resolve_type(
+                            &type_arg.node,
+                            &checker.symbols,
+                        ))
+                    })
+                    .collect(),
+                args: args
+                    .iter()
+                    .map(|arg| decorator_call_arg_metadata(arg, checker))
+                    .collect(),
+            }
+        }
+        Expr::Constructor(name, args) => DecoratorValue::Call {
+            callee: vec![name.clone()],
+            type_args: Vec::new(),
+            args: args
+                .iter()
+                .map(|arg| decorator_call_arg_metadata(arg, checker))
+                .collect(),
+        },
         _ => DecoratorValue::Unsupported {
             reason: "decorator argument is not a literal, const reference, or type".to_string(),
         },
+    }
+}
+
+fn decorator_call_arg_metadata(arg: &CallArg, checker: &TypeChecker) -> DecoratorCallArgMetadata {
+    match arg {
+        CallArg::Positional(value) => DecoratorCallArgMetadata::Positional {
+            value: decorator_expr_value(value, checker),
+        },
+        CallArg::Named(name, value) => DecoratorCallArgMetadata::Named {
+            name: name.clone(),
+            value: decorator_expr_value(value, checker),
+        },
+        CallArg::PositionalUnpack(value) => DecoratorCallArgMetadata::PositionalUnpack {
+            value: decorator_expr_value(value, checker),
+        },
+        CallArg::KeywordUnpack(value) => DecoratorCallArgMetadata::KeywordUnpack {
+            value: decorator_expr_value(value, checker),
+        },
+    }
+}
+
+fn decorator_expr_path(expr: &Expr) -> Vec<String> {
+    match expr {
+        Expr::Ident(name) => vec![name.clone()],
+        Expr::Field(base, field) => {
+            let mut path = decorator_expr_path(&base.node);
+            if path.is_empty() {
+                return Vec::new();
+            }
+            path.push(field.clone());
+            path
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn decorator_expr_label(expr: &Expr) -> &'static str {
+    match expr {
+        Expr::Ident(_) => "identifier",
+        Expr::Literal(_) => "literal",
+        Expr::Call(_, _, _) | Expr::Constructor(_, _) => "call",
+        Expr::List(_) => "list",
+        Expr::Dict(_) => "dict",
+        Expr::Field(_, _) => "field",
+        _ => "expression",
     }
 }
 
@@ -1983,6 +2307,183 @@ pub def col(name: str) -> ColumnExpr:
             diagnostics.is_empty(),
             "expected generic decorator factory source signature to satisfy docstring validation, got {diagnostics:?}"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_projects_decorated_callable_context_issue694() -> Result<(), String> {
+        let source = r#"
+const EQUAL_FUNCTION_ANCHOR = "substrait.equal"
+
+model ColumnExpr:
+    name: str
+
+model FunctionLifecycle:
+    since: str
+    changed: List[str]
+    deprecated: Option[str]
+
+def extension_mapping(name: str, anchor: str) -> str:
+    return name
+
+def deterministic_spec(kind: str, lifecycle: FunctionLifecycle, mapping: str) -> str:
+    return kind
+
+def registered[F](spec: str) -> ((F) -> F):
+    return (func) => func
+
+@registered(deterministic_spec("scalar", FunctionLifecycle(since="v0.3", changed=[], deprecated=None), extension_mapping("equal", EQUAL_FUNCTION_ANCHOR)))
+pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
+    return left
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let function = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Function(function) if function.name == "eq" => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected decorated function metadata".to_string())?;
+        let decorator = function
+            .decorators
+            .first()
+            .ok_or_else(|| "expected decorator metadata".to_string())?;
+        let callable = decorator
+            .decorated_callable
+            .as_ref()
+            .ok_or_else(|| "expected decorated callable context".to_string())?;
+
+        assert_eq!(callable.name, "eq");
+        assert_eq!(
+            callable
+                .params
+                .iter()
+                .map(|param| (param.name.as_str(), &param.ty))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "left",
+                    &TypeRef::Named {
+                        name: "ColumnExpr".to_string(),
+                    },
+                ),
+                (
+                    "right",
+                    &TypeRef::Named {
+                        name: "ColumnExpr".to_string(),
+                    },
+                ),
+            ]
+        );
+        assert_eq!(
+            callable.return_type,
+            TypeRef::Named {
+                name: "ColumnExpr".to_string(),
+            }
+        );
+
+        let [
+            DecoratorArgMetadata::Positional {
+                value: DecoratorValue::Call { callee, args, .. },
+            },
+        ] = decorator.args.as_slice()
+        else {
+            return Err(format!(
+                "expected structured decorator call metadata, got {decorator:?}"
+            ));
+        };
+        assert_eq!(callee, &vec!["deterministic_spec".to_string()]);
+        let lifecycle_args = args
+            .iter()
+            .find_map(|arg| match arg {
+                DecoratorCallArgMetadata::Positional {
+                    value: DecoratorValue::Call { callee, args, .. },
+                } if callee == &vec!["FunctionLifecycle".to_string()] => Some(args),
+                _ => None,
+            })
+            .ok_or_else(|| format!("expected nested lifecycle constructor call metadata, got {args:?}"))?;
+        assert!(
+            lifecycle_args.iter().any(|arg| matches!(
+                arg,
+                DecoratorCallArgMetadata::Named {
+                    name,
+                    value: DecoratorValue::List { items },
+                } if name == "changed" && items.is_empty()
+            )),
+            "expected lifecycle `changed=[]` metadata, got {lifecycle_args:?}"
+        );
+        assert!(
+            lifecycle_args.iter().any(|arg| matches!(
+                arg,
+                DecoratorCallArgMetadata::Named {
+                    name,
+                    value: DecoratorValue::Literal {
+                        value: SafeMetadataValue::None,
+                    },
+                } if name == "deprecated"
+            )),
+            "expected lifecycle `deprecated=None` metadata, got {lifecycle_args:?}"
+        );
+        assert!(
+            args.iter().any(|arg| matches!(
+                arg,
+                DecoratorCallArgMetadata::Positional {
+                    value: DecoratorValue::Call { callee, args, .. },
+                } if callee == &vec!["extension_mapping".to_string()]
+                    && args.iter().any(|arg| matches!(
+                        arg,
+                        DecoratorCallArgMetadata::Positional {
+                            value: DecoratorValue::ConstRef {
+                                name,
+                                value: Some(SafeMetadataValue::String(value)),
+                            },
+                        } if name == "EQUAL_FUNCTION_ANCHOR" && value == "substrait.equal"
+                    ))
+            )),
+            "expected nested extension mapping call metadata with checked const ref, got {args:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn checked_api_metadata_rejects_non_symbolic_decorator_field_metadata() -> Result<(), String> {
+        let source = r#"
+model Holder:
+    value: str
+
+def holder() -> Holder:
+    return Holder(value="equal")
+
+def registered[F](name: str) -> ((F) -> F):
+    return (func) => func
+
+@registered(holder().value)
+pub def eq(left: int, right: int) -> int:
+    return left
+"#;
+        let metadata = metadata_for(source).map_err(|errs| format!("{errs:?}"))?;
+        let function = metadata
+            .declarations
+            .iter()
+            .find_map(|decl| match decl {
+                ApiDeclaration::Function(function) if function.name == "eq" => Some(function),
+                _ => None,
+            })
+            .ok_or_else(|| "expected decorated function metadata".to_string())?;
+        let [
+            DecoratorArgMetadata::Positional {
+                value: DecoratorValue::Unsupported { reason },
+            },
+        ] = function.decorators[0].args.as_slice()
+        else {
+            return Err(format!(
+                "expected non-symbolic field decorator argument to stay unsupported, got {:?}",
+                function.decorators[0].args
+            ));
+        };
+
+        assert_eq!(reason, "decorator field expression is not a symbolic path");
         Ok(())
     }
 
