@@ -620,6 +620,15 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             }
             IrExprKind::Field { object, field } => {
                 self.scan_expr(object);
+                if field == "__name__"
+                    && let IrType::Function { params, ret } = &object.ty
+                    && let Some(key) = IrEmitter::callable_name_signature_key(params, ret)
+                {
+                    self.analysis.callable_name_signature_keys.insert(key);
+                }
+                if field == "__name__" && matches!(object.ty, IrType::Generic(_)) {
+                    self.analysis.uses_generic_callable_name_trait = true;
+                }
                 if let Some(type_name) = self.object_nominal_type_name(object) {
                     let field = self
                         .struct_field_aliases
@@ -830,28 +839,36 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             _ => None,
         };
         let canonical_name = canonical_path.as_ref().and_then(|path| path.last()).map(String::as_str);
-        local_name
-            .and_then(|name| self.function_registry.get(name).cloned())
-            .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name).cloned()))
-            .or_else(|| callable_signature.cloned())
-            .or_else(|| match &func.ty {
-                IrType::Function { params, ret } => Some(FunctionSignature {
-                    params: params
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, ty)| super::super::decl::FunctionParam {
-                            name: format!("__incan_arg_{idx}"),
-                            ty: ty.clone(),
-                            mutability: super::super::types::Mutability::Immutable,
-                            is_self: false,
-                            kind: crate::frontend::ast::ParamKind::Normal,
-                            default: None,
-                        })
-                        .collect(),
-                    return_type: ret.as_ref().clone(),
-                }),
-                _ => None,
+        let registered_signature = if canonical_path.is_some() {
+            callable_signature.cloned().or_else(|| {
+                canonical_path
+                    .as_ref()
+                    .and_then(|path| self.function_registry.get_canonical_path(path).cloned())
             })
+        } else {
+            local_name
+                .and_then(|name| self.function_registry.get(name).cloned())
+                .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name).cloned()))
+                .or_else(|| callable_signature.cloned())
+        };
+        registered_signature.or_else(|| match &func.ty {
+            IrType::Function { params, ret } => Some(FunctionSignature {
+                params: params
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, ty)| super::super::decl::FunctionParam {
+                        name: format!("__incan_arg_{idx}"),
+                        ty: ty.clone(),
+                        mutability: super::super::types::Mutability::Immutable,
+                        is_self: false,
+                        kind: crate::frontend::ast::ParamKind::Normal,
+                        default: None,
+                    })
+                    .collect(),
+                return_type: ret.as_ref().clone(),
+            }),
+            _ => None,
+        })
     }
 
     /// Record named function arguments that need private adapters for borrowed function-pointer parameters.
@@ -2261,6 +2278,232 @@ impl<'a> IrEmitter<'a> {
         Ok(format!("{}{}", header, with_marker))
     }
 
+    pub(crate) fn callable_name_signature_keys_for_program(
+        program: &IrProgram,
+        externally_reachable_items: &HashSet<String>,
+        preserve_public_items: bool,
+        external_error_trait_types: &HashSet<String>,
+    ) -> HashSet<String> {
+        GeneratedUseAnalyzer::analyze(
+            program,
+            externally_reachable_items,
+            preserve_public_items,
+            external_error_trait_types,
+        )
+        .callable_name_signature_keys
+    }
+
+    pub(crate) fn generic_callable_name_trait_used_for_program(
+        program: &IrProgram,
+        externally_reachable_items: &HashSet<String>,
+        preserve_public_items: bool,
+        external_error_trait_types: &HashSet<String>,
+    ) -> bool {
+        GeneratedUseAnalyzer::analyze(
+            program,
+            externally_reachable_items,
+            preserve_public_items,
+            external_error_trait_types,
+        )
+        .uses_generic_callable_name_trait
+    }
+
+    fn callable_name_signature_for_key(&self, key: &str) -> Option<(Vec<IrType>, IrType)> {
+        self.callable_name_local_registry()
+            .iter()
+            .find_map(|(_, signature)| {
+                let params = signature
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect::<Vec<_>>();
+                (Self::callable_name_signature_key(&params, &signature.return_type).as_deref() == Some(key))
+                    .then(|| (params, signature.return_type.clone()))
+            })
+            .or_else(|| {
+                self.callable_name_resolutions
+                    .get(key)
+                    .map(|resolution| (resolution.params.clone(), resolution.ret.clone()))
+            })
+    }
+
+    fn callable_name_helper_keys(
+        &self,
+        local_callable_name_signature_keys: &HashSet<String>,
+        include_all_callable_signatures: bool,
+    ) -> Vec<String> {
+        let mut keys = local_callable_name_signature_keys.clone();
+        if include_all_callable_signatures {
+            for (_, signature) in self.callable_name_local_registry().iter() {
+                let params = signature
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect::<Vec<_>>();
+                if let Some(key) = Self::callable_name_signature_key(&params, &signature.return_type) {
+                    keys.insert(key);
+                }
+            }
+            keys.extend(
+                self.callable_name_resolutions
+                    .iter()
+                    .filter(|(_, resolution)| {
+                        self.callable_name_current_module_path.is_empty()
+                            || resolution.module_paths.iter().any(|path| !path.is_empty())
+                    })
+                    .map(|(key, _)| key.clone()),
+            );
+        }
+        for (key, resolution) in &self.callable_name_resolutions {
+            if self.callable_name_used_signature_keys.contains(key)
+                && resolution
+                    .module_paths
+                    .contains(&self.callable_name_current_module_path)
+            {
+                keys.insert(key.clone());
+            }
+        }
+        let mut keys = keys.into_iter().collect::<Vec<_>>();
+        keys.sort();
+        keys
+    }
+
+    fn callable_name_resolution_expr(&self, key: &str, callable_tokens: TokenStream) -> TokenStream {
+        let helper = Self::callable_name_helper_ident(key);
+        let mut helper_calls = Vec::new();
+        helper_calls.push(quote! { #helper(#callable_tokens) });
+        if let Some(resolution) = self.callable_name_resolutions.get(key) {
+            for module_path in &resolution.module_paths {
+                if module_path == &self.callable_name_current_module_path {
+                    continue;
+                }
+                if module_path.is_empty() && !self.callable_name_current_module_path.is_empty() {
+                    continue;
+                }
+                let helper_path = self.emit_callable_name_helper_path(module_path, key);
+                helper_calls.push(quote! { #helper_path(#callable_tokens) });
+            }
+        }
+        let fallback = proc_macro2::Literal::string("<callable>");
+        let mut resolved = quote! { #fallback.to_string() };
+        for helper_call in helper_calls.into_iter().rev() {
+            resolved = quote! {
+                if let Some(__incan_name) = #helper_call {
+                    __incan_name.to_string()
+                } else {
+                    #resolved
+                }
+            };
+        }
+        resolved
+    }
+
+    fn emit_generic_callable_name_trait(&self, keys: &[String]) -> Option<TokenStream> {
+        if keys.is_empty() {
+            return None;
+        }
+        let trait_ident = Self::rust_ident("__IncanCallableName");
+        let impls = keys
+            .iter()
+            .filter_map(|key| {
+                let (params, ret) = self.callable_name_signature_for_key(key)?;
+                let param_tokens = params.iter().map(|param| self.emit_type(param)).collect::<Vec<_>>();
+                let ret_tokens = self.emit_type(&ret);
+                let fn_ty = quote! { fn(#(#param_tokens),*) -> #ret_tokens };
+                let resolved = self.callable_name_resolution_expr(key, quote! { __incan_callable });
+                Some(quote! {
+                    impl #trait_ident for #fn_ty {
+                        fn __incan_callable_name(&self) -> String {
+                            let __incan_callable: #fn_ty = *self;
+                            #resolved
+                        }
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        if impls.is_empty() {
+            return None;
+        }
+        Some(quote! {
+            pub trait #trait_ident {
+                fn __incan_callable_name(&self) -> String;
+            }
+
+            #(#impls)*
+        })
+    }
+
+    fn emit_callable_name_helpers(
+        &self,
+        emitted_callable_names: &HashSet<String>,
+        keys: &[String],
+    ) -> Vec<TokenStream> {
+        keys.iter()
+            .filter_map(|key| {
+                let (params, ret) = self.callable_name_signature_for_key(key)?;
+                let helper = Self::callable_name_helper_ident(key);
+                let param_tokens = params.iter().map(|param| self.emit_type(param)).collect::<Vec<_>>();
+                let ret_tokens = self.emit_type(&ret);
+                let fn_ty = quote! { fn(#(#param_tokens),*) -> #ret_tokens };
+                let mut candidates = self
+                    .callable_name_local_registry()
+                    .iter()
+                    .filter(|(name, signature)| {
+                        emitted_callable_names.contains(*name)
+                            && signature.params.len() == params.len()
+                            && signature.params.iter().map(|param| &param.ty).eq(params.iter())
+                            && signature.return_type == ret
+                    })
+                    .map(|(name, _)| {
+                        let source_name = name.strip_prefix("__incan_original_").unwrap_or(name);
+                        (name.clone(), source_name.to_string())
+                    })
+                    .collect::<Vec<_>>();
+                candidates.sort_by(|left, right| left.0.cmp(&right.0));
+                let has_candidates = !candidates.is_empty();
+
+                let mut body = quote! { None };
+                for (candidate, source_name) in candidates.into_iter().rev() {
+                    let candidate_ident = Self::rust_ident(&candidate);
+                    let source_literal = proc_macro2::Literal::string(&source_name);
+                    body = quote! {
+                        if std::ptr::fn_addr_eq(callable, #candidate_ident as #fn_ty) {
+                            Some(#source_literal)
+                        } else {
+                            #body
+                        }
+                    };
+                }
+                let callable_param = if has_candidates {
+                    Self::rust_ident("callable")
+                } else {
+                    Self::rust_ident("_callable")
+                };
+
+                let visibility = if self.callable_name_resolutions.get(key).is_some_and(|resolution| {
+                    self.callable_name_used_signature_keys.contains(key)
+                        && resolution
+                            .module_paths
+                            .contains(&self.callable_name_current_module_path)
+                }) {
+                    quote! { pub(crate) }
+                } else {
+                    quote! {}
+                };
+                let private_interfaces_allow = (!visibility.is_empty()).then(|| {
+                    quote! { #[allow(private_interfaces)] }
+                });
+
+                Some(quote! {
+                    #private_interfaces_allow
+                    #visibility fn #helper(#callable_param: #fn_ty) -> Option<&'static str> {
+                        #body
+                    }
+                })
+            })
+            .collect()
+    }
+
     /// Emit a program to TokenStream (without formatting).
     pub fn emit_program_tokens(&self, program: &IrProgram) -> Result<TokenStream, EmitError> {
         let mut items = Vec::new();
@@ -2273,9 +2516,13 @@ impl<'a> IrEmitter<'a> {
         let uses_stdlib_error_trait = analysis.uses_stdlib_error_trait;
         let result_observer_callable_types = analysis.result_observer_callable_types.clone();
         let borrowed_function_adapters = analysis.borrowed_function_adapters.clone();
+        let local_callable_name_signature_keys = analysis.callable_name_signature_keys.clone();
+        let uses_generic_callable_name_trait = analysis.uses_generic_callable_name_trait;
         self.set_result_observer_callable_types(result_observer_callable_types);
         self.set_borrowed_function_adapters(borrowed_function_adapters);
         self.set_generated_use_analysis(analysis);
+        let callable_name_helper_keys =
+            self.callable_name_helper_keys(&local_callable_name_signature_keys, uses_generic_callable_name_trait);
 
         let emitted_declarations: Vec<&IrDecl> = program
             .declarations
@@ -2420,6 +2667,21 @@ impl<'a> IrEmitter<'a> {
                     });
                 }
             });
+        }
+
+        let emitted_callable_names: HashSet<String> = emitted_declarations
+            .iter()
+            .filter_map(|decl| match &decl.kind {
+                IrDeclKind::Function(func) => Some(func.name.clone()),
+                IrDeclKind::SymbolAlias { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        items.extend(self.emit_callable_name_helpers(&emitted_callable_names, &callable_name_helper_keys));
+        if uses_generic_callable_name_trait
+            && let Some(trait_item) = self.emit_generic_callable_name_trait(&callable_name_helper_keys)
+        {
+            items.push(trait_item);
         }
 
         // Emit all declarations.

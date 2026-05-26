@@ -1830,6 +1830,222 @@ def test_alias() -> None:
 }
 
 #[test]
+fn test_imported_public_partial_presets_keep_projected_call_surface_issue698() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "imported_public_partial_preset", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        src_dir.join("presets.incn"),
+        r#"pub model Spec:
+    pub namespace: str
+    pub policy: str
+    pub klass: str
+    pub lifecycle: str
+
+
+"""Build a core portable spec."""
+pub core_spec = partial Spec(namespace="core", policy="portable")
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_imported_partial.incn"),
+        r#"from presets import core_spec
+
+
+def test_imported_partial_preset_keeps_presets() -> None:
+    spec = core_spec(klass="scalar", lifecycle="v1")
+    assert spec.namespace == "core"
+    assert spec.policy == "portable"
+    assert spec.klass == "scalar"
+    assert spec.lifecycle == "v1"
+"#,
+    )?;
+
+    let test_path = tests_dir.join("test_imported_partial.incn");
+    let test_output = run_incan(
+        tmp.path(),
+        &["test", test_path.to_str().ok_or("test path was not valid UTF-8")?],
+    )?;
+    assert_success(&test_output, "incan test for imported public partial issue698");
+    Ok(())
+}
+
+#[test]
+fn test_imported_partial_preset_defaults_survive_decorator_argument_issue698() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "imported_partial_decorator_argument", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        src_dir.join("function_registry.incn"),
+        r#"pub model FunctionSpec:
+    pub namespace: str
+    pub deterministic: bool
+    pub lifecycle: str
+
+
+pub static registered_names: list[str] = []
+pub static registered_namespaces: list[str] = []
+
+
+pub def capture(func: (int) -> int) -> ((int) -> int):
+    registered_names.append(func.__name__)
+    return func
+
+
+pub def add(spec: FunctionSpec) -> (((int) -> int) -> ((int) -> int)):
+    registered_namespaces.append(spec.namespace)
+    return capture
+
+
+pub deterministic_spec = partial FunctionSpec(namespace="core", deterministic=true)
+"#,
+    )?;
+    fs::write(
+        src_dir.join("helpers.incn"),
+        r#"from function_registry import add, deterministic_spec
+
+
+@add(deterministic_spec(lifecycle="stable"))
+pub def normalize(value: int) -> int:
+    return value
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_registry_intent.incn"),
+        r#"from function_registry import registered_names, registered_namespaces
+from helpers import normalize
+
+
+def test_decorator_can_infer_name_with_imported_partial_spec() -> None:
+    assert normalize(7) == 7
+    assert registered_names[0] == "normalize"
+    assert registered_namespaces[0] == "core"
+"#,
+    )?;
+
+    let test_path = tests_dir.join("test_registry_intent.incn");
+    let test_output = run_incan(
+        tmp.path(),
+        &["test", test_path.to_str().ok_or("test path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &test_output,
+        "incan test for imported partial in decorator argument issue698",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_decorator_callable_exposes_source_name_issue694() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "decorator_callable_name", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        &main_path,
+        r#"def main() -> None:
+    pass
+"#,
+    )?;
+    fs::write(
+        src_dir.join("registry.incn"),
+        r#"pub static names: list[str] = []
+
+
+pub def capture(func: (int) -> int) -> ((int) -> int):
+    names.append(func.__name__)
+    return func
+
+
+pub def registered() -> (((int) -> int) -> ((int) -> int)):
+    return capture
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_callable_name.incn"),
+        r#"from registry import names, registered
+
+
+@registered()
+pub def sample(value: int) -> int:
+    return value + 1
+
+
+def test_decorator_can_read_specific_callable_name() -> None:
+    assert sample(1) == 2
+    assert names[0] == "sample"
+"#,
+    )?;
+
+    let test_path = tests_dir.join("test_callable_name.incn");
+    let test_output = run_incan(
+        tmp.path(),
+        &["test", test_path.to_str().ok_or("test path was not valid UTF-8")?],
+    )?;
+    assert_success(&test_output, "incan test for decorator callable name issue694");
+    Ok(())
+}
+
+#[test]
+fn test_generic_decorator_callable_exposes_source_name_issue694() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "generic_decorator_callable_name", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        src_dir.join("registry.incn"),
+        r#"pub static names: list[str] = []
+
+
+pub def capture[F](func: F) -> F:
+    names.append(func.__name__)
+    return func
+
+
+pub def registered[F]() -> ((F) -> F):
+    return (func) => capture[F](func)
+"#,
+    )?;
+    fs::write(
+        src_dir.join("helpers.incn"),
+        r#"from registry import names, registered
+
+
+@registered[(int) -> int]()
+pub def sample(value: int) -> int:
+    return value + 1
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_generic_callable_name.incn"),
+        r#"from registry import names
+from helpers import sample
+
+
+def test_generic_decorator_can_read_callable_name() -> None:
+    assert sample(1) == 2
+    assert names[0] == "sample"
+"#,
+    )?;
+
+    let test_path = tests_dir.join("test_generic_callable_name.incn");
+    let test_output = run_incan(
+        tmp.path(),
+        &["test", test_path.to_str().ok_or("test path was not valid UTF-8")?],
+    )?;
+    assert_success(&test_output, "incan test for generic decorator callable name issue694");
+    Ok(())
+}
+
+#[test]
 fn build_frozen_uses_existing_lockfile_without_network() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_frozen_existing_lock_project", "")?;

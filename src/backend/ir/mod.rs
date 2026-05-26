@@ -71,14 +71,40 @@ impl FunctionRegistry {
         Self::default()
     }
 
+    /// Build the registry key used for a canonical module path such as `helpers.normalize`.
+    pub fn canonical_key(path: &[String]) -> Option<String> {
+        if path.len() < 2 {
+            return None;
+        }
+        Some(path.join("::"))
+    }
+
     /// Register a function signature
     pub fn register(&mut self, name: String, params: Vec<FunctionParam>, return_type: IrType) {
         self.signatures.insert(name, FunctionSignature { params, return_type });
     }
 
+    /// Register a function signature under its canonical module path.
+    pub fn register_canonical_path(&mut self, path: &[String], params: Vec<FunctionParam>, return_type: IrType) {
+        if let Some(key) = Self::canonical_key(path) {
+            self.register(key, params, return_type);
+        }
+    }
+
     /// Look up a function signature by name
     pub fn get(&self, name: &str) -> Option<&FunctionSignature> {
         self.signatures.get(name)
+    }
+
+    /// Look up a function signature by canonical module path.
+    pub fn get_canonical_path(&self, path: &[String]) -> Option<&FunctionSignature> {
+        let key = Self::canonical_key(path)?;
+        self.signatures.get(&key)
+    }
+
+    /// Iterate over registered function signatures.
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &FunctionSignature)> {
+        self.signatures.iter()
     }
 
     /// Merge another registry into this one

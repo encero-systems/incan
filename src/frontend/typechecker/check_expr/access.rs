@@ -2489,6 +2489,9 @@ impl TypeChecker {
         }
 
         let resolve_on = |checker: &mut Self, ty: &ResolvedType| -> ResolvedType {
+            if field == "__name__" && checker.is_generic_placeholder_type(ty) {
+                return ResolvedType::Str;
+            }
             match ty {
                 ResolvedType::Unknown => ResolvedType::Unknown,
                 // Trait default methods typecheck against `Self`, but field access must be declared via
@@ -2512,6 +2515,7 @@ impl TypeChecker {
                     checker.errors.push(errors::missing_field(&ty.to_string(), field, span));
                     ResolvedType::Unknown
                 }
+                ResolvedType::Function(_, _) if field == "__name__" => ResolvedType::Str,
                 ResolvedType::Named(type_name) => {
                     if let Some(field_ty) = checker.resolve_nominal_field_type(type_name, None, field, span) {
                         return field_ty;
@@ -2537,6 +2541,9 @@ impl TypeChecker {
                     ResolvedType::Unknown
                 }
                 ResolvedType::TypeVar(name) => {
+                    if field == "__name__" {
+                        return ResolvedType::Str;
+                    }
                     if let Some(property_ty) = checker.resolve_generic_placeholder_property(name, field, span) {
                         return property_ty;
                     }

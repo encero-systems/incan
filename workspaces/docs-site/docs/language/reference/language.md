@@ -332,6 +332,21 @@ pub def col(name: str) -> ColumnExpr:
 
 The post-decoration binding keeps the concrete callable signature of the decorated function unless the decorator deliberately returns a different callable shape. Checked API metadata and imports observe that concrete signature, not the generic helper's `F`.
 
+The callable value passed into a decorator exposes `__name__` as the source callable name. Registry and catalog decorators can use this from concrete decorator helpers and from generic `(F) -> F` helpers, so a decorator can record `func.__name__` without requiring the decorated declaration to repeat its own public name in a string argument.
+
+```incan
+def capture[F](func: F) -> F:
+    registry_names.append(func.__name__)
+    return func
+
+def registered[F]() -> ((F) -> F):
+    return (func) => capture[F](func)
+
+@registered()
+pub def sample(value: int) -> int:
+    return value + 1
+```
+
 Method decorators receive an unbound callable shape with the receiver first. A decorator on `def label(self, value: int) -> str` sees `(&Box, int) -> str`; a decorator on `def bump(mut self, value: int) -> int` sees `(&mut Box, int) -> int`. The wrapper passes the actual receiver borrow through to the decorated callable, so method decorators do not require cloning the receiver.
 
 Class, model, trait, enum, newtype, field, alias, and module decorators remain limited to compiler-owned decorators. Compiler-owned decorators such as `@derive`, `@route`, `@rust.extern`, `@rust.allow`, `@staticmethod`, `@classmethod`, and `@requires` keep their existing special behavior.

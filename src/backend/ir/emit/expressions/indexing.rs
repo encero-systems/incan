@@ -40,6 +40,78 @@ fn emit_dict_lookup_index_key(object: &TypedExpr, index: &TypedExpr, emitted: To
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Emit the stable source name for a function-typed value when the value points at a registered generated
+    /// function. Decorator lowering passes undecorated originals such as `__incan_original_sample`, but source-facing
+    /// metadata should still report `sample`.
+    fn emit_callable_name_expr(&self, object: &TypedExpr) -> Result<TokenStream, EmitError> {
+        let IrType::Function { params, ret } = &object.ty else {
+            return Ok(quote! { "<callable>".to_string() });
+        };
+        let Some(signature_key) = Self::callable_name_signature_key(params, ret) else {
+            return Ok(quote! { "<callable>".to_string() });
+        };
+        let callable = self.emit_expr(object)?;
+        let param_tokens = params.iter().map(|param| self.emit_type(param)).collect::<Vec<_>>();
+        let ret_tokens = self.emit_type(ret);
+        let fn_ty = quote! { fn(#(#param_tokens),*) -> #ret_tokens };
+
+        let helper = Self::callable_name_helper_ident(&signature_key);
+        let mut helper_calls = Vec::new();
+        if self.local_callable_name_signature_keys().contains(&signature_key) {
+            helper_calls.push(quote! { #helper(__incan_callable) });
+        }
+        if let Some(resolution) = self.callable_name_resolutions.get(&signature_key) {
+            for module_path in &resolution.module_paths {
+                if module_path == &self.callable_name_current_module_path {
+                    continue;
+                }
+                let helper_path = self.emit_callable_name_helper_path(module_path, &signature_key);
+                helper_calls.push(quote! { #helper_path(__incan_callable) });
+            }
+        }
+        let fallback = proc_macro2::Literal::string("<callable>");
+        let mut resolved = quote! { #fallback.to_string() };
+        for helper_call in helper_calls.into_iter().rev() {
+            resolved = quote! {
+                if let Some(__incan_name) = #helper_call {
+                    __incan_name.to_string()
+                } else {
+                    #resolved
+                }
+            };
+        }
+
+        Ok(quote! {{
+            let __incan_callable: #fn_ty = #callable;
+            #resolved
+        }})
+    }
+
+    fn emit_generic_callable_name_expr(&self, object: &TypedExpr) -> Result<TokenStream, EmitError> {
+        let object = self.emit_expr(object)?;
+        Ok(quote! { __IncanCallableName::__incan_callable_name(&#object) })
+    }
+
+    pub(in crate::backend::ir::emit) fn emit_callable_name_helper_path(
+        &self,
+        module_path: &[String],
+        signature_key: &str,
+    ) -> TokenStream {
+        let helper = Self::callable_name_helper_ident(signature_key);
+        if module_path.is_empty() {
+            return quote! { crate::#helper };
+        }
+        let mut segments = vec![quote! { crate }];
+        for segment in module_path {
+            let ident = Self::rust_ident(segment);
+            segments.push(quote! { #ident });
+        }
+        segments.push(quote! { #helper });
+        let mut iter = segments.into_iter();
+        let first = iter.next().unwrap_or_else(|| quote! { crate });
+        iter.fold(first, |acc, segment| quote! { #acc :: #segment })
+    }
+
     /// Build the fully-qualified generated-module path for a type imported from another emitted module.
     ///
     /// Default argument expressions can be expanded at a call site outside the module that declared the default. When
@@ -218,6 +290,14 @@ impl<'a> IrEmitter<'a> {
     /// - Tuple field access (`tuple.0` → `tuple.0`)
     /// - Regular struct field access (`obj.field` → `obj.field`)
     pub(in super::super) fn emit_field_expr(&self, object: &TypedExpr, field: &str) -> Result<TokenStream, EmitError> {
+        if field == "__name__" {
+            return match object.ty {
+                IrType::Function { .. } => self.emit_callable_name_expr(object),
+                IrType::Generic(_) => self.emit_generic_callable_name_expr(object),
+                _ => Ok(quote! { "<callable>".to_string() }),
+            };
+        }
+
         if Self::expr_is_storage_rooted(object) {
             let rewritten = Self::rewrite_storage_root_expr(
                 &TypedExpr::new(
