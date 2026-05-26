@@ -499,12 +499,10 @@ impl<'a> IrEmitter<'a> {
             _ => None,
         };
         let callee_name = local_name.or(canonical_name);
-        let registry_signature = if canonical_path.is_some() {
-            canonical_name.and_then(|name| self.function_registry.get(name))
+        let registry_signature = if let Some(path) = canonical_path {
+            self.canonical_function_registry().get_canonical_path(path)
         } else {
-            local_name
-                .and_then(|name| self.function_registry.get(name))
-                .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name)))
+            local_name.and_then(|name| self.function_registry.get(name))
         };
         let result_specialized_signature = callable_signature.or(registry_signature).and_then(|signature| {
             result_target_ty.and_then(|target_ty| Self::specialize_signature_by_result_target(signature, target_ty))

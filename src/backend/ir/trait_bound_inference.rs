@@ -2178,6 +2178,7 @@ fn expr_type_param_name(
 fn type_param_name_from_ir_type(ty: &IrType, type_params: &HashSet<&str>) -> Option<String> {
     match ty {
         IrType::Generic(name) if type_params.contains(name.as_str()) => Some(name.clone()),
+        IrType::Struct(name) if type_params.contains(name.as_str()) => Some(name.clone()),
         _ => None,
     }
 }
@@ -2702,6 +2703,9 @@ fn collect_calls_in_expr(
             for stmt in body {
                 recurse_stmt(stmt, result);
             }
+        }
+        IrExprKind::Closure { body, .. } => {
+            recurse_expr(body, result);
         }
         IrExprKind::Race { arms, .. } => {
             for arm in arms {

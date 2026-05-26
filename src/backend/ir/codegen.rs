@@ -37,11 +37,12 @@ use crate::frontend::ast::Program;
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 
+use super::emit::CallableNameResolution;
 use super::scanners::{
     check_for_this_import as scan_check_for_this_import, collect_rust_crates as scan_collect_rust_crates,
     detect_serde_usage,
 };
-use super::{AstLowering, EmitError, EmitService, IrEmitter, LoweringErrors};
+use super::{AstLowering, EmitError, EmitService, FunctionRegistry, IrEmitter, IrProgram, LoweringErrors};
 
 mod dependency_metadata;
 mod ordinal_bridge;
@@ -197,6 +198,25 @@ impl<'a> IrCodegen<'a> {
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
+    }
+
+    /// Build a registry for explicit canonical cross-module calls.
+    fn canonical_registry_for_programs<'program>(
+        programs: impl IntoIterator<Item = (&'program [String], &'program IrProgram)>,
+    ) -> FunctionRegistry {
+        let mut registry = FunctionRegistry::new();
+        for (module_path, program) in programs {
+            for (name, signature) in program.function_registry.iter() {
+                let mut canonical_path = module_path.to_vec();
+                canonical_path.push(name.clone());
+                registry.register_canonical_path(
+                    &canonical_path,
+                    signature.params.clone(),
+                    signature.return_type.clone(),
+                );
+            }
+        }
+        registry
     }
 
     /// Enable strict generated Rust lint validation for `--emit-rust --strict`.
@@ -459,7 +479,7 @@ impl<'a> IrCodegen<'a> {
         program: &Program,
         internal_module_roots: &HashSet<String>,
     ) -> Result<String, GenerationError> {
-        self.try_generate_via_ir_with_union_config(program, internal_module_roots, HashMap::new(), false)
+        self.try_generate_via_ir_with_union_config(program, internal_module_roots, HashMap::new(), false, None, None)
     }
 
     /// Generate code via the IR pipeline with optional crate-root union sharing for multi-file source modules.
@@ -469,6 +489,8 @@ impl<'a> IrCodegen<'a> {
         internal_module_roots: &HashSet<String>,
         generated_union_types: HashMap<String, super::types::IrType>,
         qualify_union_types_from_crate: bool,
+        mut callable_name_resolutions: Option<&mut HashMap<String, CallableNameResolution>>,
+        mut callable_name_used_signature_keys: Option<&mut HashSet<String>>,
     ) -> Result<String, GenerationError> {
         let deps: Vec<(&str, &Program)> = self
             .dependency_modules
@@ -514,11 +536,29 @@ impl<'a> IrCodegen<'a> {
 
         // RFC 023: Infer trait bounds for generic functions.
         super::trait_bound_inference::infer_trait_bounds(&mut ir_program);
+        if let Some(used_keys) = callable_name_used_signature_keys.as_deref_mut() {
+            used_keys.extend(IrEmitter::callable_name_signature_keys_for_program(
+                &ir_program,
+                &self.externally_reachable_items,
+                true,
+                &dependency_type_metadata.error_trait_type_names,
+            ));
+        }
+        if let Some(resolutions) = callable_name_resolutions.as_deref_mut() {
+            IrEmitter::add_callable_name_resolutions_for_program(resolutions, Vec::new(), &ir_program);
+        }
+        let callable_name_resolutions_for_emit = callable_name_resolutions
+            .as_ref()
+            .map(|resolutions| (**resolutions).clone())
+            .unwrap_or_default();
+        let callable_name_used_signature_keys_for_emit = callable_name_used_signature_keys
+            .as_ref()
+            .map(|used_keys| (**used_keys).clone())
+            .unwrap_or_default();
 
-        // Build unified function registry including imported module functions
-        let mut unified_registry = ir_program.function_registry.clone();
+        let mut canonical_registry = FunctionRegistry::new();
         let mut dependency_ir_programs = Vec::new();
-        for (_, dep_ast, _) in &self.dependency_modules {
+        for (dep_name, dep_ast, dep_path_segments) in &self.dependency_modules {
             // For dependencies, use best-effort lowering without type info to
             // preserve prior behavior and avoid redundant typechecking.
             let mut dep_lowering = AstLowering::new();
@@ -530,7 +570,18 @@ impl<'a> IrCodegen<'a> {
             );
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let dep_ir = dep_lowering.lower_program(dep_ast)?;
-            unified_registry.merge(&dep_ir.function_registry);
+            let module_path = dep_path_segments
+                .clone()
+                .unwrap_or_else(|| vec![(*dep_name).to_string()]);
+            for (name, signature) in dep_ir.function_registry.iter() {
+                let mut canonical_path = module_path.clone();
+                canonical_path.push(name.clone());
+                canonical_registry.register_canonical_path(
+                    &canonical_path,
+                    signature.params.clone(),
+                    signature.return_type.clone(),
+                );
+            }
             dependency_ir_programs.push(dep_ir);
         }
 
@@ -557,12 +608,17 @@ impl<'a> IrCodegen<'a> {
             self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
             inner.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
             inner.set_generated_union_types(generated_union_types);
+            inner.set_canonical_function_registry(canonical_registry.clone());
+            inner.set_callable_name_current_module_path(Vec::new());
+            inner.set_callable_name_resolutions(callable_name_resolutions_for_emit);
+            inner.set_callable_name_used_signature_keys(callable_name_used_signature_keys_for_emit);
+            inner.set_callable_name_local_registry(ir_program.function_registry.clone());
             for dep_ir in &dependency_ir_programs {
                 inner.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
             Ok(svc.emit_program(&ir_program)?)
         } else {
-            let mut emitter = IrEmitter::new(&unified_registry);
+            let mut emitter = IrEmitter::new(&ir_program.function_registry);
             emitter.set_internal_module_roots(internal_module_roots.clone());
             if self.emit_zen_in_main {
                 emitter.set_emit_zen(true);
@@ -580,6 +636,11 @@ impl<'a> IrCodegen<'a> {
             self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
             emitter.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
             emitter.set_generated_union_types(generated_union_types);
+            emitter.set_canonical_function_registry(canonical_registry.clone());
+            emitter.set_callable_name_current_module_path(Vec::new());
+            emitter.set_callable_name_resolutions(callable_name_resolutions_for_emit);
+            emitter.set_callable_name_used_signature_keys(callable_name_used_signature_keys_for_emit);
+            emitter.set_callable_name_local_registry(ir_program.function_registry.clone());
             for dep_ir in &dependency_ir_programs {
                 emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
@@ -758,14 +819,57 @@ impl<'a> IrCodegen<'a> {
                 .collect();
             super::trait_bound_inference::propagate_trait_bounds_from_programs(current_ir, &external_programs);
         }
+        let all_module_canonical_registry = Self::canonical_registry_for_programs(
+            lowered_modules
+                .iter()
+                .map(|(_, module_path, ir)| (module_path.as_slice(), ir)),
+        );
         let mut shared_union_types = HashMap::new();
         for (_, _, ir) in &lowered_modules {
             shared_union_types.extend(IrEmitter::collect_union_types_from_program(ir));
         }
 
         // Generate main file after dependency lowering so it can own shared crate-root union wrappers.
-        let main_code =
-            self.try_generate_via_ir_with_union_config(program, &internal_roots, shared_union_types, true)?;
+        let mut callable_name_resolutions = HashMap::new();
+        let mut callable_name_used_signature_keys = HashSet::new();
+        let mut generic_callable_name_trait_used = false;
+        for (_, module_path, ir) in &lowered_modules {
+            IrEmitter::add_callable_name_resolutions_for_program(
+                &mut callable_name_resolutions,
+                module_path.clone(),
+                ir,
+            );
+            let mut reachable_items = dependency_reachable_items.get(module_path).cloned().unwrap_or_default();
+            if let Some(injected_items) = self.externally_reachable_items_by_module.get(module_path) {
+                reachable_items.extend(injected_items.iter().cloned());
+            }
+            let preserve_public_items =
+                should_preserve_dependency_public_items(module_path, self.preserve_dependency_public_items);
+            callable_name_used_signature_keys.extend(IrEmitter::callable_name_signature_keys_for_program(
+                ir,
+                &reachable_items,
+                preserve_public_items,
+                &dependency_type_metadata.error_trait_type_names,
+            ));
+            generic_callable_name_trait_used |= IrEmitter::generic_callable_name_trait_used_for_program(
+                ir,
+                &reachable_items,
+                preserve_public_items,
+                &dependency_type_metadata.error_trait_type_names,
+            );
+        }
+        if generic_callable_name_trait_used {
+            callable_name_used_signature_keys.extend(callable_name_resolutions.keys().cloned());
+        }
+
+        let main_code = self.try_generate_via_ir_with_union_config(
+            program,
+            &internal_roots,
+            shared_union_types,
+            true,
+            Some(&mut callable_name_resolutions),
+            Some(&mut callable_name_used_signature_keys),
+        )?;
 
         let mut modules = HashMap::new();
         for (name, module_path, ir) in &lowered_modules {
@@ -791,6 +895,10 @@ impl<'a> IrCodegen<'a> {
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
+                inner.set_canonical_function_registry(all_module_canonical_registry.clone());
+                inner.set_callable_name_current_module_path(module_path.clone());
+                inner.set_callable_name_resolutions(callable_name_resolutions.clone());
+                inner.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
                 self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
                 for (_, _, dep_ir) in &lowered_modules {
                     inner.seed_dependency_nominal_metadata_from_program(dep_ir);
@@ -810,6 +918,10 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
+                emitter.set_canonical_function_registry(all_module_canonical_registry.clone());
+                emitter.set_callable_name_current_module_path(module_path.clone());
+                emitter.set_callable_name_resolutions(callable_name_resolutions.clone());
+                emitter.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
                 self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
                 for (_, _, dep_ir) in &lowered_modules {
                     emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
@@ -949,14 +1061,50 @@ impl<'a> IrCodegen<'a> {
                 .collect();
             super::trait_bound_inference::propagate_trait_bounds_from_programs(current_ir, &external_programs);
         }
+        let all_module_canonical_registry =
+            Self::canonical_registry_for_programs(lowered_modules.iter().map(|(path, ir)| (path.as_slice(), ir)));
         let mut shared_union_types = HashMap::new();
         for (_, ir) in &lowered_modules {
             shared_union_types.extend(IrEmitter::collect_union_types_from_program(ir));
         }
 
         // Generate main file after dependency lowering so it can own shared crate-root union wrappers.
-        let main_code =
-            self.try_generate_via_ir_with_union_config(program, &internal_roots, shared_union_types, true)?;
+        let mut callable_name_resolutions = HashMap::new();
+        let mut callable_name_used_signature_keys = HashSet::new();
+        let mut generic_callable_name_trait_used = false;
+        for (path, ir) in &lowered_modules {
+            IrEmitter::add_callable_name_resolutions_for_program(&mut callable_name_resolutions, path.clone(), ir);
+            let mut reachable_items = dependency_reachable_items.get(path).cloned().unwrap_or_default();
+            if let Some(injected_items) = self.externally_reachable_items_by_module.get(path) {
+                reachable_items.extend(injected_items.iter().cloned());
+            }
+            let preserve_public_items =
+                should_preserve_dependency_public_items(path, self.preserve_dependency_public_items);
+            callable_name_used_signature_keys.extend(IrEmitter::callable_name_signature_keys_for_program(
+                ir,
+                &reachable_items,
+                preserve_public_items,
+                &dependency_type_metadata.error_trait_type_names,
+            ));
+            generic_callable_name_trait_used |= IrEmitter::generic_callable_name_trait_used_for_program(
+                ir,
+                &reachable_items,
+                preserve_public_items,
+                &dependency_type_metadata.error_trait_type_names,
+            );
+        }
+        if generic_callable_name_trait_used {
+            callable_name_used_signature_keys.extend(callable_name_resolutions.keys().cloned());
+        }
+
+        let main_code = self.try_generate_via_ir_with_union_config(
+            program,
+            &internal_roots,
+            shared_union_types,
+            true,
+            Some(&mut callable_name_resolutions),
+            Some(&mut callable_name_used_signature_keys),
+        )?;
 
         let mut modules = HashMap::new();
         for (path, ir) in &lowered_modules {
@@ -982,6 +1130,10 @@ impl<'a> IrCodegen<'a> {
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
+                inner.set_canonical_function_registry(all_module_canonical_registry.clone());
+                inner.set_callable_name_current_module_path(path.clone());
+                inner.set_callable_name_resolutions(callable_name_resolutions.clone());
+                inner.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
                 self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
                 for (_, dep_ir) in &lowered_modules {
                     inner.seed_dependency_nominal_metadata_from_program(dep_ir);
@@ -1001,6 +1153,10 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
+                emitter.set_canonical_function_registry(all_module_canonical_registry.clone());
+                emitter.set_callable_name_current_module_path(path.clone());
+                emitter.set_callable_name_resolutions(callable_name_resolutions.clone());
+                emitter.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
                 self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
                 for (_, dep_ir) in &lowered_modules {
                     emitter.seed_dependency_nominal_metadata_from_program(dep_ir);

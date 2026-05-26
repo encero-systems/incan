@@ -530,6 +530,37 @@ def use() -> str:
 }
 
 #[test]
+fn test_from_import_accepts_public_partial_export() {
+    let library = parse_program(
+        r#"
+pub model Spec:
+  namespace: str
+  policy: str
+  klass: str
+  lifecycle: str
+
+pub core_spec = partial Spec(namespace="core", policy="portable")
+"#,
+        "partial import library",
+    );
+    let consumer = parse_program(
+        r#"
+from presets import core_spec
+
+def use() -> str:
+  spec = core_spec(klass="scalar", lifecycle="v1")
+  return spec.namespace
+"#,
+        "partial from-import consumer",
+    );
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&consumer, &[("presets", &library)])
+        .unwrap_or_else(|errs| panic!("consumer should import public partial callable by name: {errs:?}"));
+}
+
+#[test]
 fn test_method_partial_presets_project_as_defaults_for_trait_and_model() {
     let source = r#"
 trait Named:
@@ -5042,6 +5073,23 @@ def main() -> int:
     };
     assert_eq!(**ret, ResolvedType::Int);
     Ok(())
+}
+
+#[test]
+fn test_function_callable_name_metadata_typechecks_issue694() {
+    let source = r#"
+def capture(func: (int) -> int) -> ((int) -> int):
+  name: str = func.__name__
+  return func
+
+def registered() -> (((int) -> int) -> ((int) -> int)):
+  return capture
+
+@registered()
+pub def sample(value: int) -> int:
+  return value + 1
+"#;
+    assert_check_ok(source);
 }
 
 #[test]

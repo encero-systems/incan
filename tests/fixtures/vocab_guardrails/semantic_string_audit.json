@@ -103,6 +103,12 @@
       "expected_fingerprint": "0x79dfdfd491f691d1"
     },
     {
+      "path": "src/backend/ir/emit/expressions/indexing.rs",
+      "category": "callable source-name metadata emission",
+      "expected_count": 1,
+      "expected_fingerprint": "0x87dd19d1c7e84652"
+    },
+    {
       "path": "src/backend/ir/emit/expressions/methods.rs",
       "category": "quarantined metadata-free method compatibility",
       "expected_count": 9,
@@ -127,6 +133,12 @@
       "expected_fingerprint": "0x90822765d714d957"
     },
     {
+      "path": "src/backend/ir/emit/program.rs",
+      "category": "callable source-name metadata use analysis",
+      "expected_count": 2,
+      "expected_fingerprint": "0x497886b639dd72c9"
+    },
+    {
       "path": "src/backend/ir/emit/types.rs",
       "category": "Rust path and static trait emission compatibility",
       "expected_count": 2,
@@ -137,6 +149,12 @@
       "category": "known iterator method enum classification",
       "expected_count": 23,
       "expected_fingerprint": "0x5c7ee976092c9c9a"
+    },
+    {
+      "path": "src/backend/ir/lower/decl/functions.rs",
+      "category": "generic callable source-name lowering compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0xc94cea987d050f33"
     },
     {
       "path": "src/backend/ir/lower/decl/helpers.rs",
@@ -231,8 +249,8 @@
     {
       "path": "src/frontend/typechecker/check_expr/access.rs",
       "category": "method/type access surface classification",
-      "expected_count": 40,
-      "expected_fingerprint": "0xd87e478e91056a9f"
+      "expected_count": 43,
+      "expected_fingerprint": "0x8ea35141db935e1c"
     },
     {
       "path": "src/frontend/typechecker/check_expr/basics.rs",

@@ -31,7 +31,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 
 use super::decl::{IrDeclKind, IrEnumValue, IrEnumValueType, IrStruct, VariantFields, Visibility};
 use super::expr::TypedExpr;
@@ -67,6 +67,14 @@ pub(crate) struct ExternalOrdinalCustomKey {
     pub has_ordinal_bytes_equal: bool,
 }
 
+/// Cross-module callable-name resolver metadata keyed by a concrete function-pointer signature.
+#[derive(Debug, Clone)]
+pub(crate) struct CallableNameResolution {
+    pub(super) params: Vec<IrType>,
+    pub(super) ret: IrType,
+    pub(super) module_paths: Vec<Vec<String>>,
+}
+
 /// Usage facts collected before Rust emission.
 ///
 /// This analysis is intentionally about generated Rust lints, not source-language reachability diagnostics. It records
@@ -94,6 +102,10 @@ pub(super) struct GeneratedUseAnalysis {
     pub(super) result_observer_callable_types: HashSet<String>,
     /// Top-level function values adapted to a borrowed function-pointer parameter.
     pub(super) borrowed_function_adapters: HashSet<(String, Vec<usize>)>,
+    /// Concrete function-pointer signatures whose values read `__name__`.
+    pub(super) callable_name_signature_keys: HashSet<String>,
+    /// Whether a generic callable parameter reads `__name__` through the generated callable-name trait.
+    pub(super) uses_generic_callable_name_trait: bool,
 }
 
 impl GeneratedUseAnalysis {
@@ -213,8 +225,10 @@ pub struct IrEmitter<'a> {
     emit_zen_in_main: bool,
     /// Whether serde is needed for emitted Rust derives or helpers.
     needs_serde: RefCell<bool>,
-    /// Function registry for call-site type checking
+    /// Function registry for module-local call-site default argument filling and type-aware argument conversion.
     function_registry: &'a FunctionRegistry,
+    /// Cross-module registry used only for IR calls that carry an explicit canonical callee path.
+    canonical_function_registry: Option<FunctionRegistry>,
     /// Track struct derives for generating serde methods in impl blocks
     struct_derives: std::collections::HashMap<String, Vec<String>>,
     /// Current function's return type (for applying conversions in return statements)
@@ -322,6 +336,15 @@ pub struct IrEmitter<'a> {
     emitted_result_observer_callable_helpers: RefCell<HashSet<String>>,
     /// Top-level function values adapted to a borrowed function-pointer parameter.
     borrowed_function_adapters: RefCell<HashSet<(String, Vec<usize>)>>,
+    /// Current generated Rust module path. The crate root uses an empty path.
+    callable_name_current_module_path: Vec<String>,
+    /// Concrete callable-name helper modules available to this compilation unit.
+    callable_name_resolutions: HashMap<String, CallableNameResolution>,
+    /// Concrete callable-name signatures used somewhere in this compilation unit.
+    callable_name_used_signature_keys: HashSet<String>,
+    /// Local callable registry used for module-local callable-name helpers when the main emitter has a unified
+    /// cross-module call registry.
+    callable_name_local_registry: Option<FunctionRegistry>,
 }
 
 impl<'a> IrEmitter<'a> {
@@ -340,6 +363,7 @@ impl<'a> IrEmitter<'a> {
             emit_zen_in_main: false,
             needs_serde: RefCell::new(false),
             function_registry,
+            canonical_function_registry: None,
             struct_derives: std::collections::HashMap::new(),
             current_function_return_type: RefCell::new(None),
             external_rust_functions: std::collections::HashSet::new(),
@@ -378,7 +402,153 @@ impl<'a> IrEmitter<'a> {
             result_observer_callable_types: RefCell::new(HashSet::new()),
             emitted_result_observer_callable_helpers: RefCell::new(HashSet::new()),
             borrowed_function_adapters: RefCell::new(HashSet::new()),
+            callable_name_current_module_path: Vec::new(),
+            callable_name_resolutions: HashMap::new(),
+            callable_name_used_signature_keys: HashSet::new(),
+            callable_name_local_registry: None,
         }
+    }
+
+    /// Configure the generated Rust module path for callable-name helper routing.
+    pub(crate) fn set_callable_name_current_module_path(&mut self, path: Vec<String>) {
+        self.callable_name_current_module_path = path;
+    }
+
+    /// Configure the canonical callable registry for explicit cross-module call paths.
+    pub(crate) fn set_canonical_function_registry(&mut self, registry: FunctionRegistry) {
+        self.canonical_function_registry = Some(registry);
+    }
+
+    pub(super) fn canonical_function_registry(&self) -> &FunctionRegistry {
+        self.canonical_function_registry
+            .as_ref()
+            .unwrap_or(self.function_registry)
+    }
+
+    /// Configure the concrete callable-name helper modules available to this emitter.
+    pub(crate) fn set_callable_name_resolutions(&mut self, resolutions: HashMap<String, CallableNameResolution>) {
+        self.callable_name_resolutions = resolutions;
+    }
+
+    /// Configure the callable-name signatures that are used anywhere in this generated crate.
+    pub(crate) fn set_callable_name_used_signature_keys(&mut self, keys: HashSet<String>) {
+        self.callable_name_used_signature_keys = keys;
+    }
+
+    /// Configure the local callable registry used by generated callable-name helpers.
+    pub(crate) fn set_callable_name_local_registry(&mut self, registry: FunctionRegistry) {
+        self.callable_name_local_registry = Some(registry);
+    }
+
+    /// Add every concrete function-pointer signature from one lowered program to the cross-module resolver map.
+    pub(crate) fn add_callable_name_resolutions_for_program(
+        out: &mut HashMap<String, CallableNameResolution>,
+        module_path: Vec<String>,
+        program: &IrProgram,
+    ) {
+        for (_, signature) in program.function_registry.iter() {
+            let params = signature
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect::<Vec<_>>();
+            let ret = signature.return_type.clone();
+            let Some(key) = Self::callable_name_signature_key(&params, &ret) else {
+                continue;
+            };
+            let resolution = out.entry(key).or_insert_with(|| CallableNameResolution {
+                params,
+                ret,
+                module_paths: Vec::new(),
+            });
+            if !resolution.module_paths.contains(&module_path) {
+                resolution.module_paths.push(module_path.clone());
+            }
+        }
+        for resolution in out.values_mut() {
+            resolution.module_paths.sort();
+        }
+    }
+
+    /// Return the deterministic helper identifier for a concrete callable signature key.
+    pub(super) fn callable_name_helper_ident(key: &str) -> proc_macro2::Ident {
+        format_ident!(
+            "__incan_callable_name_{:016x}",
+            Self::stable_callable_name_hash(key.as_bytes())
+        )
+    }
+
+    /// Return a stable signature key for callable-name helpers when the function-pointer type is concrete.
+    pub(super) fn callable_name_signature_key(params: &[IrType], ret: &IrType) -> Option<String> {
+        if !params.iter().all(Self::callable_name_type_supported) || !Self::callable_name_type_supported(ret) {
+            return None;
+        }
+        let params = params.iter().map(IrType::rust_name).collect::<Vec<_>>().join(", ");
+        Some(format!("fn({params}) -> {}", ret.rust_name()))
+    }
+
+    fn callable_name_signature_key_from_signature(signature: &FunctionSignature) -> Option<String> {
+        let params = signature
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect::<Vec<_>>();
+        Self::callable_name_signature_key(&params, &signature.return_type)
+    }
+
+    fn callable_name_type_supported(ty: &IrType) -> bool {
+        match ty {
+            IrType::Unknown | IrType::Generic(_) | IrType::ImplTrait(_) | IrType::SelfType => false,
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner) => Self::callable_name_type_supported(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                Self::callable_name_type_supported(key) && Self::callable_name_type_supported(value)
+            }
+            IrType::Tuple(items) => items.iter().all(Self::callable_name_type_supported),
+            IrType::NamedGeneric(_, args) => args.iter().all(Self::callable_name_type_supported),
+            IrType::Function { params, ret } => Self::callable_name_signature_key(params, ret).is_some(),
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::Decimal { .. }
+            | IrType::String
+            | IrType::StrRef
+            | IrType::StaticStr
+            | IrType::FrozenStr
+            | IrType::Bytes
+            | IrType::StaticBytes
+            | IrType::FrozenBytes
+            | IrType::Numeric(_)
+            | IrType::Struct(_)
+            | IrType::Enum(_)
+            | IrType::Trait(_) => true,
+        }
+    }
+
+    fn stable_callable_name_hash(bytes: &[u8]) -> u64 {
+        let mut hash = 0xcbf29ce484222325u64;
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash
+    }
+
+    pub(super) fn local_callable_name_signature_keys(&self) -> HashSet<String> {
+        self.callable_name_local_registry()
+            .iter()
+            .filter_map(|(_, signature)| Self::callable_name_signature_key_from_signature(signature))
+            .collect()
+    }
+
+    pub(super) fn callable_name_local_registry(&self) -> &FunctionRegistry {
+        self.callable_name_local_registry
+            .as_ref()
+            .unwrap_or(self.function_registry)
     }
 
     /// Resolve transparent type aliases before emission decisions that need structural type information.
