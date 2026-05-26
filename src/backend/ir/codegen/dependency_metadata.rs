@@ -209,21 +209,25 @@ pub(super) fn collect_externally_reachable_items_by_module(
     reachable
 }
 
-/// Dependency type facts gathered during codegen setup and reused by module emission.
+/// Dependency symbol facts gathered during codegen setup and reused by module emission.
 #[derive(Debug, Clone, Default)]
-pub(super) struct DependencyTypeMetadata {
+pub(super) struct DependencySymbolMetadata {
     pub(super) module_paths: HashMap<String, Vec<String>>,
     pub(super) ambiguous_type_names: HashSet<String>,
+    pub(super) value_module_paths: HashMap<String, Vec<String>>,
+    pub(super) ambiguous_value_names: HashSet<String>,
     pub(super) enum_type_names: HashSet<String>,
     pub(super) error_trait_type_names: HashSet<String>,
 }
 
-/// Collect dependency type metadata needed by IR emission for cross-module nominal types.
-pub(super) fn collect_dependency_type_metadata(
+/// Collect dependency symbol metadata needed by IR emission for cross-module nominal types and values.
+pub(super) fn collect_dependency_symbol_metadata(
     deps: &[(&str, &Program, Option<Vec<String>>)],
-) -> DependencyTypeMetadata {
+) -> DependencySymbolMetadata {
     let mut paths: HashMap<String, Vec<String>> = HashMap::new();
     let mut ambiguous: HashSet<String> = HashSet::new();
+    let mut value_paths: HashMap<String, Vec<String>> = HashMap::new();
+    let mut ambiguous_values: HashSet<String> = HashSet::new();
     let mut enum_type_names: HashSet<String> = HashSet::new();
     let mut non_enum_type_names: HashSet<String> = HashSet::new();
     let mut error_trait_type_names: HashSet<String> = HashSet::new();
@@ -231,6 +235,33 @@ pub(super) fn collect_dependency_type_metadata(
 
     for (_name, program, path_segments) in deps {
         for decl in &program.declarations {
+            if let Some(segs) = path_segments.as_ref()
+                && let Some(name) = match &decl.node {
+                    Declaration::Const(c) => Some(&c.name),
+                    Declaration::Static(s) => Some(&s.name),
+                    Declaration::Function(f) => Some(&f.name),
+                    Declaration::Partial(p) => Some(&p.name),
+                    Declaration::Alias(a) => Some(&a.name),
+                    Declaration::Import(_)
+                    | Declaration::Model(_)
+                    | Declaration::Class(_)
+                    | Declaration::Trait(_)
+                    | Declaration::TypeAlias(_)
+                    | Declaration::Newtype(_)
+                    | Declaration::Enum(_)
+                    | Declaration::TestModule(_)
+                    | Declaration::Docstring(_) => None,
+                }
+            {
+                if let Some(existing) = value_paths.get(name) {
+                    if existing != segs {
+                        ambiguous_values.insert(name.clone());
+                    }
+                } else {
+                    value_paths.insert(name.clone(), segs.clone());
+                }
+            }
+
             let type_name = match &decl.node {
                 Declaration::Model(m) => {
                     if m.traits.iter().any(|bound| bound.node.name == error_trait_name) {
@@ -276,11 +307,16 @@ pub(super) fn collect_dependency_type_metadata(
     for name in &ambiguous {
         paths.remove(name);
     }
+    for name in &ambiguous_values {
+        value_paths.remove(name);
+    }
     enum_type_names.retain(|name| !ambiguous.contains(name) && !non_enum_type_names.contains(name));
 
-    DependencyTypeMetadata {
+    DependencySymbolMetadata {
         module_paths: paths,
         ambiguous_type_names: ambiguous,
+        value_module_paths: value_paths,
+        ambiguous_value_names: ambiguous_values,
         enum_type_names,
         error_trait_type_names,
     }

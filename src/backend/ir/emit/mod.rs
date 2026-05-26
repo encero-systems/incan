@@ -75,6 +75,14 @@ pub(crate) struct CallableNameResolution {
     pub(super) module_paths: Vec<Vec<String>>,
 }
 
+/// Callable-name usage facts collected from one lowered program.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CallableNameUseFacts {
+    pub(crate) signature_keys: HashSet<String>,
+    pub(crate) function_arg_signature_keys: HashSet<String>,
+    pub(crate) generic_trait_used: bool,
+}
+
 /// Usage facts collected before Rust emission.
 ///
 /// This analysis is intentionally about generated Rust lints, not source-language reachability diagnostics. It records
@@ -104,6 +112,8 @@ pub(super) struct GeneratedUseAnalysis {
     pub(super) borrowed_function_adapters: HashSet<(String, Vec<usize>)>,
     /// Concrete function-pointer signatures whose values read `__name__`.
     pub(super) callable_name_signature_keys: HashSet<String>,
+    /// Concrete top-level function signatures passed through reachable calls.
+    pub(super) callable_name_function_arg_signature_keys: HashSet<String>,
     /// Whether a generic callable parameter reads `__name__` through the generated callable-name trait.
     pub(super) uses_generic_callable_name_trait: bool,
 }
@@ -269,6 +279,10 @@ pub struct IrEmitter<'a> {
     type_module_paths: HashMap<String, Vec<String>>,
     /// Type names that are declared in multiple modules (ambiguous).
     ambiguous_type_names: HashSet<String>,
+    /// Map of value name -> module path segments for dependency modules.
+    value_module_paths: HashMap<String, Vec<String>>,
+    /// Value names that are declared in multiple modules (ambiguous).
+    ambiguous_value_names: HashSet<String>,
     /// Imported enum type names discovered from dependency modules.
     ///
     /// Imported enums usually lower to `IrType::Struct(name)` in consumer modules, so for-loop emission needs this
@@ -384,6 +398,8 @@ impl<'a> IrEmitter<'a> {
             const_string_literals: std::collections::HashMap::new(),
             type_module_paths: HashMap::new(),
             ambiguous_type_names: HashSet::new(),
+            value_module_paths: HashMap::new(),
+            ambiguous_value_names: HashSet::new(),
             dependency_enum_types: HashSet::new(),
             external_error_trait_types: HashSet::new(),
             internal_module_roots: HashSet::new(),
@@ -905,6 +921,47 @@ impl<'a> IrEmitter<'a> {
     pub fn set_type_module_paths(&mut self, paths: HashMap<String, Vec<String>>, ambiguous: HashSet<String>) {
         self.type_module_paths = paths;
         self.ambiguous_type_names = ambiguous;
+    }
+
+    /// Set value-to-module path mappings for dependency expressions that must be emitted outside their defining
+    /// module.
+    pub fn set_value_module_paths(&mut self, paths: HashMap<String, Vec<String>>, ambiguous: HashSet<String>) {
+        self.value_module_paths = paths;
+        self.ambiguous_value_names = ambiguous;
+    }
+
+    pub(in crate::backend::ir::emit) fn emit_dependency_item_path(
+        &self,
+        module_path: &[String],
+        name: &str,
+    ) -> Option<TokenStream> {
+        let mut segments = vec![quote! { crate }];
+        for segment in module_path {
+            let ident = Self::rust_ident(segment);
+            segments.push(quote! { #ident });
+        }
+        let ident = Self::rust_ident(name);
+        segments.push(quote! { #ident });
+
+        let mut iter = segments.into_iter();
+        let first = iter.next()?;
+        Some(iter.fold(first, |acc, segment| quote! { #acc :: #segment }))
+    }
+
+    pub(in crate::backend::ir::emit) fn emit_dependency_type_path(&self, name: &str) -> Option<TokenStream> {
+        if name.contains("::") || self.ambiguous_type_names.contains(name) {
+            return None;
+        }
+        let module_path = self.type_module_paths.get(name)?;
+        self.emit_dependency_item_path(module_path, name)
+    }
+
+    pub(in crate::backend::ir::emit) fn emit_dependency_value_path(&self, name: &str) -> Option<TokenStream> {
+        if name.contains("::") || self.ambiguous_value_names.contains(name) {
+            return None;
+        }
+        let module_path = self.value_module_paths.get(name)?;
+        self.emit_dependency_item_path(module_path, name)
     }
 
     /// Set imported enum type names discovered during codegen setup.

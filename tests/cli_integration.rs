@@ -1942,6 +1942,78 @@ def test_decorator_can_infer_name_with_imported_partial_spec() -> None:
 }
 
 #[test]
+fn test_imported_partial_default_symbols_survive_decorator_argument_issue701() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "imported_partial_default_symbols_decorator", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        src_dir.join("registry.incn"),
+        r#"pub const DEFAULT_NAMESPACE: str = "core"
+
+
+pub enum Policy(str):
+    Portable = "portable"
+
+
+pub model Spec:
+    pub namespace: str
+    pub policy: Policy
+    pub lifecycle: str
+
+
+pub static namespaces: list[str] = []
+pub static names: list[str] = []
+
+
+pub spec = partial Spec(namespace=DEFAULT_NAMESPACE, policy=Policy.Portable)
+
+
+pub def capture(func: (int) -> int) -> ((int) -> int):
+    names.append(func.__name__)
+    return func
+
+
+pub def add(spec_value: Spec) -> (((int) -> int) -> ((int) -> int)):
+    namespaces.append(spec_value.namespace)
+    return capture
+"#,
+    )?;
+    fs::write(
+        src_dir.join("helpers.incn"),
+        r#"from registry import add, spec
+
+
+@add(spec(lifecycle="v1"))
+pub def sample(value: int) -> int:
+    return value + 1
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_partial_default_symbols.incn"),
+        r#"from helpers import sample
+from registry import names, namespaces
+
+
+def test_partial_default_symbols_in_decorator() -> None:
+    assert sample(1) == 2
+    assert names[0] == "sample"
+    assert namespaces[0] == "core"
+"#,
+    )?;
+
+    let test_path = tests_dir.join("test_partial_default_symbols.incn");
+    let test_output = run_incan(
+        tmp.path(),
+        &["test", test_path.to_str().ok_or("test path was not valid UTF-8")?],
+    )?;
+    assert_success(&test_output, "incan test for imported partial default symbols issue701");
+    Ok(())
+}
+
+#[test]
 fn test_decorator_callable_exposes_source_name_issue694() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "decorator_callable_name", "")?;
@@ -2042,6 +2114,143 @@ def test_generic_decorator_can_read_callable_name() -> None:
         &["test", test_path.to_str().ok_or("test path was not valid UTF-8")?],
     )?;
     assert_success(&test_output, "incan test for generic decorator callable name issue694");
+    Ok(())
+}
+
+#[test]
+fn test_generic_decorator_callable_name_accepts_imported_alias_union_issue701() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "generic_callable_name_imported_alias_union", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        src_dir.join("types.incn"),
+        r#"pub model A:
+    pub value: int
+
+
+pub model B:
+    pub value: int
+
+
+pub type Expr = Union[A, B]
+"#,
+    )?;
+    fs::write(
+        src_dir.join("registry.incn"),
+        r#"pub static names: list[str] = []
+
+
+pub def capture[F](func: F) -> F:
+    names.append(func.__name__)
+    return func
+
+
+pub def register[F]() -> ((F) -> F):
+    return (func) => capture[F](func)
+"#,
+    )?;
+    fs::write(
+        src_dir.join("helpers.incn"),
+        r#"from registry import register
+from types import Expr
+
+
+@register[(Expr) -> Expr]()
+pub def identity_expr(value: Expr) -> Expr:
+    return value
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_alias_union_callable_name.incn"),
+        r#"from helpers import identity_expr
+from registry import names
+from types import A
+
+
+def test_alias_union_callable_name() -> None:
+    identity_expr(A(value=1))
+    assert names[0] == "identity_expr"
+"#,
+    )?;
+
+    let test_path = tests_dir.join("test_alias_union_callable_name.incn");
+    let test_output = run_incan(
+        tmp.path(),
+        &["test", test_path.to_str().ok_or("test path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &test_output,
+        "incan test for alias/union generic callable name issue701",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_generic_callable_name_planning_ignores_unrelated_async_signatures_issue701()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "generic_callable_name_with_async_noise", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        src_dir.join("registry.incn"),
+        r#"pub static names: list[str] = []
+
+
+pub def capture[F](func: F) -> F:
+    names.append(func.__name__)
+    return func
+
+
+pub def register[F]() -> ((F) -> F):
+    return (func) => capture[F](func)
+"#,
+    )?;
+    fs::write(
+        src_dir.join("helpers.incn"),
+        r#"from registry import register
+
+
+@register[(int) -> int]()
+pub def sample(value: int) -> int:
+    return value + 1
+"#,
+    )?;
+    fs::write(
+        src_dir.join("noise.incn"),
+        r#"pub async def unrelated_async(delay: float) -> None:
+    return
+
+
+pub def unrelated_generic[T](value: T) -> T:
+    return value
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_scoped_callable_name_planning.incn"),
+        r#"from helpers import sample
+from registry import names
+
+
+def test_generic_callable_name_ignores_unrelated_signatures() -> None:
+    assert sample(1) == 2
+    assert names[0] == "sample"
+"#,
+    )?;
+
+    let test_path = tests_dir.join("test_scoped_callable_name_planning.incn");
+    let test_output = run_incan(
+        tmp.path(),
+        &["test", test_path.to_str().ok_or("test path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &test_output,
+        "incan test for scoped generic callable-name planning issue701",
+    );
     Ok(())
 }
 

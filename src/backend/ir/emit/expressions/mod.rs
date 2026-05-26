@@ -688,6 +688,11 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { #n.get() })
             }
             IrExprKind::Var { name, access: _, .. } => {
+                if *self.qualify_internal_canonical_paths.borrow()
+                    && let Some(path) = self.emit_dependency_value_path(name)
+                {
+                    return Ok(path);
+                }
                 let n = Self::rust_ident(name);
                 Ok(quote! { #n })
             }

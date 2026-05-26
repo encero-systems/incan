@@ -20,7 +20,7 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use incan_core::lang::surface::result_methods::ResultMethodId;
 use incan_core::lang::traits::{self as core_traits, TraitId};
@@ -36,7 +36,7 @@ use super::super::expr::{
 use super::super::stmt::AssignTarget;
 use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::super::{FunctionRegistry, FunctionSignature, IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
-use super::{EmitError, GeneratedUseAnalysis, IrEmitter};
+use super::{CallableNameUseFacts, EmitError, GeneratedUseAnalysis, IrEmitter};
 
 struct OrdinalValueEnumBridgeSpec {
     type_path: TokenStream,
@@ -571,6 +571,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_type(ty);
                 }
                 for arg in args {
+                    for key in self.callable_name_function_arg_signature_keys(&arg.expr) {
+                        self.analysis.callable_name_function_arg_signature_keys.insert(key);
+                    }
                     self.scan_expr(&arg.expr);
                 }
             }
@@ -788,6 +791,52 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrExprKind::Literal(_)
             | IrExprKind::FieldsList(_)
             | IrExprKind::SerdeToJson => {}
+        }
+    }
+
+    fn callable_name_function_arg_signature_keys(&self, expr: &TypedExpr) -> Vec<String> {
+        match &expr.kind {
+            IrExprKind::Var { name, .. } => {
+                let mut keys = HashSet::new();
+                if let IrType::Function { params, ret } = &expr.ty
+                    && let Some(key) = IrEmitter::callable_name_signature_key(params, ret)
+                {
+                    keys.insert(key);
+                }
+                if let Some(signature) = self.function_registry.get(name) {
+                    let params = signature
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect::<Vec<_>>();
+                    if let Some(key) = IrEmitter::callable_name_signature_key(&params, &signature.return_type) {
+                        keys.insert(key);
+                    }
+                }
+                let Some(IrDecl {
+                    kind: IrDeclKind::Function(func),
+                    ..
+                }) = self.declarations_by_name.get(name).copied()
+                else {
+                    let mut keys = keys.into_iter().collect::<Vec<_>>();
+                    keys.sort();
+                    return keys;
+                };
+                if func.is_async || !func.type_params.is_empty() {
+                    return Vec::new();
+                }
+                let params = func.params.iter().map(|param| param.ty.clone()).collect::<Vec<_>>();
+                if let Some(key) = IrEmitter::callable_name_signature_key(&params, &func.return_type) {
+                    keys.insert(key);
+                }
+                let mut keys = keys.into_iter().collect::<Vec<_>>();
+                keys.sort();
+                keys
+            }
+            IrExprKind::InteropCoerce { expr, .. }
+            | IrExprKind::NumericResize { expr, .. }
+            | IrExprKind::Cast { expr, .. } => self.callable_name_function_arg_signature_keys(expr),
+            _ => Vec::new(),
         }
     }
 
@@ -2070,13 +2119,13 @@ impl<'a> IrEmitter<'a> {
     fn emit_generated_union_member_type(&self, ty: &IrType) -> TokenStream {
         match ty {
             IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => self
-                .emit_dependency_nominal_type_path(name)
+                .emit_dependency_type_path(name)
                 .unwrap_or_else(|| self.emit_type(ty)),
             IrType::NamedGeneric(name, args) if name == super::super::types::IR_UNION_TYPE_NAME => {
                 self.emit_union_type_path(ty)
             }
             IrType::NamedGeneric(name, args) => {
-                let base = self.emit_dependency_nominal_type_path(name).unwrap_or_else(|| {
+                let base = self.emit_dependency_type_path(name).unwrap_or_else(|| {
                     let ident = Self::rust_ident(name);
                     quote! { #ident }
                 });
@@ -2149,25 +2198,6 @@ impl<'a> IrEmitter<'a> {
             | IrType::SelfType
             | IrType::Unknown => self.emit_type(ty),
         }
-    }
-
-    /// Emit a crate-qualified path for an unambiguous nominal type declared in a dependency module.
-    fn emit_dependency_nominal_type_path(&self, name: &str) -> Option<TokenStream> {
-        if name.contains("::") || self.ambiguous_type_names.contains(name) {
-            return None;
-        }
-        let module_path = self.type_module_paths.get(name)?;
-        let mut segments = vec![quote! { crate }];
-        for segment in module_path {
-            let ident = Self::rust_ident(segment);
-            segments.push(quote! { #ident });
-        }
-        let name_ident = Self::rust_ident(name);
-        segments.push(quote! { #name_ident });
-
-        let mut iter = segments.into_iter();
-        let first = iter.next()?;
-        Some(iter.fold(first, |acc, segment| quote! { #acc :: #segment }))
     }
 
     /// Emit a complete IR program to formatted Rust code.
@@ -2278,34 +2308,23 @@ impl<'a> IrEmitter<'a> {
         Ok(format!("{}{}", header, with_marker))
     }
 
-    pub(crate) fn callable_name_signature_keys_for_program(
+    pub(crate) fn callable_name_use_facts_for_program(
         program: &IrProgram,
         externally_reachable_items: &HashSet<String>,
         preserve_public_items: bool,
         external_error_trait_types: &HashSet<String>,
-    ) -> HashSet<String> {
-        GeneratedUseAnalyzer::analyze(
+    ) -> CallableNameUseFacts {
+        let analysis = GeneratedUseAnalyzer::analyze(
             program,
             externally_reachable_items,
             preserve_public_items,
             external_error_trait_types,
-        )
-        .callable_name_signature_keys
-    }
-
-    pub(crate) fn generic_callable_name_trait_used_for_program(
-        program: &IrProgram,
-        externally_reachable_items: &HashSet<String>,
-        preserve_public_items: bool,
-        external_error_trait_types: &HashSet<String>,
-    ) -> bool {
-        GeneratedUseAnalyzer::analyze(
-            program,
-            externally_reachable_items,
-            preserve_public_items,
-            external_error_trait_types,
-        )
-        .uses_generic_callable_name_trait
+        );
+        CallableNameUseFacts {
+            signature_keys: analysis.callable_name_signature_keys,
+            function_arg_signature_keys: analysis.callable_name_function_arg_signature_keys,
+            generic_trait_used: analysis.uses_generic_callable_name_trait,
+        }
     }
 
     fn callable_name_signature_for_key(&self, key: &str) -> Option<(Vec<IrType>, IrType)> {
@@ -2330,29 +2349,15 @@ impl<'a> IrEmitter<'a> {
     fn callable_name_helper_keys(
         &self,
         local_callable_name_signature_keys: &HashSet<String>,
-        include_all_callable_signatures: bool,
+        include_generic_callable_signatures: bool,
     ) -> Vec<String> {
         let mut keys = local_callable_name_signature_keys.clone();
-        if include_all_callable_signatures {
-            for (_, signature) in self.callable_name_local_registry().iter() {
-                let params = signature
-                    .params
-                    .iter()
-                    .map(|param| param.ty.clone())
-                    .collect::<Vec<_>>();
-                if let Some(key) = Self::callable_name_signature_key(&params, &signature.return_type) {
-                    keys.insert(key);
-                }
-            }
-            keys.extend(
-                self.callable_name_resolutions
-                    .iter()
-                    .filter(|(_, resolution)| {
-                        self.callable_name_current_module_path.is_empty()
-                            || resolution.module_paths.iter().any(|path| !path.is_empty())
-                    })
-                    .map(|(key, _)| key.clone()),
-            );
+        if include_generic_callable_signatures {
+            keys.extend(self.callable_name_used_signature_keys.iter().filter_map(|key| {
+                self.callable_name_signature_for_key(key)
+                    .is_some()
+                    .then_some(key.clone())
+            }));
         }
         for (key, resolution) in &self.callable_name_resolutions {
             if self.callable_name_used_signature_keys.contains(key)
@@ -2368,7 +2373,12 @@ impl<'a> IrEmitter<'a> {
         keys
     }
 
-    fn callable_name_resolution_expr(&self, key: &str, callable_tokens: TokenStream) -> TokenStream {
+    fn callable_name_resolution_expr_with_fallback(
+        &self,
+        key: &str,
+        callable_tokens: TokenStream,
+        fallback: TokenStream,
+    ) -> TokenStream {
         let helper = Self::callable_name_helper_ident(key);
         let mut helper_calls = Vec::new();
         helper_calls.push(quote! { #helper(#callable_tokens) });
@@ -2384,8 +2394,7 @@ impl<'a> IrEmitter<'a> {
                 helper_calls.push(quote! { #helper_path(#callable_tokens) });
             }
         }
-        let fallback = proc_macro2::Literal::string("<callable>");
-        let mut resolved = quote! { #fallback.to_string() };
+        let mut resolved = fallback;
         for helper_call in helper_calls.into_iter().rev() {
             resolved = quote! {
                 if let Some(__incan_name) = #helper_call {
@@ -2403,14 +2412,35 @@ impl<'a> IrEmitter<'a> {
             return None;
         }
         let trait_ident = Self::rust_ident("__IncanCallableName");
-        let impls = keys
-            .iter()
-            .filter_map(|key| {
-                let (params, ret) = self.callable_name_signature_for_key(key)?;
-                let param_tokens = params.iter().map(|param| self.emit_type(param)).collect::<Vec<_>>();
-                let ret_tokens = self.emit_type(&ret);
-                let fn_ty = quote! { fn(#(#param_tokens),*) -> #ret_tokens };
-                let resolved = self.callable_name_resolution_expr(key, quote! { __incan_callable });
+        let mut grouped_keys: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for key in keys {
+            let Some((params, ret)) = self.callable_name_signature_for_key(key) else {
+                continue;
+            };
+            let resolved_params = params
+                .iter()
+                .map(|param| self.resolve_type_aliases_for_emit(param))
+                .collect::<Vec<_>>();
+            let resolved_ret = self.resolve_type_aliases_for_emit(&ret);
+            let Some(resolved_key) = Self::callable_name_signature_key(&resolved_params, &resolved_ret) else {
+                continue;
+            };
+            grouped_keys.entry(resolved_key).or_default().push(key.clone());
+        }
+
+        let impls = grouped_keys
+            .values_mut()
+            .filter_map(|keys| {
+                keys.sort();
+                let primary_key = keys.first()?;
+                let (params, ret) = self.callable_name_signature_for_key(primary_key)?;
+                let fn_ty = self.emit_callable_fn_type(&params, &ret);
+                let fallback = proc_macro2::Literal::string("<callable>");
+                let mut resolved = quote! { #fallback.to_string() };
+                for key in keys.iter().rev() {
+                    resolved =
+                        self.callable_name_resolution_expr_with_fallback(key, quote! { __incan_callable }, resolved);
+                }
                 Some(quote! {
                     impl #trait_ident for #fn_ty {
                         fn __incan_callable_name(&self) -> String {
@@ -2442,9 +2472,7 @@ impl<'a> IrEmitter<'a> {
             .filter_map(|key| {
                 let (params, ret) = self.callable_name_signature_for_key(key)?;
                 let helper = Self::callable_name_helper_ident(key);
-                let param_tokens = params.iter().map(|param| self.emit_type(param)).collect::<Vec<_>>();
-                let ret_tokens = self.emit_type(&ret);
-                let fn_ty = quote! { fn(#(#param_tokens),*) -> #ret_tokens };
+                let fn_ty = self.emit_callable_fn_type(&params, &ret);
                 let mut candidates = self
                     .callable_name_local_registry()
                     .iter()

@@ -51,9 +51,7 @@ impl<'a> IrEmitter<'a> {
             return Ok(quote! { "<callable>".to_string() });
         };
         let callable = self.emit_expr(object)?;
-        let param_tokens = params.iter().map(|param| self.emit_type(param)).collect::<Vec<_>>();
-        let ret_tokens = self.emit_type(ret);
-        let fn_ty = quote! { fn(#(#param_tokens),*) -> #ret_tokens };
+        let fn_ty = self.emit_callable_fn_type(params, ret);
 
         let helper = Self::callable_name_helper_ident(&signature_key);
         let mut helper_calls = Vec::new();
@@ -110,29 +108,6 @@ impl<'a> IrEmitter<'a> {
         let mut iter = segments.into_iter();
         let first = iter.next().unwrap_or_else(|| quote! { crate });
         iter.fold(first, |acc, segment| quote! { #acc :: #segment })
-    }
-
-    /// Build the fully-qualified generated-module path for a type imported from another emitted module.
-    ///
-    /// Default argument expressions can be expanded at a call site outside the module that declared the default. When
-    /// the default names an enum variant from that declaring module, the generated Rust must qualify the enum type
-    /// through the dependency module path instead of assuming the type name is locally imported.
-    fn emit_dependency_type_path(&self, name: &str) -> Option<TokenStream> {
-        if name.contains("::") || self.ambiguous_type_names.contains(name) {
-            return None;
-        }
-        let module_path = self.type_module_paths.get(name)?;
-        let mut segments = vec![quote! { crate }];
-        for segment in module_path {
-            let ident = Self::rust_ident(segment);
-            segments.push(quote! { #ident });
-        }
-        let name_ident = Self::rust_ident(name);
-        segments.push(quote! { #name_ident });
-
-        let mut iter = segments.into_iter();
-        let first = iter.next()?;
-        Some(iter.fold(first, |acc, segment| quote! { #acc :: #segment }))
     }
 
     /// Emit an index expression.

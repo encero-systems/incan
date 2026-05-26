@@ -122,6 +122,11 @@ impl<'a> IrEmitter<'a> {
                 if name == surface_types::as_str(SurfaceTypeId::ValidationError) {
                     return quote! { incan_stdlib::validation::ValidationError };
                 }
+                if *self.qualify_internal_canonical_paths.borrow()
+                    && let Some(path) = self.emit_dependency_type_path(name)
+                {
+                    return path;
+                }
                 Self::emit_path_ident(name)
             }
             IrType::NamedGeneric(name, _) if name == super::super::types::IR_UNION_TYPE_NAME => {
@@ -135,11 +140,15 @@ impl<'a> IrEmitter<'a> {
                     Some(CollectionTypeId::Generator) => Some(quote! { incan_stdlib::iter::Generator }),
                     _ => None,
                 };
-                let n = Self::emit_path_ident(name);
                 let ts: Vec<_> = args.iter().map(|t| self.emit_type(t)).collect();
                 if let Some(n) = frozen_name {
                     quote! { #n < #(#ts),* > }
+                } else if *self.qualify_internal_canonical_paths.borrow()
+                    && let Some(n) = self.emit_dependency_type_path(name)
+                {
+                    quote! { #n < #(#ts),* > }
                 } else {
+                    let n = Self::emit_path_ident(name);
                     quote! { #n < #(#ts),* > }
                 }
             }
@@ -169,6 +178,14 @@ impl<'a> IrEmitter<'a> {
             }
             IrType::Unknown => quote! { _ },
         }
+    }
+
+    pub(in crate::backend::ir::emit) fn emit_callable_fn_type(&self, params: &[IrType], ret: &IrType) -> TokenStream {
+        let previous = self.qualify_internal_canonical_paths.replace(true);
+        let param_tokens = params.iter().map(|param| self.emit_type(param)).collect::<Vec<_>>();
+        let ret_tokens = self.emit_type(ret);
+        self.qualify_internal_canonical_paths.replace(previous);
+        quote! { fn(#(#param_tokens),*) -> #ret_tokens }
     }
 
     // ========================================================================
