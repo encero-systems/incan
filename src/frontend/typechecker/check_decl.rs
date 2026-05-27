@@ -3778,7 +3778,7 @@ impl TypeChecker {
             return;
         };
 
-        let mut binding_ty = original_ty;
+        let mut binding_ty = original_ty.clone();
         for decorator in func.decorators.iter().rev() {
             if self.is_user_defined_decorator_candidate(&decorator.node) {
                 binding_ty = self.apply_user_defined_decorator(decorator, binding_ty, &func.name);
@@ -3790,7 +3790,10 @@ impl TypeChecker {
         {
             self.type_info.declarations.decorated_function_bindings.insert(
                 func.name.clone(),
-                DecoratedFunctionBindingInfo { ty: binding_ty.clone() },
+                DecoratedFunctionBindingInfo {
+                    ty: binding_ty.clone(),
+                    original_ty,
+                },
             );
             symbol.kind = SymbolKind::Variable(VariableInfo {
                 ty: binding_ty,

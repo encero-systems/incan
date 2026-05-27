@@ -177,6 +177,11 @@ pub struct RustInteropArtifacts {
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
 #[derive(Debug, Default, Clone)]
 pub struct DeclarationArtifacts {
+    /// Module-local function declarations keyed by source name after annotation resolution.
+    ///
+    /// Lowering consumes this instead of re-lowering raw AST annotations so aliases such as
+    /// `type Expr = Union[...]` do not produce a different callable surface from typechecked call sites.
+    pub function_bindings: HashMap<String, FunctionBindingInfo>,
     /// Module-visible static bindings keyed by local name for lowering/runtime emission.
     pub static_bindings: HashMap<String, StaticBindingInfo>,
     /// Same-type method aliases keyed by nominal type name (`alias -> target_method`).
@@ -427,11 +432,22 @@ pub struct StaticBindingInfo {
     pub is_imported: bool,
 }
 
+/// Lowering metadata for one source function declaration.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionBindingInfo {
+    /// Typechecker-resolved source parameters, including default-presence markers.
+    pub params: Vec<CallableParam>,
+    /// Typechecker-resolved source return type.
+    pub return_type: ResolvedType,
+}
+
 /// Lowering metadata for one RFC 036 decorated function binding.
 #[derive(Debug, Clone, PartialEq)]
 pub struct DecoratedFunctionBindingInfo {
     /// Final type of the module-visible binding after applying all user-defined decorators.
     pub ty: ResolvedType,
+    /// Original callable type before decorators are applied.
+    pub original_ty: ResolvedType,
 }
 
 /// Lowering metadata for one RFC 036 decorated method binding.

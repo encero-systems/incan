@@ -1206,25 +1206,6 @@ impl AstLowering {
         }
     }
 
-    /// Build a synthetic callable signature from an already-lowered function type.
-    fn function_signature_from_ir_type(params: &[IrType], ret: &IrType) -> FunctionSignature {
-        FunctionSignature {
-            params: params
-                .iter()
-                .enumerate()
-                .map(|(idx, ty)| FunctionParam {
-                    name: format!("__incan_arg_{idx}"),
-                    ty: ty.clone(),
-                    mutability: super::super::super::types::Mutability::Immutable,
-                    is_self: false,
-                    kind: ast::ParamKind::Normal,
-                    default: None,
-                })
-                .collect(),
-            return_type: ret.clone(),
-        }
-    }
-
     /// Return whether passing `arg` to a callable parameter should refine that parameter to a shared borrow.
     fn callable_arg_needs_implicit_borrow(arg: &TypedExpr, target_ty: &IrType) -> bool {
         if arg.ty.is_copy() || matches!(target_ty, IrType::Ref(_) | IrType::RefMut(_)) {
@@ -1263,7 +1244,7 @@ impl AstLowering {
             return callable_signature;
         };
         let mut signature =
-            callable_signature.unwrap_or_else(|| Self::function_signature_from_ir_type(params, ret.as_ref()));
+            callable_signature.unwrap_or_else(|| FunctionSignature::from_function_type(params, ret.as_ref()));
         let mut changed = false;
 
         for (idx, arg) in args.iter().enumerate() {

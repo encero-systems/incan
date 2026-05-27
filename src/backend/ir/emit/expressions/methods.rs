@@ -272,17 +272,11 @@ impl<'a> IrEmitter<'a> {
             .method_signature_for_receiver(&receiver.ty, method)
             .or(specialized_signature.as_ref());
         let has_incan_receiver_signature = receiver_signature.is_some();
-        let callable_signature = match (callable_signature, receiver_signature) {
-            (Some(call_sig), Some(method_sig))
-                if call_sig.params.iter().all(|param| param.default.is_none())
-                    && method_sig.params.iter().any(|param| param.default.is_some()) =>
-            {
-                Some(method_sig)
-            }
-            (Some(call_sig), _) => Some(call_sig),
-            (None, method_sig) => method_sig,
-        };
-        if let Some(sig) = callable_signature
+        let callable_signature =
+            FunctionSignature::merge_default_source_by(callable_signature, receiver_signature, |left, right| {
+                self.call_signature_type_matches(left, right)
+            });
+        if let Some(sig) = callable_signature.as_ref()
             && sig
                 .params
                 .iter()
@@ -291,7 +285,7 @@ impl<'a> IrEmitter<'a> {
             return self.emit_rest_aware_call_args(receiver, args, sig);
         }
 
-        let ordered_args: Vec<(TypedExpr, bool)> = if let Some(sig) = callable_signature {
+        let ordered_args: Vec<(TypedExpr, bool)> = if let Some(sig) = callable_signature.as_ref() {
             if args.iter().any(|arg| arg.name.is_some()) {
                 let mut positional: Vec<TypedExpr> = Vec::new();
                 let mut named: std::collections::HashMap<&str, TypedExpr> = std::collections::HashMap::new();
@@ -335,7 +329,7 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .enumerate()
             .map(|(idx, (arg, from_default))| {
-                let param = callable_signature.and_then(|sig| sig.params.get(idx));
+                let param = callable_signature.as_ref().and_then(|sig| sig.params.get(idx));
                 let external_method_shape = matches!(
                     base_use_site,
                     ValueUseSite::ExternalCallArg { .. } | ValueUseSite::MethodArg

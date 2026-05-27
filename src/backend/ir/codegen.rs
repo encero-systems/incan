@@ -204,10 +204,11 @@ impl<'a> IrCodegen<'a> {
     fn canonical_registry_for_programs<'program>(
         programs: impl IntoIterator<Item = (&'program [String], &'program IrProgram)>,
     ) -> FunctionRegistry {
+        let programs: Vec<_> = programs.into_iter().collect();
         let mut registry = FunctionRegistry::new();
-        for (module_path, program) in programs {
+        for (module_path, program) in &programs {
             for (name, signature) in program.function_registry.iter() {
-                let mut canonical_path = module_path.to_vec();
+                let mut canonical_path = (*module_path).to_vec();
                 canonical_path.push(name.clone());
                 registry.register_canonical_path(
                     &canonical_path,
@@ -215,6 +216,39 @@ impl<'a> IrCodegen<'a> {
                     signature.return_type.clone(),
                 );
             }
+        }
+
+        let mut pending_reexports = Vec::new();
+        for (module_path, program) in &programs {
+            for reexport in &program.function_reexports {
+                let mut alias_path = (*module_path).to_vec();
+                alias_path.push(reexport.name.clone());
+                pending_reexports.push((alias_path, reexport.target_path.clone()));
+            }
+        }
+        while !pending_reexports.is_empty() {
+            let mut unresolved = Vec::new();
+            let mut made_progress = false;
+            for (alias_path, target_path) in pending_reexports {
+                if registry.get_canonical_path(&alias_path).is_some() {
+                    made_progress = true;
+                    continue;
+                }
+                if let Some(signature) = registry.get_canonical_path(&target_path).cloned() {
+                    registry.register_canonical_path(
+                        &alias_path,
+                        signature.params.clone(),
+                        signature.return_type.clone(),
+                    );
+                    made_progress = true;
+                } else {
+                    unresolved.push((alias_path, target_path));
+                }
+            }
+            if !made_progress {
+                break;
+            }
+            pending_reexports = unresolved;
         }
         registry
     }
@@ -573,34 +607,42 @@ impl<'a> IrCodegen<'a> {
             callable_name_used_signature_keys_for_emit.extend(callable_name_use_facts.function_arg_signature_keys);
         }
 
-        let mut canonical_registry = FunctionRegistry::new();
         let mut dependency_ir_programs = Vec::new();
         for (dep_name, dep_ast, dep_path_segments) in &self.dependency_modules {
-            // For dependencies, use best-effort lowering without type info to
-            // preserve prior behavior and avoid redundant typechecking.
-            let mut dep_lowering = AstLowering::new();
+            let dep_type_info = {
+                use crate::frontend::typechecker::TypeChecker;
+                let mut tc = TypeChecker::new();
+                self.configure_typechecker(&mut tc);
+                match tc.check_with_imports_allow_private(dep_ast, &deps) {
+                    Ok(()) => tc.type_info().clone(),
+                    Err(errs) => return Err(GenerationError::TypeCheck(errs)),
+                }
+            };
+            let mut dep_lowering = AstLowering::new_with_type_info(dep_type_info);
             dep_lowering.set_current_source_module_name(
-                dep_ast
-                    .source_path
-                    .as_deref()
-                    .and_then(crate::frontend::module::logical_module_name_from_source_path),
+                dep_path_segments
+                    .clone()
+                    .map(|segments| segments.join("."))
+                    .or_else(|| {
+                        dep_ast
+                            .source_path
+                            .as_deref()
+                            .and_then(crate::frontend::module::logical_module_name_from_source_path)
+                    }),
             );
+            dep_lowering.seed_dependency_trait_decls(&self.dependency_modules);
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let dep_ir = dep_lowering.lower_program(dep_ast)?;
             let module_path = dep_path_segments
                 .clone()
                 .unwrap_or_else(|| vec![(*dep_name).to_string()]);
-            for (name, signature) in dep_ir.function_registry.iter() {
-                let mut canonical_path = module_path.clone();
-                canonical_path.push(name.clone());
-                canonical_registry.register_canonical_path(
-                    &canonical_path,
-                    signature.params.clone(),
-                    signature.return_type.clone(),
-                );
-            }
-            dependency_ir_programs.push(dep_ir);
+            dependency_ir_programs.push((module_path, dep_ir));
         }
+        let canonical_registry = Self::canonical_registry_for_programs(
+            dependency_ir_programs
+                .iter()
+                .map(|(module_path, dep_ir)| (module_path.as_slice(), dep_ir)),
+        );
 
         // Emit IR to Rust code
         let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
@@ -625,7 +667,7 @@ impl<'a> IrCodegen<'a> {
             inner.set_callable_name_resolutions(callable_name_resolutions_for_emit);
             inner.set_callable_name_used_signature_keys(callable_name_used_signature_keys_for_emit);
             inner.set_callable_name_local_registry(ir_program.function_registry.clone());
-            for dep_ir in &dependency_ir_programs {
+            for (_, dep_ir) in &dependency_ir_programs {
                 inner.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
             Ok(svc.emit_program(&ir_program)?)
@@ -648,7 +690,7 @@ impl<'a> IrCodegen<'a> {
             emitter.set_callable_name_resolutions(callable_name_resolutions_for_emit);
             emitter.set_callable_name_used_signature_keys(callable_name_used_signature_keys_for_emit);
             emitter.set_callable_name_local_registry(ir_program.function_registry.clone());
-            for dep_ir in &dependency_ir_programs {
+            for (_, dep_ir) in &dependency_ir_programs {
                 emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
             Ok(emitter.emit_program(&ir_program)?)

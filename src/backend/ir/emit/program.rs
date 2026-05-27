@@ -887,37 +887,14 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             IrExprKind::Var { name, .. } => Some(name.as_str()),
             _ => None,
         };
-        let canonical_name = canonical_path.as_ref().and_then(|path| path.last()).map(String::as_str);
-        let registered_signature = if canonical_path.is_some() {
-            callable_signature.cloned().or_else(|| {
-                canonical_path
-                    .as_ref()
-                    .and_then(|path| self.function_registry.get_canonical_path(path).cloned())
-            })
-        } else {
-            local_name
-                .and_then(|name| self.function_registry.get(name).cloned())
-                .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name).cloned()))
-                .or_else(|| callable_signature.cloned())
-        };
-        registered_signature.or_else(|| match &func.ty {
-            IrType::Function { params, ret } => Some(FunctionSignature {
-                params: params
-                    .iter()
-                    .enumerate()
-                    .map(|(idx, ty)| super::super::decl::FunctionParam {
-                        name: format!("__incan_arg_{idx}"),
-                        ty: ty.clone(),
-                        mutability: super::super::types::Mutability::Immutable,
-                        is_self: false,
-                        kind: crate::frontend::ast::ParamKind::Normal,
-                        default: None,
-                    })
-                    .collect(),
-                return_type: ret.as_ref().clone(),
-            }),
-            _ => None,
-        })
+        FunctionRegistry::effective_call_signature(
+            self.function_registry,
+            self.function_registry,
+            local_name,
+            canonical_path.as_deref(),
+            callable_signature,
+            Some(&func.ty),
+        )
     }
 
     /// Record named function arguments that need private adapters for borrowed function-pointer parameters.

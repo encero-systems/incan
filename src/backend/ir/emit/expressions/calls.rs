@@ -7,12 +7,12 @@ mod testing_asserts;
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::super::super::FunctionSignature;
 use super::super::super::conversions::{BinOpEmitKind, determine_binop_plan};
 use super::super::super::decl::FunctionParam;
 use super::super::super::expr::{BinOp, IrCallArg, IrCallArgKind, IrExprKind, TypedExpr, VarRefKind};
 use super::super::super::ownership::{ArgumentPassingPlan, ValueUseSite};
 use super::super::super::types::IrType;
+use super::super::super::{FunctionRegistry, FunctionSignature};
 use super::super::{EmitError, IrEmitter};
 use crate::frontend::ast::ParamKind;
 use incan_core::lang::stdlib;
@@ -499,25 +499,21 @@ impl<'a> IrEmitter<'a> {
             _ => None,
         };
         let callee_name = local_name.or(canonical_name);
-        let registry_signature = if let Some(path) = canonical_path {
-            self.canonical_function_registry().get_canonical_path(path)
-        } else {
-            local_name.and_then(|name| self.function_registry.get(name))
-        };
-        let result_specialized_signature = callable_signature.or(registry_signature).and_then(|signature| {
+        let merged_signature = FunctionRegistry::effective_call_signature_by(
+            self.function_registry,
+            self.canonical_function_registry(),
+            local_name,
+            canonical_path,
+            callable_signature,
+            Some(&func.ty),
+            |left, right| self.call_signature_type_matches(left, right),
+        );
+        let result_specialized_signature = merged_signature.as_ref().and_then(|signature| {
             result_target_ty.and_then(|target_ty| Self::specialize_signature_by_result_target(signature, target_ty))
         });
-        let function_sig = associated_signature.as_ref().or_else(|| {
-            if canonical_path.is_some() {
-                result_specialized_signature
-                    .as_ref()
-                    .or(callable_signature.or(registry_signature))
-            } else {
-                result_specialized_signature
-                    .as_ref()
-                    .or(registry_signature.or(callable_signature))
-            }
-        });
+        let function_sig = associated_signature
+            .as_ref()
+            .or_else(|| result_specialized_signature.as_ref().or(merged_signature.as_ref()));
         // The checked-newtype lowering path emits a compiler-internal panic marker call. This remains the narrow,
         // explicitly-tracked generated `panic!` exemption that issue #351 left to a separate follow-up. Render it as
         // the Rust `panic!` macro so generated code stays valid without colliding with user-defined functions that may

@@ -1917,15 +1917,37 @@ pub def normalize(value: int) -> int:
 "#,
     )?;
     fs::write(
+        src_dir.join("registry_facade.incn"),
+        r#"pub from function_registry import add, deterministic_spec
+"#,
+    )?;
+    fs::write(
+        src_dir.join("facade_helpers.incn"),
+        r#"from registry_facade import add, deterministic_spec
+
+
+@add(deterministic_spec(lifecycle="stable"))
+pub def facade_normalize(value: int) -> int:
+    return value
+"#,
+    )?;
+    fs::write(
         tests_dir.join("test_registry_intent.incn"),
         r#"from function_registry import registered_names, registered_namespaces
 from helpers import normalize
+from facade_helpers import facade_normalize
 
 
 def test_decorator_can_infer_name_with_imported_partial_spec() -> None:
     assert normalize(7) == 7
     assert registered_names[0] == "normalize"
     assert registered_namespaces[0] == "core"
+
+
+def test_decorator_can_use_reexported_partial_spec() -> None:
+    assert facade_normalize(8) == 8
+    assert registered_names[1] == "facade_normalize"
+    assert registered_namespaces[1] == "core"
 "#,
     )?;
 
@@ -2014,6 +2036,310 @@ def test_partial_default_symbols_in_decorator() -> None:
 }
 
 #[test]
+fn test_decorated_functions_preserve_default_argument_calls_issue703() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "decorated_default_argument_calls", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    fs::write(
+        src_dir.join("columns.incn"),
+        r#"pub model ColumnExpr:
+    pub value: str
+
+
+pub model Ref:
+    pub name: str
+
+
+pub model Literal:
+    pub value: int
+
+
+pub type Expr = Union[Ref, Literal]
+
+
+pub def col(value: str) -> ColumnExpr:
+    return ColumnExpr(value=value)
+
+
+pub def union_col(name: str) -> Expr:
+    return Ref(name=name)
+"#,
+    )?;
+    fs::write(
+        src_dir.join("defaults.incn"),
+        r#"pub model Ref:
+    pub name: str
+
+
+pub model Literal:
+    pub value: int
+
+
+pub type Expr = Union[Ref, Literal]
+
+
+pub def col(name: str) -> Expr:
+    return Ref(name=name)
+
+
+def identity(func: (Expr) -> int) -> (Expr) -> int:
+    return func
+
+
+@identity
+pub def decorated_default(expr: Expr = col("")) -> int:
+    return 1
+"#,
+    )?;
+    fs::write(
+        src_dir.join("test_consumer.incn"),
+        r#"from defaults import decorated_default
+
+
+def test_imported_decorated_default_call() -> None:
+    assert decorated_default() == 1
+"#,
+    )?;
+    fs::write(
+        src_dir.join("facade.incn"),
+        r#"pub from defaults import decorated_default
+"#,
+    )?;
+    fs::write(
+        src_dir.join("facade_chain.incn"),
+        r#"pub from facade import decorated_default
+"#,
+    )?;
+    fs::write(
+        src_dir.join("facade_alias.incn"),
+        r#"pub from defaults import decorated_default as public_decorated_default
+"#,
+    )?;
+    fs::write(
+        src_dir.join("test_facade_consumer.incn"),
+        r#"from facade import decorated_default
+
+
+def test_reexported_decorated_default_call() -> None:
+    assert decorated_default() == 1
+"#,
+    )?;
+    fs::write(
+        src_dir.join("test_facade_chain_consumer.incn"),
+        r#"from facade_chain import decorated_default
+
+
+def test_chained_reexported_decorated_default_call() -> None:
+    assert decorated_default() == 1
+"#,
+    )?;
+    fs::write(
+        src_dir.join("test_facade_alias_consumer.incn"),
+        r#"from facade_alias import public_decorated_default
+
+
+def test_aliased_reexported_decorated_default_call() -> None:
+    assert public_decorated_default() == 1
+"#,
+    )?;
+    let functions_dir = src_dir.join("functions");
+    let aggregates_dir = functions_dir.join("aggregates");
+    fs::create_dir_all(&aggregates_dir)?;
+    fs::write(
+        aggregates_dir.join("count.incn"),
+        r#"from defaults import Expr, col
+
+
+def identity(func: (Expr) -> int) -> (Expr) -> int:
+    return func
+
+
+@identity
+pub def count(expr: Expr = col("")) -> int:
+    return 1
+"#,
+    )?;
+    fs::write(
+        functions_dir.join("mod.incn"),
+        r#"pub from functions.aggregates.count import count
+"#,
+    )?;
+    fs::write(
+        src_dir.join("test_nested_facade_consumer.incn"),
+        r#"from functions import count
+
+
+def test_nested_reexported_decorated_default_call() -> None:
+    assert count() == 1
+"#,
+    )?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        tests_dir.join("test_decorated_default_probe.incn"),
+        r#"from columns import ColumnExpr, Expr, col, union_col
+
+
+def identity(func: (int) -> int) -> ((int) -> int):
+    return func
+
+
+class Box:
+    value: int
+
+    @method_identity
+    def decorated_method_default(self, value: int = 11) -> int:
+        return value
+
+
+def method_identity(func: (&Box, int) -> int) -> ((&Box, int) -> int):
+    return func
+
+
+@identity
+def decorated_default(value: int = 7) -> int:
+    return value
+
+
+def count_identity(func: (ColumnExpr) -> int) -> ((ColumnExpr) -> int):
+    return func
+
+
+@count_identity
+def count(expr: ColumnExpr = col("")) -> int:
+    return 1
+
+
+def union_count_identity(func: (Expr) -> int) -> ((Expr) -> int):
+    return func
+
+
+@union_count_identity
+def union_count(expr: Expr = union_col("")) -> int:
+    return 1
+
+
+def adapted_impl(value: str) -> int:
+    return 7
+
+
+def string_adapter(func: (int) -> int) -> ((str) -> int):
+    return adapted_impl
+
+
+@string_adapter
+def surface_changed(value: int = 7) -> int:
+    return value
+
+
+def plain_default(value: int = 7) -> int:
+    return value
+
+
+def plain_union_default(expr: Expr = union_col("")) -> int:
+    return 1
+
+
+def test_decorated_default_probe() -> None:
+    assert plain_default() == 7
+    assert plain_union_default() == 1
+    assert plain_union_default(union_col("orders")) == 1
+    assert decorated_default() == 7
+    assert decorated_default(3) == 3
+    box = Box(value=1)
+    assert box.decorated_method_default() == 11
+    assert box.decorated_method_default(5) == 5
+    assert count() == 1
+    assert count(col("orders")) == 1
+    assert union_count() == 1
+    assert union_count(union_col("orders")) == 1
+    assert surface_changed("changed") == 7
+"#,
+    )?;
+
+    let test_path = tmp.path().join("tests/test_decorated_default_probe.incn");
+    let test_output = run_incan(
+        tmp.path(),
+        &["test", test_path.to_str().ok_or("test path was not valid UTF-8")?],
+    )?;
+    assert_success(&test_output, "incan test for decorated default arguments issue703");
+
+    let consumer_path = src_dir.join("test_consumer.incn");
+    let consumer_output = run_incan(
+        tmp.path(),
+        &[
+            "test",
+            consumer_path.to_str().ok_or("consumer path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(
+        &consumer_output,
+        "incan test for imported decorated default arguments issue703",
+    );
+
+    let facade_consumer_path = src_dir.join("test_facade_consumer.incn");
+    let facade_consumer_output = run_incan(
+        tmp.path(),
+        &[
+            "test",
+            facade_consumer_path
+                .to_str()
+                .ok_or("facade consumer path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(
+        &facade_consumer_output,
+        "incan test for re-exported decorated default arguments issue703",
+    );
+
+    let facade_chain_consumer_path = src_dir.join("test_facade_chain_consumer.incn");
+    let facade_chain_consumer_output = run_incan(
+        tmp.path(),
+        &[
+            "test",
+            facade_chain_consumer_path
+                .to_str()
+                .ok_or("facade chain consumer path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(
+        &facade_chain_consumer_output,
+        "incan test for chained re-exported decorated default arguments issue703",
+    );
+
+    let facade_alias_consumer_path = src_dir.join("test_facade_alias_consumer.incn");
+    let facade_alias_consumer_output = run_incan(
+        tmp.path(),
+        &[
+            "test",
+            facade_alias_consumer_path
+                .to_str()
+                .ok_or("facade alias consumer path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(
+        &facade_alias_consumer_output,
+        "incan test for aliased re-exported decorated default arguments issue703",
+    );
+
+    let nested_facade_consumer_path = src_dir.join("test_nested_facade_consumer.incn");
+    let nested_facade_consumer_output = run_incan(
+        tmp.path(),
+        &[
+            "test",
+            nested_facade_consumer_path
+                .to_str()
+                .ok_or("nested facade consumer path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(
+        &nested_facade_consumer_output,
+        "incan test for nested re-exported decorated default arguments issue703",
+    );
+    Ok(())
+}
+
+#[test]
 fn test_decorator_callable_exposes_source_name_issue694() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "decorator_callable_name", "")?;
@@ -2041,8 +2367,14 @@ pub def registered() -> (((int) -> int) -> ((int) -> int)):
 "#,
     )?;
     fs::write(
+        src_dir.join("registry_facade.incn"),
+        r#"pub from registry import names, registered
+"#,
+    )?;
+    fs::write(
         tests_dir.join("test_callable_name.incn"),
         r#"from registry import names, registered
+from registry_facade import registered as facade_registered
 
 
 @registered()
@@ -2050,9 +2382,16 @@ pub def sample(value: int) -> int:
     return value + 1
 
 
+@facade_registered()
+pub def facade_sample(value: int) -> int:
+    return value + 2
+
+
 def test_decorator_can_read_specific_callable_name() -> None:
     assert sample(1) == 2
     assert names[0] == "sample"
+    assert facade_sample(1) == 3
+    assert names[1] == "facade_sample"
 "#,
     )?;
 

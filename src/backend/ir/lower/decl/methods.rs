@@ -354,7 +354,7 @@ impl AstLowering {
                 type_param_names,
             )?;
             let adapter = self.decorated_method_original_adapter(owner, method)?;
-            let wrapper = self.lower_decorated_method_wrapper(owner, method)?;
+            let wrapper = self.lower_decorated_method_wrapper(owner, method, type_param_names)?;
             Ok(vec![original, adapter, wrapper])
         } else {
             Ok(vec![self.lower_method_with_type_params(method, type_param_names)?])
@@ -366,6 +366,7 @@ impl AstLowering {
         &mut self,
         owner: &str,
         method: &ast::MethodDecl,
+        owner_type_param_names: Option<&HashSet<&str>>,
     ) -> Result<IrFunction, LoweringError> {
         let Some(binding) = self.type_info.as_ref().and_then(|info| {
             info.declarations
@@ -373,15 +374,23 @@ impl AstLowering {
                 .get(&(owner.to_string(), method.name.clone()))
                 .cloned()
         }) else {
-            return self.lower_method_with_type_params(method, None);
+            return self.lower_method_with_type_params(method, owner_type_param_names);
         };
         let crate::frontend::symbols::ResolvedType::Function(params, ret) = binding.unbound_ty else {
-            return self.lower_method_with_type_params(method, None);
+            return self.lower_method_with_type_params(method, owner_type_param_names);
         };
         let Some((receiver_param, surface_params)) = params.split_first() else {
-            return self.lower_method_with_type_params(method, None);
+            return self.lower_method_with_type_params(method, owner_type_param_names);
         };
         let receiver_ty = self.lower_resolved_type(&receiver_param.ty);
+        let original_surface_params = match binding.original_unbound_ty {
+            crate::frontend::symbols::ResolvedType::Function(original_params, _) => {
+                original_params.into_iter().skip(1).collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        };
+        let defaults =
+            self.decorated_param_defaults_for_surface(surface_params, &original_surface_params, &method.params);
         let mut wrapper_params = Vec::with_capacity(surface_params.len() + 1);
         let receiver = method.receiver.unwrap_or(ast::Receiver::Immutable);
         wrapper_params.push(FunctionParam {
@@ -404,7 +413,7 @@ impl AstLowering {
                 mutability: Mutability::Immutable,
                 is_self: false,
                 kind: param.kind,
-                default: None,
+                default: defaults.get(idx).cloned().flatten(),
             }
         }));
         let return_type = self.lower_resolved_type(&ret);

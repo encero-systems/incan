@@ -2782,6 +2782,7 @@ mod tests {
             source_module_name: None,
             entry_point: None,
             function_registry: FunctionRegistry::new(),
+            function_reexports: Vec::new(),
             rust_module_path: None,
             newtype_checked_ctor: Default::default(),
         }
@@ -2829,6 +2830,7 @@ mod tests {
             source_module_name: None,
             entry_point: None,
             function_registry: FunctionRegistry::new(),
+            function_reexports: Vec::new(),
             rust_module_path: None,
             newtype_checked_ctor: Default::default(),
         };

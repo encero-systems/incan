@@ -567,6 +567,11 @@ impl<'a> IrEmitter<'a> {
             .unwrap_or(self.function_registry)
     }
 
+    /// Return whether two call-signature types describe the same emitted surface after transparent aliases expand.
+    pub(in crate::backend::ir::emit) fn call_signature_type_matches(&self, left: &IrType, right: &IrType) -> bool {
+        left == right || self.resolve_type_aliases_for_emit(left) == self.resolve_type_aliases_for_emit(right)
+    }
+
     /// Resolve transparent type aliases before emission decisions that need structural type information.
     pub(in crate::backend::ir::emit) fn resolve_type_aliases_for_emit(&self, ty: &IrType) -> IrType {
         let mut visiting = HashSet::new();

@@ -55,10 +55,11 @@ mod validate_rust_module;
 
 pub use const_eval::ConstValue;
 pub use type_info::{
-    ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FixedUnpackPlan, IdentKind,
-    ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
-    RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
-    ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
+    ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FixedUnpackPlan,
+    FunctionBindingInfo, IdentKind, ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch,
+    ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo,
+    TestingFixtureInfo, TypeCheckInfo, ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode,
+    ValidatedNewtypeCoercionStep,
 };
 #[cfg(test)]
 mod tests;

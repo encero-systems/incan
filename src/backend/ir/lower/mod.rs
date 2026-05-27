@@ -39,10 +39,10 @@ use super::decl::{FunctionParam, IrDecl, IrDeclKind, IrImportOrigin, IrImportQua
 use super::expr::{IrCallArg, IrCallArgKind, IrExprKind, VarAccess, VarRefKind};
 use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
-use super::{FunctionSignature, IrProgram, Mutability};
+use super::{FunctionReexport, FunctionSignature, IrProgram, Mutability};
 use crate::frontend::ast;
 use crate::frontend::decorator_resolution;
-use crate::frontend::symbols::NewtypePrimitiveConstraint;
+use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint};
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::conventions;
@@ -256,6 +256,68 @@ impl AstLowering {
     /// Override the source module name used for compiler-provided call-site metadata.
     pub fn set_current_source_module_name(&mut self, name: Option<String>) {
         self.current_source_module_name = name;
+    }
+
+    /// Lower one typechecker-resolved callable surface into IR parameters, attaching an already-planned default
+    /// expression for each parameter when present.
+    fn function_params_from_callable_surface(
+        &mut self,
+        callable_params: &[CallableParam],
+        defaults: &[Option<TypedExpr>],
+    ) -> Vec<FunctionParam> {
+        callable_params
+            .iter()
+            .enumerate()
+            .map(|(idx, param)| {
+                let base_ty = self.lower_resolved_type(&param.ty);
+                FunctionParam {
+                    name: param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
+                    ty: Self::lower_param_container_type(param.kind, base_ty),
+                    mutability: Mutability::Immutable,
+                    is_self: false,
+                    kind: param.kind,
+                    default: defaults.get(idx).cloned().flatten(),
+                }
+            })
+            .collect()
+    }
+
+    fn function_params_from_source_callable_surface(
+        &mut self,
+        callable_params: &[CallableParam],
+        source_params: &[ast::Spanned<ast::Param>],
+    ) -> Vec<FunctionParam> {
+        callable_params
+            .iter()
+            .enumerate()
+            .map(|(idx, param)| {
+                let source_idx = param
+                    .name
+                    .as_deref()
+                    .and_then(|name| source_params.iter().position(|source| source.node.name == name))
+                    .unwrap_or(idx);
+                let source_param = source_params.get(source_idx);
+                let default = if param.has_default {
+                    source_param
+                        .and_then(|source| source.node.default.as_ref())
+                        .and_then(|default_expr| self.lower_expr_spanned(default_expr).ok())
+                } else {
+                    None
+                };
+                FunctionParam {
+                    name: param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
+                    ty: Self::lower_param_container_type(param.kind, self.lower_resolved_type(&param.ty)),
+                    mutability: if source_param.is_some_and(|source| source.node.is_mut) {
+                        Mutability::Mutable
+                    } else {
+                        Mutability::Immutable
+                    },
+                    is_self: false,
+                    kind: param.kind,
+                    default,
+                }
+            })
+            .collect()
     }
 
     /// Return the logger name supplied to default `std.logging.get_logger()` calls.
@@ -895,6 +957,50 @@ impl AstLowering {
         }
     }
 
+    fn collect_function_reexports(&self, program: &ast::Program) -> Vec<FunctionReexport> {
+        let mut reexports = Vec::new();
+        for decl in &program.declarations {
+            let ast::Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            if !matches!(import.visibility, ast::Visibility::Public) {
+                continue;
+            }
+            let ast::ImportKind::From { module, items } = &import.kind else {
+                continue;
+            };
+
+            let module_path = self.canonical_source_import_module_segments(module);
+            for item in items {
+                let mut target_path = module_path.clone();
+                target_path.push(item.name.clone());
+                reexports.push(FunctionReexport {
+                    name: item.alias.as_ref().unwrap_or(&item.name).clone(),
+                    target_path,
+                });
+            }
+        }
+        reexports
+    }
+
+    fn canonical_source_import_module_segments(&self, module: &ast::ImportPath) -> Vec<String> {
+        let segments = if module.parent_levels > 0 && !module.is_absolute {
+            let mut base = self
+                .current_source_module_name
+                .as_deref()
+                .map(|module_name| module_name.split('.').map(str::to_string).collect::<Vec<_>>())
+                .unwrap_or_default();
+            for _ in 0..module.parent_levels {
+                base.pop();
+            }
+            base.extend(module.segments.iter().cloned());
+            base
+        } else {
+            module.segments.clone()
+        };
+        crate::frontend::module::canonicalize_source_module_segments(&segments)
+    }
+
     /// Lower a complete AST program to IR.
     ///
     /// This is the main entry point for the lowering pass. It performs:
@@ -922,6 +1028,7 @@ impl AstLowering {
         let mut errors: Vec<LoweringError> = Vec::new();
         self.import_aliases = decorator_resolution::collect_import_aliases(program);
         self.rust_import_aliases = decorator_resolution::collect_rust_import_aliases(program);
+        ir_program.function_reexports = self.collect_function_reexports(program);
         self.imported_alias_targets = self.collect_imported_alias_targets(program);
         self.seed_imported_stdlib_trait_decls(program);
         self.alias_imported_dependency_trait_decls();
@@ -1061,55 +1168,78 @@ impl AstLowering {
             if let ast::Declaration::Function(ref f) = decl.node {
                 let type_param_names: std::collections::HashSet<&str> =
                     f.type_params.iter().map(|tp| tp.name.as_str()).collect();
-                let params: Vec<FunctionParam> = f
-                    .params
-                    .iter()
-                    .map(|p| {
-                        let base_ty = self.lower_type_with_type_params(&p.node.ty.node, Some(&type_param_names));
-                        let param_ty = Self::lower_param_container_type(p.node.kind, base_ty);
-                        FunctionParam {
-                            name: p.node.name.clone(),
-                            ty: param_ty,
-                            mutability: if p.node.is_mut {
-                                Mutability::Mutable
-                            } else {
-                                Mutability::Immutable
-                            },
-                            is_self: false,
-                            kind: p.node.kind,
-                            default: match &p.node.default {
-                                Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
-                                None => None,
-                            },
-                        }
-                    })
-                    .collect();
-                let return_type = self
+                let function_binding = self
                     .type_info
                     .as_ref()
-                    .and_then(|info| info.declarations.decorated_function_bindings.get(&f.name))
-                    .and_then(|binding| match &binding.ty {
-                        crate::frontend::symbols::ResolvedType::Function(_, ret) => Some(self.lower_resolved_type(ret)),
-                        _ => None,
-                    })
+                    .and_then(|info| info.declarations.function_bindings.get(&f.name).cloned());
+                let source_params: Vec<FunctionParam> = function_binding
+                    .as_ref()
+                    .map(|binding| self.function_params_from_source_callable_surface(&binding.params, &f.params))
+                    .unwrap_or_else(|| {
+                        f.params
+                            .iter()
+                            .map(|p| {
+                                let base_ty =
+                                    self.lower_type_with_type_params(&p.node.ty.node, Some(&type_param_names));
+                                let param_ty = Self::lower_param_container_type(p.node.kind, base_ty);
+                                FunctionParam {
+                                    name: p.node.name.clone(),
+                                    ty: param_ty,
+                                    mutability: if p.node.is_mut {
+                                        Mutability::Mutable
+                                    } else {
+                                        Mutability::Immutable
+                                    },
+                                    is_self: false,
+                                    kind: p.node.kind,
+                                    default: match &p.node.default {
+                                        Some(default_expr) => self.lower_expr_spanned(default_expr).ok(),
+                                        None => None,
+                                    },
+                                }
+                            })
+                            .collect()
+                    });
+                if let Some(binding) = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.declarations.decorated_function_bindings.get(&f.name).cloned())
+                    && let crate::frontend::symbols::ResolvedType::Function(callable_params, callable_ret) = binding.ty
+                {
+                    let original_params = match &binding.original_ty {
+                        crate::frontend::symbols::ResolvedType::Function(params, _) => params.as_slice(),
+                        _ => &[],
+                    };
+                    let defaults =
+                        self.decorated_param_defaults_for_surface(&callable_params, original_params, &f.params);
+                    let params = self.function_params_from_callable_surface(&callable_params, &defaults);
+                    let return_type = self.lower_resolved_type(&callable_ret);
+                    ir_program
+                        .function_registry
+                        .register(f.name.clone(), params.clone(), return_type.clone());
+                    self.update_root_function_binding(&f.name, &params, &return_type);
+
+                    let original_name = Self::decorator_original_function_name(&f.name);
+                    let original_return_type = function_binding
+                        .as_ref()
+                        .map(|binding| self.lower_resolved_type(&binding.return_type))
+                        .unwrap_or_else(|| {
+                            self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names))
+                        });
+                    ir_program
+                        .function_registry
+                        .register(original_name, source_params, original_return_type);
+                    continue;
+                }
+                let return_type = function_binding
+                    .as_ref()
+                    .map(|binding| self.lower_resolved_type(&binding.return_type))
                     .unwrap_or_else(|| self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names)));
                 ir_program
                     .function_registry
-                    .register(f.name.clone(), params.clone(), return_type.clone());
+                    .register(f.name.clone(), source_params.clone(), return_type.clone());
                 if let Some(signature) = ir_program.function_registry.get(&f.name).cloned() {
                     self.update_root_function_binding(&f.name, &signature.params, &signature.return_type);
-                }
-                if self
-                    .type_info
-                    .as_ref()
-                    .is_some_and(|info| info.declarations.decorated_function_bindings.contains_key(&f.name))
-                {
-                    let original_name = Self::decorator_original_function_name(&f.name);
-                    let original_return_type =
-                        self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names));
-                    ir_program
-                        .function_registry
-                        .register(original_name, params, original_return_type);
                 }
             } else if let ast::Declaration::Alias(ref alias) = decl.node
                 && let [target] = alias.target.segments.as_slice()
@@ -1599,6 +1729,10 @@ impl AstLowering {
                 span: ast::Span::default().into(),
             });
         };
+        let original_params = match binding.original_ty {
+            crate::frontend::symbols::ResolvedType::Function(params, _) => params,
+            _ => Vec::new(),
+        };
 
         let original_name = Self::decorator_original_function_name(&f.name);
         let original = self.lower_function_named(f, original_name.clone(), super::decl::Visibility::Private)?;
@@ -1614,7 +1748,13 @@ impl AstLowering {
         let mut value = self.lower_expr_spanned(&decorator_expr)?;
         value.ty = decorated_ty.clone();
         let static_name = Self::decorator_static_binding_name(&f.name);
-        let wrapper = self.decorated_function_wrapper(f, &static_name, &callable_params, callable_ret.as_ref());
+        let wrapper = self.decorated_function_wrapper(
+            f,
+            &static_name,
+            &callable_params,
+            &original_params,
+            callable_ret.as_ref(),
+        );
 
         Ok(vec![
             IrDecl::new(IrDeclKind::Function(original)),
@@ -1633,24 +1773,12 @@ impl AstLowering {
         &mut self,
         f: &ast::FunctionDecl,
         static_name: &str,
-        callable_params: &[crate::frontend::symbols::CallableParam],
+        callable_params: &[CallableParam],
+        original_params: &[CallableParam],
         callable_ret: &crate::frontend::symbols::ResolvedType,
     ) -> super::decl::IrFunction {
-        let params: Vec<FunctionParam> = callable_params
-            .iter()
-            .enumerate()
-            .map(|(idx, param)| {
-                let base_ty = self.lower_resolved_type(&param.ty);
-                FunctionParam {
-                    name: param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
-                    ty: Self::lower_param_container_type(param.kind, base_ty),
-                    mutability: Mutability::Immutable,
-                    is_self: false,
-                    kind: param.kind,
-                    default: None,
-                }
-            })
-            .collect();
+        let defaults = self.decorated_param_defaults_for_surface(callable_params, original_params, &f.params);
+        let params = self.function_params_from_callable_surface(callable_params, &defaults);
         let return_type = self.lower_resolved_type(callable_ret);
         let static_func = TypedExpr::new(
             IrExprKind::StaticRead {
@@ -1700,6 +1828,75 @@ impl AstLowering {
             rust_attributes: Vec::new(),
             lint_allows: Vec::new(),
         }
+    }
+
+    /// Lower source defaults for a decorated callable wrapper when the final callable surface still maps to the
+    /// original typechecker-resolved parameters.
+    ///
+    /// Function types can describe parameter types but not default expressions. User-defined decorators often return an
+    /// explicit function type such as `(int) -> int`, which erases the declaration's richer call-site defaults even
+    /// when the decorator keeps the same callable surface. This helper rebuilds one default plan from source parameter
+    /// metadata only after the final decorator surface still matches the original callable shape. The comparison uses
+    /// typechecker-resolved parameter types so transparent aliases like `type Expr = Union[...]` do not split lowering
+    /// behavior across import or alias boundaries.
+    pub(super) fn decorated_param_defaults_for_surface(
+        &mut self,
+        surface_params: &[CallableParam],
+        original_params: &[CallableParam],
+        source_params: &[ast::Spanned<ast::Param>],
+    ) -> Vec<Option<TypedExpr>> {
+        let positional_shapes_match = Self::decorated_positional_param_shapes_match(surface_params, original_params);
+
+        surface_params
+            .iter()
+            .enumerate()
+            .map(|(idx, surface_param)| {
+                let default_expr = if let Some(name) = surface_param.name.as_deref() {
+                    original_params
+                        .iter()
+                        .position(|original_param| {
+                            original_param.name.as_deref() == Some(name)
+                                && Self::decorated_param_shape_matches(surface_param, original_param)
+                        })
+                        .and_then(|source_idx| {
+                            original_params
+                                .get(source_idx)
+                                .is_some_and(|original_param| original_param.has_default)
+                                .then(|| source_params.get(source_idx))
+                                .flatten()
+                        })
+                        .and_then(|source_param| source_param.node.default.clone())
+                } else if positional_shapes_match {
+                    original_params
+                        .get(idx)
+                        .is_some_and(|original_param| original_param.has_default)
+                        .then(|| source_params.get(idx))
+                        .flatten()
+                        .and_then(|source_param| source_param.node.default.clone())
+                } else {
+                    None
+                };
+
+                default_expr.and_then(|expr| self.lower_expr_spanned(&expr).ok())
+            })
+            .collect()
+    }
+
+    fn decorated_positional_param_shapes_match(
+        surface_params: &[CallableParam],
+        original_params: &[CallableParam],
+    ) -> bool {
+        surface_params.len() == original_params.len()
+            && surface_params
+                .iter()
+                .zip(original_params)
+                .all(|(surface_param, original_param)| {
+                    Self::decorated_param_shape_matches(surface_param, original_param)
+                })
+    }
+
+    fn decorated_param_shape_matches(surface_param: &CallableParam, original_param: &CallableParam) -> bool {
+        surface_param.kind == original_param.kind && surface_param.ty == original_param.ty
     }
 
     /// Add alias-qualified dependency trait declarations so default methods can expand for imported derive aliases.

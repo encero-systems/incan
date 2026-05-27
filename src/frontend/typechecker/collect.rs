@@ -10,7 +10,7 @@ use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::freeze_const_type;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 
-use super::TypeChecker;
+use super::{FunctionBindingInfo, TypeChecker};
 
 mod decl_helpers;
 pub(super) mod decorators;
@@ -1255,6 +1255,13 @@ impl TypeChecker {
             })
             .collect();
         let return_type = self.resolve_type_checked(&func.return_type);
+        self.type_info.declarations.function_bindings.insert(
+            func.name.clone(),
+            FunctionBindingInfo {
+                params: params.clone(),
+                return_type: return_type.clone(),
+            },
+        );
 
         self.symbols.define(Symbol {
             name: func.name.clone(),
