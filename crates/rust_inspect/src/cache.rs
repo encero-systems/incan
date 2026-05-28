@@ -341,6 +341,43 @@ fn canonical_path_candidates(canonical_path: &str) -> Vec<String> {
     }
 }
 
+/// Return whether two Rust paths may name the same item after cache-supported spelling aliases.
+fn cache_path_aliases_match(left: &str, right: &str) -> bool {
+    let right_candidates = canonical_path_candidates(right);
+    canonical_path_candidates(left).iter().any(|left_candidate| {
+        right_candidates
+            .iter()
+            .any(|right_candidate| left_candidate == right_candidate)
+    })
+}
+
+/// Re-key a cached item for a query path while preserving the extracted Rust metadata.
+fn insert_aliased_item(
+    inner: &mut CacheInner,
+    root: &Path,
+    canonical_path: &str,
+    hit: &Arc<RustItemMetadata>,
+) -> Arc<RustItemMetadata> {
+    let mut aliased = (*hit.as_ref()).clone();
+    aliased.canonical_path = canonical_path.to_owned();
+    let arc = Arc::new(aliased);
+    let key_item = (root.to_path_buf(), canonical_path.to_owned());
+    inner.failed_items.remove(&key_item);
+    inner.items.insert(key_item, Arc::clone(&arc));
+    arc
+}
+
+/// Look up cached public aliases whose recorded definition path matches the requested path.
+fn cached_definition_alias(inner: &CacheInner, root: &Path, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
+    inner.items.iter().find_map(|((item_root, _), cached)| {
+        if item_root != root {
+            return None;
+        }
+        let definition = cached.definition_path.as_deref()?;
+        cache_path_aliases_match(definition, canonical_path).then(|| Arc::clone(cached))
+    })
+}
+
 /// Attempt extraction through primary workspace, out-dirs workspace, then resolved dependency workspace.
 fn extract_in_workspace_set(
     inner: &mut CacheInner,
@@ -584,7 +621,7 @@ impl RustMetadataCache {
     /// Return metadata for `canonical_path`, loading/extracting on cache miss.
     ///
     /// Lookup order is:
-    /// 1. in-memory exact/alias hits
+    /// 1. in-memory exact, definition-path, and spelling-alias hits
     /// 2. workspace extraction using canonical-path candidates
     /// 3. dependency-workspace extraction fallback
     /// 4. persisted disk-cache update for future sessions
@@ -620,6 +657,29 @@ impl RustMetadataCache {
             trace.set_outcome("hit.memory.exact");
             return Ok(Arc::clone(hit));
         }
+        if let Some(hit) = cached_definition_alias(&inner, &root, canonical_path) {
+            let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
+            let persist_started = Instant::now();
+            if let Err(err) = persist_item_to_disk_cache(&inner, &root, arc.as_ref())
+                && timing_enabled
+            {
+                eprintln!(
+                    "[rust-inspect-timing] root={} query={} stage=disk_cache.persist.definition_alias_hit status=error err={err}",
+                    root.display(),
+                    canonical_path
+                );
+            }
+            log_timing_stage(
+                timing_enabled,
+                &root,
+                canonical_path,
+                "disk_cache.persist.definition_alias_hit",
+                persist_started.elapsed(),
+                "",
+            );
+            trace.set_outcome("hit.memory.definition_alias");
+            return Ok(arc);
+        }
         if let Some(miss) = inner.failed_items.get(&key_item) {
             trace.set_outcome("hit.memory.negative");
             return Err(miss.to_error());
@@ -629,11 +689,8 @@ impl RustMetadataCache {
         let mut meta = None;
         for candidate in canonical_path_candidates(canonical_path) {
             let candidate_key = (root.clone(), candidate.clone());
-            if let Some(hit) = inner.items.get(&candidate_key) {
-                let mut aliased = (*hit.as_ref()).clone();
-                aliased.canonical_path = canonical_path.to_owned();
-                let arc = Arc::new(aliased);
-                inner.items.insert(key_item.clone(), Arc::clone(&arc));
+            if let Some(hit) = inner.items.get(&candidate_key).cloned() {
+                let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
                 let persist_started = Instant::now();
                 if let Err(err) = persist_item_to_disk_cache(&inner, &root, arc.as_ref())
                     && timing_enabled
@@ -761,13 +818,33 @@ impl RustMetadataCache {
             }));
         }
 
+        if let Some(hit) = cached_definition_alias(&inner, &root, canonical_path) {
+            let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
+            if let Err(err) = persist_item_to_disk_cache(&inner, &root, arc.as_ref()) {
+                tracing::warn!(
+                    root = %root.display(),
+                    query = %canonical_path,
+                    error = %err,
+                    "failed to persist rust-inspect disk cache after definition alias hit"
+                );
+                if rust_inspect_timing_enabled() {
+                    eprintln!(
+                        "[rust-inspect-timing] root={} query={} stage=disk_cache.persist.cached_definition_alias status=error err={err}",
+                        root.display(),
+                        canonical_path
+                    );
+                }
+            }
+            return Ok(Some(CacheLookupHit {
+                metadata: arc,
+                alias_used: true,
+            }));
+        }
+
         for candidate in canonical_path_candidates(canonical_path) {
             let candidate_key = (root.clone(), candidate.clone());
-            if let Some(hit) = inner.items.get(&candidate_key) {
-                let mut aliased = (*hit.as_ref()).clone();
-                aliased.canonical_path = canonical_path.to_owned();
-                let arc = Arc::new(aliased);
-                inner.items.insert(key_item.clone(), Arc::clone(&arc));
+            if let Some(hit) = inner.items.get(&candidate_key).cloned() {
+                let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
                 if let Err(err) = persist_item_to_disk_cache(&inner, &root, arc.as_ref()) {
                     tracing::warn!(
                         root = %root.display(),
