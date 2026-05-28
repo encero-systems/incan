@@ -916,9 +916,14 @@ impl<'a> IrEmitter<'a> {
             } => {
                 let param_tokens: Vec<TokenStream> = params
                     .iter()
-                    .map(|(pname, _pty)| {
+                    .map(|(pname, pty)| {
                         let n = Self::rust_ident(pname);
-                        quote! { #n }
+                        if matches!(pty, IrType::RustDisplay(_)) {
+                            let ty = self.emit_type(pty);
+                            quote! { #n: #ty }
+                        } else {
+                            quote! { #n }
+                        }
                     })
                     .collect();
                 let b = self.emit_expr(body)?;

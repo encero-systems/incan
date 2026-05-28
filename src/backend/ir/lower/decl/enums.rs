@@ -115,6 +115,7 @@ fn type_defaults_partial_eq(ty: &IrType) -> bool {
         | IrType::ImplTrait(_)
         | IrType::Function { .. }
         | IrType::Generic(_)
+        | IrType::RustDisplay(_)
         | IrType::SelfType
         | IrType::Unknown => false,
     }

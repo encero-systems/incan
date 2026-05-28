@@ -214,6 +214,17 @@ pub struct TypeChecker {
     /// This keeps trait/supertrait compatibility available for imported function signatures without making those trait
     /// names ambient in user source.
     pub(crate) transitive_pub_traits: HashMap<String, Vec<TraitInfo>>,
+    /// Internal semantic type cache for stdlib stub helper types referenced by imported stdlib signatures.
+    ///
+    /// Stub-backed stdlib modules often define carrier classes that imported functions return or accept. These types
+    /// must be available for internal method lookup, but importing one stdlib item must not make every sibling stub
+    /// type source-visible in user modules.
+    pub(crate) transitive_stdlib_stub_types: HashMap<String, TypeInfo>,
+    /// Internal semantic trait cache for stdlib stub helper traits referenced by imported stdlib signatures.
+    ///
+    /// Like [`Self::transitive_stdlib_stub_types`], these traits are used for trait-bound compatibility and
+    /// trait-method dispatch without widening source-visible name lookup.
+    pub(crate) transitive_stdlib_stub_traits: HashMap<String, TraitInfo>,
     /// Tracks which `pub::` libraries have already seeded the internal transitive semantic caches for this checker
     /// run.
     pub(crate) cached_pub_libraries: HashSet<String>,
@@ -310,6 +321,8 @@ impl TypeChecker {
             library_manifests: Arc::new(LibraryManifestIndex::default()),
             transitive_pub_types: HashMap::new(),
             transitive_pub_traits: HashMap::new(),
+            transitive_stdlib_stub_types: HashMap::new(),
+            transitive_stdlib_stub_traits: HashMap::new(),
             cached_pub_libraries: HashSet::new(),
             current_module_path: None,
             declared_crate_names: None,
@@ -543,6 +556,35 @@ impl TypeChecker {
         (Self::normalize_rust_namespace_path(trimmed).to_string(), Vec::new())
     }
 
+    /// Rewrite Rust's crate-relative type displays against the inspected callable or type path that produced them.
+    ///
+    /// rust-analyzer reports signatures from inside a Rust crate using displays such as
+    /// `crate::ScalarFunctionImplementation`. Incan source, imports, and generated Rust refer to the dependency by its
+    /// crate name (`datafusion_expr::ScalarFunctionImplementation`), so boundary typing must canonicalize those
+    /// displays before compatibility checks or contextual argument checking run.
+    pub(crate) fn rust_display_for_owner_path(&self, rust_ty: &str, owner_path: &str) -> String {
+        let owner = Self::normalize_rust_namespace_path(owner_path);
+        let Some(crate_name) = owner.split("::").next().filter(|segment| !segment.is_empty()) else {
+            return rust_ty.to_string();
+        };
+        let replacement = format!("{crate_name}::");
+        let mut rendered = String::with_capacity(rust_ty.len() + replacement.len());
+        let mut remaining = rust_ty;
+        while let Some(idx) = remaining.find("crate::") {
+            let (before, after) = remaining.split_at(idx);
+            rendered.push_str(before);
+            let prev = rendered.chars().next_back();
+            if prev.is_some_and(|ch| ch == '_' || ch.is_ascii_alphanumeric()) {
+                rendered.push_str("crate::");
+            } else {
+                rendered.push_str(replacement.as_str());
+            }
+            remaining = &after["crate::".len()..];
+        }
+        rendered.push_str(remaining);
+        rendered
+    }
+
     fn rust_definition_for_path(&self, canonical_path: &str) -> Option<String> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         if let Some(definition) = self.symbols.all_symbols().iter().find_map(|sym| {
@@ -684,23 +726,26 @@ impl TypeChecker {
         sig.params.first().is_some_and(Self::rust_param_is_receiver)
     }
 
-    /// Build a conservative function type from rust-inspect metadata.
-    ///
-    /// When `drop_receiver` is true and the Rust signature starts with `self`, that first parameter is omitted because
-    /// method-call syntax already supplies the receiver expression.
-    pub(crate) fn resolved_function_type_from_rust_sig(
+    /// Build a Rust function type from a signature whose displays may use `crate::` relative to `rust_path`.
+    pub(crate) fn resolved_function_type_from_rust_sig_for_owner_path(
         &self,
         sig: &RustFunctionSig,
         drop_receiver: bool,
+        rust_path: &str,
     ) -> ResolvedType {
         let skip = usize::from(drop_receiver && Self::rust_signature_has_receiver(sig));
         let params = sig
             .params
             .iter()
             .skip(skip)
-            .map(|p| CallableParam::positional(self.resolved_param_type_from_rust_display(p.type_display.as_str())))
+            .map(|p| {
+                CallableParam::positional(
+                    self.resolved_param_type_from_rust_display_for_owner_path(p.type_display.as_str(), rust_path),
+                )
+            })
             .collect();
-        let ret = self.resolved_type_from_rust_display(sig.return_type.as_str());
+        let ret_display = self.rust_display_for_owner_path(sig.return_type.as_str(), rust_path);
+        let ret = self.resolved_type_from_rust_display(ret_display.as_str());
         ResolvedType::Function(params, Box::new(ret))
     }
 
@@ -755,7 +800,10 @@ impl TypeChecker {
         drop_receiver: bool,
         rust_path: &str,
     ) -> ResolvedType {
-        Self::substitute_rust_self_type(self.resolved_function_type_from_rust_sig(sig, drop_receiver), rust_path)
+        Self::substitute_rust_self_type(
+            self.resolved_function_type_from_rust_sig_for_owner_path(sig, drop_receiver, rust_path),
+            rust_path,
+        )
     }
 
     /// Render `path` with generic arguments as `path<A, B, ...>` for embedding in [`ResolvedType::RustPath`].
@@ -1062,6 +1110,13 @@ impl TypeChecker {
             let inner_ty = match inner {
                 "str" => ResolvedType::Str,
                 "[u8]" => ResolvedType::Bytes,
+                _ if inner_normalized.starts_with('[') && inner_normalized.ends_with(']') => {
+                    let elem = &inner_normalized[1..inner_normalized.len() - 1];
+                    ResolvedType::Generic(
+                        collection_name(CollectionTypeId::List).to_string(),
+                        vec![self.resolved_type_from_rust_display(elem)],
+                    )
+                }
                 _ => self.resolved_type_from_rust_display(inner_normalized.as_str()),
             };
             return if is_mut {
@@ -1076,6 +1131,16 @@ impl TypeChecker {
             return structural;
         }
         self.resolved_type_from_rust_display(normalized.as_str())
+    }
+
+    /// Convert a Rust parameter display into a resolved type after expanding crate-relative paths for its owner.
+    pub(crate) fn resolved_param_type_from_rust_display_for_owner_path(
+        &self,
+        rust_ty: &str,
+        owner_path: &str,
+    ) -> ResolvedType {
+        let display = self.rust_display_for_owner_path(rust_ty, owner_path);
+        self.resolved_param_type_from_rust_display(display.as_str())
     }
 
     /// Convert a Rust parameter display type into the typed target carried by Rust-boundary coercion metadata.
@@ -1109,6 +1174,16 @@ impl TypeChecker {
             return structural;
         }
         self.resolved_param_type_from_rust_display(normalized.as_str())
+    }
+
+    /// Convert a Rust boundary target after expanding crate-relative paths for its owner.
+    pub(crate) fn resolved_rust_boundary_target_from_param_display_for_owner_path(
+        &self,
+        rust_ty: &str,
+        owner_path: &str,
+    ) -> ResolvedType {
+        let display = self.rust_display_for_owner_path(rust_ty, owner_path);
+        self.resolved_rust_boundary_target_from_param_display(display.as_str())
     }
 
     /// Set the declared Rust crate names from `incan.toml [rust-dependencies]`.
@@ -1454,6 +1529,9 @@ impl TypeChecker {
         if let Some(info) = self.lookup_type_info(name) {
             return Some(info);
         }
+        if let Some(info) = self.transitive_stdlib_stub_types.get(name) {
+            return Some(info);
+        }
         let infos = self.transitive_pub_types.get(name)?;
         (infos.len() == 1).then(|| &infos[0])
     }
@@ -1465,6 +1543,9 @@ impl TypeChecker {
     /// name resolution.
     pub(crate) fn lookup_semantic_trait_info(&self, name: &str) -> Option<&TraitInfo> {
         if let Some(info) = self.lookup_trait_info(name) {
+            return Some(info);
+        }
+        if let Some(info) = self.transitive_stdlib_stub_traits.get(name) {
             return Some(info);
         }
         let infos = self.transitive_pub_traits.get(name)?;
@@ -3558,7 +3639,10 @@ impl TypeChecker {
     /// interfaces such as `session -> dataset -> session`. A predeclaration pass breaks that order sensitivity by
     /// making type- and trait-like names resolvable before method and function signatures are collected.
     fn predeclare_dependency_interfaces(&mut self, dependencies: &[(&str, &Program)], public_only: bool) {
-        for (_, dep_ast) in dependencies {
+        for (module_name, dep_ast) in dependencies {
+            if Self::is_generated_stdlib_dependency_module(module_name) {
+                continue;
+            }
             for decl in &dep_ast.declarations {
                 if public_only && !is_public_decl(decl) {
                     continue;
@@ -3566,6 +3650,13 @@ impl TypeChecker {
                 self.predeclare_dependency_decl(decl);
             }
         }
+    }
+
+    fn is_generated_stdlib_dependency_module(module_name: &str) -> bool {
+        module_name == incan_core::lang::stdlib::INCAN_STD_NAMESPACE
+            || module_name
+                .strip_prefix(incan_core::lang::stdlib::INCAN_STD_NAMESPACE)
+                .is_some_and(|tail| tail.starts_with('_'))
     }
 
     /// Seed the symbol table with a minimal placeholder for one dependency declaration.
@@ -3664,6 +3755,7 @@ impl TypeChecker {
                         traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                         trait_adoptions: Vec::new(),
                         variants: en.variants.iter().map(|v| v.node.name.clone()).collect(),
+                        variant_fields: HashMap::new(),
                         variant_aliases: en
                             .variant_aliases
                             .iter()
@@ -3707,12 +3799,18 @@ impl TypeChecker {
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
         for (name, dep_ast) in dependencies {
+            if Self::is_generated_stdlib_dependency_module(name) {
+                continue;
+            }
             self.dependency_exports
                 .insert(name.to_string(), exported_symbols(dep_ast));
         }
         self.predeclare_dependency_interfaces(dependencies, true);
         // First: import all dependencies
         for (name, dep_ast) in dependencies {
+            if Self::is_generated_stdlib_dependency_module(name) {
+                continue;
+            }
             self.import_module(dep_ast, name);
         }
 
@@ -3736,6 +3834,9 @@ impl TypeChecker {
         self.dependency_trait_rust_derive_paths.clear();
         self.predeclare_dependency_interfaces(dependencies, false);
         for (name, dep_ast) in dependencies {
+            if Self::is_generated_stdlib_dependency_module(name) {
+                continue;
+            }
             self.import_module_all(dep_ast, name);
         }
         self.check_program(program)

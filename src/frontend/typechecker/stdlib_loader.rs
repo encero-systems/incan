@@ -167,7 +167,6 @@ impl StdlibAstCache {
     }
 
     /// List public trait signatures in a stdlib module.
-    #[cfg(feature = "lsp")]
     pub fn list_traits(&mut self, module_path: &[String]) -> Vec<(String, TraitInfo)> {
         self.ensure_loaded(module_path);
         let key = module_path.join(".");
@@ -1070,6 +1069,19 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                 let method_overloads =
                     extract_method_overloads_with_rust_imports(&en.methods, &tp_names, &rust_imports, &stdlib_imports);
                 let methods = methods_from_overloads(&method_overloads);
+                let variant_fields = en
+                    .variants
+                    .iter()
+                    .map(|variant| {
+                        let fields = variant
+                            .node
+                            .fields
+                            .iter()
+                            .map(|field| ast_type_to_resolved_with_rust_imports(&field.node, &tp_names, &rust_imports))
+                            .collect();
+                        (variant.node.name.clone(), fields)
+                    })
+                    .collect();
                 types.push((
                     en.name.clone(),
                     TypeInfo::Enum(EnumInfo {
@@ -1077,6 +1089,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                         trait_adoptions: trait_adoption_infos_from_bounds(&en.traits, &tp_names, &stdlib_imports),
                         variants: en.variants.iter().map(|variant| variant.node.name.clone()).collect(),
+                        variant_fields,
                         variant_aliases: en
                             .variant_aliases
                             .iter()

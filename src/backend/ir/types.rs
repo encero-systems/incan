@@ -83,6 +83,12 @@ pub enum IrType {
     /// - Codegen emits this as `Name<Arg0, Arg1, ...>`.
     NamedGeneric(String, Vec<IrType>),
 
+    /// Exact Rust type display carried from interop metadata.
+    ///
+    /// This is reserved for Rust boundary shapes that the Incan type model cannot faithfully spell yet, such as
+    /// borrowed slices (`&[T]`) in closure parameters.
+    RustDisplay(String),
+
     /// Opaque trait return type emitted as Rust `impl Trait`, RFC 042.
     ImplTrait(IrTraitBound),
 
@@ -126,6 +132,7 @@ impl IrType {
                 params.iter().any(IrType::contains_generic_parameter) || ret.contains_generic_parameter()
             }
             IrType::Generic(_) => true,
+            IrType::RustDisplay(_) => false,
             _ => false,
         }
     }
@@ -204,6 +211,7 @@ impl IrType {
             IrType::Struct(name) => name.clone(),
             IrType::Enum(name) => name.clone(),
             IrType::Trait(name) => name.clone(),
+            IrType::RustDisplay(display) => display.clone(),
             IrType::NamedGeneric(name, args) => {
                 let inner: Vec<_> = args.iter().map(|a| a.incan_name()).collect();
                 format!("{}[{}]", name, inner.join(", "))
@@ -254,6 +262,7 @@ impl IrType {
             IrType::Result(ok, err) => format!("Result<{}, {}>", ok.rust_name(), err.rust_name()),
             IrType::Struct(name) | IrType::Enum(name) => name.clone(),
             IrType::Trait(name) => format!("dyn {}", name),
+            IrType::RustDisplay(display) => display.clone(),
             IrType::NamedGeneric(name, _) if name == IR_UNION_TYPE_NAME => {
                 self.union_type_name().unwrap_or_else(|| IR_UNION_TYPE_NAME.to_string())
             }

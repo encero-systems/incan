@@ -129,6 +129,7 @@ impl<'a> IrEmitter<'a> {
                 }
                 Self::emit_path_ident(name)
             }
+            IrType::RustDisplay(display) => display.parse().unwrap_or_else(|_| quote! { _ }),
             IrType::NamedGeneric(name, _) if name == super::super::types::IR_UNION_TYPE_NAME => {
                 self.emit_union_type_path(ty)
             }

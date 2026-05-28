@@ -483,13 +483,17 @@ impl TypeChecker {
                             .params
                             .iter()
                             .skip(skip)
-                            .map(|p| self.resolved_param_type_from_rust_display(p.type_display.as_str()))
+                            .map(|p| {
+                                self.resolved_param_type_from_rust_display_for_owner_path(p.type_display.as_str(), path)
+                            })
                             .collect();
+                        let return_display =
+                            self.rust_display_for_owner_path(method.signature.return_type.as_str(), path);
                         candidates.push(InteropAdapterSig {
                             name: format!("rust::{}.{name}", path),
                             receiver,
                             params,
-                            return_type: self.resolved_type_from_rust_display(method.signature.return_type.as_str()),
+                            return_type: self.resolved_type_from_rust_display(return_display.as_str()),
                         });
                     }
                 }

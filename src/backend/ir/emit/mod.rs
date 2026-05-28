@@ -541,7 +541,8 @@ impl<'a> IrEmitter<'a> {
             | IrType::Numeric(_)
             | IrType::Struct(_)
             | IrType::Enum(_)
-            | IrType::Trait(_) => true,
+            | IrType::Trait(_)
+            | IrType::RustDisplay(_) => true,
         }
     }
 

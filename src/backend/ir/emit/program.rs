@@ -1079,6 +1079,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrType::FrozenBytes
             | IrType::StrRef
             | IrType::Generic(_)
+            | IrType::RustDisplay(_)
             | IrType::SelfType
             | IrType::Unknown => {}
         }
@@ -1733,6 +1734,7 @@ impl<'a> IrEmitter<'a> {
             | IrType::Enum(_)
             | IrType::Trait(_)
             | IrType::Generic(_)
+            | IrType::RustDisplay(_)
             | IrType::SelfType
             | IrType::Unknown => {}
         }
@@ -2172,6 +2174,7 @@ impl<'a> IrEmitter<'a> {
             | IrType::StrRef
             | IrType::ImplTrait(_)
             | IrType::Generic(_)
+            | IrType::RustDisplay(_)
             | IrType::SelfType
             | IrType::Unknown => self.emit_type(ty),
         }

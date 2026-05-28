@@ -3011,6 +3011,7 @@ pub def make_pair() -> Pair:
                     definition_path: Some("demo::Pair".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
+                        alias_target: None,
                         methods: Vec::new(),
                         implemented_traits: Vec::new(),
                         fields: vec![
@@ -3125,6 +3126,7 @@ pub def forward(payload: Payload) -> int:
                     definition_path: Some("demo::Builder".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
+                        alias_target: None,
                         methods: vec![
                             RustMethodSig {
                                 name: "new".to_string(),
@@ -3387,6 +3389,7 @@ pub async def register_csv() -> None:
                     definition_path: Some("demo::SessionContext".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
+                        alias_target: None,
                         methods: vec![
                             RustMethodSig {
                                 name: "new".to_string(),
@@ -3439,6 +3442,7 @@ pub async def register_csv() -> None:
                     definition_path: Some("demo::CsvReadOptions".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
+                        alias_target: None,
                         methods: vec![RustMethodSig {
                             name: "new".to_string(),
                             signature: RustFunctionSig {

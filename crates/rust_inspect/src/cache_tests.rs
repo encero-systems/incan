@@ -9,8 +9,9 @@ fn dummy_type_metadata(path: &str) -> RustItemMetadata {
         definition_path: None,
         visibility: RustVisibility::Public,
         kind: RustItemKind::Type(RustTypeInfo {
+            alias_target: None,
             methods: Vec::new(),
-                    implemented_traits: Vec::new(),
+            implemented_traits: Vec::new(),
             fields: Vec::new(),
             variants: Vec::new(),
         }),
@@ -24,6 +25,7 @@ fn dummy_reexported_type_metadata(path: &str, definition_path: &str) -> RustItem
         definition_path: Some(definition_path.to_string()),
         visibility: RustVisibility::Public,
         kind: RustItemKind::Type(RustTypeInfo {
+            alias_target: None,
             methods: Vec::new(),
             implemented_traits: Vec::new(),
             fields: Vec::new(),
@@ -167,8 +169,9 @@ fn raw_identifier_alias_hits_existing_cached_item() -> Result<(), Box<dyn std::e
             definition_path: Some("incan_stdlib::r#async::sync::Semaphore".to_string()),
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
                 methods: Vec::new(),
-                    implemented_traits: Vec::new(),
+                implemented_traits: Vec::new(),
                 fields: Vec::new(),
                 variants: Vec::new(),
             }),

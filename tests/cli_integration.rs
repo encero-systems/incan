@@ -627,6 +627,7 @@ fn run_accepts_generic_rust_param_scenarios_share_one_generated_project() -> Res
         r#"
 
 [rust-dependencies]
+arc_callback = { path = "rust/arc_callback" }
 borrow_helper = { path = "rust/borrow_helper" }
 decode_helper = { path = "rust/decode_helper" }
 decode_trait_helper = { path = "rust/decode_trait_helper" }
@@ -637,18 +638,40 @@ reexport_identity = { path = "rust/reexport_identity" }
     )?;
     fs::write(
         &main_path,
-        r#"from borrowed_generic import borrowed_generic_case
+        r#"from arc_callback import arc_callback_case
+from borrowed_generic import borrowed_generic_case
 from by_value_decode import by_value_decode_case
 from cross_crate_decode import cross_crate_decode_case
 from reexport_identity import reexport_identity_case
 from trait_by_value_decode import trait_by_value_decode_case
 
 def main() -> None:
+  println(arc_callback_case())
   println(borrowed_generic_case())
   println(by_value_decode_case())
   println(trait_by_value_decode_case())
   println(cross_crate_decode_case())
   println(reexport_identity_case())
+"#,
+    )?;
+    fs::write(
+        tmp.path().join("src").join("arc_callback.incn"),
+        r#"from rust::arc_callback import CallbackError, ColumnarValue, SliceCallback, create_udf
+from rust::std::sync import Arc
+
+def callback(args: list[ColumnarValue]) -> Result[ColumnarValue, CallbackError]:
+  return Ok(args[0].clone())
+
+def inline_arc_callback_value() -> int:
+  match create_udf("inline", Arc.from((args) => callback(args.to_vec()))):
+    Ok(value) => return value.value()
+    Err(_) => return -1
+
+pub def arc_callback_case() -> str:
+  implementation: SliceCallback = Arc.from((args) => callback(args.to_vec()))
+  match create_udf("assigned", implementation):
+    Ok(value) => return f"arc_callback:{value.value()}:{inline_arc_callback_value()}"
+    Err(_) => return "arc_callback:err"
 "#,
     )?;
     fs::write(
@@ -712,6 +735,53 @@ pub def reexport_identity_case() -> str:
 "#,
     )?;
 
+    let helper_src = tmp.path().join("rust").join("arc_callback").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("arc_callback src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "arc_callback"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"use std::sync::Arc;
+
+#[derive(Clone)]
+pub struct ColumnarValue {
+    value: i64,
+}
+
+impl ColumnarValue {
+    pub fn new(value: i64) -> Self {
+        Self { value }
+    }
+
+    pub fn value(&self) -> i64 {
+        self.value
+    }
+}
+
+pub struct CallbackError;
+
+pub type SliceCallback = Arc<dyn Fn(&[ColumnarValue]) -> Result<ColumnarValue, CallbackError> + Send + Sync>;
+
+pub fn invoke(callback: SliceCallback) -> Result<ColumnarValue, CallbackError> {
+    let args = vec![ColumnarValue::new(7)];
+    callback(&args)
+}
+
+pub fn create_udf(_name: &str, callback: crate::SliceCallback) -> Result<ColumnarValue, CallbackError> {
+    let args = vec![ColumnarValue::new(11)];
+    callback(&args)
+}
+"#,
+    )?;
     let helper_src = tmp.path().join("rust").join("borrow_helper").join("src");
     fs::create_dir_all(&helper_src)?;
     fs::write(
@@ -917,8 +987,171 @@ impl Expr {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(
         stdout.trim(),
-        "borrowed:1\nby_value:ok\ntrait_by_value:ok\ncross_crate:ok\nreexport_identity:ok",
+        "arc_callback:11:11\nborrowed:1\nby_value:ok\ntrait_by_value:ok\ncross_crate:ok\nreexport_identity:ok",
         "expected batched generic Rust param output, got:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_runner_prefers_project_sibling_import_over_unimported_stdlib_stub_type()
+-> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_root = tmp.path();
+    fs::write(
+        project_root.join("incan.toml"),
+        r#"[project]
+name = "stdhash_sibling_collision"
+version = "0.1.0"
+"#,
+    )?;
+
+    let src_dir = project_root.join("src");
+    let functions_dir = src_dir.join("functions");
+    let hashing_dir = functions_dir.join("hashing");
+    let session_dir = src_dir.join("session");
+    let tests_dir = project_root.join("tests");
+    fs::create_dir_all(&hashing_dir)?;
+    fs::create_dir_all(&session_dir)?;
+    fs::create_dir_all(&tests_dir)?;
+
+    fs::write(
+        hashing_dir.join("expr.incn"),
+        r#"pub model Expr:
+    pub value: int
+"#,
+    )?;
+    fs::write(
+        hashing_dir.join("sha224.incn"),
+        r#"from functions.hashing.expr import Expr
+
+pub def sha224(expr: Expr) -> Expr:
+    return expr
+"#,
+    )?;
+    fs::write(
+        hashing_dir.join("sha2.incn"),
+        r#"from functions.hashing.expr import Expr
+from functions.hashing.sha224 import sha224
+
+pub def sha2(expr: Expr) -> Expr:
+    return sha224(expr)
+"#,
+    )?;
+    fs::write(
+        functions_dir.join("mod.incn"),
+        r#"pub from functions.hashing.expr import Expr
+pub from functions.hashing.sha224 import sha224
+pub from functions.hashing.sha2 import sha2
+"#,
+    )?;
+    fs::write(
+        session_dir.join("bridge.incn"),
+        r#"from std.hash import sha1 as std_sha1
+
+pub def digest(data: bytes) -> bytes:
+    return std_sha1.digest(data)
+"#,
+    )?;
+    fs::write(
+        session_dir.join("mod.incn"),
+        r#"pub from session.bridge import digest
+"#,
+    )?;
+    fs::write(
+        src_dir.join("lib.incn"),
+        r#"pub from functions import Expr, sha224, sha2
+pub from session import digest
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_collision.incn"),
+        r#"from functions import Expr, sha2
+from session import digest
+
+def test_collision__sibling_import_wins() -> None:
+    payload = Expr(value=1)
+    assert len(digest(b"abc")) > 0
+    assert sha2(payload).value == 1
+"#,
+    )?;
+
+    let output = run_incan(project_root, &["test", "tests"])?;
+    assert_success(
+        &output,
+        "incan test should keep project sibling imports ahead of unimported stdlib stub helper types",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_runner_resolves_imported_stdlib_enum_patterns_from_enum_metadata() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_root = tmp.path();
+    fs::write(
+        project_root.join("incan.toml"),
+        r#"[project]
+name = "stdlib_enum_pattern_metadata"
+version = "0.1.0"
+"#,
+    )?;
+
+    let src_dir = project_root.join("src");
+    let substrait_dir = src_dir.join("substrait");
+    let session_dir = src_dir.join("session");
+    let tests_dir = project_root.join("tests");
+    fs::create_dir_all(&substrait_dir)?;
+    fs::create_dir_all(&session_dir)?;
+    fs::create_dir_all(&tests_dir)?;
+
+    fs::write(
+        substrait_dir.join("schema.incn"),
+        r#"pub enum PrimitiveKind(str):
+    Bool = "bool"
+    String = "string"
+"#,
+    )?;
+    fs::write(
+        session_dir.join("json_schema.incn"),
+        r#"from std.json import JsonKind, JsonValue
+from substrait.schema import PrimitiveKind
+
+pub def primitive_kind() -> PrimitiveKind:
+    return PrimitiveKind.Bool
+
+pub def schema_name(value: JsonValue) -> str:
+    match value.kind():
+        JsonKind.Bool => return "BOOLEAN"
+        JsonKind.String => return "STRING"
+        _ => return "OTHER"
+"#,
+    )?;
+    fs::write(
+        session_dir.join("mod.incn"),
+        r#"pub from session.json_schema import primitive_kind, schema_name
+"#,
+    )?;
+    fs::write(
+        src_dir.join("lib.incn"),
+        r#"pub from session import primitive_kind, schema_name
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_json_schema.incn"),
+        r#"from session import primitive_kind, schema_name
+from std.json import JsonValue
+
+def test_stdlib_enum_patterns_survive_colliding_project_variants() -> None:
+    assert primitive_kind().value() == "bool"
+    assert schema_name(JsonValue.bool(True)) == "BOOLEAN"
+    assert schema_name(JsonValue.string("x")) == "STRING"
+"#,
+    )?;
+
+    let output = run_incan(project_root, &["test", "tests"])?;
+    assert_success(
+        &output,
+        "incan test should resolve imported stdlib enum patterns from enum-owned metadata",
     );
     Ok(())
 }

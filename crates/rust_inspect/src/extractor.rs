@@ -457,6 +457,16 @@ fn source_function_return_type_display(f: Function, db: &RootDatabase) -> Option
     })
 }
 
+/// Return the written RHS of a Rust `type` alias when available.
+///
+/// HIR type displays may erase callable trait-object arguments inside aliases to `_`. The source RHS is the
+/// authoritative contract for contextual typing at Rust boundaries, so preserve it when rust-analyzer can recover the
+/// defining syntax.
+fn source_type_alias_target_display(alias: ra_ap_hir::TypeAlias, db: &RootDatabase) -> Option<String> {
+    let source = alias.source(db)?;
+    source.value.ty().map(|ty| ty.to_string().trim().to_string())
+}
+
 fn join_use_path(prefix: Option<&str>, path: &str) -> String {
     match prefix {
         Some(prefix) if !prefix.is_empty() => format!("{prefix}::{path}"),
@@ -928,6 +938,7 @@ fn extract_rust_item_inner(
         ModuleDef::Adt(adt) => {
             let ty = adt.ty(db);
             RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
                 methods: collect_inherent_methods(ty.clone(), db, dt),
                 implemented_traits: collect_implemented_traits(ty.clone(), db),
                 fields: collect_public_fields(ty.clone(), db, dt, crate_name),
@@ -940,6 +951,7 @@ fn extract_rust_item_inner(
         ModuleDef::BuiltinType(b) => {
             let ty = b.ty(db);
             RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
                 methods: collect_inherent_methods(ty.clone(), db, dt),
                 implemented_traits: collect_implemented_traits(ty.clone(), db),
                 fields: collect_public_fields(ty, db, dt, crate_name),
@@ -956,6 +968,7 @@ fn extract_rust_item_inner(
         ModuleDef::TypeAlias(a) => {
             let ty = a.ty(db);
             RustItemKind::Type(RustTypeInfo {
+                alias_target: source_type_alias_target_display(a, db).or_else(|| Some(format_ty(&ty, db, dt))),
                 methods: collect_inherent_methods(ty.clone(), db, dt),
                 implemented_traits: collect_implemented_traits(ty.clone(), db),
                 fields: collect_public_fields(ty, db, dt, crate_name),
@@ -1057,6 +1070,42 @@ edition = "2021"
         };
         let fields = info.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>();
         assert_eq!(fields, ["zeta", "alpha"]);
+        Ok(())
+    }
+
+    #[test]
+    fn type_alias_metadata_preserves_source_target_shape() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo_alias_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )?;
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"use std::sync::Arc;
+
+pub struct ColumnarValue;
+pub struct CallbackError;
+
+pub type SliceCallback =
+    Arc<dyn Fn(&[ColumnarValue]) -> Result<ColumnarValue, CallbackError> + Send + Sync>;
+"#,
+        )?;
+
+        let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let metadata = extract_rust_item(&workspace, "demo_alias_probe::SliceCallback")?;
+        let RustItemKind::Type(info) = metadata.kind else {
+            return Err(std::io::Error::other("expected type metadata").into());
+        };
+        assert_eq!(
+            info.alias_target.as_deref(),
+            Some("Arc<dyn Fn(&[ColumnarValue]) -> Result<ColumnarValue, CallbackError> + Send + Sync>")
+        );
         Ok(())
     }
 

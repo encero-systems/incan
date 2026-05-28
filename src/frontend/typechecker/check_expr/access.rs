@@ -27,6 +27,8 @@ use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics::NumericFamily;
 use incan_core::lang::{conventions, stdlib};
 use incan_core::lang::{enum_helpers, surface::option_methods};
+use quote::ToTokens;
+use syn::{GenericArgument, PathArguments, ReturnType, Type as SynType, TypeParamBound};
 
 use super::TypeChecker;
 
@@ -47,6 +49,18 @@ struct ValueEnumGeneratedCall<'a> {
     span: Span,
 }
 
+#[derive(Debug, Clone)]
+struct RustCallableAliasParam {
+    rust_display: String,
+    resolved_ty: ResolvedType,
+}
+
+#[derive(Debug, Clone)]
+struct RustCallableAliasSignature {
+    params: Vec<RustCallableAliasParam>,
+    return_ty: ResolvedType,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NumericResizeMethodPolicy {
     Lossless,
@@ -61,6 +75,170 @@ fn rust_receiver_display(path: &str) -> String {
 }
 
 impl TypeChecker {
+    /// Return the target display for a Rust type alias when the expected destination type names one.
+    fn rust_callable_alias_target_display(&self, expected_ty: &ResolvedType) -> Option<String> {
+        let ResolvedType::RustPath(path) = expected_ty else {
+            return None;
+        };
+        if let Some(metadata) = self.rust_item_metadata_for_path(path)
+            && let RustItemKind::Type(type_info) = &metadata.kind
+            && let Some(target) = type_info.alias_target.as_ref()
+        {
+            return Some(self.rust_display_for_owner_path(target, path));
+        }
+        Some(self.rust_display_for_owner_path(path, path))
+            .filter(|display| display.contains("dyn") && display.contains("Fn"))
+    }
+
+    /// Parse a Rust callable alias target such as `Arc<dyn Fn(&[T]) -> Result<U, E> + Send + Sync>`.
+    fn rust_callable_alias_signature(&self, expected_ty: &ResolvedType) -> Option<RustCallableAliasSignature> {
+        let target_display = self.rust_callable_alias_target_display(expected_ty)?;
+        let ty = syn::parse_str::<SynType>(&target_display).ok()?;
+        let trait_object = Self::rust_callable_trait_object(&ty)?;
+        let fn_bound = trait_object.bounds.iter().find_map(|bound| {
+            let TypeParamBound::Trait(trait_bound) = bound else {
+                return None;
+            };
+            let segment = trait_bound.path.segments.last()?;
+            if !matches!(segment.ident.to_string().as_str(), "Fn" | "FnMut" | "FnOnce") {
+                return None;
+            }
+            let PathArguments::Parenthesized(args) = &segment.arguments else {
+                return None;
+            };
+            Some(args)
+        })?;
+
+        let params = fn_bound
+            .inputs
+            .iter()
+            .map(|input| {
+                let rust_display = Self::compact_rust_display(&input.to_token_stream().to_string());
+                RustCallableAliasParam {
+                    resolved_ty: self.resolved_param_type_from_rust_display(&rust_display),
+                    rust_display,
+                }
+            })
+            .collect::<Vec<_>>();
+        let return_ty = match &fn_bound.output {
+            ReturnType::Default => ResolvedType::Unit,
+            ReturnType::Type(_, ty) => {
+                let rust_display = Self::compact_rust_display(&ty.to_token_stream().to_string());
+                self.resolved_type_from_rust_display(&rust_display)
+            }
+        };
+        Some(RustCallableAliasSignature { params, return_ty })
+    }
+
+    fn rust_callable_trait_object(ty: &SynType) -> Option<&syn::TypeTraitObject> {
+        match ty {
+            SynType::TraitObject(trait_object) => Some(trait_object),
+            SynType::Group(group) => Self::rust_callable_trait_object(&group.elem),
+            SynType::Paren(paren) => Self::rust_callable_trait_object(&paren.elem),
+            SynType::Path(path) => {
+                let segment = path.path.segments.last()?;
+                let PathArguments::AngleBracketed(args) = &segment.arguments else {
+                    return None;
+                };
+                args.args.iter().find_map(|arg| match arg {
+                    GenericArgument::Type(inner) => Self::rust_callable_trait_object(inner),
+                    _ => None,
+                })
+            }
+            _ => None,
+        }
+    }
+
+    fn check_closure_with_rust_callable_alias(
+        &mut self,
+        expr: &Spanned<Expr>,
+        signature: &RustCallableAliasSignature,
+    ) -> ResolvedType {
+        let Expr::Closure(params, body) = &expr.node else {
+            return self.check_expr(expr);
+        };
+        if params.len() != signature.params.len() {
+            self.errors.push(errors::builtin_arity(
+                "closure",
+                signature.params.len(),
+                params.len(),
+                expr.span,
+            ));
+            return ResolvedType::Unknown;
+        }
+
+        self.symbols.enter_scope(ScopeKind::Function);
+
+        let prev_in_async_body = self.in_async_body;
+        self.in_async_body = false;
+        let prev_return_error_type = self.current_return_error_type.take();
+
+        let param_types = params
+            .iter()
+            .zip(signature.params.iter())
+            .map(|(param, expected)| {
+                let ty = expected.resolved_ty.clone();
+                self.symbols.define(Symbol {
+                    name: param.node.name.clone(),
+                    kind: SymbolKind::Variable(VariableInfo {
+                        ty: ty.clone(),
+                        is_mutable: false,
+                        is_used: false,
+                    }),
+                    span: param.span,
+                    scope: 0,
+                });
+                CallableParam::named(param.node.name.clone(), ty, param.node.kind)
+            })
+            .collect::<Vec<_>>();
+
+        let return_ty = self.check_expr_with_expected(body, Some(&signature.return_ty));
+        if !matches!(return_ty, ResolvedType::Unknown) && !self.types_compatible(&return_ty, &signature.return_ty) {
+            self.errors.push(errors::type_mismatch(
+                &signature.return_ty.to_string(),
+                &return_ty.to_string(),
+                body.span,
+            ));
+        }
+
+        self.current_return_error_type = prev_return_error_type;
+        self.in_async_body = prev_in_async_body;
+        self.symbols.exit_scope();
+
+        self.type_info.rust.closure_param_type_displays.insert(
+            (expr.span.start, expr.span.end),
+            signature
+                .params
+                .iter()
+                .map(|param| param.rust_display.clone())
+                .collect(),
+        );
+
+        let closure_ty = ResolvedType::Function(param_types, Box::new(signature.return_ty.clone()));
+        self.record_expr_type(expr.span, closure_ty.clone());
+        closure_ty
+    }
+
+    fn check_method_arg_with_rust_callable_alias(
+        &mut self,
+        arg: &CallArg,
+        signature: Option<&RustCallableAliasSignature>,
+    ) -> ResolvedType {
+        match arg {
+            CallArg::Positional(expr)
+            | CallArg::Named(_, expr)
+            | CallArg::PositionalUnpack(expr)
+            | CallArg::KeywordUnpack(expr) => {
+                if let Some(signature) = signature
+                    && matches!(expr.node, Expr::Closure(_, _))
+                {
+                    return self.check_closure_with_rust_callable_alias(expr, signature);
+                }
+                self.check_expr(expr)
+            }
+        }
+    }
+
     /// Return whether `method` names an RFC 070 `Result[T, E]` combinator.
     fn result_combinator_name(method: &str) -> bool {
         matches!(
@@ -2742,6 +2920,22 @@ impl TypeChecker {
                 ResolvedType::Ref(ref inner) | ResolvedType::RefMut(ref inner)
                     if matches!(
                         inner.as_ref(),
+                        ResolvedType::Generic(name, _)
+                            if collection_type_id(name.as_str()) == Some(CollectionTypeId::List)
+                    )
+            )
+            && let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = base_ty
+        {
+            return *inner;
+        }
+
+        if method == "to_vec"
+            && args.is_empty()
+            && matches!(
+                base_ty,
+                ResolvedType::Ref(ref inner) | ResolvedType::RefMut(ref inner)
+                    if matches!(
+                        inner.as_ref(),
                         ResolvedType::RustPath(path)
                             if Self::rust_ref_to_vec_returns_bytes(path)
                                 || Self::rust_to_vec_receiver_is_known_byte_output(base)
@@ -2767,15 +2961,18 @@ impl TypeChecker {
             return ret;
         }
 
+        let contextual_rust_callable = expected_return_ty.and_then(|expected| {
+            if args.len() == 1 {
+                self.rust_callable_alias_signature(expected)
+            } else {
+                None
+            }
+        });
+
         // Collect arg types for method-specific validation.
         let arg_types: Vec<ResolvedType> = args
             .iter()
-            .map(|arg| match arg {
-                CallArg::Positional(e)
-                | CallArg::Named(_, e)
-                | CallArg::PositionalUnpack(e)
-                | CallArg::KeywordUnpack(e) => self.check_expr(e),
-            })
+            .map(|arg| self.check_method_arg_with_rust_callable_alias(arg, contextual_rust_callable.as_ref()))
             .collect();
 
         if self.receiver_has_computed_property(&base_ty, method, span) {

@@ -1658,6 +1658,7 @@ fn collect_generic_type_param_names(ty: &IrType, type_param_names: &HashSet<&str
         | IrType::FrozenStr
         | IrType::FrozenBytes
         | IrType::StrRef
+        | IrType::RustDisplay(_)
         | IrType::SelfType
         | IrType::Unknown => {}
     }
@@ -2374,6 +2375,7 @@ fn add_bounds_from_type(
         | IrType::FrozenStr
         | IrType::FrozenBytes
         | IrType::StrRef
+        | IrType::RustDisplay(_)
         | IrType::SelfType
         | IrType::Unknown => {}
     }

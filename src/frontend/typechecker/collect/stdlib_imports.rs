@@ -216,7 +216,7 @@ impl TypeChecker {
         }
 
         let testing_semantics = self.load_testing_semantics_for_import(&context, span);
-        self.materialize_stdlib_stub_types(&context, span);
+        self.cache_stdlib_stub_semantics(&context);
 
         for item in items {
             if self.materialize_stdlib_from_import(&context, item, testing_semantics.as_ref(), span) {
@@ -237,21 +237,19 @@ impl TypeChecker {
         }
     }
 
-    /// Materialize all known top-level types for a stub-backed stdlib module before collecting individual items.
-    fn materialize_stdlib_stub_types(&mut self, context: &FromImportContext<'_>, span: Span) {
+    /// Cache all known top-level types and traits for a stub-backed stdlib module without making them source-visible.
+    fn cache_stdlib_stub_semantics(&mut self, context: &FromImportContext<'_>) {
         if !context.stdlib.as_ref().is_some_and(|stdlib| stdlib.has_stub) {
             return;
         }
 
         for (type_name, type_info) in self.stdlib_cache.list_types(&context.module.segments) {
-            if self.symbols.lookup(&type_name).is_none() {
-                self.symbols.define(Symbol {
-                    name: type_name,
-                    kind: SymbolKind::Type(type_info),
-                    span,
-                    scope: 0,
-                });
-            }
+            self.transitive_stdlib_stub_types.entry(type_name).or_insert(type_info);
+        }
+        for (trait_name, trait_info) in self.stdlib_cache.list_traits(&context.module.segments) {
+            self.transitive_stdlib_stub_traits
+                .entry(trait_name)
+                .or_insert(trait_info);
         }
     }
 
@@ -1342,6 +1340,20 @@ impl TypeChecker {
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             variants: export.variants.iter().map(|variant| variant.name.clone()).collect(),
+            variant_fields: export
+                .variants
+                .iter()
+                .map(|variant| {
+                    (
+                        variant.name.clone(),
+                        variant
+                            .fields
+                            .iter()
+                            .map(resolved_type_from_manifest_type_ref)
+                            .collect(),
+                    )
+                })
+                .collect(),
             variant_aliases: export
                 .variant_aliases
                 .iter()

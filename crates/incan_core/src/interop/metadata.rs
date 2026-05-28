@@ -426,8 +426,15 @@ pub struct RustVariantInfo {
 }
 
 /// Method, field, and variant surface for a Rust ADT or builtin type.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
 pub struct RustTypeInfo {
+    /// Pretty-printed target type when this item is a Rust `type` alias.
+    ///
+    /// Ordinary structs, enums, traits, and builtins leave this empty. Alias targets are metadata, not a substitute
+    /// type identity: callers should use them only when the alias itself is the expected surface and the target shape
+    /// is needed for contextual typing or boundary planning.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub alias_target: Option<String>,
     /// Public inherent methods and associated functions.
     pub methods: Vec<RustMethodSig>,
     /// Trait implementations rust-inspect can prove for this Rust type.
@@ -485,6 +492,7 @@ mod tests {
             definition_path: Some(path.to_string()),
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
                 methods: Vec::new(),
                 implemented_traits: Vec::new(),
                 fields: Vec::new(),

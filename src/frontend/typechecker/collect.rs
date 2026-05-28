@@ -1107,6 +1107,19 @@ impl TypeChecker {
     /// Register an enum declaration and define symbols for each variant.
     fn collect_enum(&mut self, en: &EnumDecl, span: Span) {
         let variants: Vec<_> = en.variants.iter().map(|v| v.node.name.clone()).collect();
+        let variant_fields: HashMap<_, _> = en
+            .variants
+            .iter()
+            .map(|variant| {
+                let fields = variant
+                    .node
+                    .fields
+                    .iter()
+                    .map(|field| self.resolve_type_checked(field))
+                    .collect();
+                (variant.node.name.clone(), fields)
+            })
+            .collect();
         let variant_aliases: HashMap<_, _> = en
             .variant_aliases
             .iter()
@@ -1137,6 +1150,7 @@ impl TypeChecker {
                 traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                 trait_adoptions,
                 variants: variants.clone(),
+                variant_fields: variant_fields.clone(),
                 variant_aliases: variant_aliases.clone(),
                 value_enum,
                 derives,
@@ -1159,12 +1173,7 @@ impl TypeChecker {
 
         // Also define each variant as a symbol
         for variant in &en.variants {
-            let fields: Vec<_> = variant
-                .node
-                .fields
-                .iter()
-                .map(|f| self.resolve_type_checked(f))
-                .collect();
+            let fields = variant_fields.get(&variant.node.name).cloned().unwrap_or_default();
             self.symbols.define_preserving_existing_binding(Symbol {
                 name: variant.node.name.clone(),
                 kind: SymbolKind::Variant(VariantInfo {

@@ -367,30 +367,8 @@ impl TypeChecker {
                 );
                 let rust_resolution =
                     self.rust_enum_constructor_payload_types(expected_ty, name.as_str(), positional_count);
-                let field_types: Option<Vec<ResolvedType>> = incan_resolution
-                    .clone()
-                    .or_else(|| {
-                        self.symbols.all_symbols().iter().rev().find_map(|sym| {
-                            if sym.name != variant_name {
-                                return None;
-                            }
-                            if let SymbolKind::Variant(info) = &sym.kind {
-                                if self.match_variant_symbol_applies_to_scrutinee(
-                                    expected_ty,
-                                    info,
-                                    positional_count,
-                                    enum_qualifier_opt,
-                                ) {
-                                    Some(info.fields.clone())
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .or_else(|| match rust_resolution.as_ref() {
+                let field_types: Option<Vec<ResolvedType>> =
+                    incan_resolution.clone().or_else(|| match rust_resolution.as_ref() {
                         Some(RustEnumPatternResolution::PayloadTypes(fields)) => Some(fields.clone()),
                         Some(RustEnumPatternResolution::QualifierMismatch) | None => None,
                     });
@@ -587,40 +565,11 @@ impl TypeChecker {
         }
     }
 
-    /// Whether a [`SymbolKind::Variant`] from the symbol table actually describes this match scrutinee.
-    ///
-    /// rust-inspect metadata and library manifests register variant names (e.g. `Root`) at module scope. A `rusttype`
-    /// alias such as `PlanRel` uses a **different** Incan name than the backing Rust enum (`Sender`), so we must not
-    /// let an unrelated `Root` stub with empty payload metadata shadow [`Self::rust_enum_constructor_payload_types`],
-    /// or payload bindings in the pattern are never registered and the arm body sees `Unknown symbol`. Source enums can
-    /// also reuse variant names across distinct enums, so qualified patterns must check the enum name in addition to
-    /// the short variant symbol.
-    fn match_variant_symbol_applies_to_scrutinee(
-        &self,
-        expected_ty: &ResolvedType,
-        info: &VariantInfo,
-        positional_count: usize,
-        enum_qualifier_opt: Option<&str>,
-    ) -> bool {
-        if positional_count > info.fields.len() {
-            return false;
-        }
-        if enum_qualifier_opt.is_some_and(|qualifier| qualifier != info.enum_name) {
-            return false;
-        }
-        match expected_ty {
-            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => info.enum_name == *type_name,
-            // Scrutinee is a bare Rust path: module-level variant symbols are Incan-/manifest-scoped names.
-            ResolvedType::RustPath(_) => false,
-            _ => false,
-        }
-    }
-
     /// Payload types for a source-defined enum variant, using the enum type's own metadata.
     ///
     /// Qualified patterns such as `Color.Red` should not depend on a module-level `Red` symbol being importable or
     /// winning same-scope shadowing. The scrutinee already tells us which enum is being matched, so resolve the
-    /// variant from that enum's table first and reserve bare variant symbols as a compatibility fallback.
+    /// variant from that enum's table.
     fn incan_enum_constructor_payload_types(
         &self,
         expected_ty: &ResolvedType,
@@ -635,7 +584,7 @@ impl TypeChecker {
         if enum_qualifier_opt.is_some_and(|qualifier| qualifier != enum_name) {
             return None;
         }
-        let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name) else {
+        let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name) else {
             return None;
         };
         let canonical_variant = enum_info
@@ -646,22 +595,15 @@ impl TypeChecker {
         if !enum_info.variants.iter().any(|variant| variant == canonical_variant) {
             return None;
         }
-        let Some(symbol) = self
-            .symbols
-            .all_symbols()
-            .iter()
-            .rev()
-            .find(|sym| sym.name == canonical_variant || sym.name == variant_name)
-        else {
-            return Some(Vec::new());
-        };
-        let SymbolKind::Variant(info) = &symbol.kind else {
-            return Some(Vec::new());
-        };
-        if info.enum_name != *enum_name || positional_count > info.fields.len() {
+        let fields = enum_info
+            .variant_fields
+            .get(canonical_variant)
+            .cloned()
+            .unwrap_or_default();
+        if positional_count > fields.len() {
             return None;
         }
-        Some(info.fields.clone())
+        Some(fields)
     }
 
     /// Tuple-variant payload types for `match` patterns on Rust-backed enum surfaces.

@@ -579,6 +579,8 @@ pub struct EnumInfo {
     /// Explicit traits adopted by this enum, preserving generic trait arguments when present.
     pub trait_adoptions: Vec<TypeBoundInfo>,
     pub variants: Vec<String>,
+    /// Positional payload fields for each canonical variant name.
+    pub variant_fields: HashMap<String, Vec<ResolvedType>>,
     /// Variant alias name to canonical variant name.
     pub variant_aliases: HashMap<String, String>,
     pub value_enum: Option<ValueEnumInfo>,

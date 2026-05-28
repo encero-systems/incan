@@ -254,7 +254,11 @@ impl TypeChecker {
                                     if self.errors.len() == error_count_before {
                                         self.record_expr_type(
                                             callee.span,
-                                            self.resolved_function_type_from_rust_sig(sig, false),
+                                            self.resolved_function_type_from_rust_sig_for_owner_path(
+                                                sig,
+                                                false,
+                                                info.path.as_str(),
+                                            ),
                                         );
                                         self.type_info
                                             .expressions

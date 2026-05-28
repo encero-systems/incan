@@ -100,17 +100,7 @@ impl TypeChecker {
                 let resolved = match &info.metadata {
                     Some(meta) => match &meta.kind {
                         incan_core::interop::RustItemKind::Function(sig) => {
-                            let params = sig
-                                .params
-                                .iter()
-                                .map(|p| {
-                                    CallableParam::positional(
-                                        self.resolved_param_type_from_rust_display(p.type_display.as_str()),
-                                    )
-                                })
-                                .collect();
-                            let ret = self.resolved_type_from_rust_display(sig.return_type.as_str());
-                            ResolvedType::Function(params, Box::new(ret))
+                            self.resolved_function_type_from_rust_sig_for_owner_path(sig, false, info.path.as_str())
                         }
                         incan_core::interop::RustItemKind::Constant { type_display } => {
                             self.resolved_type_from_rust_display(type_display.as_str())

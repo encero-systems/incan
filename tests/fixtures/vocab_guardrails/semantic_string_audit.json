@@ -249,8 +249,8 @@
     {
       "path": "src/frontend/typechecker/check_expr/access.rs",
       "category": "method/type access surface classification",
-      "expected_count": 43,
-      "expected_fingerprint": "0x8ea35141db935e1c"
+      "expected_count": 45,
+      "expected_fingerprint": "0x04cd6395cd9125c3"
     },
     {
       "path": "src/frontend/typechecker/check_expr/basics.rs",

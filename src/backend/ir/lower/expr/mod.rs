@@ -1200,9 +1200,40 @@ impl AstLowering {
 
             // ---- Closures ----
             ast::Expr::Closure(params, body) => {
+                let recorded_param_types = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| match info.expr_type(expr_span) {
+                        Some(crate::frontend::symbols::ResolvedType::Function(callable_params, _)) => Some(
+                            callable_params
+                                .iter()
+                                .map(|param| self.lower_resolved_type(&param.ty))
+                                .collect::<Vec<_>>(),
+                        ),
+                        _ => None,
+                    });
+                let exact_rust_param_types = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.closure_param_type_displays(expr_span))
+                    .filter(|displays| displays.len() == params.len())
+                    .map(|displays| {
+                        displays
+                            .iter()
+                            .map(|display| IrType::RustDisplay(display.clone()))
+                            .collect::<Vec<_>>()
+                    });
                 let param_pairs: Vec<(String, IrType)> = params
                     .iter()
-                    .map(|p| (p.node.name.clone(), self.lower_type(&p.node.ty.node)))
+                    .enumerate()
+                    .map(|(idx, p)| {
+                        let ty = exact_rust_param_types
+                            .as_ref()
+                            .and_then(|types| types.get(idx).cloned())
+                            .or_else(|| recorded_param_types.as_ref().and_then(|types| types.get(idx).cloned()))
+                            .unwrap_or_else(|| self.lower_type(&p.node.ty.node));
+                        (p.node.name.clone(), ty)
+                    })
                     .collect();
                 self.non_linear_context_depth += 1;
                 let body_ir_result = self.lower_expr_spanned(body);

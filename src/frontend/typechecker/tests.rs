@@ -2630,8 +2630,34 @@ fn test_resolved_param_type_from_builtin_borrowed_displays_preserves_ref_payload
         ResolvedType::Ref(Box::new(ResolvedType::Bytes)),
     );
     assert_eq!(
+        checker.resolved_param_type_from_rust_display("&[demo::ColumnarValue]"),
+        ResolvedType::Ref(Box::new(ResolvedType::Generic(
+            "List".to_string(),
+            vec![ResolvedType::RustPath("demo::ColumnarValue".to_string())]
+        ))),
+    );
+    assert_eq!(
         checker.resolved_param_type_from_rust_display("&'h mut demo::Thing"),
         ResolvedType::RefMut(Box::new(ResolvedType::RustPath("demo::Thing".to_string()))),
+    );
+}
+
+#[test]
+fn test_rust_owner_path_expands_crate_relative_signature_displays() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.rust_display_for_owner_path(
+            "Arc<dyn Fn(&[crate::ColumnarValue]) -> crate::Result<crate::ColumnarValue> + Send + Sync>",
+            "demo_runtime::create_udf",
+        ),
+        "Arc<dyn Fn(&[demo_runtime::ColumnarValue]) -> demo_runtime::Result<demo_runtime::ColumnarValue> + Send + Sync>",
+    );
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display_for_owner_path(
+            "crate::ScalarFunctionImplementation",
+            "demo_runtime::create_udf",
+        ),
+        ResolvedType::RustPath("demo_runtime::ScalarFunctionImplementation".to_string()),
     );
 }
 
@@ -3178,7 +3204,7 @@ fn test_rust_inspect_function_signature_preserves_borrowed_rust_path_param() -> 
         return Err(std::io::Error::other("expected rust-inspect function entry").into());
     };
     assert_eq!(
-        checker.resolved_function_type_from_rust_sig(&sig, false),
+        checker.resolved_function_type_from_rust_sig_for_owner_path(&sig, false, "demo::takes_ref"),
         ResolvedType::Function(
             vec![CallableParam::positional(ResolvedType::Ref(Box::new(
                 ResolvedType::RustPath("demo::Thing".to_string())
@@ -3232,6 +3258,7 @@ fn test_rust_item_metadata_lookup_reuses_cached_nominal_item_for_instantiated_ru
                 definition_path: Some("demo::SendError".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     fields: Vec::new(),
                     methods: Vec::new(),
                     implemented_traits: Vec::new(),
@@ -3324,6 +3351,7 @@ fn test_types_compatible_accepts_rust_alias_definition_without_metadata_lookup()
                 definition_path: Some("incan_stdlib::r#async::channel::Sender".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     fields: Vec::new(),
                     methods: Vec::new(),
                     implemented_traits: Vec::new(),
@@ -3361,6 +3389,7 @@ fn test_types_compatible_accepts_rust_path_alias_with_attached_definition_metada
                 definition_path: Some("incan_stdlib::r#async::sync::Semaphore".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     fields: Vec::new(),
                     methods: Vec::new(),
                     implemented_traits: Vec::new(),
@@ -3713,6 +3742,7 @@ def render[T](value: Label[T]) -> str:
                 definition_path: Some("std::string::String".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![RustMethodSig {
                         name: "as_str".to_string(),
                         signature: RustFunctionSig {
@@ -3768,6 +3798,7 @@ fn seed_async_rust_method_probe_with_options_param(
             definition_path: Some("demo::SessionContext".to_string()),
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
                 methods: vec![
                     RustMethodSig {
                         name: "new".to_string(),
@@ -3818,6 +3849,7 @@ fn seed_async_rust_method_probe_with_options_param(
             definition_path: Some("demo::CsvReadOptions".to_string()),
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
                 methods: vec![RustMethodSig {
                     name: "new".to_string(),
                     signature: RustFunctionSig {
@@ -3987,6 +4019,7 @@ def render(value: Label) -> str:
                 definition_path: Some("std::string::String".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![RustMethodSig {
                         name: "as_str".to_string(),
                         signature: RustFunctionSig {
@@ -4071,6 +4104,7 @@ def f(x: Envelope) -> None:
                 definition_path: Some("demo::Envelope".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -4095,6 +4129,7 @@ def f(x: Envelope) -> None:
                 definition_path: Some("demo::Kind".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -4143,6 +4178,7 @@ def f(x: Envelope) -> None:
                 definition_path: Some("demo::Envelope".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -4167,6 +4203,7 @@ def f(x: Envelope) -> None:
                 definition_path: Some("demo::Kind".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -4218,6 +4255,7 @@ def inspect(rel: Rel) -> None:
                 definition_path: Some("demo::Rel".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -4242,6 +4280,7 @@ def inspect(rel: Rel) -> None:
                 definition_path: Some("demo::rel::RelType".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -4265,6 +4304,7 @@ def inspect(rel: Rel) -> None:
                 definition_path: Some("demo::ReadRel".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -4289,6 +4329,7 @@ def inspect(rel: Rel) -> None:
                 definition_path: Some("demo::read_rel::ReadType".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -8401,6 +8442,7 @@ def f(w: Widget) -> None:
                 definition_path: Some("demo::Widget".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: Vec::new(),
                     implemented_traits: vec![RustImplementedTrait {
                         path: "demo::AlphaRender".to_string(),
@@ -8478,6 +8520,7 @@ def f(encoded: bytes) -> None:
                 definition_path: Some(path.to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: Vec::new(),
                     implemented_traits: vec![RustImplementedTrait {
                         path: "demo::Message".to_string(),
@@ -8622,6 +8665,7 @@ type Thing = rusttype RustThing with Labelled
                 definition_path: Some("demo::RustThing".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: vec![RustImplementedTrait {
                         path: "demo::Labelled".to_string(),
@@ -9761,6 +9805,29 @@ def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
       return "FilterRel"
     _ =>
       return "UnknownRel"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_match_qualified_incan_enum_variant_uses_enum_owned_payload_metadata() {
+    let source = r#"
+enum Packet:
+  Bool(bool)
+  String(str)
+
+enum OtherKind(str):
+  Bool = "bool"
+  String = "string"
+
+def packet_name(packet: Packet) -> str:
+  match packet:
+    Packet.Bool(flag) =>
+      if flag:
+        return "true"
+      return "false"
+    Packet.String(value) =>
+      return value
 "#;
     assert!(check_str(source).is_ok());
 }

@@ -172,6 +172,12 @@ pub struct RustInteropArtifacts {
     /// resolved field names so `Range(1, 3)` can emit `Range { start: 1, end: 3 }` instead of an invalid tuple-style
     /// Rust constructor.
     pub named_field_constructor_fields: HashMap<(usize, usize), Vec<String>>,
+    /// Rust closure parameter displays keyed by closure-expression span.
+    ///
+    /// This is populated when contextual Rust metadata proves a closure is being used as a Rust callable boundary
+    /// whose parameter shape cannot be faithfully represented by ordinary Incan surface types, such as `&[T]`.
+    /// Lowering/emission consumes the displays directly so generated closures keep Rust inference stable.
+    pub closure_param_type_displays: HashMap<(usize, usize), Vec<String>>,
 }
 
 /// Declaration-level binding rewrites and visibility facts consumed by lowering.
@@ -481,6 +487,14 @@ impl TypeCheckInfo {
     /// Return the resolved type recorded for the expression at `span`, if any.
     pub fn expr_type(&self, span: Span) -> Option<&ResolvedType> {
         self.expressions.expr_types.get(&(span.start, span.end))
+    }
+
+    /// Return exact Rust parameter displays recorded for a closure expression, if any.
+    pub fn closure_param_type_displays(&self, span: Span) -> Option<&[String]> {
+        self.rust
+            .closure_param_type_displays
+            .get(&(span.start, span.end))
+            .map(Vec::as_slice)
     }
 
     /// Return computed-property metadata for a field-access expression, if that access resolved to a property.
