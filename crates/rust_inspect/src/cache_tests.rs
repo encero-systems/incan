@@ -17,6 +17,21 @@ fn dummy_type_metadata(path: &str) -> RustItemMetadata {
     }
 }
 
+/// Build minimal public Rust type metadata that records its defining module path.
+fn dummy_reexported_type_metadata(path: &str, definition_path: &str) -> RustItemMetadata {
+    RustItemMetadata {
+        canonical_path: path.to_string(),
+        definition_path: Some(definition_path.to_string()),
+        visibility: RustVisibility::Public,
+        kind: RustItemKind::Type(RustTypeInfo {
+            methods: Vec::new(),
+            implemented_traits: Vec::new(),
+            fields: Vec::new(),
+            variants: Vec::new(),
+        }),
+    }
+}
+
 #[test]
 fn lockfile_registry_fallback_resolves_hyphenated_package_for_underscored_crate_name()
 -> Result<(), Box<dyn std::error::Error>> {
@@ -162,6 +177,36 @@ fn raw_identifier_alias_hits_existing_cached_item() -> Result<(), Box<dyn std::e
 
     let hit = cache.get_or_extract(tmp.path(), "incan_stdlib::r#async::sync::RawSemaphore", &|_| ())?;
     assert_eq!(hit.canonical_path, "incan_stdlib::r#async::sync::RawSemaphore");
+    Ok(())
+}
+
+#[test]
+/// Definition paths should reuse cached public re-export metadata instead of forcing another extraction.
+fn definition_path_alias_hits_existing_cached_reexport() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+
+    let cache = RustMetadataCache::new();
+    cache.insert_test_item(
+        tmp.path(),
+        dummy_reexported_type_metadata("bridge::ScalarUDF", "bridge::udf::ScalarUDF"),
+    )?;
+
+    let hit = cache
+        .get_cached(tmp.path(), "bridge::udf::ScalarUDF")?
+        .ok_or_else(|| std::io::Error::other("expected definition-path cache alias hit"))?;
+    assert_eq!(hit.metadata.canonical_path, "bridge::udf::ScalarUDF");
+    assert_eq!(
+        hit.metadata.definition_path.as_deref(),
+        Some("bridge::udf::ScalarUDF")
+    );
+    assert!(hit.alias_used);
+
+    let extracted = cache.get_or_extract(tmp.path(), "bridge::udf::ScalarUDF", &|_| ())?;
+    assert_eq!(extracted.canonical_path, "bridge::udf::ScalarUDF");
     Ok(())
 }
 

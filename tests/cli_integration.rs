@@ -632,6 +632,7 @@ decode_helper = { path = "rust/decode_helper" }
 decode_trait_helper = { path = "rust/decode_trait_helper" }
 prost = { path = "rust/prost" }
 prost-types = { path = "rust/prost-types" }
+reexport_identity = { path = "rust/reexport_identity" }
 "#,
     )?;
     fs::write(
@@ -639,6 +640,7 @@ prost-types = { path = "rust/prost-types" }
         r#"from borrowed_generic import borrowed_generic_case
 from by_value_decode import by_value_decode_case
 from cross_crate_decode import cross_crate_decode_case
+from reexport_identity import reexport_identity_case
 from trait_by_value_decode import trait_by_value_decode_case
 
 def main() -> None:
@@ -646,6 +648,7 @@ def main() -> None:
   println(by_value_decode_case())
   println(trait_by_value_decode_case())
   println(cross_crate_decode_case())
+  println(reexport_identity_case())
 "#,
     )?;
     fs::write(
@@ -694,6 +697,18 @@ pub def cross_crate_decode_case() -> str:
   match FileDescriptorSet.decode(encoded.as_slice()):
     Ok(_) => return "cross_crate:ok"
     Err(_) => return "cross_crate:err"
+"#,
+    )?;
+    fs::write(
+        tmp.path().join("src").join("reexport_identity.incn"),
+        r#"from rust::reexport_identity import Expr as RustExpr, ScalarFunction as RustScalarFunction, registry
+
+pub def reexport_identity_case() -> str:
+  state = registry()
+  udf = state.udf()
+  args: list[RustExpr] = []
+  _ = RustExpr.ScalarFunction(RustScalarFunction.new_udf(udf, args))
+  return "reexport_identity:ok"
 "#,
     )?;
 
@@ -840,6 +855,58 @@ impl prost::Message for FileDescriptorSet {
 }
 "#,
     )?;
+    let reexport_identity_src = tmp.path().join("rust").join("reexport_identity").join("src");
+    fs::create_dir_all(&reexport_identity_src)?;
+    fs::write(
+        reexport_identity_src
+            .parent()
+            .ok_or("reexport_identity src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "reexport_identity"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        reexport_identity_src.join("lib.rs"),
+        r#"use std::sync::Arc;
+
+pub mod udf {
+    pub struct ScalarUDF;
+}
+
+pub use udf::ScalarUDF;
+
+pub struct FunctionRegistry;
+
+pub fn registry() -> FunctionRegistry {
+    FunctionRegistry
+}
+
+impl FunctionRegistry {
+    pub fn udf(&self) -> Arc<udf::ScalarUDF> {
+        Arc::new(udf::ScalarUDF)
+    }
+}
+
+pub struct Expr;
+pub struct ScalarFunction;
+
+impl ScalarFunction {
+    pub fn new_udf(_udf: Arc<ScalarUDF>, _args: Vec<Expr>) -> Self {
+        Self
+    }
+}
+
+impl Expr {
+    #[allow(non_snake_case)]
+    pub fn ScalarFunction(_function: ScalarFunction) -> Self {
+        Self
+    }
+}
+"#,
+    )?;
 
     let output = run_incan(
         tmp.path(),
@@ -850,7 +917,7 @@ impl prost::Message for FileDescriptorSet {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(
         stdout.trim(),
-        "borrowed:1\nby_value:ok\ntrait_by_value:ok\ncross_crate:ok",
+        "borrowed:1\nby_value:ok\ntrait_by_value:ok\ncross_crate:ok\nreexport_identity:ok",
         "expected batched generic Rust param output, got:\n{stdout}"
     );
     Ok(())

@@ -543,9 +543,9 @@ impl TypeChecker {
         (Self::normalize_rust_namespace_path(trimmed).to_string(), Vec::new())
     }
 
-    fn attached_rust_definition_for_path(&self, canonical_path: &str) -> Option<String> {
+    fn rust_definition_for_path(&self, canonical_path: &str) -> Option<String> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
-        self.symbols.all_symbols().iter().find_map(|sym| {
+        if let Some(definition) = self.symbols.all_symbols().iter().find_map(|sym| {
             let SymbolKind::RustItem(info) = &sym.kind else {
                 return None;
             };
@@ -553,19 +553,24 @@ impl TypeChecker {
                 return None;
             }
             info.metadata.as_ref().and_then(|meta| meta.definition_path.clone())
-        })
+        }) {
+            return Some(definition);
+        }
+        self.rust_item_metadata_for_path(canonical_path)
+            .and_then(|metadata| metadata.definition_path)
     }
 
     /// Extract the cheap Rust identity already known to the checker for compatibility checks.
     ///
     /// This must stay metadata-light. `types_compatible(...)` calls it frequently, so it may only use symbol-local
-    /// metadata already attached during import collection. Fresh rust-inspect extraction from this path would leak a
-    /// heavy workspace/indexing concern into ordinary semantic checks.
+    /// metadata already attached during import collection plus cache-only Rust ABI/rust-inspect reads. Fresh
+    /// rust-inspect extraction from this path would leak a heavy workspace/indexing concern into ordinary semantic
+    /// checks.
     fn rust_identity_for_type(&self, ty: &ResolvedType) -> Option<(String, Option<String>, Vec<ResolvedType>)> {
         match ty {
             ResolvedType::RustPath(path) => {
                 let (base, args) = self.rust_path_base_and_args(path);
-                let definition = self.attached_rust_definition_for_path(base.as_str());
+                let definition = self.rust_definition_for_path(base.as_str());
                 Some((base, definition, args))
             }
             ResolvedType::Named(name) => {

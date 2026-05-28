@@ -28,24 +28,45 @@ impl TypeChecker {
     /// signature is known lets the next method call validate against its real signature instead of falling back to
     /// permissive unknown-method lowering.
     fn prewarm_rust_return_type_metadata(&self, ty: &ResolvedType) {
+        self.prewarm_rust_type_identity_metadata(ty);
+    }
+
+    /// Eagerly cache Rust identity metadata for nominal paths nested inside Rust display types.
+    ///
+    /// rust-inspect can report public signatures such as `Arc<crate::Type>` while another API returns the same type
+    /// through its defining module, for example `Arc<crate::private::Type>`. The outer generic wrapper is not the
+    /// semantic identity; the nested Rust path is. Prewarming those nested paths lets compatibility use cache-only
+    /// definition metadata instead of treating the two displays as unrelated nominal types.
+    fn prewarm_rust_type_identity_metadata(&self, ty: &ResolvedType) {
         match ty {
             ResolvedType::RustPath(path) => {
-                let _ = self.rust_item_metadata_for_path_blocking(path);
+                let (base, args) = self.rust_path_base_and_args(path);
+                if base.contains("::") {
+                    let _ = self.rust_item_metadata_for_path_blocking(base.as_str());
+                }
+                for arg in args {
+                    self.prewarm_rust_type_identity_metadata(&arg);
+                }
             }
-            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.prewarm_rust_return_type_metadata(inner),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.prewarm_rust_type_identity_metadata(inner),
             ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
                 for arg in args {
-                    self.prewarm_rust_return_type_metadata(arg);
+                    self.prewarm_rust_type_identity_metadata(arg);
                 }
             }
             ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => {
-                self.prewarm_rust_return_type_metadata(inner);
+                self.prewarm_rust_type_identity_metadata(inner);
             }
             ResolvedType::FrozenDict(key, value) => {
-                self.prewarm_rust_return_type_metadata(key);
-                self.prewarm_rust_return_type_metadata(value);
+                self.prewarm_rust_type_identity_metadata(key);
+                self.prewarm_rust_type_identity_metadata(value);
             }
-            ResolvedType::Function(_, ret) => self.prewarm_rust_return_type_metadata(ret),
+            ResolvedType::Function(params, ret) => {
+                for param in params {
+                    self.prewarm_rust_type_identity_metadata(&param.ty);
+                }
+                self.prewarm_rust_type_identity_metadata(ret);
+            }
             _ => {}
         }
     }
@@ -414,6 +435,8 @@ impl TypeChecker {
             let arg_expr = Self::call_arg_expr(arg);
             let normalized = param.type_display.replace(' ', "");
             let target_ty = self.resolved_rust_boundary_target_from_param_display(param.type_display.as_str());
+            self.prewarm_rust_type_identity_metadata(arg_ty);
+            self.prewarm_rust_type_identity_metadata(&target_ty);
             if preserves_lookup_arg_shape && self.rust_lookup_probe_boundary_match(arg_ty, &target_ty) {
                 continue;
             }
@@ -467,6 +490,8 @@ impl TypeChecker {
             let arg_expr = Self::call_arg_expr(arg);
             let normalized = param.type_display.replace(' ', "");
             let target_ty = self.resolved_rust_boundary_target_from_param_display(param.type_display.as_str());
+            self.prewarm_rust_type_identity_metadata(arg_ty);
+            self.prewarm_rust_type_identity_metadata(&target_ty);
             match self.rust_arg_boundary_match(arg_ty, param.type_display.as_str()) {
                 RustArgBoundaryMatch::Exact => {}
                 RustArgBoundaryMatch::Coercion(kind) => {
@@ -504,6 +529,23 @@ mod validate_rust_function_call_tests {
     use incan_core::lang::types::numerics::NumericTypeId;
     use std::collections::HashMap;
 
+    #[cfg(feature = "rust_inspect")]
+    fn scalar_udf_metadata(path: &str, definition_path: &str) -> incan_core::interop::RustItemMetadata {
+        use incan_core::interop::{RustItemKind, RustTypeInfo, RustVisibility};
+
+        incan_core::interop::RustItemMetadata {
+            canonical_path: path.to_string(),
+            definition_path: Some(definition_path.to_string()),
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(RustTypeInfo {
+                methods: Vec::new(),
+                implemented_traits: Vec::new(),
+                fields: Vec::new(),
+                variants: Vec::new(),
+            }),
+        }
+    }
+
     #[test]
     fn zero_parameter_rust_sig_rejects_extra_arguments() {
         let mut checker = TypeChecker::new();
@@ -528,6 +570,61 @@ mod validate_rust_function_call_tests {
             "expected builtin_arity for 0-param Rust call with 1 arg, errors={:?}",
             checker.errors
         );
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn rust_function_call_matches_reexported_identity_inside_generic_wrapper() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut checker = TypeChecker::new();
+        let tmp = tempfile::tempdir()?;
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"incan_test_rust_generic_identity\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        let manifest_dir = tmp.path().to_path_buf();
+        checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+        checker.rust_inspect_cache.insert_test_item(
+            &manifest_dir,
+            scalar_udf_metadata("bridge::ScalarUDF", "bridge::udf::ScalarUDF"),
+        )?;
+        checker.rust_inspect_cache.insert_test_item(
+            &manifest_dir,
+            scalar_udf_metadata("bridge::udf::ScalarUDF", "bridge::udf::ScalarUDF"),
+        )?;
+
+        let span = Span::new(10, 20);
+        checker.symbols.define(Symbol {
+            name: "udf".to_string(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty: ResolvedType::RustPath("rust::Arc<bridge::udf::ScalarUDF>".to_string()),
+                is_mutable: false,
+                is_used: false,
+            }),
+            span,
+            scope: 0,
+        });
+
+        let arg_expr = Spanned::new(Expr::Ident("udf".to_string()), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("udf".to_string()),
+                type_display: "Arc<bridge::ScalarUDF>".to_string(),
+            }],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::bridge::consume_udf", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected Rust re-export identity to match inside generic wrapper, errors={:?}",
+            checker.errors
+        );
+        Ok(())
     }
 
     #[test]
