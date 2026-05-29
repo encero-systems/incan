@@ -83,6 +83,28 @@ pub(crate) struct CallableNameUseFacts {
     pub(crate) generic_trait_used: bool,
 }
 
+/// Generated callable-name symbol roles for one concrete function-pointer signature.
+#[derive(Debug, Clone, Copy)]
+enum CallableNameSymbolRole {
+    /// Resolve a function pointer to a source name, using static candidates first and dynamic registrations second.
+    Resolver,
+    /// Return the shared dynamic-name storage for generic/decorated callables with this signature.
+    Registry,
+    /// Insert or update one dynamic callable-name registration for this signature.
+    Register,
+}
+
+impl CallableNameSymbolRole {
+    /// Return the stable generated Rust symbol prefix for this helper role.
+    const fn prefix(self) -> &'static str {
+        match self {
+            Self::Resolver => "__incan_callable_name",
+            Self::Registry => "__incan_callable_name_registry",
+            Self::Register => "__incan_register_callable_name",
+        }
+    }
+}
+
 /// Usage facts collected before Rust emission.
 ///
 /// This analysis is intentionally about generated Rust lints, not source-language reachability diagnostics. It records
@@ -486,28 +508,34 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
-    /// Return the deterministic helper identifier for a concrete callable signature key.
+    /// Return a deterministic generated symbol for one callable-name helper role and concrete signature key.
+    fn callable_name_symbol_ident(role: CallableNameSymbolRole, key: &str) -> proc_macro2::Ident {
+        format_ident!(
+            "{}_{:016x}",
+            role.prefix(),
+            Self::stable_callable_name_hash(key.as_bytes())
+        )
+    }
+
+    /// Return the generated resolver helper identifier for a concrete callable signature key.
+    ///
+    /// The resolver checks same-module static function candidates and then the per-signature dynamic registry.
     pub(super) fn callable_name_helper_ident(key: &str) -> proc_macro2::Ident {
-        format_ident!(
-            "__incan_callable_name_{:016x}",
-            Self::stable_callable_name_hash(key.as_bytes())
-        )
+        Self::callable_name_symbol_ident(CallableNameSymbolRole::Resolver, key)
     }
 
-    /// Return the deterministic dynamic-name registration helper for a concrete callable signature key.
+    /// Return the generated dynamic-name registration helper identifier for a concrete callable signature key.
+    ///
+    /// The registration helper records runtime metadata for concrete generic/decorated function values.
     pub(super) fn callable_name_register_ident(key: &str) -> proc_macro2::Ident {
-        format_ident!(
-            "__incan_register_callable_name_{:016x}",
-            Self::stable_callable_name_hash(key.as_bytes())
-        )
+        Self::callable_name_symbol_ident(CallableNameSymbolRole::Register, key)
     }
 
-    /// Return the deterministic dynamic-name registry helper for a concrete callable signature key.
+    /// Return the generated dynamic-name registry accessor identifier for a concrete callable signature key.
+    ///
+    /// The registry accessor owns the per-signature `OnceLock<Mutex<...>>` used by the registration helper.
     pub(super) fn callable_name_registry_ident(key: &str) -> proc_macro2::Ident {
-        format_ident!(
-            "__incan_callable_name_registry_{:016x}",
-            Self::stable_callable_name_hash(key.as_bytes())
-        )
+        Self::callable_name_symbol_ident(CallableNameSymbolRole::Registry, key)
     }
 
     /// Return a stable signature key for callable-name helpers when the function-pointer type is concrete.
