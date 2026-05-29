@@ -1820,9 +1820,34 @@ impl AstLowering {
                 name: original_name.to_string(),
                 type_args,
             },
+            original_ty.clone(),
+        );
+        let original_ref = TypedExpr::new(
+            IrExprKind::Cast {
+                expr: Box::new(original_ref),
+                to_type: original_ty.clone(),
+            },
             original_ty,
         );
-        let decorated_func = self.lower_decorator_application_value(&f.decorators, original_ref, decorated_ty)?;
+        let register_callable_name = TypedExpr::new(
+            IrExprKind::RegisterCallableName {
+                callable: Box::new(original_ref.clone()),
+                source_name: f.name.clone(),
+            },
+            IrType::Unit,
+        );
+        let mut decorated_func =
+            self.lower_decorator_application_value(&f.decorators, original_ref, decorated_ty.clone())?;
+        if !decorated_ty.contains_generic_parameter() {
+            decorated_func = TypedExpr::new(
+                IrExprKind::CacheGenericDecoratedFunction {
+                    cache_name: f.name.clone(),
+                    type_param_names: type_params.iter().map(|param| param.name.clone()).collect(),
+                    value: Box::new(decorated_func),
+                },
+                decorated_ty,
+            );
+        }
         let args = params
             .iter()
             .map(|param| IrCallArg {
@@ -1853,7 +1878,10 @@ impl AstLowering {
             name: f.name.clone(),
             params,
             return_type,
-            body: vec![IrStmt::new(IrStmtKind::Return(Some(call)))],
+            body: vec![
+                IrStmt::new(IrStmtKind::Expr(register_callable_name)),
+                IrStmt::new(IrStmtKind::Return(Some(call))),
+            ],
             is_async: f.is_async(),
             is_generator: false,
             visibility: Self::map_visibility(f.visibility),

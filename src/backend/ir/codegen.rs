@@ -632,12 +632,18 @@ impl<'a> IrCodegen<'a> {
             );
             dep_lowering.seed_dependency_trait_decls(&self.dependency_modules);
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
-            let dep_ir = dep_lowering.lower_program(dep_ast)?;
+            let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
+            super::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
             let module_path = dep_path_segments
                 .clone()
                 .unwrap_or_else(|| vec![(*dep_name).to_string()]);
             dependency_ir_programs.push((module_path, dep_ir));
         }
+        let dependency_programs = dependency_ir_programs
+            .iter()
+            .map(|(_, dep_ir)| dep_ir)
+            .collect::<Vec<_>>();
+        super::trait_bound_inference::propagate_trait_bounds_from_programs(&mut ir_program, &dependency_programs);
         let canonical_registry = Self::canonical_registry_for_programs(
             dependency_ir_programs
                 .iter()
@@ -714,7 +720,7 @@ impl<'a> IrCodegen<'a> {
     ///
     /// Returns `GenerationError::Lowering` if AST lowering fails, or
     /// `GenerationError::Emission` if IR emission fails.
-    pub fn try_generate_module(&mut self, _module_name: &str, program: &Program) -> Result<String, GenerationError> {
+    pub fn try_generate_module(&mut self, module_name: &str, program: &Program) -> Result<String, GenerationError> {
         // Use the IR pipeline for module generation too
         let mut lowering = AstLowering::new();
         lowering.set_current_source_module_name(
@@ -723,10 +729,35 @@ impl<'a> IrCodegen<'a> {
                 .as_deref()
                 .and_then(crate::frontend::module::logical_module_name_from_source_path),
         );
+        lowering.seed_dependency_trait_decls(&self.dependency_modules);
         let mut ir_program = lowering.lower_program(program)?;
 
         // RFC 023: Infer trait bounds for generic functions.
         super::trait_bound_inference::infer_trait_bounds(&mut ir_program);
+        let mut dependency_ir_programs = Vec::new();
+        for (dep_name, dep_ast, dep_path_segments) in &self.dependency_modules {
+            if *dep_name == module_name {
+                continue;
+            }
+            let mut dep_lowering = AstLowering::new();
+            dep_lowering.set_current_source_module_name(
+                dep_path_segments
+                    .clone()
+                    .map(|segments| segments.join("."))
+                    .or_else(|| {
+                        dep_ast
+                            .source_path
+                            .as_deref()
+                            .and_then(crate::frontend::module::logical_module_name_from_source_path)
+                    }),
+            );
+            dep_lowering.seed_dependency_trait_decls(&self.dependency_modules);
+            let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
+            super::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
+            dependency_ir_programs.push(dep_ir);
+        }
+        let dependency_programs = dependency_ir_programs.iter().collect::<Vec<_>>();
+        super::trait_bound_inference::propagate_trait_bounds_from_programs(&mut ir_program, &dependency_programs);
 
         // Best-effort: treat registered dependency module names as internal roots.
         // (This is most relevant for the non-nested multi-file API.)
@@ -2386,6 +2417,90 @@ def main() -> None:
         let (_main_code, modules) = must_ok(codegen.try_generate_multi_file(&main_module, &[db_module_name, "store"]));
 
         must_some(modules.get("store"), "missing generated non-nested store module").to_string()
+    }
+
+    fn nested_module_code(modules: &[(&str, &str, Vec<&str>)], target_path: &[&str]) -> String {
+        let main_module = main_module_program();
+        let mut codegen = IrCodegen::new();
+        let parsed_modules = modules
+            .iter()
+            .map(|(flat_name, source, path)| {
+                (
+                    (*flat_name).to_string(),
+                    parse_program(source),
+                    path.iter().map(|segment| (*segment).to_string()).collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (flat_name, program, _) in &parsed_modules {
+            codegen.add_module(flat_name, program);
+        }
+        let paths = parsed_modules
+            .iter()
+            .map(|(_, _, path)| path.clone())
+            .collect::<Vec<_>>();
+
+        let (_main_code, rust_modules) = must_ok(codegen.try_generate_multi_file_nested(&main_module, &paths));
+        let target = target_path
+            .iter()
+            .map(|segment| (*segment).to_string())
+            .collect::<Vec<_>>();
+        must_some(rust_modules.get(&target), "missing generated nested target module").to_string()
+    }
+
+    #[test]
+    fn nested_decorated_generic_original_inherits_imported_reflection_bounds() {
+        let code = nested_module_code(
+            &[
+                (
+                    "substrait_schema",
+                    r#"
+def requires_clone[T with Clone]() -> str:
+  return "clone"
+
+pub def reflected_schema_marker[T]() -> str:
+  return f"{T.__class_name__()}:{len(T.__fields__())}:{requires_clone[T]()}"
+"#,
+                    vec!["substrait", "schema"],
+                ),
+                (
+                    "functions_csv_from_csv",
+                    r#"
+from substrait.schema import reflected_schema_marker
+
+def registered_application(parts: list[str]) -> str:
+  return parts[0]
+
+def register[F]() -> ((F) -> F):
+  return (func) => remember[F](func)
+
+def remember[F](func: F) -> F:
+  if func.__name__ == "":
+    return func
+  return func
+
+@register()
+pub def from_csv[T]() -> str:
+  return registered_application([reflected_schema_marker[T]()])
+"#,
+                    vec!["functions", "csv", "from_csv"],
+                ),
+            ],
+            &["functions", "csv", "from_csv"],
+        );
+
+        assert!(
+            code.contains("fn __incan_original_from_csv<\n    T: incan_stdlib::reflection::HasTypeClassName")
+                || code
+                    .contains("fn __incan_original_from_csv<\n    T: incan_stdlib::reflection::HasTypeFieldMetadata"),
+            "{code}"
+        );
+        assert!(
+            code.contains("incan_stdlib::reflection::HasTypeClassName")
+                && code.contains("incan_stdlib::reflection::HasTypeFieldMetadata")
+                && code.contains("+ Clone"),
+            "{code}"
+        );
     }
 
     #[test]

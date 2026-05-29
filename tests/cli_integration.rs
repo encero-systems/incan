@@ -2014,20 +2014,56 @@ def main() -> None:
 fn run_decorated_type_parameter_reflection_calls_issue715() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "decorated_type_parameter_reflection_issue715", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    fs::write(
+        src_dir.join("reflection_helpers.incn"),
+        r#"def requires_clone[T with Clone]() -> str:
+    return "clone"
+
+
+pub def reflected_schema_marker[T]() -> str:
+    return f"{T.__class_name__()}:{len(T.__fields__())}:{requires_clone[T]()}"
+"#,
+    )?;
     fs::write(
         &main_path,
-        r#"def passthrough[F]() -> ((F) -> F):
-    return (func) => func
+        r#"from reflection_helpers import reflected_schema_marker
 
 
-@passthrough()
+static decorated_names: list[str] = []
+
+
+def register[F]() -> ((F) -> F):
+    return (func) => remember[F](func)
+
+
+def remember[F](func: F) -> F:
+    decorated_names.append(func.__name__)
+    return func
+
+
+@register()
 def class_name_for[T]() -> str:
     return str(T.__class_name__())
 
 
-@passthrough()
+@register()
 def field_count_for[T]() -> int:
     return len(T.__fields__())
+
+
+def requires_clone[T with Clone]() -> str:
+    return "clone"
+
+
+@register()
+def clone_marker_for[T]() -> str:
+    return requires_clone[T]()
+
+
+@register()
+def imported_reflection_for[T]() -> str:
+    return reflected_schema_marker[T]()
 
 
 model MySchema:
@@ -2038,6 +2074,14 @@ model MySchema:
 def main() -> None:
     println(class_name_for[MySchema]())
     println(field_count_for[MySchema]())
+    println(clone_marker_for[MySchema]())
+    println(imported_reflection_for[MySchema]())
+    println(imported_reflection_for[MySchema]())
+    println(decorated_names[0])
+    println(decorated_names[1])
+    println(decorated_names[2])
+    println(decorated_names[3])
+    println(len(decorated_names))
 "#,
     )?;
 
@@ -2053,7 +2097,18 @@ def main() -> None:
     let lines = stdout.lines().collect::<Vec<_>>();
     assert_eq!(
         lines,
-        vec!["MySchema", "2"],
+        vec![
+            "MySchema",
+            "2",
+            "clone",
+            "MySchema:2:clone",
+            "MySchema:2:clone",
+            "class_name_for",
+            "field_count_for",
+            "clone_marker_for",
+            "imported_reflection_for",
+            "4",
+        ],
         "unexpected decorated type-parameter reflection output:\n{stdout}"
     );
     Ok(())

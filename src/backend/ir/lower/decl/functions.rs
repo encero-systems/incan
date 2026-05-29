@@ -212,6 +212,12 @@ fn collect_generic_callable_name_type_params_from_expr(expr: &super::super::supe
                 }
             }
         }
+        IrExprKind::RegisterCallableName { callable, .. } => {
+            collect_generic_callable_name_type_params_from_expr(callable, out);
+        }
+        IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+            collect_generic_callable_name_type_params_from_expr(value, out);
+        }
         IrExprKind::Var { .. }
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }

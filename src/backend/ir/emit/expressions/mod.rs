@@ -104,6 +104,72 @@ impl<'a> IrEmitter<'a> {
         .with_span(expr.span)
     }
 
+    /// Emit explicit callable-name metadata for a concrete function pointer.
+    fn emit_register_callable_name(&self, callable: &TypedExpr, source_name: &str) -> Result<TokenStream, EmitError> {
+        let IrType::Function { params, ret } = &callable.ty else {
+            return Ok(quote! { () });
+        };
+        let Some(signature_key) = Self::callable_name_signature_key(params, ret) else {
+            return Ok(quote! { () });
+        };
+        let register = Self::callable_name_register_ident(&signature_key);
+        let fn_ty = self.emit_callable_fn_type(params, ret);
+        let callable = self.emit_expr(callable)?;
+        let source_name = Literal::string(source_name);
+        Ok(quote! {{
+            let __incan_callable: #fn_ty = #callable;
+            #register(__incan_callable, #source_name);
+        }})
+    }
+
+    fn emit_cache_generic_decorated_function(
+        &self,
+        cache_name: &str,
+        type_param_names: &[String],
+        value: &TypedExpr,
+    ) -> Result<TokenStream, EmitError> {
+        if !matches!(value.ty, IrType::Function { .. }) {
+            return Err(EmitError::Unsupported(
+                "generic decorated function cache requires a function pointer type".to_string(),
+            ));
+        }
+        let cache_ident = Self::rust_static_ident(&format!("__incan_generic_decorated_{cache_name}"));
+        let fn_ty = self.emit_type(&value.ty);
+        let value_tokens = self.emit_expr(value)?;
+        let type_key_parts = type_param_names
+            .iter()
+            .map(|name| {
+                let ident = Self::rust_ident(name);
+                quote! { std::any::type_name::<#ident>() }
+            })
+            .collect::<Vec<_>>();
+        let type_key = if type_key_parts.is_empty() {
+            quote! { String::new() }
+        } else {
+            quote! { [#(#type_key_parts),*].join("\u{1f}") }
+        };
+
+        Ok(quote! {{
+            static #cache_ident: std::sync::OnceLock<std::sync::Mutex<Vec<(String, #fn_ty)>>> =
+                std::sync::OnceLock::new();
+            let __incan_type_key = #type_key;
+            let mut __incan_entries = #cache_ident
+                .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                .lock()
+                .unwrap_or_else(|__incan_poisoned| __incan_poisoned.into_inner());
+            if let Some((_, __incan_cached)) = __incan_entries
+                .iter()
+                .find(|(__incan_key, _)| __incan_key == &__incan_type_key)
+            {
+                *__incan_cached
+            } else {
+                let __incan_decorated = #value_tokens;
+                __incan_entries.push((__incan_type_key, __incan_decorated));
+                __incan_decorated
+            }
+        }})
+    }
+
     /// Emit one list-literal element, materializing owned sink semantics at the literal boundary.
     ///
     /// Incan `list[str]` literals should store owned Rust `String` elements up front, but ordinary Incan-to-Incan
@@ -741,6 +807,16 @@ impl<'a> IrEmitter<'a> {
                     Ok(quote! { #ident :: < #(#args),* > })
                 }
             }
+
+            IrExprKind::RegisterCallableName { callable, source_name } => {
+                self.emit_register_callable_name(callable, source_name)
+            }
+
+            IrExprKind::CacheGenericDecoratedFunction {
+                cache_name,
+                type_param_names,
+                value,
+            } => self.emit_cache_generic_decorated_function(cache_name, type_param_names, value),
 
             IrExprKind::BinOp { op, left, right } => self.emit_binop_expr(op, left, right),
 

@@ -122,6 +122,12 @@ impl<'a> IrEmitter<'a> {
                     Self::rewrite_borrowed_param_types_in_expr(&mut arg.expr, borrowed);
                 }
             }
+            IrExprKind::RegisterCallableName { callable, .. } => {
+                Self::rewrite_borrowed_param_types_in_expr(callable, borrowed);
+            }
+            IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+                Self::rewrite_borrowed_param_types_in_expr(value, borrowed);
+            }
             IrExprKind::BuiltinCall { args, .. } => {
                 for arg in args {
                     Self::rewrite_borrowed_param_types_in_expr(arg, borrowed);
@@ -1299,6 +1305,12 @@ impl<'a> IrEmitter<'a> {
                 Self::note_param_use(name, param_names, shadowed_names, used_names);
             }
             IrExprKind::AssociatedFunction { .. } | IrExprKind::FunctionItem { .. } => {}
+            IrExprKind::RegisterCallableName { callable, .. } => {
+                Self::collect_expr_used_names(callable, param_names, shadowed_names, used_names);
+            }
+            IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+                Self::collect_expr_used_names(value, param_names, shadowed_names, used_names);
+            }
             IrExprKind::BinOp { left, right, .. } => {
                 Self::collect_expr_used_names(left, param_names, shadowed_names, used_names);
                 Self::collect_expr_used_names(right, param_names, shadowed_names, used_names);

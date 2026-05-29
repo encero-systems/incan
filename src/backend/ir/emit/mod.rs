@@ -494,6 +494,22 @@ impl<'a> IrEmitter<'a> {
         )
     }
 
+    /// Return the deterministic dynamic-name registration helper for a concrete callable signature key.
+    pub(super) fn callable_name_register_ident(key: &str) -> proc_macro2::Ident {
+        format_ident!(
+            "__incan_register_callable_name_{:016x}",
+            Self::stable_callable_name_hash(key.as_bytes())
+        )
+    }
+
+    /// Return the deterministic dynamic-name registry helper for a concrete callable signature key.
+    pub(super) fn callable_name_registry_ident(key: &str) -> proc_macro2::Ident {
+        format_ident!(
+            "__incan_callable_name_registry_{:016x}",
+            Self::stable_callable_name_hash(key.as_bytes())
+        )
+    }
+
     /// Return a stable signature key for callable-name helpers when the function-pointer type is concrete.
     pub(super) fn callable_name_signature_key(params: &[IrType], ret: &IrType) -> Option<String> {
         if !params.iter().all(Self::callable_name_type_supported) || !Self::callable_name_type_supported(ret) {

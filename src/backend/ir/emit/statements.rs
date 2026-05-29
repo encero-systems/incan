@@ -776,6 +776,8 @@ fn expr_uses_binding_name(expr: &super::super::expr::IrExpr, binding_name: &str)
             super::super::expr::FormatPart::Expr { expr, .. } => expr_uses_binding_name(expr, binding_name),
             super::super::expr::FormatPart::Literal(_) => false,
         }),
+        IrExprKind::RegisterCallableName { callable, .. } => expr_uses_binding_name(callable, binding_name),
+        IrExprKind::CacheGenericDecoratedFunction { value, .. } => expr_uses_binding_name(value, binding_name),
         IrExprKind::Unit
         | IrExprKind::None
         | IrExprKind::Bool(_)

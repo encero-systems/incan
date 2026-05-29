@@ -153,6 +153,28 @@ pub enum IrExprKind {
         type_args: Vec<IrType>,
     },
 
+    /// Register a generated function pointer with its source callable name.
+    ///
+    /// Generic decorated wrappers instantiate `__incan_original_name::<T>` at runtime. Rust can coerce that
+    /// monomorphized item to a function pointer, but a global function-pointer trait impl cannot name the originating
+    /// generic declaration. This expression records explicit compiler metadata for that concrete pointer before the
+    /// decorator sees it.
+    RegisterCallableName {
+        callable: Box<IrExpr>,
+        source_name: String,
+    },
+
+    /// Cache one decorated generic function value by concrete type-argument key.
+    ///
+    /// Generic decorators that return the same callable surface are still declaration-side metadata hooks. When the
+    /// callable signature itself does not mention the generic type parameters, generated Rust can keep one decorated
+    /// function pointer per concrete type-argument tuple and avoid replaying decorator side effects on every call.
+    CacheGenericDecoratedFunction {
+        cache_name: String,
+        type_param_names: Vec<String>,
+        value: Box<IrExpr>,
+    },
+
     // Binary operations
     BinOp {
         op: BinOp,

@@ -551,6 +551,17 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_type(ty);
                 }
             }
+            IrExprKind::RegisterCallableName { callable, .. } => {
+                self.scan_expr(callable);
+                if let IrType::Function { params, ret } = &callable.ty
+                    && let Some(key) = IrEmitter::callable_name_signature_key(params, ret)
+                {
+                    self.analysis.callable_name_signature_keys.insert(key);
+                }
+            }
+            IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+                self.scan_expr(value);
+            }
             IrExprKind::BinOp { left, right, .. } => {
                 self.scan_expr(left);
                 self.scan_expr(right);
@@ -853,6 +864,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             IrExprKind::InteropCoerce { expr, .. }
             | IrExprKind::NumericResize { expr, .. }
             | IrExprKind::Cast { expr, .. } => self.callable_name_function_arg_signature_keys(expr),
+            IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+                self.callable_name_function_arg_signature_keys(value)
+            }
             _ => Vec::new(),
         }
     }
@@ -1788,6 +1802,10 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::Cast { expr: operand, .. }
             | IrExprKind::NumericResize { expr: operand, .. }
             | IrExprKind::InteropCoerce { expr: operand, .. } => Self::collect_union_types_from_expr(operand, out),
+            IrExprKind::RegisterCallableName { callable, .. } => Self::collect_union_types_from_expr(callable, out),
+            IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+                Self::collect_union_types_from_expr(value, out);
+            }
             IrExprKind::Index { object, index } => {
                 Self::collect_union_types_from_expr(object, out);
                 Self::collect_union_types_from_expr(index, out);
@@ -2464,18 +2482,22 @@ impl<'a> IrEmitter<'a> {
     fn emit_callable_name_helpers(
         &self,
         emitted_callable_names: &HashSet<String>,
+        dynamic_only_callable_names: &HashSet<String>,
         keys: &[String],
     ) -> Vec<TokenStream> {
         keys.iter()
             .filter_map(|key| {
                 let (params, ret) = self.callable_name_signature_for_key(key)?;
                 let helper = Self::callable_name_helper_ident(key);
+                let registry = Self::callable_name_registry_ident(key);
+                let register = Self::callable_name_register_ident(key);
                 let fn_ty = self.emit_callable_fn_type(&params, &ret);
                 let mut candidates = self
                     .callable_name_local_registry()
                     .iter()
                     .filter(|(name, signature)| {
                         emitted_callable_names.contains(*name)
+                            && !dynamic_only_callable_names.contains(*name)
                             && signature.params.len() == params.len()
                             && signature.params.iter().map(|param| &param.ty).eq(params.iter())
                             && signature.return_type == ret
@@ -2486,9 +2508,20 @@ impl<'a> IrEmitter<'a> {
                     })
                     .collect::<Vec<_>>();
                 candidates.sort_by(|left, right| left.0.cmp(&right.0));
-                let has_candidates = !candidates.is_empty();
 
-                let mut body = quote! { None };
+                let dynamic_lookup = quote! {{
+                    let __incan_entries = #registry()
+                        .lock()
+                        .unwrap_or_else(|__incan_poisoned| __incan_poisoned.into_inner());
+                    __incan_entries.iter().rev().find_map(|(__incan_registered, __incan_name)| {
+                        if std::ptr::fn_addr_eq(*__incan_registered, callable) {
+                            Some(*__incan_name)
+                        } else {
+                            None
+                        }
+                    })
+                }};
+                let mut body = dynamic_lookup;
                 for (candidate, source_name) in candidates.into_iter().rev() {
                     let candidate_ident = Self::rust_ident(&candidate);
                     let source_literal = proc_macro2::Literal::string(&source_name);
@@ -2500,11 +2533,6 @@ impl<'a> IrEmitter<'a> {
                         }
                     };
                 }
-                let callable_param = if has_candidates {
-                    Self::rust_ident("callable")
-                } else {
-                    Self::rust_ident("_callable")
-                };
 
                 let visibility = if self.callable_name_resolutions.get(key).is_some_and(|resolution| {
                     self.callable_name_used_signature_keys.contains(key)
@@ -2521,8 +2549,29 @@ impl<'a> IrEmitter<'a> {
                 });
 
                 Some(quote! {
+                    fn #registry() -> &'static std::sync::Mutex<Vec<(#fn_ty, &'static str)>> {
+                        static __INCAN_CALLABLE_NAMES:
+                            std::sync::OnceLock<std::sync::Mutex<Vec<(#fn_ty, &'static str)>>> =
+                            std::sync::OnceLock::new();
+                        __INCAN_CALLABLE_NAMES.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                    }
+
+                    fn #register(callable: #fn_ty, source_name: &'static str) {
+                        let mut __incan_entries = #registry()
+                            .lock()
+                            .unwrap_or_else(|__incan_poisoned| __incan_poisoned.into_inner());
+                        if let Some((_, __incan_name)) = __incan_entries
+                            .iter_mut()
+                            .find(|(__incan_registered, _)| std::ptr::fn_addr_eq(*__incan_registered, callable))
+                        {
+                            *__incan_name = source_name;
+                        } else {
+                            __incan_entries.push((callable, source_name));
+                        }
+                    }
+
                     #private_interfaces_allow
-                    #visibility fn #helper(#callable_param: #fn_ty) -> Option<&'static str> {
+                    #visibility fn #helper(callable: #fn_ty) -> Option<&'static str> {
                         #body
                     }
                 })
@@ -2703,7 +2752,18 @@ impl<'a> IrEmitter<'a> {
                 _ => None,
             })
             .collect();
-        items.extend(self.emit_callable_name_helpers(&emitted_callable_names, &callable_name_helper_keys));
+        let dynamic_only_callable_names: HashSet<String> = emitted_declarations
+            .iter()
+            .filter_map(|decl| match &decl.kind {
+                IrDeclKind::Function(func) if func.is_async || !func.type_params.is_empty() => Some(func.name.clone()),
+                _ => None,
+            })
+            .collect();
+        items.extend(self.emit_callable_name_helpers(
+            &emitted_callable_names,
+            &dynamic_only_callable_names,
+            &callable_name_helper_keys,
+        ));
         if uses_generic_callable_name_trait
             && let Some(trait_item) = self.emit_generic_callable_name_trait(&callable_name_helper_keys)
         {
