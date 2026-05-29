@@ -216,6 +216,7 @@ fn collect_generic_callable_name_type_params_from_expr(expr: &super::super::supe
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
         | IrExprKind::AssociatedFunction { .. }
+        | IrExprKind::FunctionItem { .. }
         | IrExprKind::Unit
         | IrExprKind::None
         | IrExprKind::Bool(_)
@@ -500,38 +501,45 @@ impl AstLowering {
             if !self.is_user_defined_decorator_candidate(&decorator.node) {
                 continue;
             }
-            let callable = if decorator.node.is_call {
-                let args = Self::decorator_call_args(decorator)?;
-                let path = &decorator.node.path.segments;
-                if path.len() >= 2 {
-                    let base_path = ImportPath {
-                        parent_levels: decorator.node.path.parent_levels,
-                        is_absolute: decorator.node.path.is_absolute,
-                        segments: path[..path.len() - 1].to_vec(),
-                    };
-                    let base =
-                        Self::decorator_path_expr_from_import_path(&base_path, Self::decorator_synthetic_callee_span());
-                    let method = path.last().cloned().unwrap_or_default();
-                    Spanned::new(
-                        Expr::MethodCall(Box::new(base), method, decorator.node.type_args.clone(), args),
-                        decorator.span,
-                    )
-                } else {
-                    let callee = Self::decorator_path_expr(&decorator.node, Self::decorator_synthetic_callee_span());
-                    Spanned::new(
-                        Expr::Call(Box::new(callee), decorator.node.type_args.clone(), args),
-                        decorator.span,
-                    )
-                }
-            } else {
-                Self::decorator_path_expr(&decorator.node, decorator.span)
-            };
+            let callable = Self::decorator_callable_expr(decorator)?;
             current = Spanned::new(
                 Expr::Call(Box::new(callable), Vec::new(), vec![ast::CallArg::Positional(current)]),
                 Self::decorator_synthetic_callee_span(),
             );
         }
         Ok(current)
+    }
+
+    /// Build the callable expression for one decorator before it is applied to the decorated function value.
+    pub(in crate::backend::ir::lower) fn decorator_callable_expr(
+        decorator: &Spanned<ast::Decorator>,
+    ) -> Result<Spanned<Expr>, LoweringError> {
+        if decorator.node.is_call {
+            let args = Self::decorator_call_args(decorator)?;
+            let path = &decorator.node.path.segments;
+            if path.len() >= 2 {
+                let base_path = ImportPath {
+                    parent_levels: decorator.node.path.parent_levels,
+                    is_absolute: decorator.node.path.is_absolute,
+                    segments: path[..path.len() - 1].to_vec(),
+                };
+                let base =
+                    Self::decorator_path_expr_from_import_path(&base_path, Self::decorator_synthetic_callee_span());
+                let method = path.last().cloned().unwrap_or_default();
+                Ok(Spanned::new(
+                    Expr::MethodCall(Box::new(base), method, decorator.node.type_args.clone(), args),
+                    decorator.span,
+                ))
+            } else {
+                let callee = Self::decorator_path_expr(&decorator.node, Self::decorator_synthetic_callee_span());
+                Ok(Spanned::new(
+                    Expr::Call(Box::new(callee), decorator.node.type_args.clone(), args),
+                    decorator.span,
+                ))
+            }
+        } else {
+            Ok(Self::decorator_path_expr(&decorator.node, decorator.span))
+        }
     }
 
     /// Convert parsed decorator arguments into ordinary call arguments for lowering.

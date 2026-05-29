@@ -732,6 +732,16 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { #type_ident :: #function_ident })
             }
 
+            IrExprKind::FunctionItem { name, type_args } => {
+                let ident = Self::rust_ident(name);
+                if type_args.is_empty() {
+                    Ok(quote! { #ident })
+                } else {
+                    let args: Vec<_> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
+                    Ok(quote! { #ident :: < #(#args),* > })
+                }
+            }
+
             IrExprKind::BinOp { op, left, right } => self.emit_binop_expr(op, left, right),
 
             IrExprKind::UnaryOp { op, operand } => {

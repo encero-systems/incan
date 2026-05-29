@@ -2011,6 +2011,55 @@ def main() -> None:
 }
 
 #[test]
+fn run_decorated_type_parameter_reflection_calls_issue715() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "decorated_type_parameter_reflection_issue715", "")?;
+    fs::write(
+        &main_path,
+        r#"def passthrough[F]() -> ((F) -> F):
+    return (func) => func
+
+
+@passthrough()
+def class_name_for[T]() -> str:
+    return str(T.__class_name__())
+
+
+@passthrough()
+def field_count_for[T]() -> int:
+    return len(T.__fields__())
+
+
+model MySchema:
+    id: int
+    status: str
+
+
+def main() -> None:
+    println(class_name_for[MySchema]())
+    println(field_count_for[MySchema]())
+"#,
+    )?;
+
+    let run_output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &run_output,
+        "incan run for decorated type-parameter reflection issue715",
+    );
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        vec!["MySchema", "2"],
+        "unexpected decorated type-parameter reflection output:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn check_bare_model_type_value_rejected_issue714() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "model_type_value_issue714", "")?;
@@ -2039,6 +2088,40 @@ def main() -> None:
     assert!(
         stderr.contains("Cannot use type 'MySchema' as a value"),
         "expected bare model type value diagnostic, got:\n{stderr}"
+    );
+    Ok(())
+}
+
+#[test]
+fn build_inline_fstring_rust_str_argument_issue716() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "inline_fstring_rust_str_argument_issue716", "")?;
+    fs::write(
+        &main_path,
+        r#"from rust::incan_stdlib::errors import raise_value_error
+
+
+def fail_inline(value: str) -> int:
+    return raise_value_error(f"bad value `{value}`")
+
+
+def fail_local(value: str) -> int:
+    message = f"bad value `{value}`"
+    return raise_value_error(message)
+
+
+def main() -> None:
+    fail_inline("x")
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &build_output,
+        "incan build for inline f-string Rust &str argument issue716",
     );
     Ok(())
 }

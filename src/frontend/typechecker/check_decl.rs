@@ -3774,11 +3774,13 @@ impl TypeChecker {
             return;
         }
 
-        let Some(original_ty) = self.lookup_symbol(&func.name).and_then(|symbol| match &symbol.kind {
-            SymbolKind::Function(info) => Some(function_info_callable_type(info)),
-            SymbolKind::Variable(info) => Some(info.ty.clone()),
-            _ => None,
-        }) else {
+        let Some((original_ty, original_function_info)) =
+            self.lookup_symbol(&func.name).and_then(|symbol| match &symbol.kind {
+                SymbolKind::Function(info) => Some((function_info_callable_type(info), Some(info.clone()))),
+                SymbolKind::Variable(info) => Some((info.ty.clone(), None)),
+                _ => None,
+            })
+        else {
             return;
         };
 
@@ -3797,6 +3799,16 @@ impl TypeChecker {
                 DecoratedFunctionBindingInfo {
                     ty: binding_ty.clone(),
                     original_ty,
+                    type_params: original_function_info
+                        .as_ref()
+                        .map_or_else(Vec::new, |info| info.type_params.clone()),
+                    type_param_bounds: original_function_info
+                        .as_ref()
+                        .map_or_else(HashMap::new, |info| info.type_param_bounds.clone()),
+                    type_param_bound_details: original_function_info
+                        .as_ref()
+                        .map_or_else(HashMap::new, |info| info.type_param_bound_details.clone()),
+                    is_async: original_function_info.as_ref().is_some_and(|info| info.is_async),
                 },
             );
             symbol.kind = SymbolKind::Variable(VariableInfo {

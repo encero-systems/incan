@@ -292,6 +292,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::StaticRead { .. }
             | IrExprKind::StaticBinding { .. }
             | IrExprKind::AssociatedFunction { .. }
+            | IrExprKind::FunctionItem { .. }
             | IrExprKind::Literal(_)
             | IrExprKind::FieldsList(_)
             | IrExprKind::SerdeToJson
@@ -1297,7 +1298,7 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
                 Self::note_param_use(name, param_names, shadowed_names, used_names);
             }
-            IrExprKind::AssociatedFunction { .. } => {}
+            IrExprKind::AssociatedFunction { .. } | IrExprKind::FunctionItem { .. } => {}
             IrExprKind::BinOp { left, right, .. } => {
                 Self::collect_expr_used_names(left, param_names, shadowed_names, used_names);
                 Self::collect_expr_used_names(right, param_names, shadowed_names, used_names);

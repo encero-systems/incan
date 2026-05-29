@@ -6,7 +6,7 @@
 use crate::frontend::ast::{CallArg, Expr, Span, Spanned, Type};
 use crate::frontend::diagnostics::errors;
 use crate::frontend::resolved_type_subst::substitute_resolved_type;
-use crate::frontend::symbols::{FieldInfo, ResolvedType, SymbolKind, TypeInfo};
+use crate::frontend::symbols::{FieldInfo, FunctionInfo, ResolvedType, SymbolKind, TypeInfo};
 use crate::frontend::typechecker::IdentKind;
 use incan_core::interop::{RustFieldInfo, RustItemKind, RustTypeInfo};
 use incan_core::lang::derives::{self, DeriveId};
@@ -373,6 +373,28 @@ impl TypeChecker {
                 }
                 return constructor_ty;
             }
+        }
+
+        if let Expr::Ident(name) = &callee.node
+            && !type_args.is_empty()
+            && let Some(binding) = self
+                .type_info
+                .declarations
+                .decorated_function_bindings
+                .get(name)
+                .cloned()
+            && !binding.type_params.is_empty()
+            && let ResolvedType::Function(params, ret) = binding.ty
+        {
+            let info = FunctionInfo {
+                params,
+                return_type: *ret,
+                is_async: binding.is_async,
+                type_params: binding.type_params,
+                type_param_bounds: binding.type_param_bounds,
+                type_param_bound_details: binding.type_param_bound_details,
+            };
+            return self.validate_function_call(name, &info, type_args, args, span);
         }
 
         if !type_args.is_empty() {

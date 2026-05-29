@@ -1492,6 +1492,7 @@ fn collect_backend_clone_bounds_in_expr(
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
         | IrExprKind::AssociatedFunction { .. }
+        | IrExprKind::FunctionItem { .. }
         | IrExprKind::Unit
         | IrExprKind::None
         | IrExprKind::Bool(_)
@@ -2155,6 +2156,7 @@ fn scan_expr_for_bounds(
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
         | IrExprKind::AssociatedFunction { .. }
+        | IrExprKind::FunctionItem { .. }
         | IrExprKind::Unit
         | IrExprKind::None
         | IrExprKind::Bool(_)
@@ -2702,6 +2704,21 @@ fn collect_calls_in_expr(
             recurse_expr(func, result);
             for arg in args {
                 recurse_expr(&arg.expr, result);
+            }
+        }
+        IrExprKind::FunctionItem { name, type_args } => {
+            if let Some(callee_key) = resolve_called_generic_key(name, None, function_bounds) {
+                let mut mapping = HashMap::new();
+                if let Some(callee_type_params) = function_bounds.get(callee_key.as_str()) {
+                    for (callee_tp, caller_ty) in callee_type_params.iter().zip(type_args.iter()) {
+                        if let Some(caller_tp) = type_param_name_from_ir_type(caller_ty, type_params) {
+                            mapping.insert(callee_tp.name.clone(), caller_tp);
+                        }
+                    }
+                }
+                if !mapping.is_empty() {
+                    result.push((callee_key, mapping));
+                }
             }
         }
         IrExprKind::BinOp { left, right, .. } => {

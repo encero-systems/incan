@@ -545,6 +545,12 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                         .insert((type_name.clone(), original_name.to_string()));
                 }
             }
+            IrExprKind::FunctionItem { name, type_args } => {
+                self.mark_reachable_item(name);
+                for ty in type_args {
+                    self.scan_type(ty);
+                }
+            }
             IrExprKind::BinOp { left, right, .. } => {
                 self.scan_expr(left);
                 self.scan_expr(right);
@@ -827,6 +833,17 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 }
                 let params = func.params.iter().map(|param| param.ty.clone()).collect::<Vec<_>>();
                 if let Some(key) = IrEmitter::callable_name_signature_key(&params, &func.return_type) {
+                    keys.insert(key);
+                }
+                let mut keys = keys.into_iter().collect::<Vec<_>>();
+                keys.sort();
+                keys
+            }
+            IrExprKind::FunctionItem { .. } => {
+                let mut keys = HashSet::new();
+                if let IrType::Function { params, ret } = &expr.ty
+                    && let Some(key) = IrEmitter::callable_name_signature_key(params, ret)
+                {
                     keys.insert(key);
                 }
                 let mut keys = keys.into_iter().collect::<Vec<_>>();
@@ -1922,6 +1939,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::String(_)
             | IrExprKind::Bytes(_)
             | IrExprKind::AssociatedFunction { .. }
+            | IrExprKind::FunctionItem { .. }
             | IrExprKind::Var { .. }
             | IrExprKind::StaticRead { .. }
             | IrExprKind::StaticBinding { .. }

@@ -6,7 +6,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::{ParamKind, Span};
-use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType};
+use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType, TypeBoundInfo};
 use crate::frontend::testing_markers::TestingFixtureScope;
 use incan_core::interop::{CoercionPolicy, RustFunctionSig};
 
@@ -454,6 +454,14 @@ pub struct DecoratedFunctionBindingInfo {
     pub ty: ResolvedType,
     /// Original callable type before decorators are applied.
     pub original_ty: ResolvedType,
+    /// Source-declared type parameters preserved for explicit call-site generic arguments.
+    pub type_params: Vec<String>,
+    /// Explicit source-declared bounds per type parameter.
+    pub type_param_bounds: HashMap<String, Vec<String>>,
+    /// Resolved source-declared bounds, preserving generic type arguments.
+    pub type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>>,
+    /// Whether the original declaration is async.
+    pub is_async: bool,
 }
 
 /// Lowering metadata for one RFC 036 decorated method binding.

@@ -35,7 +35,7 @@ mod types;
 use std::collections::{HashMap, HashSet};
 
 use super::TypedExpr;
-use super::decl::{FunctionParam, IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier};
+use super::decl::{FunctionParam, IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier, IrTypeParam};
 use super::expr::{IrCallArg, IrCallArgKind, IrExprKind, VarAccess, VarRefKind};
 use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
@@ -1743,6 +1743,24 @@ impl AstLowering {
             ret: Box::new(self.lower_resolved_type(&callable_ret)),
         };
 
+        if !original.type_params.is_empty() {
+            let wrapper = self.generic_decorated_function_wrapper(
+                f,
+                &original_name,
+                &callable_params,
+                &original_params,
+                callable_ret.as_ref(),
+                &original.params,
+                &original.return_type,
+                original.type_params.clone(),
+                decorated_ty,
+            )?;
+            return Ok(vec![
+                IrDecl::new(IrDeclKind::Function(original)),
+                IrDecl::new(IrDeclKind::Function(wrapper)),
+            ]);
+        }
+
         let decorator_expr = self.decorator_application_expr(&f.name, &f.decorators)?;
         let mut value = self.lower_expr_spanned(&decorator_expr)?;
         value.ty = decorated_ty.clone();
@@ -1765,6 +1783,124 @@ impl AstLowering {
             }),
             IrDecl::new(IrDeclKind::Function(wrapper)),
         ])
+    }
+
+    /// Lower a generic decorated function wrapper by applying decorators in the wrapper's concrete type-parameter
+    /// environment.
+    ///
+    /// A module-level static can store a monomorphic decorated function value, but it cannot store "the decorated
+    /// version of `f[T]` for every `T`". For generic declarations, the wrapper keeps the source type parameters and
+    /// applies the decorator chain to `__incan_original_f::<T>` at the call site before invoking the result.
+    #[allow(clippy::too_many_arguments)]
+    fn generic_decorated_function_wrapper(
+        &mut self,
+        f: &ast::FunctionDecl,
+        original_name: &str,
+        callable_params: &[CallableParam],
+        original_params: &[CallableParam],
+        callable_ret: &crate::frontend::symbols::ResolvedType,
+        original_function_params: &[FunctionParam],
+        original_return_type: &IrType,
+        type_params: Vec<IrTypeParam>,
+        decorated_ty: IrType,
+    ) -> Result<super::decl::IrFunction, LoweringError> {
+        let defaults = self.decorated_param_defaults_for_surface(callable_params, original_params, &f.params);
+        let params = self.function_params_from_callable_surface(callable_params, &defaults);
+        let return_type = self.lower_resolved_type(callable_ret);
+        let type_args = type_params
+            .iter()
+            .map(|param| IrType::Generic(param.name.clone()))
+            .collect::<Vec<_>>();
+        let original_ty = IrType::Function {
+            params: original_function_params.iter().map(|param| param.ty.clone()).collect(),
+            ret: Box::new(original_return_type.clone()),
+        };
+        let original_ref = TypedExpr::new(
+            IrExprKind::FunctionItem {
+                name: original_name.to_string(),
+                type_args,
+            },
+            original_ty,
+        );
+        let decorated_func = self.lower_decorator_application_value(&f.decorators, original_ref, decorated_ty)?;
+        let args = params
+            .iter()
+            .map(|param| IrCallArg {
+                name: None,
+                kind: IrCallArgKind::Positional,
+                expr: TypedExpr::new(
+                    IrExprKind::Var {
+                        name: param.name.clone(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    param.ty.clone(),
+                ),
+            })
+            .collect();
+        let call = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(decorated_func),
+                type_args: Vec::new(),
+                args,
+                callable_signature: None,
+                canonical_path: None,
+            },
+            return_type.clone(),
+        );
+
+        Ok(super::decl::IrFunction {
+            name: f.name.clone(),
+            params,
+            return_type,
+            body: vec![IrStmt::new(IrStmtKind::Return(Some(call)))],
+            is_async: f.is_async(),
+            is_generator: false,
+            visibility: Self::map_visibility(f.visibility),
+            type_params,
+            is_extern: false,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        })
+    }
+
+    /// Lower the callable value for one decorator without applying it to the decorated function.
+    fn lower_decorator_callable_value(
+        &mut self,
+        decorator: &ast::Spanned<ast::Decorator>,
+    ) -> Result<TypedExpr, LoweringError> {
+        let expr = Self::decorator_callable_expr(decorator)?;
+        self.lower_expr_spanned(&expr)
+    }
+
+    /// Lower the bottom-up decorator application chain starting from an already-specialized function value.
+    fn lower_decorator_application_value(
+        &mut self,
+        decorators: &[ast::Spanned<ast::Decorator>],
+        mut current: TypedExpr,
+        final_ty: IrType,
+    ) -> Result<TypedExpr, LoweringError> {
+        for decorator in decorators.iter().rev() {
+            if !self.is_user_defined_decorator_candidate(&decorator.node) {
+                continue;
+            }
+            let callable = self.lower_decorator_callable_value(decorator)?;
+            current = TypedExpr::new(
+                IrExprKind::Call {
+                    func: Box::new(callable),
+                    type_args: Vec::new(),
+                    args: vec![IrCallArg {
+                        name: None,
+                        kind: IrCallArgKind::Positional,
+                        expr: current,
+                    }],
+                    callable_signature: None,
+                    canonical_path: None,
+                },
+                final_ty.clone(),
+            );
+        }
+        Ok(current)
     }
 
     /// Lower the public function wrapper that dispatches through the decorated callable static.

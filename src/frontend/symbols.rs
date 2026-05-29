@@ -706,7 +706,7 @@ pub struct MethodInfo {
 }
 
 /// Resolved type-parameter bound metadata preserved for export/import paths.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TypeBoundInfo {
     pub name: String,
     pub source_name: Option<String>,

@@ -144,6 +144,15 @@ pub enum IrExprKind {
         function_name: String,
     },
 
+    /// Reference a free function item with optional explicit type arguments.
+    ///
+    /// Generic decorated wrappers need to pass `__incan_original_name::<T>` as a callable value after the wrapper has
+    /// a concrete type-parameter environment. A plain variable reference cannot carry that turbofish.
+    FunctionItem {
+        name: String,
+        type_args: Vec<IrType>,
+    },
+
     // Binary operations
     BinOp {
         op: BinOp,

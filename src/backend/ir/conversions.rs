@@ -807,6 +807,14 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 (IrExprKind::Field { .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => {
                     Conversion::Clone
                 }
+                (_, Some(IrType::StrRef))
+                    if matches!(expr.ty, IrType::String) && !expr_has_rust_reference_shape(expr) =>
+                {
+                    Conversion::Borrow
+                }
+                (_, None) if matches!(expr.ty, IrType::String) && !expr_has_rust_reference_shape(expr) => {
+                    Conversion::Borrow
+                }
                 (IrExprKind::Var { .. }, _) if matches!(expr.ty, IrType::String) => {
                     if expr_has_rust_reference_shape(expr) {
                         Conversion::None
@@ -1394,6 +1402,17 @@ mod tests {
             },
             IrType::String,
         );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_external_function_string_expression_to_str_ref_borrows_issue716() {
+        let expr = IrExpr::new(IrExprKind::Format { parts: Vec::new() }, IrType::String);
+
+        let conv = determine_conversion(&expr, Some(&IrType::StrRef), ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::Borrow);
 
         let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
         assert_eq!(conv, Conversion::Borrow);
