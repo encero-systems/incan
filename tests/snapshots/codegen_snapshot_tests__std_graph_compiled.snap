@@ -64,6 +64,11 @@ pub struct GraphError {
 }
 impl incan_stdlib::reflection::HasClassName for GraphError {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for GraphError {
+    fn __class_name__() -> &'static str {
         "GraphError"
     }
 }
@@ -71,6 +76,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for GraphError {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for GraphError {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("detail"),
@@ -126,6 +138,11 @@ pub struct GraphNode<T> {
 }
 impl<T> incan_stdlib::reflection::HasClassName for GraphNode<T> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T> incan_stdlib::reflection::HasTypeClassName for GraphNode<T> {
+    fn __class_name__() -> &'static str {
         "GraphNode"
     }
 }
@@ -133,6 +150,13 @@ impl<T> incan_stdlib::reflection::HasFieldMetadata for GraphNode<T> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for GraphNode<T> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("id"),
@@ -211,6 +235,11 @@ pub struct GraphEdge {
 }
 impl incan_stdlib::reflection::HasClassName for GraphEdge {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for GraphEdge {
+    fn __class_name__() -> &'static str {
         "GraphEdge"
     }
 }
@@ -218,6 +247,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for GraphEdge {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for GraphEdge {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("id"),
@@ -314,6 +350,11 @@ pub struct DiGraph<T> {
 }
 impl<T> incan_stdlib::reflection::HasClassName for DiGraph<T> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T> incan_stdlib::reflection::HasTypeClassName for DiGraph<T> {
+    fn __class_name__() -> &'static str {
         "DiGraph"
     }
 }
@@ -321,6 +362,13 @@ impl<T> incan_stdlib::reflection::HasFieldMetadata for DiGraph<T> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for DiGraph<T> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("next_node_id"),
@@ -784,6 +832,11 @@ pub struct Dag<T> {
 }
 impl<T> incan_stdlib::reflection::HasClassName for Dag<T> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T> incan_stdlib::reflection::HasTypeClassName for Dag<T> {
+    fn __class_name__() -> &'static str {
         "Dag"
     }
 }
@@ -791,6 +844,13 @@ impl<T> incan_stdlib::reflection::HasFieldMetadata for Dag<T> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for Dag<T> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("graph"),
@@ -932,6 +992,11 @@ pub struct MultiDiGraph<T> {
 }
 impl<T> incan_stdlib::reflection::HasClassName for MultiDiGraph<T> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T> incan_stdlib::reflection::HasTypeClassName for MultiDiGraph<T> {
+    fn __class_name__() -> &'static str {
         "MultiDiGraph"
     }
 }
@@ -939,6 +1004,13 @@ impl<T> incan_stdlib::reflection::HasFieldMetadata for MultiDiGraph<T> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for MultiDiGraph<T> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("graph"),

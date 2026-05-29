@@ -1932,6 +1932,118 @@ def main() -> None:
 }
 
 #[test]
+fn run_type_parameter_reflection_calls_issue715() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "type_parameter_reflection_issue715", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    fs::write(
+        src_dir.join("schema_helpers.incn"),
+        r#"pub def class_name_for[T]() -> str:
+    return T.__class_name__()
+
+
+pub def field_count_for[T]() -> int:
+    return len(T.__fields__())
+
+
+pub def print_schema[T]() -> None:
+    println(str(T.__class_name__()))
+    for info in T.__fields__():
+        println(f"{info.name}|{info.wire_name}|{info.type_name}|{info.has_default}")
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from schema_helpers import class_name_for, field_count_for, print_schema
+
+
+model MySchema:
+    id [description="Stable id"]: int
+    status [alias="state"]: str = "new"
+
+
+class BareSchema:
+    value: int
+
+
+def local_field_count[T]() -> int:
+    return len(T.__fields__())
+
+
+def main() -> None:
+    println(class_name_for[MySchema]())
+    println(field_count_for[MySchema]())
+    println(local_field_count[MySchema]())
+    print_schema[MySchema]()
+    println(class_name_for[BareSchema]())
+    println(field_count_for[BareSchema]())
+"#,
+    )?;
+
+    let check_output = run_incan(
+        tmp.path(),
+        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&check_output, "incan --check for type-parameter reflection issue715");
+
+    let run_output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&run_output, "incan run for type-parameter reflection issue715");
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        vec![
+            "MySchema",
+            "2",
+            "2",
+            "MySchema",
+            "id|id|int|false",
+            "status|state|str|true",
+            "BareSchema",
+            "1",
+        ],
+        "unexpected type-parameter reflection output:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn check_bare_model_type_value_rejected_issue714() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "model_type_value_issue714", "")?;
+    fs::write(
+        &main_path,
+        r#"model MySchema:
+    id: int
+    status: str
+
+
+def accepts_any[T](value: T) -> str:
+    return str(value.__class_name__())
+
+
+def main() -> None:
+    println(accepts_any(MySchema))
+"#,
+    )?;
+
+    let check_output = run_incan(
+        tmp.path(),
+        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_failure(&check_output, "incan --check for bare model type value issue714");
+    let stderr = String::from_utf8_lossy(&check_output.stderr);
+    assert!(
+        stderr.contains("Cannot use type 'MySchema' as a value"),
+        "expected bare model type value diagnostic, got:\n{stderr}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_public_alias_of_imported_item_reexports_original_path_issue617() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "public_alias_import_reexport", "")?;

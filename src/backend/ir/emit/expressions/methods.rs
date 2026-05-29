@@ -23,6 +23,7 @@ use incan_core::interop::{
     MetadataFreeReceiverClass, RustCollectionFamily,
 };
 use incan_core::lang::surface::result_methods::{self, ResultMethodId};
+use incan_core::lang::{magic_methods, trait_bounds::rust as tb};
 
 mod collection_methods;
 mod fast_paths;
@@ -33,6 +34,14 @@ use collection_methods::emit_collection_method;
 use fast_paths::emit_registered_method_fast_path;
 use iterator_methods::emit_iterator_method;
 use string_methods::emit_string_method;
+
+fn type_reflection_trait_path(method: &str) -> Option<&'static str> {
+    match magic_methods::from_str(method) {
+        Some(magic_methods::MagicMethodId::ClassName) => Some(tb::INCAN_TYPE_CLASS_NAME),
+        Some(magic_methods::MagicMethodId::Fields) => Some(tb::INCAN_TYPE_FIELD_METADATA),
+        _ => None,
+    }
+}
 
 /// Compute common receiver setup for method emission.
 ///
@@ -847,7 +856,7 @@ impl<'a> IrEmitter<'a> {
         arg_policy: MethodCallArgPolicy,
         result_use_site: ValueUseSite<'_>,
     ) -> Result<TokenStream, EmitError> {
-        self.emit_method_call_expr_with_result_use(
+        let emitted = self.emit_method_call_expr_with_result_use(
             receiver,
             method,
             dispatch,
@@ -856,7 +865,13 @@ impl<'a> IrEmitter<'a> {
             callable_signature,
             arg_policy,
             Some(result_use_site),
-        )
+        )?;
+        if magic_methods::from_str(method) == Some(magic_methods::MagicMethodId::ClassName)
+            && matches!(Self::use_site_target_ty(result_use_site), Some(IrType::String))
+        {
+            return Ok(quote! { (#emitted).to_string() });
+        }
+        Ok(emitted)
     }
 
     /// Shared method-call emitter used by plain and target-aware method emission.
@@ -961,6 +976,32 @@ impl<'a> IrEmitter<'a> {
             if self.enum_variant_fields.contains_key(&canonical_key) {
                 return self.emit_enum_variant_call(name, canonical_method, &arg_exprs);
             }
+        }
+
+        if let IrExprKind::Var {
+            name,
+            ref_kind: VarRefKind::TypeName,
+            ..
+        } = &receiver.kind
+            && args.is_empty()
+            && type_args.is_empty()
+            && let Some(trait_path) = type_reflection_trait_path(method)
+        {
+            let receiver_ty = match &receiver.ty {
+                IrType::Unknown => IrType::Struct(name.clone()),
+                ty => ty.clone(),
+            };
+            let receiver_tokens = self.emit_type(&receiver_ty);
+            let path_tokens: Vec<TokenStream> = trait_path
+                .split("::")
+                .map(|segment| {
+                    let ident = Self::rust_ident(segment);
+                    quote! { #ident }
+                })
+                .collect();
+            let trait_tokens = super::super::decls::join_path_tokens(&path_tokens);
+            let m = Self::rust_ident(method);
+            return Ok(quote! { <#receiver_tokens as #trait_tokens>::#m() });
         }
 
         // Associated function call on a type: `Type.method(...)` → `Type::method(...)`

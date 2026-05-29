@@ -14,6 +14,11 @@ struct Point {
 }
 impl incan_stdlib::reflection::HasClassName for Point {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Point {
+    fn __class_name__() -> &'static str {
         "Point"
     }
 }
@@ -21,6 +26,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Point {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Point {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("x"),
@@ -51,6 +63,11 @@ struct Rectangle {
 }
 impl incan_stdlib::reflection::HasClassName for Rectangle {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Rectangle {
+    fn __class_name__() -> &'static str {
         "Rectangle"
     }
 }
@@ -58,6 +75,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Rectangle {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Rectangle {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("width"),
@@ -87,6 +111,11 @@ struct Circle {
 }
 impl incan_stdlib::reflection::HasClassName for Circle {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Circle {
+    fn __class_name__() -> &'static str {
         "Circle"
     }
 }
@@ -94,6 +123,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Circle {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Circle {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("radius"),
@@ -122,6 +158,11 @@ struct Counter {
 }
 impl incan_stdlib::reflection::HasClassName for Counter {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Counter {
+    fn __class_name__() -> &'static str {
         "Counter"
     }
 }
@@ -129,6 +170,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Counter {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Counter {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("count"),
@@ -160,6 +208,11 @@ struct Stack {
 }
 impl incan_stdlib::reflection::HasClassName for Stack {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Stack {
+    fn __class_name__() -> &'static str {
         "Stack"
     }
 }
@@ -167,6 +220,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Stack {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Stack {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("items"),
@@ -202,6 +262,11 @@ struct Calculator {
 }
 impl incan_stdlib::reflection::HasClassName for Calculator {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Calculator {
+    fn __class_name__() -> &'static str {
         "Calculator"
     }
 }
@@ -209,6 +274,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Calculator {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Calculator {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("name"),
@@ -236,6 +308,11 @@ struct Person {
 }
 impl incan_stdlib::reflection::HasClassName for Person {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Person {
+    fn __class_name__() -> &'static str {
         "Person"
     }
 }
@@ -243,6 +320,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Person {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Person {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("name"),
@@ -282,6 +366,11 @@ struct Employee {
 }
 impl incan_stdlib::reflection::HasClassName for Employee {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Employee {
+    fn __class_name__() -> &'static str {
         "Employee"
     }
 }
@@ -289,6 +378,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Employee {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Employee {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("person"),

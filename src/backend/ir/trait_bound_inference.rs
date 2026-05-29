@@ -1825,6 +1825,14 @@ fn reflection_magic_trait_bound(method: &str) -> Option<&'static str> {
     }
 }
 
+fn type_reflection_magic_trait_bound(method: &str) -> Option<&'static str> {
+    match magic_methods::from_str(method) {
+        Some(magic_methods::MagicMethodId::ClassName) => Some(tb::INCAN_TYPE_CLASS_NAME),
+        Some(magic_methods::MagicMethodId::Fields) => Some(tb::INCAN_TYPE_FIELD_METADATA),
+        _ => None,
+    }
+}
+
 /// Scan an expression for trait-bound-relevant operations on type parameters.
 fn scan_expr_for_bounds(
     expr: &IrExpr,
@@ -1876,13 +1884,30 @@ fn scan_expr_for_bounds(
         IrExprKind::MethodCall {
             receiver, method, args, ..
         } => {
+            let receiver_is_type_name = matches!(
+                receiver.kind,
+                IrExprKind::Var {
+                    ref_kind: VarRefKind::TypeName,
+                    ..
+                }
+            );
             if let Some(tp_name) = expr_type_param_name(receiver, type_params, params) {
-                if method == "clone" {
+                if method == "clone" && !receiver_is_type_name {
                     add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
                 }
-                if let Some(bound) = reflection_magic_trait_bound(method) {
+                let reflection_bound = if receiver_is_type_name {
+                    type_reflection_magic_trait_bound(method)
+                } else {
+                    reflection_magic_trait_bound(method)
+                };
+                if let Some(bound) = reflection_bound {
                     add_bound(bounds_map, &tp_name, IrTraitBound::simple(bound));
                 }
+            } else if receiver_is_type_name
+                && let Some(tp_name) = type_name_expr_type_param_name(receiver, type_params)
+                && let Some(bound) = type_reflection_magic_trait_bound(method)
+            {
+                add_bound(bounds_map, &tp_name, IrTraitBound::simple(bound));
             } else if method == "clone"
                 && matches!(receiver.ty, IrType::Unknown)
                 && matches!(&receiver.kind, IrExprKind::Var { .. } | IrExprKind::Field { .. })
@@ -2185,6 +2210,18 @@ fn expr_type_param_name(
     }
 
     None
+}
+
+fn type_name_expr_type_param_name(expr: &IrExpr, type_params: &HashSet<&str>) -> Option<String> {
+    let IrExprKind::Var {
+        name,
+        ref_kind: VarRefKind::TypeName,
+        ..
+    } = &expr.kind
+    else {
+        return None;
+    };
+    type_params.contains(name.as_str()).then(|| name.clone())
 }
 
 fn type_param_name_from_ir_type(ty: &IrType, type_params: &HashSet<&str>) -> Option<String> {

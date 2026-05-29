@@ -40,10 +40,28 @@ pub trait HasFieldMetadata {
     fn __fields__(&self) -> FrozenList<FieldInfo>;
 }
 
+/// Provides type-level field metadata for generated models and classes.
+///
+/// The compiler uses this trait for generic schema helpers that reflect on an explicit type argument, for example
+/// `T.__fields__()`, without requiring a dummy runtime value.
+pub trait HasTypeFieldMetadata {
+    /// Returns field metadata for this type.
+    fn __fields__() -> FrozenList<FieldInfo>;
+}
+
 /// Provides the value-level `__class_name__()` reflection helper for generated models and classes.
 pub trait HasClassName {
     /// Returns this value's Incan class/model name.
     fn __class_name__(&self) -> &'static str;
+}
+
+/// Provides type-level class/model names for generated models and classes.
+///
+/// The compiler uses this trait for generic schema helpers that reflect on an explicit type argument, for example
+/// `T.__class_name__()`, without requiring a dummy runtime value.
+pub trait HasTypeClassName {
+    /// Returns this type's Incan class/model name.
+    fn __class_name__() -> &'static str;
 }
 
 /// Runtime value type for field reflection (RFC 021).

@@ -32,7 +32,7 @@ def main() -> None:
         println(f"{info.name}: {info.type_name}")
 ```
 
-## Generic Reflection
+## Generic Value Reflection
 
 Generic helpers may call `value.__class_name__()` and `value.__fields__()` on a type parameter. The compiler treats those calls as reflection capabilities and emits the required runtime bounds for the generated Rust function, so the generic helper has the same field metadata result as a direct concrete call when it is instantiated with a reflectable model or class.
 
@@ -40,6 +40,31 @@ Generic helpers may call `value.__class_name__()` and `value.__fields__()` on a 
 def reflected_field_count[T](value: T) -> int:
     return len(value.__fields__())
 ```
+
+## Generic Type Reflection
+
+Generic schema helpers may also reflect on an explicit type argument without constructing a dummy value. This is the intended shape for APIs that need a model's schema rather than one model instance.
+
+```incan
+def schema_field_count[T]() -> int:
+    return len(T.__fields__())
+
+def schema_name[T]() -> str:
+    return T.__class_name__()
+```
+
+Callers instantiate those helpers with a reflectable model or class type:
+
+```incan
+model User:
+    name: str
+    email: str
+
+println(schema_name[User]())
+println(schema_field_count[User]())
+```
+
+Model and class type names are still not ordinary runtime values. Use them as constructor callees, type arguments, or type-owned reflection receivers; a bare expression such as `use_value(User)` is rejected unless Incan grows a deliberate first-class type-object feature.
 
 ### `FieldInfo` structure
 

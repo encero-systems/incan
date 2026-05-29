@@ -418,6 +418,13 @@ pub fn generic_function_reference(name: &str, span: Span) -> CompileError {
     .with_note("Only monomorphic (non-generic) functions can be passed by name (RFC 035)")
 }
 
+/// Type error for using a type-like name in value position.
+pub fn type_name_used_as_value(name: &str, span: Span) -> CompileError {
+    CompileError::type_error(format!("Cannot use type '{name}' as a value"), span)
+        .with_hint("Use the type in a constructor, type argument, or type-owned reflection call")
+        .with_note("Model and class types are not first-class runtime values")
+}
+
 pub fn missing_return_type(span: Span) -> CompileError {
     CompileError::type_error("Function is missing a return type".to_string(), span)
         .with_hint("Add a return type annotation: def name(...) -> Type:")

@@ -16,7 +16,7 @@ Import with:
 from std.reflection import FieldInfo
 ```
 
-You only need to import `FieldInfo` when you want to spell the type explicitly in an annotation. Calling `obj.__fields__()` and inspecting the returned records does not require an explicit import.
+You only need to import `FieldInfo` when you want to spell the type explicitly in an annotation. Calling `obj.__fields__()` or generic type-level reflection such as `T.__fields__()` and inspecting the returned records does not require an explicit import.
 
 ## Types
 

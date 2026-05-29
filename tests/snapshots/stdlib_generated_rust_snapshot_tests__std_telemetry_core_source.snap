@@ -139,6 +139,11 @@ pub struct TelemetryValue {
 }
 impl incan_stdlib::reflection::HasClassName for TelemetryValue {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for TelemetryValue {
+    fn __class_name__() -> &'static str {
         "TelemetryValue"
     }
 }
@@ -146,6 +151,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for TelemetryValue {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for TelemetryValue {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 8] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("kind"),
@@ -589,6 +601,11 @@ pub struct Resource {
 }
 impl incan_stdlib::reflection::HasClassName for Resource {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Resource {
+    fn __class_name__() -> &'static str {
         "Resource"
     }
 }
@@ -596,6 +613,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Resource {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Resource {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("attributes"),
@@ -662,6 +686,11 @@ pub struct InstrumentationScope {
 }
 impl incan_stdlib::reflection::HasClassName for InstrumentationScope {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for InstrumentationScope {
+    fn __class_name__() -> &'static str {
         "InstrumentationScope"
     }
 }
@@ -669,6 +698,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for InstrumentationScope {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for InstrumentationScope {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("name"),
@@ -783,6 +819,11 @@ pub struct SpanContext {
 }
 impl incan_stdlib::reflection::HasClassName for SpanContext {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for SpanContext {
+    fn __class_name__() -> &'static str {
         "SpanContext"
     }
 }
@@ -790,6 +831,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for SpanContext {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for SpanContext {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("trace_id"),

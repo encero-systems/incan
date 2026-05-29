@@ -220,7 +220,7 @@
       "path": "src/backend/ir/trait_bound_inference.rs",
       "category": "clone/as_ref/self and reflection trait-bound inference compatibility",
       "expected_count": 4,
-      "expected_fingerprint": "0xf6bac5fbb4750df0"
+      "expected_fingerprint": "0x7b05117f4d9db0da"
     },
     {
       "path": "src/cli/commands/common.rs",

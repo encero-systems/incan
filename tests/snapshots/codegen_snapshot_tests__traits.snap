@@ -21,6 +21,11 @@ struct Dog {
 }
 impl incan_stdlib::reflection::HasClassName for Dog {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Dog {
+    fn __class_name__() -> &'static str {
         "Dog"
     }
 }
@@ -28,6 +33,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Dog {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Dog {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("name"),
@@ -50,6 +62,11 @@ struct Rectangle {
 }
 impl incan_stdlib::reflection::HasClassName for Rectangle {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Rectangle {
+    fn __class_name__() -> &'static str {
         "Rectangle"
     }
 }
@@ -57,6 +74,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Rectangle {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Rectangle {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("width"),
@@ -102,6 +126,11 @@ struct Circle {
 }
 impl incan_stdlib::reflection::HasClassName for Circle {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Circle {
+    fn __class_name__() -> &'static str {
         "Circle"
     }
 }
@@ -109,6 +138,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Circle {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Circle {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("radius"),
@@ -147,6 +183,11 @@ struct Square {
 }
 impl incan_stdlib::reflection::HasClassName for Square {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Square {
+    fn __class_name__() -> &'static str {
         "Square"
     }
 }
@@ -154,6 +195,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Square {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Square {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("side"),
@@ -208,6 +256,11 @@ struct Carton {
 }
 impl incan_stdlib::reflection::HasClassName for Carton {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Carton {
+    fn __class_name__() -> &'static str {
         "Carton"
     }
 }
@@ -215,6 +268,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Carton {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Carton {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("width"),
@@ -277,6 +337,11 @@ struct Document {
 }
 impl incan_stdlib::reflection::HasClassName for Document {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Document {
+    fn __class_name__() -> &'static str {
         "Document"
     }
 }
@@ -284,6 +349,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Document {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Document {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("title"),

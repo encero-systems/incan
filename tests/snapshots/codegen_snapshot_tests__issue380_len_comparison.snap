@@ -31,6 +31,11 @@ pub struct Expr {
 }
 impl incan_stdlib::reflection::HasClassName for Expr {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Expr {
+    fn __class_name__() -> &'static str {
         "Expr"
     }
 }
@@ -38,6 +43,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Expr {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Expr {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("kind"),

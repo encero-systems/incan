@@ -236,6 +236,21 @@ impl TypeChecker {
         ty
     }
 
+    /// Type-check an expression used as a type-owned receiver, such as `Type.method()` or `Enum.Variant`.
+    pub(crate) fn check_type_receiver_expr(&mut self, expr: &Spanned<Expr>) -> ResolvedType {
+        self.type_receiver_spans.push((expr.span.start, expr.span.end));
+        let ty = self.check_expr(expr);
+        self.type_receiver_spans.pop();
+        ty
+    }
+
+    pub(crate) fn is_type_receiver_span(&self, span: Span) -> bool {
+        self.type_receiver_spans
+            .iter()
+            .rev()
+            .any(|&(start, end)| start == span.start && end == span.end)
+    }
+
     /// Type-check an expression with an expected destination type when one is already known.
     ///
     /// This is intentionally narrow: only expression forms that benefit from contextual typing without broad inference

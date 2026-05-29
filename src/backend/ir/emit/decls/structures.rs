@@ -191,6 +191,12 @@ impl<'a> IrEmitter<'a> {
             quote! {
                 impl #generics incan_stdlib::reflection::HasClassName for #name #generics_bare {
                     fn __class_name__(&self) -> &'static str {
+                        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+                    }
+                }
+
+                impl #generics incan_stdlib::reflection::HasTypeClassName for #name #generics_bare {
+                    fn __class_name__() -> &'static str {
                         #class_name
                     }
                 }
@@ -204,6 +210,12 @@ impl<'a> IrEmitter<'a> {
                 quote! {
                     impl #generics incan_stdlib::reflection::HasFieldMetadata for #name #generics_bare {
                         fn __fields__(&self) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+                            <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+                        }
+                    }
+
+                    impl #generics incan_stdlib::reflection::HasTypeFieldMetadata for #name #generics_bare {
+                        fn __fields__() -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
                             static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; #field_count] = [#(#field_infos),*];
                             incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
                         }

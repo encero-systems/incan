@@ -1854,11 +1854,23 @@ impl TypeChecker {
             ResolvedType::Ref(_) | ResolvedType::RefMut(_) | ResolvedType::Function(_, _) | ResolvedType::SelfType => {
                 true
             }
-            ResolvedType::TypeVar(_) | ResolvedType::CallSiteInfer => false,
+            ResolvedType::TypeVar(name) => self.active_type_param_has_builtin_bound(name, TraitId::Clone),
+            ResolvedType::CallSiteInfer => false,
             // RFC 041: provenance is known, but Incan does not yet query Rust for `Copy`/`Clone`; do not assume.
             ResolvedType::RustPath(_) => false,
             ResolvedType::Unknown => true,
         }
+    }
+
+    fn active_type_param_has_builtin_bound(&self, type_param: &str, trait_id: TraitId) -> bool {
+        let expected = core_traits::as_str(trait_id);
+        self.current_type_param_bound_details.iter().rev().any(|frame| {
+            frame.get(type_param).is_some_and(|bounds| {
+                bounds
+                    .iter()
+                    .any(|bound| bound.name == expected || Self::type_bound_source_name(bound) == expected)
+            })
+        })
     }
 
     /// [`ResolvedType::SelfType`] in a trait method signature means the receiver type for this call site.
@@ -2485,7 +2497,7 @@ impl TypeChecker {
         index: &Spanned<Expr>,
         span: Span,
     ) -> ResolvedType {
-        let base_ty = self.check_expr(base);
+        let base_ty = self.check_type_receiver_expr(base);
         if let Some(ty) = self.resolve_type_index_expression(&base_ty, base) {
             return ty;
         }
@@ -2629,7 +2641,7 @@ impl TypeChecker {
         field: &str,
         span: Span,
     ) -> ResolvedType {
-        let base_ty = self.check_expr(base);
+        let base_ty = self.check_type_receiver_expr(base);
 
         // Imported modules use symbol-driven metadata resolution.
         if let Some((module_name, module_path)) = self.imported_module_for_expr(base) {
@@ -2941,7 +2953,7 @@ impl TypeChecker {
             return self.check_builtin_list_repeat_call(args, span);
         }
 
-        let base_ty = self.check_expr(base);
+        let base_ty = self.check_type_receiver_expr(base);
 
         // If the receiver type is Unknown, be permissive and do not error on methods.
         if matches!(base_ty, ResolvedType::Unknown) {

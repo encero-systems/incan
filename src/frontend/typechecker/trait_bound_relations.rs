@@ -190,7 +190,7 @@ impl TypeChecker {
     }
 
     /// Return the resolved source trait item name for a bound, falling back to the visible spelling.
-    fn type_bound_source_name(bound: &TypeBoundInfo) -> &str {
+    pub(in crate::frontend::typechecker) fn type_bound_source_name(bound: &TypeBoundInfo) -> &str {
         bound
             .source_name
             .as_deref()

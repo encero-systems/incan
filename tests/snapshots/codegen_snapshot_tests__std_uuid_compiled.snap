@@ -123,6 +123,11 @@ pub struct UuidError {
 }
 impl incan_stdlib::reflection::HasClassName for UuidError {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for UuidError {
+    fn __class_name__() -> &'static str {
         "UuidError"
     }
 }
@@ -130,6 +135,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for UuidError {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for UuidError {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("kind"),
@@ -451,6 +463,11 @@ struct _UuidText {
 }
 impl incan_stdlib::reflection::HasClassName for _UuidText {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for _UuidText {
+    fn __class_name__() -> &'static str {
         "_UuidText"
     }
 }
@@ -458,6 +475,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for _UuidText {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for _UuidText {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("text"),
@@ -593,6 +617,11 @@ struct _UuidBytesWriter {
 }
 impl incan_stdlib::reflection::HasClassName for _UuidBytesWriter {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for _UuidBytesWriter {
+    fn __class_name__() -> &'static str {
         "_UuidBytesWriter"
     }
 }
@@ -600,6 +629,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for _UuidBytesWriter {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for _UuidBytesWriter {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("out"),

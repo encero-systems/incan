@@ -4963,6 +4963,97 @@ def reflected_class_name[T](value: T) -> str:
 }
 
 #[test]
+fn test_type_parameter_reflection_magic_methods_record_surface_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def reflected_field_count[T]() -> int:
+  fields = T.__fields__()
+  return len(fields)
+
+def reflected_class_name[T]() -> str:
+  return T.__class_name__()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expressions
+            .expr_types
+            .values()
+            .any(|ty| matches!(ty, ResolvedType::Str)),
+        "expected type-parameter __class_name__() to resolve to str, got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::FrozenList(inner)
+                    if matches!(inner.as_ref(), ResolvedType::Named(name) if name == "FieldInfo")
+            )
+        }),
+        "expected type-parameter __fields__() to resolve to FrozenList[FieldInfo], got {:?}",
+        info.expressions.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_bare_model_type_name_is_not_a_value() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model User:
+  name: str
+
+def accepts_any[T](value: T) -> str:
+  return value.__class_name__()
+
+def main() -> None:
+  accepts_any(User)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let Err(errs) = checker.check_program(&ast) else {
+        return Err(std::io::Error::other("expected bare model type name to be rejected").into());
+    };
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Cannot use type 'User' as a value")),
+        "expected bare model value diagnostic, got {errs:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_type_receiver_context_does_not_leak_into_nested_values() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model User:
+  name: str
+
+def accepts_any[T](value: T) -> str:
+  return value.__class_name__()
+
+def main() -> None:
+  accepts_any(User).upper()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let Err(errs) = checker.check_program(&ast) else {
+        return Err(std::io::Error::other("expected nested bare model type name to be rejected").into());
+    };
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Cannot use type 'User' as a value")),
+        "expected nested bare model value diagnostic, got {errs:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_reflection_fieldinfo_members_typecheck_without_explicit_import() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 model User:
@@ -6351,6 +6442,15 @@ def add(mut xs: List[Mutex], value: Mutex) -> None:
         }),
         "expected List.append / Clone diagnostic for Rust element type; got {errs:?}"
     );
+}
+
+#[test]
+fn test_list_append_accepts_clone_bound_type_param() {
+    let source = r#"
+def add_item[T with Clone](mut items: List[T], item: T) -> None:
+  items.append(item)
+"#;
+    assert_check_ok(source);
 }
 
 #[test]

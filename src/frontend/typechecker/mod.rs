@@ -161,6 +161,8 @@ pub struct TypeChecker {
     pub(crate) await_operand_span: Option<(usize, usize)>,
     /// Nesting depth for expressions being checked as call arguments.
     pub(crate) call_argument_depth: usize,
+    /// Expression spans where type-like identifiers are valid namespace/type owners.
+    pub(crate) type_receiver_spans: Vec<(usize, usize)>,
     /// Stack of active loop contexts, innermost last.
     pub(crate) loop_stack: Vec<LoopContext>,
     /// Active trait @requires context for default method bodies.
@@ -298,6 +300,7 @@ impl TypeChecker {
             in_async_body: false,
             await_operand_span: None,
             call_argument_depth: 0,
+            type_receiver_spans: Vec::new(),
             loop_stack: Vec::new(),
             current_trait_requires: None,
             current_trait_properties: None,

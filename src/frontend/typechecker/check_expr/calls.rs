@@ -63,7 +63,7 @@ impl TypeChecker {
         // and the field name matches a variant, treat this as a constructor and
         // return the enum type.
         if let Expr::Field(base, member_name) = &callee.node {
-            let base_ty = self.check_expr(base);
+            let base_ty = self.check_type_receiver_expr(base);
             let base_is_enum_type_name = self.is_enum_type_name_expr_for_call(base);
             if let ResolvedType::Named(enum_name) = &base_ty
                 && let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name)

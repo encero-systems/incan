@@ -36,6 +36,11 @@ pub struct ListIterator<T: Clone> {
 }
 impl<T: Clone> incan_stdlib::reflection::HasClassName for ListIterator<T> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T: Clone> incan_stdlib::reflection::HasTypeClassName for ListIterator<T> {
+    fn __class_name__() -> &'static str {
         "ListIterator"
     }
 }
@@ -43,6 +48,13 @@ impl<T: Clone> incan_stdlib::reflection::HasFieldMetadata for ListIterator<T> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T: Clone> incan_stdlib::reflection::HasTypeFieldMetadata for ListIterator<T> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("items"),
@@ -124,6 +136,12 @@ pub struct MapIterator<T, Source: Iterator<T>, U> {
 impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasClassName
 for MapIterator<T, Source, U> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasTypeClassName
+for MapIterator<T, Source, U> {
+    fn __class_name__() -> &'static str {
         "MapIterator"
     }
 }
@@ -132,6 +150,14 @@ for MapIterator<T, Source, U> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasTypeFieldMetadata
+for MapIterator<T, Source, U> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("source"),
@@ -217,6 +243,12 @@ pub struct FilterIterator<T, Source: Iterator<T>> {
 impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
 for FilterIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+for FilterIterator<T, Source> {
+    fn __class_name__() -> &'static str {
         "FilterIterator"
     }
 }
@@ -225,6 +257,14 @@ for FilterIterator<T, Source> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+for FilterIterator<T, Source> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("source"),
@@ -320,6 +360,12 @@ pub struct FlatMapIterator<T, Source: Iterator<T>, U> {
 impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasClassName
 for FlatMapIterator<T, Source, U> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasTypeClassName
+for FlatMapIterator<T, Source, U> {
+    fn __class_name__() -> &'static str {
         "FlatMapIterator"
     }
 }
@@ -328,6 +374,14 @@ for FlatMapIterator<T, Source, U> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T, Source: Iterator<T>, U> incan_stdlib::reflection::HasTypeFieldMetadata
+for FlatMapIterator<T, Source, U> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("source"),
@@ -475,6 +529,12 @@ pub struct TakeIterator<T, Source: Iterator<T>> {
 impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
 for TakeIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+for TakeIterator<T, Source> {
+    fn __class_name__() -> &'static str {
         "TakeIterator"
     }
 }
@@ -483,6 +543,14 @@ for TakeIterator<T, Source> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+for TakeIterator<T, Source> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("source"),
@@ -593,6 +661,12 @@ pub struct SkipIterator<T, Source: Iterator<T>> {
 impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
 for SkipIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+for SkipIterator<T, Source> {
+    fn __class_name__() -> &'static str {
         "SkipIterator"
     }
 }
@@ -601,6 +675,14 @@ for SkipIterator<T, Source> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+for SkipIterator<T, Source> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("source"),
@@ -710,6 +792,15 @@ pub struct ChainIterator<T, First: Iterator<T>, Second: Iterator<T>> {
 impl<T, First: Iterator<T>, Second: Iterator<T>> incan_stdlib::reflection::HasClassName
 for ChainIterator<T, First, Second> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<
+    T,
+    First: Iterator<T>,
+    Second: Iterator<T>,
+> incan_stdlib::reflection::HasTypeClassName for ChainIterator<T, First, Second> {
+    fn __class_name__() -> &'static str {
         "ChainIterator"
     }
 }
@@ -721,6 +812,17 @@ impl<
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<
+    T,
+    First: Iterator<T>,
+    Second: Iterator<T>,
+> incan_stdlib::reflection::HasTypeFieldMetadata for ChainIterator<T, First, Second> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("first"),
@@ -848,6 +950,12 @@ pub struct EnumerateIterator<T, Source: Iterator<T>> {
 impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
 for EnumerateIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+for EnumerateIterator<T, Source> {
+    fn __class_name__() -> &'static str {
         "EnumerateIterator"
     }
 }
@@ -856,6 +964,14 @@ for EnumerateIterator<T, Source> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+for EnumerateIterator<T, Source> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("source"),
@@ -963,6 +1079,16 @@ pub struct ZipIterator<T, Left: Iterator<T>, U, Right: Iterator<U>> {
 impl<T, Left: Iterator<T>, U, Right: Iterator<U>> incan_stdlib::reflection::HasClassName
 for ZipIterator<T, Left, U, Right> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<
+    T,
+    Left: Iterator<T>,
+    U,
+    Right: Iterator<U>,
+> incan_stdlib::reflection::HasTypeClassName for ZipIterator<T, Left, U, Right> {
+    fn __class_name__() -> &'static str {
         "ZipIterator"
     }
 }
@@ -975,6 +1101,18 @@ impl<
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<
+    T,
+    Left: Iterator<T>,
+    U,
+    Right: Iterator<U>,
+> incan_stdlib::reflection::HasTypeFieldMetadata for ZipIterator<T, Left, U, Right> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("left"),
@@ -1110,6 +1248,12 @@ pub struct TakeWhileIterator<T: Clone, Source: Iterator<T>> {
 impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
 for TakeWhileIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+for TakeWhileIterator<T, Source> {
+    fn __class_name__() -> &'static str {
         "TakeWhileIterator"
     }
 }
@@ -1118,6 +1262,14 @@ for TakeWhileIterator<T, Source> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+for TakeWhileIterator<T, Source> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("source"),
@@ -1238,6 +1390,12 @@ pub struct SkipWhileIterator<T: Clone, Source: Iterator<T>> {
 impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
 for SkipWhileIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+for SkipWhileIterator<T, Source> {
+    fn __class_name__() -> &'static str {
         "SkipWhileIterator"
     }
 }
@@ -1246,6 +1404,14 @@ for SkipWhileIterator<T, Source> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T: Clone, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+for SkipWhileIterator<T, Source> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("source"),
@@ -1363,6 +1529,12 @@ pub struct BatchIterator<T, Source: Iterator<T>> {
 impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasClassName
 for BatchIterator<T, Source> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeClassName
+for BatchIterator<T, Source> {
+    fn __class_name__() -> &'static str {
         "BatchIterator"
     }
 }
@@ -1371,6 +1543,14 @@ for BatchIterator<T, Source> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T, Source: Iterator<T>> incan_stdlib::reflection::HasTypeFieldMetadata
+for BatchIterator<T, Source> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("source"),

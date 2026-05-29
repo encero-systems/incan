@@ -62,7 +62,22 @@ impl TypeChecker {
                     ResolvedType::Function(info.params.clone(), Box::new(info.return_type.clone())),
                 )
             }
-            SymbolKind::Type(_) => (IdentKind::TypeName, ResolvedType::Named(name.to_string())),
+            SymbolKind::Type(info) => {
+                if !self.is_type_receiver_span(span) {
+                    self.errors.push(errors::type_name_used_as_value(name, span));
+                    self.type_info
+                        .expressions
+                        .ident_kinds
+                        .insert((span.start, span.end), IdentKind::TypeName);
+                    return ResolvedType::Unknown;
+                }
+                let ty = if matches!(info, TypeInfo::Builtin) && sym.scope > 0 {
+                    ResolvedType::TypeVar(name.to_string())
+                } else {
+                    ResolvedType::Named(name.to_string())
+                };
+                (IdentKind::TypeName, ty)
+            }
             SymbolKind::Variant(info) => (IdentKind::Variant, ResolvedType::Named(info.enum_name.clone())),
             SymbolKind::Field(info) => (IdentKind::Value, info.ty.clone()),
             SymbolKind::Property(info) => (IdentKind::Value, info.return_type.clone()),
@@ -76,7 +91,17 @@ impl TypeChecker {
                     (IdentKind::Module, ResolvedType::Named(name.to_string()))
                 }
             }
-            SymbolKind::Trait(_) => (IdentKind::Trait, ResolvedType::Named(name.to_string())),
+            SymbolKind::Trait(_) => {
+                if !self.is_type_receiver_span(span) {
+                    self.errors.push(errors::type_name_used_as_value(name, span));
+                    self.type_info
+                        .expressions
+                        .ident_kinds
+                        .insert((span.start, span.end), IdentKind::Trait);
+                    return ResolvedType::Unknown;
+                }
+                (IdentKind::Trait, ResolvedType::Named(name.to_string()))
+            }
             SymbolKind::RustItem(info) => {
                 if let Some(meta) = &info.metadata
                     && meta.visibility == incan_core::interop::RustVisibility::Restricted

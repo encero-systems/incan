@@ -11,6 +11,11 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 struct Cursor {}
 impl incan_stdlib::reflection::HasClassName for Cursor {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Cursor {
+    fn __class_name__() -> &'static str {
         "Cursor"
     }
 }
@@ -18,6 +23,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Cursor {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Cursor {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
@@ -33,6 +45,11 @@ struct Wrapper {
 }
 impl incan_stdlib::reflection::HasClassName for Wrapper {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Wrapper {
+    fn __class_name__() -> &'static str {
         "Wrapper"
     }
 }
@@ -40,6 +57,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Wrapper {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Wrapper {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("_cursor"),

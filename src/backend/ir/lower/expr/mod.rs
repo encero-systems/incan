@@ -865,12 +865,17 @@ impl AstLowering {
                         arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
                     }
                 }
-                let expr_ty = self
+                let mut expr_ty = self
                     .type_info
                     .as_ref()
                     .and_then(|info| info.expr_type(expr_span))
                     .map(|ty| self.lower_resolved_type(ty))
                     .unwrap_or(IrType::Unknown);
+                if magic_methods::from_str(&method_name) == Some(MagicMethodId::ClassName)
+                    && matches!(expr_ty, IrType::String)
+                {
+                    expr_ty = IrType::StaticStr;
+                }
                 let dispatch = self
                     .type_info
                     .as_ref()

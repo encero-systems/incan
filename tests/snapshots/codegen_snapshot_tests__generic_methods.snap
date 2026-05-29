@@ -11,6 +11,11 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 struct Box {}
 impl incan_stdlib::reflection::HasClassName for Box {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Box {
+    fn __class_name__() -> &'static str {
         "Box"
     }
 }
@@ -18,6 +23,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Box {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Box {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
@@ -34,6 +46,11 @@ struct Shelf<U> {
 }
 impl<U> incan_stdlib::reflection::HasClassName for Shelf<U> {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<U> incan_stdlib::reflection::HasTypeClassName for Shelf<U> {
+    fn __class_name__() -> &'static str {
         "Shelf"
     }
 }
@@ -41,6 +58,13 @@ impl<U> incan_stdlib::reflection::HasFieldMetadata for Shelf<U> {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<U> incan_stdlib::reflection::HasTypeFieldMetadata for Shelf<U> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("item"),
@@ -67,6 +91,11 @@ pub trait Echo {
 struct Pair {}
 impl incan_stdlib::reflection::HasClassName for Pair {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Pair {
+    fn __class_name__() -> &'static str {
         "Pair"
     }
 }
@@ -74,6 +103,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for Pair {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Pair {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
         incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
     }
@@ -90,6 +126,11 @@ struct EchoBox {
 }
 impl incan_stdlib::reflection::HasClassName for EchoBox {
     fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for EchoBox {
+    fn __class_name__() -> &'static str {
         "EchoBox"
     }
 }
@@ -97,6 +138,13 @@ impl incan_stdlib::reflection::HasFieldMetadata for EchoBox {
     fn __fields__(
         &self,
     ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for EchoBox {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
         static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
             incan_stdlib::reflection::FieldInfo {
                 name: incan_stdlib::frozen::FrozenStr::new("marker"),
