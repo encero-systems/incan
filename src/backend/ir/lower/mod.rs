@@ -1395,24 +1395,23 @@ impl AstLowering {
                                 errors.push(e);
                             }
 
-                            // Generate impl block for all methods/properties (inherited + own)
-                            if !all_methods.is_empty() || !all_properties.is_empty() {
-                                match self.lower_decorated_method_statics(&struct_ir.name, &all_methods) {
-                                    Ok(statics) => ir_program.declarations.extend(statics),
-                                    Err(e) => errors.push(e),
+                            // Generate an impl block even for field-only classes so compiler-provided reflection
+                            // helpers have the same concrete surface as models.
+                            match self.lower_decorated_method_statics(&struct_ir.name, &all_methods) {
+                                Ok(statics) => ir_program.declarations.extend(statics),
+                                Err(e) => errors.push(e),
+                            }
+                            match self.lower_class_methods(
+                                &struct_ir.name,
+                                &c.type_params,
+                                &all_methods,
+                                &all_properties,
+                                &c.traits,
+                            ) {
+                                Ok(impl_ir) => {
+                                    ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
                                 }
-                                match self.lower_class_methods(
-                                    &struct_ir.name,
-                                    &c.type_params,
-                                    &all_methods,
-                                    &all_properties,
-                                    &c.traits,
-                                ) {
-                                    Ok(impl_ir) => {
-                                        ir_program.declarations.push(IrDecl::new(IrDeclKind::Impl(impl_ir)));
-                                    }
-                                    Err(e) => errors.push(e),
-                                }
+                                Err(e) => errors.push(e),
                             }
 
                             // Generate trait impls for each trait this class implements

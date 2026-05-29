@@ -9,6 +9,19 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Box {}
+impl incan_stdlib::reflection::HasClassName for Box {
+    fn __class_name__(&self) -> &'static str {
+        "Box"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Box {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl Box {
     pub fn get<T: Clone>(&self, value: T) -> T {
         return value;
@@ -18,6 +31,29 @@ impl Box {
 struct Shelf<U> {
     #[expect(dead_code, reason = "retained for Incan private field semantics")]
     item: U,
+}
+impl<U> incan_stdlib::reflection::HasClassName for Shelf<U> {
+    fn __class_name__(&self) -> &'static str {
+        "Shelf"
+    }
+}
+impl<U> incan_stdlib::reflection::HasFieldMetadata for Shelf<U> {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("item"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("item"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("U"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
 }
 impl<U> Shelf<U> {
     pub fn swap<T: Clone>(&self, value: T) -> T {
@@ -29,6 +65,19 @@ pub trait Echo {
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Pair {}
+impl incan_stdlib::reflection::HasClassName for Pair {
+    fn __class_name__(&self) -> &'static str {
+        "Pair"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Pair {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl Pair {
     pub fn swap<T: Clone, U: Clone>(&self, _: T, right: U) -> U {
         return right;
@@ -38,6 +87,29 @@ impl Pair {
 struct EchoBox {
     #[expect(dead_code, reason = "retained for Incan private field semantics")]
     marker: i64,
+}
+impl incan_stdlib::reflection::HasClassName for EchoBox {
+    fn __class_name__(&self) -> &'static str {
+        "EchoBox"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for EchoBox {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("marker"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("marker"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
 }
 impl Echo for EchoBox {
     fn echo<T: Clone>(&self, value: T) -> T {

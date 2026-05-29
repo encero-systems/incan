@@ -101,6 +101,56 @@ pub struct CompressionError {
     pub operation: String,
     pub detail: String,
 }
+impl incan_stdlib::reflection::HasClassName for CompressionError {
+    fn __class_name__(&self) -> &'static str {
+        "CompressionError"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for CompressionError {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 4] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("kind"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("kind"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("codec"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("codec"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("Option[Codec]"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("operation"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("operation"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("detail"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("detail"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl CompressionError {
     pub fn message(&self) -> String {
         "\n        Return the human-readable error detail.\n        ";

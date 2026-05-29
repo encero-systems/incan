@@ -13,6 +13,38 @@ struct User {
     #[expect(dead_code, reason = "retained for Incan private field semantics")]
     age: i64,
 }
+impl incan_stdlib::reflection::HasClassName for User {
+    fn __class_name__(&self) -> &'static str {
+        "User"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for User {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("name"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("name"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("age"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("age"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

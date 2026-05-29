@@ -12,6 +12,38 @@ struct StoredNode {
     store_id_raw: i64,
     node: String,
 }
+impl incan_stdlib::reflection::HasClassName for StoredNode {
+    fn __class_name__(&self) -> &'static str {
+        "StoredNode"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for StoredNode {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("store_id_raw"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("store_id_raw"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("node"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("node"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 fn store_nodes(store_id: i64, stored_nodes: Vec<StoredNode>) -> Vec<String> {
     return (stored_nodes)
         .iter()

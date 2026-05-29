@@ -19,11 +19,66 @@ pub trait Shape {
 struct Dog {
     pub name: String,
 }
+impl incan_stdlib::reflection::HasClassName for Dog {
+    fn __class_name__(&self) -> &'static str {
+        "Dog"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Dog {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("name"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("name"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl Named for Dog {}
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Rectangle {
     width: f64,
     height: f64,
+}
+impl incan_stdlib::reflection::HasClassName for Rectangle {
+    fn __class_name__(&self) -> &'static str {
+        "Rectangle"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Rectangle {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("width"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("width"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("height"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("height"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
 }
 impl Rectangle {
     pub fn area(&self) -> f64 {
@@ -44,6 +99,29 @@ impl Shape for Rectangle {
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Circle {
     radius: f64,
+}
+impl incan_stdlib::reflection::HasClassName for Circle {
+    fn __class_name__(&self) -> &'static str {
+        "Circle"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Circle {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("radius"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("radius"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
 }
 impl Circle {
     pub fn draw(&self) -> String {
@@ -66,6 +144,29 @@ impl Drawable for Circle {
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Square {
     side: f64,
+}
+impl incan_stdlib::reflection::HasClassName for Square {
+    fn __class_name__(&self) -> &'static str {
+        "Square"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Square {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("side"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("side"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
 }
 impl Square {
     pub fn area(&self) -> f64 {
@@ -105,6 +206,47 @@ struct Carton {
     height: f64,
     depth: f64,
 }
+impl incan_stdlib::reflection::HasClassName for Carton {
+    fn __class_name__(&self) -> &'static str {
+        "Carton"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Carton {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("width"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("width"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("height"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("height"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("depth"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("depth"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("float"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl Carton {
     pub fn resize(&self, factor: f64) {
         self.width = self.width * factor;
@@ -132,6 +274,38 @@ pub trait Serializable {
 struct Document {
     title: String,
     content: String,
+}
+impl incan_stdlib::reflection::HasClassName for Document {
+    fn __class_name__(&self) -> &'static str {
+        "Document"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Document {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("title"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("title"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("content"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("content"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
 }
 impl Document {
     pub fn to_string(&self) -> String {

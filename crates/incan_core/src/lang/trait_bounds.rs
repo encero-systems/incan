@@ -138,6 +138,10 @@ pub mod rust {
 
     // Async
     pub const FUTURE: &str = "std::future::Future";
+
+    // Compiler-provided Incan reflection capabilities
+    pub const INCAN_CLASS_NAME: &str = "incan_stdlib::reflection::HasClassName";
+    pub const INCAN_FIELD_METADATA: &str = "incan_stdlib::reflection::HasFieldMetadata";
 }
 
 /// Look up the Rust trait path for an Incan trait bound name.

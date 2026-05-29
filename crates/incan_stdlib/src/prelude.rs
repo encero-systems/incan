@@ -7,7 +7,7 @@
 //! ```
 
 // Re-export runtime traits and helpers
-pub use crate::reflection::{FieldInfo, HasFieldInfo};
+pub use crate::reflection::{FieldInfo, HasClassName, HasFieldInfo, HasFieldMetadata};
 // frozen runtime types for consts (RFC 008)
 pub use crate::frozen::{FrozenBytes, FrozenDict, FrozenList, FrozenSet, FrozenStr};
 // Python-like numeric operations (generic entrypoints + compatibility helpers)

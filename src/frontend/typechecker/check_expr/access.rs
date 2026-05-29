@@ -1260,6 +1260,41 @@ impl TypeChecker {
         }
     }
 
+    /// Return the receiver-independent reflection result type available through an inferred generic capability.
+    fn generic_reflection_magic_method_return_type(&self, method: &str) -> Option<ResolvedType> {
+        match magic_methods::from_str(method) {
+            Some(magic_methods::MagicMethodId::ClassName) => Some(ResolvedType::Str),
+            Some(magic_methods::MagicMethodId::Fields) => Some(ResolvedType::FrozenList(Box::new(
+                ResolvedType::Named(surface_types::as_str(SurfaceTypeId::FieldInfo).to_string()),
+            ))),
+            _ => None,
+        }
+    }
+
+    fn validate_reflection_magic_call(
+        &mut self,
+        method: &str,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+    ) {
+        if !type_args.is_empty() {
+            self.errors
+                .push(errors::explicit_call_site_type_args_not_supported(span));
+        }
+        let expected_arity = match magic_methods::from_str(method) {
+            Some(magic_methods::MagicMethodId::ClassName)
+            | Some(magic_methods::MagicMethodId::Fields)
+            | Some(magic_methods::MagicMethodId::FieldItems) => 0,
+            Some(magic_methods::MagicMethodId::FieldValue) => 1,
+            _ => return,
+        };
+        if args.len() != expected_arity {
+            self.errors
+                .push(errors::builtin_arity(method, expected_arity, args.len(), span));
+        }
+    }
+
     /// Report whether a nominal type is allowed to use a given reflection magic method.
     ///
     /// Support is intentionally method-specific: `__class_name__()` is limited to models and classes, while
@@ -3008,6 +3043,7 @@ impl TypeChecker {
         if self.nominal_type_supports_reflection_magic(&base_ty, method)
             && let Some(ret) = self.reflection_magic_method_return_type(&base_ty, method)
         {
+            self.validate_reflection_magic_call(method, type_args, args, span);
             return ret;
         }
 
@@ -3600,6 +3636,10 @@ impl TypeChecker {
                     expected_return_ty,
                 )
             {
+                return ret;
+            }
+            if let Some(ret) = self.generic_reflection_magic_method_return_type(method) {
+                self.validate_reflection_magic_call(method, type_args, args, span);
                 return ret;
             }
             return base_ty.clone();

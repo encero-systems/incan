@@ -38,8 +38,8 @@ impl<'a> IrEmitter<'a> {
             // `Validate` is an Incan semantic derive (not a Rust derive macro).
             .filter(|d| derives::from_str(d.as_str()) != Some(DeriveId::Validate))
             .map(|d| match derives::from_str(d.as_str()) {
-                _ if d == "FieldInfo" => quote! { incan_derive::FieldInfo },
-                _ if d == "IncanClass" => quote! { incan_derive::IncanClass },
+                _ if d == derives::FIELD_INFO_DERIVE_NAME => quote! { incan_derive::FieldInfo },
+                _ if d == derives::INCAN_CLASS_DERIVE_NAME => quote! { incan_derive::IncanClass },
                 _ if d.contains("::") => {
                     let segs: Vec<TokenStream> = d.split("::").map(Self::rust_ident).map(|id| quote! { #id }).collect();
                     super::join_path_tokens(&segs)
@@ -80,6 +80,7 @@ impl<'a> IrEmitter<'a> {
         // RFC 023: emit generic type parameters with trait bounds (declaration) and bare names (type positions).
         let generics = self.emit_type_params(&s.type_params);
         let generics_bare = self.emit_type_params_bare(&s.type_params);
+        let reflection_impls = self.emit_struct_reflection_trait_impls(s)?;
 
         if is_tuple_struct {
             let tuple_fields: Vec<TokenStream> = s
@@ -107,6 +108,7 @@ impl<'a> IrEmitter<'a> {
             Ok(quote! {
                 #struct_def
                 #constructor_impl
+                #reflection_impls
             })
         } else {
             let fields: Vec<TokenStream> = s
@@ -168,8 +170,56 @@ impl<'a> IrEmitter<'a> {
                 }
 
                 #constructor
+                #reflection_impls
             })
         }
+    }
+
+    /// Emit the Rust traits that make compiler-provided reflection available through generic bounds.
+    fn emit_struct_reflection_trait_impls(&self, s: &IrStruct) -> Result<TokenStream, EmitError> {
+        let name = Self::rust_ident(&s.name);
+        let generics = self.emit_type_params(&s.type_params);
+        let generics_bare = self.emit_type_params_bare(&s.type_params);
+        let has_class_name = s
+            .derives
+            .iter()
+            .any(|derive| derive == derives::INCAN_CLASS_DERIVE_NAME);
+        let has_field_metadata = s.derives.iter().any(|derive| derive == derives::FIELD_INFO_DERIVE_NAME);
+
+        let class_name_impl = if has_class_name {
+            let class_name = s.name.as_str();
+            quote! {
+                impl #generics incan_stdlib::reflection::HasClassName for #name #generics_bare {
+                    fn __class_name__(&self) -> &'static str {
+                        #class_name
+                    }
+                }
+            }
+        } else {
+            quote! {}
+        };
+
+        let field_metadata_impl = if has_field_metadata {
+            if let Some((field_count, field_infos)) = self.reflection_field_info_entries(&s.name)? {
+                quote! {
+                    impl #generics incan_stdlib::reflection::HasFieldMetadata for #name #generics_bare {
+                        fn __fields__(&self) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+                            static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; #field_count] = [#(#field_infos),*];
+                            incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+                        }
+                    }
+                }
+            } else {
+                quote! {}
+            }
+        } else {
+            quote! {}
+        };
+
+        Ok(quote! {
+            #class_name_impl
+            #field_metadata_impl
+        })
     }
 
     /// Emit a Rust enum definition plus shared and value-enum-specific helper implementations.
@@ -216,8 +266,8 @@ impl<'a> IrEmitter<'a> {
                     && derives::from_str(d.as_str()) != Some(DeriveId::Display)
             })
             .map(|d| match derives::from_str(d.as_str()) {
-                _ if d == "FieldInfo" => quote! { incan_derive::FieldInfo },
-                _ if d == "IncanClass" => quote! { incan_derive::IncanClass },
+                _ if d == derives::FIELD_INFO_DERIVE_NAME => quote! { incan_derive::FieldInfo },
+                _ if d == derives::INCAN_CLASS_DERIVE_NAME => quote! { incan_derive::IncanClass },
                 _ if d.contains("::") => {
                     let segs: Vec<TokenStream> = d.split("::").map(Self::rust_ident).map(|id| quote! { #id }).collect();
                     super::join_path_tokens(&segs)

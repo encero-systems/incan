@@ -11,6 +11,29 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 pub struct Boxed<T> {
     pub value: T,
 }
+impl<T> incan_stdlib::reflection::HasClassName for Boxed<T> {
+    fn __class_name__(&self) -> &'static str {
+        "Boxed"
+    }
+}
+impl<T> incan_stdlib::reflection::HasFieldMetadata for Boxed<T> {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("value"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("value"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("T"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl<T> Boxed<T> {
     /// Returns field metadata for this type.
     pub fn __fields__(

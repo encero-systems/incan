@@ -4924,6 +4924,45 @@ def describe(u: User) -> None:
 }
 
 #[test]
+fn test_generic_reflection_magic_methods_record_surface_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def reflected_field_count[T](value: T) -> int:
+  fields = value.__fields__()
+  return len(fields)
+
+def reflected_class_name[T](value: T) -> str:
+  return value.__class_name__()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expressions
+            .expr_types
+            .values()
+            .any(|ty| matches!(ty, ResolvedType::Str)),
+        "expected generic __class_name__() to resolve to str, got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::FrozenList(inner)
+                    if matches!(inner.as_ref(), ResolvedType::Named(name) if name == "FieldInfo")
+            )
+        }),
+        "expected generic __fields__() to resolve to FrozenList[FieldInfo], got {:?}",
+        info.expressions.expr_types
+    );
+    Ok(())
+}
+
+#[test]
 fn test_reflection_fieldinfo_members_typecheck_without_explicit_import() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 model User:

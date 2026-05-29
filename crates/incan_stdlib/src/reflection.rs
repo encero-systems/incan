@@ -3,7 +3,7 @@
 //! The `HasFieldInfo` trait provides introspection capabilities for structured types,
 //! allowing generated code to query field names and types at runtime.
 
-use crate::frozen::{FrozenDict, FrozenStr};
+use crate::frozen::{FrozenDict, FrozenList, FrozenStr};
 
 /// Provides reflection information about a type's fields.
 ///
@@ -29,6 +29,21 @@ pub trait HasFieldInfo {
 
     /// Returns the type names of all fields in this type.
     fn field_types() -> Vec<&'static str>;
+}
+
+/// Provides the rich field metadata returned by Incan's value-level `__fields__()` helper.
+///
+/// The compiler implements this trait for generated models and classes so generic Incan code can use
+/// `value.__fields__()` through an inferred Rust capability bound without changing the concrete reflection result.
+pub trait HasFieldMetadata {
+    /// Returns field metadata for this value's type.
+    fn __fields__(&self) -> FrozenList<FieldInfo>;
+}
+
+/// Provides the value-level `__class_name__()` reflection helper for generated models and classes.
+pub trait HasClassName {
+    /// Returns this value's Incan class/model name.
+    fn __class_name__(&self) -> &'static str;
 }
 
 /// Runtime value type for field reflection (RFC 021).

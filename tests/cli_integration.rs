@@ -1859,6 +1859,79 @@ fn fmt_tuple_target_list_comprehension_remains_buildable() -> Result<(), Box<dyn
 }
 
 #[test]
+fn run_generic_reflection_calls_issue712() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "generic_reflection_issue712", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    fs::write(
+        src_dir.join("generic_reflection_helpers.incn"),
+        r#"pub def imported_field_count[T](value: T) -> int:
+    return len(value.__fields__())
+
+
+pub def imported_class_name[T](value: T) -> str:
+    return str(value.__class_name__())
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from generic_reflection_helpers import imported_class_name, imported_field_count
+
+
+model Row:
+    name: str
+
+
+class Bare:
+    value: int
+
+
+def reflected_field_count[T](value: T) -> int:
+    return len(value.__fields__())
+
+
+def reflected_class_name[T](value: T) -> str:
+    return str(value.__class_name__())
+
+
+def main() -> None:
+    row = Row(name="Ada")
+    println(reflected_class_name(row))
+    println(reflected_field_count(row))
+    println(imported_class_name(row))
+    println(imported_field_count(row))
+    bare = Bare(value=1)
+    println(bare.__class_name__())
+    println(len(bare.__fields__()))
+    println(reflected_class_name(bare))
+    println(reflected_field_count(bare))
+    println(imported_class_name(bare))
+    println(imported_field_count(bare))
+"#,
+    )?;
+
+    let check_output = run_incan(
+        tmp.path(),
+        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&check_output, "incan --check for generic reflection issue712");
+
+    let run_output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&run_output, "incan run for generic reflection issue712");
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        vec!["Row", "1", "Row", "1", "Bare", "1", "Bare", "1", "Bare", "1"],
+        "unexpected generic reflection output:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_public_alias_of_imported_item_reexports_original_path_issue617() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "public_alias_import_reexport", "")?;
