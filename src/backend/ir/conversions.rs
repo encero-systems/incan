@@ -812,9 +812,6 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 {
                     Conversion::Borrow
                 }
-                (_, None) if matches!(expr.ty, IrType::String) && !expr_has_rust_reference_shape(expr) => {
-                    Conversion::Borrow
-                }
                 (IrExprKind::Var { .. }, _) if matches!(expr.ty, IrType::String) => {
                     if expr_has_rust_reference_shape(expr) {
                         Conversion::None
@@ -828,6 +825,9 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                     } else {
                         Conversion::Borrow
                     }
+                }
+                (_, None) if matches!(expr.ty, IrType::String) && !expr_has_rust_reference_shape(expr) => {
+                    Conversion::Borrow
                 }
                 (_, Some(IrType::Ref(_))) if !expr_has_rust_reference_shape(expr) => Conversion::Borrow,
                 (_, Some(IrType::RefMut(_))) if !expr_has_rust_reference_shape(expr) => Conversion::MutBorrow,

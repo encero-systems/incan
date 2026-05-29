@@ -2694,6 +2694,9 @@ impl TypeChecker {
                     if let Some(sig) = self.rust_associated_function_signature(path, field) {
                         return self.resolved_function_type_from_rust_sig_for_path(&sig, false, path);
                     }
+                    if let Some(params) = self.rust_variant_callable_params(path, field) {
+                        return ResolvedType::Function(params, Box::new(ResolvedType::RustPath(path.to_string())));
+                    }
                     if let RustItemKind::Type(info) = &meta.kind
                         && let Some(rust_field) = info.fields.iter().find(|f| f.name == field)
                     {
@@ -3033,6 +3036,24 @@ impl TypeChecker {
         }
 
         if let Some(path) = self.rust_canonical_path_for_receiver_type(&base_ty) {
+            if let Some(params) = self.rust_variant_callable_params(&path, method) {
+                if !type_args.is_empty() {
+                    self.errors
+                        .push(errors::explicit_call_site_type_args_not_supported(span));
+                }
+                let arg_types = self.check_call_arg_types_for_params(args, &params);
+                let mut type_bindings = std::collections::HashMap::new();
+                self.validate_callable_arg_bindings(
+                    format!("rust::{path}.{method}").as_str(),
+                    &params,
+                    args,
+                    &arg_types,
+                    &mut type_bindings,
+                    span,
+                );
+                self.type_info.record_call_site_callable_params_exact(span, &params);
+                return ResolvedType::RustPath(path);
+            }
             if let Some(ret) = Self::known_rust_path_method_return(path.as_str(), method) {
                 return ret;
             }

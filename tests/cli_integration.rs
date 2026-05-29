@@ -2127,6 +2127,61 @@ def main() -> None:
 }
 
 #[test]
+fn build_inline_fstring_rust_string_variant_issue716() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let helper_dir = tmp.path().join("rust").join("tiny_error");
+    fs::create_dir_all(helper_dir.join("src"))?;
+    fs::write(
+        helper_dir.join("Cargo.toml"),
+        "[package]\nname = \"tiny_error\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    fs::write(
+        helper_dir.join("src").join("lib.rs"),
+        r#"pub enum TinyError {
+    Execution(String),
+}
+
+pub fn consume(err: TinyError) -> i64 {
+    match err {
+        TinyError::Execution(message) => message.len() as i64,
+    }
+}
+"#,
+    )?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "inline_fstring_rust_string_variant_issue716",
+        r#"
+[rust-dependencies]
+tiny_error = { path = "rust/tiny_error" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::tiny_error import TinyError, consume
+
+
+def make_error(value: str) -> int:
+    return consume(TinyError.Execution(f"bad value `{value}`"))
+
+
+def main() -> None:
+    println(str(make_error("x")))
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &build_output,
+        "incan build for inline f-string Rust String enum variant issue716",
+    );
+    Ok(())
+}
+
+#[test]
 fn build_public_alias_of_imported_item_reexports_original_path_issue617() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "public_alias_import_reexport", "")?;

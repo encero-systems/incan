@@ -951,6 +951,26 @@ impl TypeChecker {
         }
     }
 
+    /// Return callable-parameter metadata for one rust-inspect-backed enum variant constructor.
+    ///
+    /// Rust enum variants are callable constructors at the source surface, but they are not ordinary inherent
+    /// functions. Carrying their payload shapes through the same callable metadata path keeps backend argument
+    /// ownership planning target-driven instead of guessing from the source expression shape.
+    pub(crate) fn rust_variant_callable_params(&self, rust_path: &str, variant: &str) -> Option<Vec<CallableParam>> {
+        let metadata = self.rust_item_metadata_for_path(rust_path)?;
+        let RustItemKind::Type(info) = &metadata.kind else {
+            return None;
+        };
+        let variant = info.variants.iter().find(|candidate| candidate.name == variant)?;
+        Some(
+            variant
+                .fields
+                .iter()
+                .map(|field| CallableParam::positional(self.resolved_type_from_rust_shape(field)))
+                .collect(),
+        )
+    }
+
     /// Resolve a Rust-origin method signature from cached metadata.
     pub(crate) fn rust_method_signature(&self, rust_path: &str, method: &str) -> Option<RustFunctionSig> {
         let metadata = self.rust_item_metadata_for_path(rust_path)?;
