@@ -29,6 +29,47 @@ pub struct Expr {
     pub column_name: String,
     pub arguments: Vec<Expr>,
 }
+impl incan_stdlib::reflection::HasClassName for Expr {
+    fn __class_name__(&self) -> &'static str {
+        "Expr"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Expr {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("kind"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("kind"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("ExprKind"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("column_name"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("column_name"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("arguments"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("arguments"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("list[Expr]"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl Expr {
     /// Returns field metadata for this type.
     pub fn __fields__(

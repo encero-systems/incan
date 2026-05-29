@@ -12,6 +12,29 @@ incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 struct AllowModel {
     value: i64,
 }
+impl incan_stdlib::reflection::HasClassName for AllowModel {
+    fn __class_name__(&self) -> &'static str {
+        "AllowModel"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for AllowModel {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("value"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("value"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl AllowModel {
     #[allow(unused_variables)]
     pub fn model_method(&self, _: i64) -> i64 {
@@ -22,6 +45,29 @@ impl AllowModel {
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct allow_class {
     value: i64,
+}
+impl incan_stdlib::reflection::HasClassName for allow_class {
+    fn __class_name__(&self) -> &'static str {
+        "allow_class"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for allow_class {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("value"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("value"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
 }
 impl allow_class {
     #[allow(non_snake_case)]

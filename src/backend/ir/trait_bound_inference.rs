@@ -27,7 +27,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use incan_core::lang::trait_bounds::rust as tb;
+use incan_core::lang::{magic_methods, trait_bounds::rust as tb};
 
 use super::IrProgram;
 use super::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
@@ -1817,6 +1817,14 @@ fn scan_stmt_for_bounds(
     }
 }
 
+fn reflection_magic_trait_bound(method: &str) -> Option<&'static str> {
+    match magic_methods::from_str(method) {
+        Some(magic_methods::MagicMethodId::ClassName) => Some(tb::INCAN_CLASS_NAME),
+        Some(magic_methods::MagicMethodId::Fields) => Some(tb::INCAN_FIELD_METADATA),
+        _ => None,
+    }
+}
+
 /// Scan an expression for trait-bound-relevant operations on type parameters.
 fn scan_expr_for_bounds(
     expr: &IrExpr,
@@ -1868,10 +1876,13 @@ fn scan_expr_for_bounds(
         IrExprKind::MethodCall {
             receiver, method, args, ..
         } => {
-            if method == "clone"
-                && let Some(tp_name) = expr_type_param_name(receiver, type_params, params)
-            {
-                add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+            if let Some(tp_name) = expr_type_param_name(receiver, type_params, params) {
+                if method == "clone" {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                }
+                if let Some(bound) = reflection_magic_trait_bound(method) {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(bound));
+                }
             } else if method == "clone"
                 && matches!(receiver.ty, IrType::Unknown)
                 && matches!(&receiver.kind, IrExprKind::Var { .. } | IrExprKind::Field { .. })

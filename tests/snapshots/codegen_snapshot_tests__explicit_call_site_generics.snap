@@ -12,6 +12,19 @@ fn id<T>(x: T) -> T {
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Boxed {}
+impl incan_stdlib::reflection::HasClassName for Boxed {
+    fn __class_name__(&self) -> &'static str {
+        "Boxed"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Boxed {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl Boxed {
     pub fn pick<T>(&self, value: T) -> T {
         return value;

@@ -41,6 +41,19 @@ fn collect_via_callable(
 }
 #[derive(Debug, Clone, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Collector {}
+impl incan_stdlib::reflection::HasClassName for Collector {
+    fn __class_name__(&self) -> &'static str {
+        "Collector"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Collector {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl Collector {
     pub fn collect(
         &self,

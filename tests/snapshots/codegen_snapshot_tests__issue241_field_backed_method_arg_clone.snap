@@ -9,6 +9,19 @@ expression: rust_code
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
 #[derive(Clone, Debug, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Cursor {}
+impl incan_stdlib::reflection::HasClassName for Cursor {
+    fn __class_name__(&self) -> &'static str {
+        "Cursor"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Cursor {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 0] = [];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl Cursor {
     pub fn join(&self, _: Self, _: bool) -> Self {
         return Cursor {};
@@ -17,6 +30,29 @@ impl Cursor {
 #[derive(Clone, Debug, incan_derive::FieldInfo, incan_derive::IncanClass)]
 struct Wrapper {
     _cursor: Cursor,
+}
+impl incan_stdlib::reflection::HasClassName for Wrapper {
+    fn __class_name__(&self) -> &'static str {
+        "Wrapper"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Wrapper {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("_cursor"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("_cursor"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("Cursor"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
 }
 impl Wrapper {
     pub fn merge(&self, other: Self) -> Self {

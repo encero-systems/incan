@@ -32,6 +32,15 @@ def main() -> None:
         println(f"{info.name}: {info.type_name}")
 ```
 
+## Generic Reflection
+
+Generic helpers may call `value.__class_name__()` and `value.__fields__()` on a type parameter. The compiler treats those calls as reflection capabilities and emits the required runtime bounds for the generated Rust function, so the generic helper has the same field metadata result as a direct concrete call when it is instantiated with a reflectable model or class.
+
+```incan
+def reflected_field_count[T](value: T) -> int:
+    return len(value.__fields__())
+```
+
 ### `FieldInfo` structure
 
 Each `FieldInfo` record contains:
