@@ -2776,10 +2776,12 @@ fn inline_code(value: &str) -> String {
     format!("{fence} {value} {fence}")
 }
 
+/// Collect import aliases visible to LSP decorator resolution.
 fn collect_import_aliases(ast: &Program) -> HashMap<String, Vec<String>> {
     crate::frontend::decorator_resolution::collect_import_aliases(ast)
 }
 
+/// Resolve a decorator path through visible import aliases.
 fn resolve_decorator_path(
     dec: &crate::frontend::ast::Decorator,
     aliases: &HashMap<String, Vec<String>>,
@@ -3152,6 +3154,7 @@ fn unchecked_lookup_hover(source: &str, value_types: &[ValueTypeFact], ident: &s
     ))
 }
 
+/// Return the LSP source location for a stdlib import path.
 fn stdlib_location_for_path(path: &[String]) -> Option<Location> {
     let stub_rel = stdlib::stdlib_stub_path(path)?;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -3166,6 +3169,7 @@ fn stdlib_location_for_path(path: &[String]) -> Option<Location> {
     })
 }
 
+/// Find the import path that exposes a stdlib source location.
 fn find_stdlib_import_path(ast: &Program, offset: usize) -> Option<Vec<String>> {
     for decl in &ast.declarations {
         let Declaration::Import(import) = &decl.node else {

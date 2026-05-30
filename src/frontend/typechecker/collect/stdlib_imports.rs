@@ -1517,6 +1517,7 @@ impl TypeChecker {
         }
     }
 
+    /// Convert manifest parameters into checked callable parameters.
     fn params_from_manifest(&self, params: &[ParamExport]) -> Vec<CallableParam> {
         params
             .iter()
@@ -1723,6 +1724,7 @@ impl TypeChecker {
     }
 }
 
+/// Convert a manifest parameter kind into a checked parameter kind.
 fn param_kind_from_manifest(kind: ParamKindExport) -> ParamKind {
     match kind {
         ParamKindExport::Normal => ParamKind::Normal,

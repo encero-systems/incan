@@ -510,6 +510,7 @@ impl TypeChecker {
         self.rust_item_metadata_for_path(canonical_path)
     }
 
+    /// Split top-level generic arguments from a Rust display type.
     fn split_top_level_generic_args(args: &str) -> Vec<&str> {
         split_top_level_rust_args(args)
     }
@@ -588,6 +589,7 @@ impl TypeChecker {
         rendered
     }
 
+    /// Return the Rust definition metadata for a canonical path.
     fn rust_definition_for_path(&self, canonical_path: &str) -> Option<String> {
         let canonical_path = Self::normalize_rust_namespace_path(canonical_path);
         if let Some(definition) = self.symbols.all_symbols().iter().find_map(|sym| {
@@ -663,6 +665,7 @@ impl TypeChecker {
         Some(format!("{base}<{rendered_args}>"))
     }
 
+    /// Return whether two Rust type identities describe the same boundary type.
     fn rust_type_identities_compatible(&self, actual: &ResolvedType, expected: &ResolvedType) -> Option<bool> {
         if let ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) = expected
             && let Some(matches) = self.rust_type_identities_compatible(actual, inner)
@@ -687,6 +690,7 @@ impl TypeChecker {
         Some(self.rust_type_args_compatible(actual_args.as_slice(), expected_args.as_slice()))
     }
 
+    /// Return whether Rust generic type arguments are compatible.
     fn rust_type_args_compatible(&self, actual_args: &[ResolvedType], expected_args: &[ResolvedType]) -> bool {
         if actual_args.len() != expected_args.len() {
             return (actual_args.is_empty() && expected_args.iter().all(Self::rust_type_arg_is_unknown_placeholder))
@@ -699,6 +703,7 @@ impl TypeChecker {
         })
     }
 
+    /// Return whether a Rust type argument is an unknown placeholder.
     fn rust_type_arg_is_unknown_placeholder(arg: &ResolvedType) -> bool {
         match arg {
             ResolvedType::Unknown => true,
@@ -839,6 +844,7 @@ impl TypeChecker {
         strip_rust_borrow_lifetimes(rust_ty)
     }
 
+    /// Return Rust display text with lifetime parameters removed.
     fn rust_display_without_lifetimes(rust_ty: &str) -> String {
         Self::strip_borrow_lifetimes(rust_ty)
             .replace("'static ", "")
@@ -847,10 +853,12 @@ impl TypeChecker {
             .to_string()
     }
 
+    /// Return compact Rust display text for comparison.
     fn compact_rust_display(rust_ty: &str) -> String {
         Self::rust_display_without_lifetimes(rust_ty).replace(' ', "")
     }
 
+    /// Split a Rust generic display type into base and arguments.
     fn rust_generic_base_and_args(normalized: &str) -> Option<(&str, Vec<&str>)> {
         let start = normalized.find('<')?;
         if !normalized.ends_with('>') {
@@ -861,10 +869,12 @@ impl TypeChecker {
         Some((base, Self::split_top_level_generic_args(inner)))
     }
 
+    /// Build a Rust collection identity from a display-type base.
     fn rust_collection_id_from_display_base(base: &str) -> Option<CollectionTypeId> {
         incan_core::lang::types::collections::from_rust_display_base(base)
     }
 
+    /// Return the resolved Rust display type for a structural parameter.
     fn resolved_structural_rust_param_display<F>(&self, normalized: &str, mut resolve_arg: F) -> Option<ResolvedType>
     where
         F: FnMut(&Self, &str) -> ResolvedType,
@@ -2527,6 +2537,7 @@ impl TypeChecker {
         }
     }
 
+    /// Collect static writes performed inside initializer conditions.
     fn collect_static_initializer_static_writes_from_condition(
         &mut self,
         condition: &Condition,
@@ -2650,6 +2661,7 @@ impl TypeChecker {
         }
     }
 
+    /// Collect static dependencies referenced by a condition expression.
     fn collect_static_dependencies_from_condition(
         &self,
         condition: &Condition,
@@ -3675,6 +3687,7 @@ impl TypeChecker {
         }
     }
 
+    /// Return whether a module path names generated stdlib dependency code.
     fn is_generated_stdlib_dependency_module(module_name: &str) -> bool {
         module_name == incan_core::lang::stdlib::INCAN_STD_NAMESPACE
             || module_name

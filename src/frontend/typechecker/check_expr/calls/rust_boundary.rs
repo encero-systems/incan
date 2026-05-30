@@ -132,6 +132,7 @@ impl TypeChecker {
         );
     }
 
+    /// Return how a rusttype boundary matches an argument type.
     fn rusttype_boundary_match(&self, arg_ty: &ResolvedType, target_ty: &ResolvedType) -> Option<RustArgCoercionKind> {
         if let ResolvedType::Named(type_name) = arg_ty
             && let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(type_name)
@@ -159,6 +160,7 @@ impl TypeChecker {
         None
     }
 
+    /// Return whether a Rust type display names a generic type parameter.
     fn is_rust_generic_type_param_display(rust_ty: &str) -> bool {
         let normalized = rust_ty.trim().replace(' ', "");
         let mut chars = normalized.chars();
@@ -409,6 +411,7 @@ impl TypeChecker {
         }
     }
 
+    /// Bind Incan call arguments to a Rust function signature.
     fn bind_rust_call_args<'a>(
         &mut self,
         callable_display: &str,
@@ -544,6 +547,7 @@ impl TypeChecker {
         }
     }
 
+    /// Return whether an argument can cross a Rust boundary.
     #[cfg(test)]
     pub(in crate::frontend::typechecker) fn rust_arg_matches_boundary(
         &self,

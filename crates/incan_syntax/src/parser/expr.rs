@@ -1525,6 +1525,7 @@ impl<'a> Parser<'a> {
         Expr::Ident(s.to_string())
     }
 
+    /// Parse a `match` expression.
     fn match_expr(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         let subject = self.expression()?;
         self.expect(
@@ -1559,6 +1560,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse one arm of a `match` expression.
     fn match_arm(&mut self) -> Result<Spanned<MatchArm>, CompileError> {
         let start = self.current_span().start;
 
@@ -1813,6 +1815,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse an `if` expression.
     fn if_expr(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::If), "Expected 'if'")?;
         let condition = self.expression()?;
@@ -1847,6 +1850,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse a `loop` expression.
     fn loop_expr(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::Loop), "Expected 'loop'")?;
         self.expect(
@@ -2220,6 +2224,7 @@ impl<'a> Parser<'a> {
         Ok(clauses)
     }
 
+    /// Parse a parenthesized expression or tuple literal.
     fn paren_or_tuple(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         // Implicit line continuation: skip newlines after (
         self.skip_newlines();
@@ -2358,6 +2363,7 @@ impl<'a> Parser<'a> {
         result
     }
 
+    /// Parse call arguments.
     fn call_args(&mut self) -> Result<Vec<CallArg>, CompileError> {
         // Implicit line continuation: skip newlines after (
         self.skip_newlines();

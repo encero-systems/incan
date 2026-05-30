@@ -457,6 +457,7 @@ impl<'a> IrEmitter<'a> {
         self.canonical_function_registry = Some(registry);
     }
 
+    /// Return the canonical function registry used for callable-name lookups.
     pub(super) fn canonical_function_registry(&self) -> &FunctionRegistry {
         self.canonical_function_registry
             .as_ref()
@@ -547,6 +548,7 @@ impl<'a> IrEmitter<'a> {
         Some(format!("fn({params}) -> {}", ret.rust_name()))
     }
 
+    /// Build a callable-name signature key from a function signature.
     fn callable_name_signature_key_from_signature(signature: &FunctionSignature) -> Option<String> {
         let params = signature
             .params
@@ -556,6 +558,7 @@ impl<'a> IrEmitter<'a> {
         Self::callable_name_signature_key(&params, &signature.return_type)
     }
 
+    /// Return whether a type can participate in callable-name helper signatures.
     fn callable_name_type_supported(ty: &IrType) -> bool {
         match ty {
             IrType::Unknown | IrType::Generic(_) | IrType::ImplTrait(_) | IrType::SelfType => false,
@@ -590,6 +593,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Hash a callable-name signature key with a stable FNV-1a variant.
     fn stable_callable_name_hash(bytes: &[u8]) -> u64 {
         let mut hash = 0xcbf29ce484222325u64;
         for byte in bytes {
@@ -599,6 +603,7 @@ impl<'a> IrEmitter<'a> {
         hash
     }
 
+    /// Return callable-name signature keys defined by the current module.
     pub(super) fn local_callable_name_signature_keys(&self) -> HashSet<String> {
         self.callable_name_local_registry()
             .iter()
@@ -606,6 +611,7 @@ impl<'a> IrEmitter<'a> {
             .collect()
     }
 
+    /// Return the local function registry used for callable-name helpers.
     pub(super) fn callable_name_local_registry(&self) -> &FunctionRegistry {
         self.callable_name_local_registry
             .as_ref()
@@ -678,6 +684,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit the generated call that initializes local and imported module statics.
     pub(super) fn emit_module_static_init_call(&self) -> TokenStream {
         if *self.module_has_local_statics.borrow() || !self.imported_static_module_init_bindings.borrow().is_empty() {
             let init_fn = Self::rust_ident("__incan_init_module_statics");
@@ -687,14 +694,17 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Replace the imported static bindings that need per-static init calls.
     pub(super) fn set_imported_static_init_bindings(&self, bindings: HashSet<String>) {
         *self.imported_static_init_bindings.borrow_mut() = bindings;
     }
 
+    /// Replace imported static modules that need module-level init calls.
     pub(super) fn set_imported_static_module_init_bindings(&self, bindings: Vec<String>) {
         *self.imported_static_module_init_bindings.borrow_mut() = bindings;
     }
 
+    /// Build the generated Rust identifier for an imported static init shim.
     pub(super) fn imported_static_init_ident(name: &str) -> proc_macro2::Ident {
         let mut rendered = String::from("__incan_init_imported_static_");
         for ch in name.chars() {
@@ -707,10 +717,12 @@ impl<'a> IrEmitter<'a> {
         proc_macro2::Ident::new(&rendered, proc_macro2::Span::call_site())
     }
 
+    /// Return whether a static binding needs its imported init shim called.
     pub(super) fn static_needs_imported_init_call(&self, name: &str) -> bool {
         self.imported_static_init_bindings.borrow().contains(name)
     }
 
+    /// Return whether a static binding needs any imported static init support.
     pub(super) fn static_needs_imported_init_import(&self, name: &str) -> bool {
         self.static_needs_imported_init_call(name)
             || self
@@ -720,6 +732,7 @@ impl<'a> IrEmitter<'a> {
                 .any(|binding| binding == name)
     }
 
+    /// Emit the generated init call required before touching a static binding.
     pub(super) fn emit_static_init_call_for_static(&self, name: &str) -> TokenStream {
         if self.static_needs_imported_init_call(name) {
             let init_fn = Self::imported_static_init_ident(name);
@@ -980,6 +993,7 @@ impl<'a> IrEmitter<'a> {
         self.ambiguous_value_names = ambiguous;
     }
 
+    /// Emit a qualified path for an item imported from dependency metadata.
     pub(in crate::backend::ir::emit) fn emit_dependency_item_path(
         &self,
         module_path: &[String],
@@ -998,6 +1012,7 @@ impl<'a> IrEmitter<'a> {
         Some(iter.fold(first, |acc, segment| quote! { #acc :: #segment }))
     }
 
+    /// Emit a dependency-qualified type path when a local type name is ambiguous.
     pub(in crate::backend::ir::emit) fn emit_dependency_type_path(&self, name: &str) -> Option<TokenStream> {
         if name.contains("::") || self.ambiguous_type_names.contains(name) {
             return None;
@@ -1006,6 +1021,7 @@ impl<'a> IrEmitter<'a> {
         self.emit_dependency_item_path(module_path, name)
     }
 
+    /// Emit a dependency-qualified value path when a local value name is ambiguous.
     pub(in crate::backend::ir::emit) fn emit_dependency_value_path(&self, name: &str) -> Option<TokenStream> {
         if name.contains("::") || self.ambiguous_value_names.contains(name) {
             return None;

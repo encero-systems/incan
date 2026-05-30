@@ -811,6 +811,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         }
     }
 
+    /// Collect callable-name signature keys required by function arguments.
     fn callable_name_function_arg_signature_keys(&self, expr: &TypedExpr) -> Vec<String> {
         match &expr.kind {
             IrExprKind::Var { name, .. } => {
@@ -1163,6 +1164,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Collect imported static bindings that need generated init calls.
     fn collect_imported_static_init_bindings(&self, declarations: &[&IrDecl]) -> (HashSet<String>, Vec<String>) {
         let mut access_bindings = HashSet::new();
         let mut module_init_bindings = HashSet::new();
@@ -2324,6 +2326,7 @@ impl<'a> IrEmitter<'a> {
         Ok(format!("{}{}", header, with_marker))
     }
 
+    /// Collect callable-name use facts for a whole IR program.
     pub(crate) fn callable_name_use_facts_for_program(
         program: &IrProgram,
         externally_reachable_items: &HashSet<String>,
@@ -2343,6 +2346,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return the callable-name signature metadata for a helper key.
     fn callable_name_signature_for_key(&self, key: &str) -> Option<(Vec<IrType>, IrType)> {
         self.callable_name_local_registry()
             .iter()
@@ -2362,6 +2366,7 @@ impl<'a> IrEmitter<'a> {
             })
     }
 
+    /// Return helper keys needed for callable-name resolution.
     fn callable_name_helper_keys(
         &self,
         local_callable_name_signature_keys: &HashSet<String>,
@@ -2389,6 +2394,7 @@ impl<'a> IrEmitter<'a> {
         keys
     }
 
+    /// Build a callable-name resolution expression with a source-name fallback.
     fn callable_name_resolution_expr_with_fallback(
         &self,
         key: &str,
@@ -2423,6 +2429,7 @@ impl<'a> IrEmitter<'a> {
         resolved
     }
 
+    /// Emit the trait used for generic callable-name reflection.
     fn emit_generic_callable_name_trait(&self, keys: &[String]) -> Option<TokenStream> {
         if keys.is_empty() {
             return None;
@@ -2479,6 +2486,7 @@ impl<'a> IrEmitter<'a> {
         })
     }
 
+    /// Emit generated callable-name helper functions.
     fn emit_callable_name_helpers(
         &self,
         emitted_callable_names: &HashSet<String>,

@@ -23,6 +23,7 @@ pub fn testing_marker_runtime_misuse_message(marker: &str) -> String {
     format!("std.testing.{marker} is marker metadata for `incan test` and is not executable runtime logic")
 }
 
+/// Report misuse of compile-time testing markers at runtime.
 fn marker_runtime_misuse(marker: &str) -> ! {
     crate::errors::__private::raise_runtime_misuse(&testing_marker_runtime_misuse_message(marker));
 }

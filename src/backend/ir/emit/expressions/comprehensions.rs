@@ -729,16 +729,19 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return whether a call argument contains a `try` expression.
     fn call_arg_contains_try(arg: &IrCallArg) -> bool {
         Self::expr_contains_try(&arg.expr)
     }
 
+    /// Return whether a list entry contains a `try` expression.
     fn list_entry_contains_try(entry: &IrListEntry) -> bool {
         match entry {
             IrListEntry::Element(expr) | IrListEntry::Spread(expr) => Self::expr_contains_try(expr),
         }
     }
 
+    /// Return whether a dict entry contains a `try` expression.
     fn dict_entry_contains_try(entry: &IrDictEntry) -> bool {
         match entry {
             IrDictEntry::Pair(key, value) => Self::expr_contains_try(key) || Self::expr_contains_try(value),
@@ -746,6 +749,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return whether a generator clause contains a `try` expression.
     fn generator_clause_contains_try(clause: &IrGeneratorClause) -> bool {
         match clause {
             IrGeneratorClause::For { iterable, .. } => Self::expr_contains_try(iterable),
@@ -753,6 +757,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return whether a statement contains a `try` expression.
     fn stmt_contains_try(stmt: &IrStmt) -> bool {
         match &stmt.kind {
             IrStmtKind::Expr(expr) | IrStmtKind::Let { value: expr, .. } | IrStmtKind::Yield(expr) => {
@@ -795,6 +800,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return whether an assignment target contains a `try` expression.
     fn assign_target_contains_try(target: &AssignTarget) -> bool {
         match target {
             AssignTarget::Field { object, .. } => Self::expr_contains_try(object),

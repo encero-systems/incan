@@ -775,6 +775,7 @@ fn type_bound_from_checked(bound: &CheckedTypeBound) -> TypeBoundExport {
     }
 }
 
+/// Convert checked callable parameters into library-manifest parameter records.
 fn params_from_checked(params: &[CallableParam]) -> Vec<ParamExport> {
     params
         .iter()
@@ -789,6 +790,7 @@ fn params_from_checked(params: &[CallableParam]) -> Vec<ParamExport> {
         .collect()
 }
 
+/// Convert an AST parameter kind into a library-manifest parameter kind.
 fn param_kind_from_ast(kind: crate::frontend::ast::ParamKind) -> ParamKindExport {
     match kind {
         crate::frontend::ast::ParamKind::Normal => ParamKindExport::Normal,

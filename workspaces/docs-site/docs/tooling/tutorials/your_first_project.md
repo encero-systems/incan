@@ -212,8 +212,7 @@ test_main.incn::test_farewell PASSED
 ```
 
 !!! tip "Test discovery"
-    Test files are found by name (`test_*.incn`) and test functions by name (`def test_*()`).
-    See: [Testing](../how-to/testing.md).
+    Test files are found by name (`test_*.incn`) and test functions by name (`def test_*()`). See: [Testing](../how-to/testing.md).
 
 ## Your final project layout
 

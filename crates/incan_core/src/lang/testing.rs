@@ -103,6 +103,7 @@ pub fn assert_comparison_failure_kind(id: TestingAssertHelperId) -> Option<&'sta
     }
 }
 
+/// Build metadata for a standard-library assertion helper.
 const fn assert_helper(id: TestingAssertHelperId, canonical: &'static str) -> TestingAssertHelperInfo {
     LangItemInfo {
         id,

@@ -46,6 +46,7 @@ pub(super) fn emit_registered_method_fast_path(
     Ok(None)
 }
 
+/// Return whether a receiver can use a method fast path.
 fn receiver_matches_fast_path(emitter: &IrEmitter, receiver_ty: &IrType, fast_path: &MethodFastPath) -> bool {
     let Some((name, args)) = named_generic_receiver(receiver_ty) else {
         return false;
@@ -57,6 +58,7 @@ fn receiver_matches_fast_path(emitter: &IrEmitter, receiver_ty: &IrType, fast_pa
         && type_module_matches(emitter, name, fast_path)
 }
 
+/// Return the named generic receiver, if present.
 fn named_generic_receiver(ty: &IrType) -> Option<(&str, &[IrType])> {
     match peel_refs(ty) {
         IrType::NamedGeneric(name, args) => Some((name.as_str(), args.as_slice())),
@@ -64,6 +66,7 @@ fn named_generic_receiver(ty: &IrType) -> Option<(&str, &[IrType])> {
     }
 }
 
+/// Remove transparent reference wrappers from an IR type.
 fn peel_refs(ty: &IrType) -> &IrType {
     let mut ty = ty;
     while let IrType::Ref(inner) | IrType::RefMut(inner) = ty {
@@ -72,10 +75,12 @@ fn peel_refs(ty: &IrType) -> &IrType {
     ty
 }
 
+/// Return whether a type name matches an expected Rust path.
 fn type_name_matches(actual: &str, expected: &str) -> bool {
     actual == expected || actual.rsplit("::").next() == Some(expected)
 }
 
+/// Return whether a concrete type argument matches an expected Rust path.
 fn concrete_type_arg_matches(actual: &IrType, expected: &str) -> bool {
     match expected {
         "str" => matches!(
@@ -90,6 +95,7 @@ fn concrete_type_arg_matches(actual: &IrType, expected: &str) -> bool {
     }
 }
 
+/// Return whether a type module path matches an expected Rust module.
 fn type_module_matches(emitter: &IrEmitter, type_name: &str, fast_path: &MethodFastPath) -> bool {
     let short_name = type_name.rsplit("::").next().unwrap_or(type_name);
     type_path_matches(type_name, fast_path.source_module, fast_path.receiver_type)
@@ -101,15 +107,18 @@ fn type_module_matches(emitter: &IrEmitter, type_name: &str, fast_path: &MethodF
         })
 }
 
+/// Return whether a type path matches an expected Rust path.
 fn type_path_matches(type_name: &str, module: &str, receiver_type: &str) -> bool {
     let module_path = module.replace('.', "::");
     type_name == format!("{module_path}::{receiver_type}")
 }
 
+/// Return whether a module path matches an expected Rust module.
 fn module_matches(actual: &[String], expected: &str) -> bool {
     actual.iter().map(String::as_str).eq(expected.split('.'))
 }
 
+/// Emit one argument for a method fast path.
 fn emit_fast_path_arg(
     emitter: &IrEmitter,
     shape: MethodFastPathArgShape,
@@ -124,6 +133,7 @@ fn emit_fast_path_arg(
     }
 }
 
+/// Emit an argument borrowed as `str` for a method fast path.
 fn emit_borrowed_str_arg(emitter: &IrEmitter, arg: &TypedExpr) -> Result<TokenStream, EmitError> {
     if let IrExprKind::Index { object, index } = &arg.kind
         && list_element_type(&object.ty).is_some_and(is_owned_string_type)
@@ -138,6 +148,7 @@ fn emit_borrowed_str_arg(emitter: &IrEmitter, arg: &TypedExpr) -> Result<TokenSt
     Ok(borrowed_str_tokens(&arg.ty, emitted))
 }
 
+/// Return the element type for a list IR type.
 fn list_element_type(ty: &IrType) -> Option<&IrType> {
     match peel_refs(ty) {
         IrType::List(elem) => Some(elem.as_ref()),
@@ -145,10 +156,12 @@ fn list_element_type(ty: &IrType) -> Option<&IrType> {
     }
 }
 
+/// Return whether an IR type is owned string storage.
 fn is_owned_string_type(ty: &IrType) -> bool {
     matches!(peel_refs(ty), IrType::String)
 }
 
+/// Emit tokens that borrow an expression as `str`.
 fn borrowed_str_tokens(ty: &IrType, emitted: TokenStream) -> TokenStream {
     match ty {
         IrType::StaticStr | IrType::StrRef => emitted,
@@ -162,6 +175,7 @@ fn borrowed_str_tokens(ty: &IrType, emitted: TokenStream) -> TokenStream {
     }
 }
 
+/// Emit an expression borrowed for a Rust call boundary.
 fn borrow_expr_for_call(ty: &IrType, emitted: TokenStream) -> TokenStream {
     match ty {
         IrType::Ref(_) | IrType::RefMut(_) => emitted,

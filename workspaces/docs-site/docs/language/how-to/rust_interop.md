@@ -513,8 +513,7 @@ Direct `list[T]` arguments lower to Rust `Vec<T>`. At external Rust call boundar
 ## Understanding Rust types (optional)
 
 ??? tip "Coming from Python?"
-    If you're new to Rust types like `Vec`, `HashMap`, `String`, `Option`, and `Result`, see
-    [Understanding Rust types (coming from Python)](rust_types_for_python_devs.md).
+    If you're new to Rust types like `Vec`, `HashMap`, `String`, `Option`, and `Result`, see [Understanding Rust types (coming from Python)](rust_types_for_python_devs.md).
 
 ### Matching on Rust-backed enums and oneofs
 

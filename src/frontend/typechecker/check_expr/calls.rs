@@ -23,6 +23,7 @@ mod constructors;
 mod generic_bounds;
 mod rust_boundary;
 
+/// Return whether the last Rust path segment looks like a type name.
 fn rust_path_last_segment_looks_like_type(path: &str) -> bool {
     path.rsplit("::")
         .next()

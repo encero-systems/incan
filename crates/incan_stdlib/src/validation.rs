@@ -10,6 +10,7 @@ pub struct ValidationError {
 }
 
 impl ValidationError {
+    /// Create a validation error without a machine-readable code.
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -17,6 +18,7 @@ impl ValidationError {
         }
     }
 
+    /// Create a validation error with a machine-readable code.
     pub fn with_code(message: impl Into<String>, code: impl Into<String>) -> Self {
         Self {
             message: message.into(),
@@ -43,6 +45,7 @@ pub struct ValidationFailure {
 }
 
 impl ValidationFailure {
+    /// Create a field/path validation failure from a displayable error.
     pub fn new(path: impl Into<String>, error: impl Display) -> Self {
         Self {
             path: path.into(),
@@ -81,6 +84,7 @@ pub struct ValidationErrorsBuilder {
 }
 
 impl ValidationErrorsBuilder {
+    /// Create a validation-error builder for a target type.
     pub fn new(target: impl Into<String>) -> Self {
         Self {
             target: target.into(),
@@ -88,14 +92,17 @@ impl ValidationErrorsBuilder {
         }
     }
 
+    /// Add a validation failure for one field or path.
     pub fn push_field_error(&mut self, field: impl Into<String>, error: impl Display) {
         self.failures.push(ValidationFailure::new(field, error));
     }
 
+    /// Return whether no validation failures have been collected.
     pub fn is_empty(&self) -> bool {
         self.failures.is_empty()
     }
 
+    /// Raise an aggregate validation error if any failures were collected.
     pub fn raise_if_any(self) {
         if !self.failures.is_empty() {
             crate::errors::raise(ValidationErrors {
@@ -106,6 +113,7 @@ impl ValidationErrorsBuilder {
     }
 }
 
+/// Raise a validation error for a failed validated-newtype hook.
 #[cold]
 #[track_caller]
 pub fn raise_validation_error(target: impl AsRef<str>, hook: impl AsRef<str>, error: impl Display) -> ! {
@@ -116,6 +124,7 @@ pub fn raise_validation_error(target: impl AsRef<str>, hook: impl AsRef<str>, er
     ))
 }
 
+/// Raise a validation error for a failed named constraint.
 #[cold]
 #[track_caller]
 pub fn raise_constraint_error(target: impl AsRef<str>, constraint: impl AsRef<str>) -> ! {

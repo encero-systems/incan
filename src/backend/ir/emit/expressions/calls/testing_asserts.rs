@@ -68,6 +68,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Evaluate an IR expression as a constant boolean when possible.
     fn constant_bool(expr: &TypedExpr) -> Option<bool> {
         match &expr.kind {
             IrExprKind::Bool(value) => Some(*value),
@@ -76,6 +77,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Normalize an assert argument for generated failure messages.
     fn canonical_assert_arg(
         helper_id: TestingAssertHelperId,
         args: &[IrCallArg],
@@ -90,6 +92,7 @@ impl<'a> IrEmitter<'a> {
         })
     }
 
+    /// Build the generated failure message for an assertion.
     fn assert_failure_message(helper_id: TestingAssertHelperId) -> Result<&'static str, EmitError> {
         testing::assert_helper_default_failure_message(helper_id).ok_or_else(|| {
             EmitError::Unsupported(format!(
@@ -99,6 +102,7 @@ impl<'a> IrEmitter<'a> {
         })
     }
 
+    /// Extract the payload expression from a `Result` constructor call.
     fn result_constructor_payload(expr: &TypedExpr, constructor: ConstructorId) -> Option<&TypedExpr> {
         let expr = match &expr.kind {
             IrExprKind::InteropCoerce { expr, .. } => expr.as_ref(),
@@ -121,6 +125,7 @@ impl<'a> IrEmitter<'a> {
         args.first().map(|arg| &arg.expr)
     }
 
+    /// Emit a generated assertion failure.
     fn emit_assert_failure(
         &self,
         default_message: &'static str,
@@ -140,6 +145,7 @@ impl<'a> IrEmitter<'a> {
         Ok(quote! { panic!(#default_message); })
     }
 
+    /// Emit a generated `assert_raises` failure.
     fn emit_assert_raises_failure(
         &self,
         default_message: TokenStream,
@@ -159,6 +165,7 @@ impl<'a> IrEmitter<'a> {
         Ok(default_message)
     }
 
+    /// Emit a generated comparison assertion failure.
     fn emit_assert_comparison_failure(
         &self,
         failure_kind: &'static str,
@@ -211,6 +218,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit an assertion that an option is `Some`.
     fn emit_assert_option_some(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
         let option = Self::canonical_assert_arg(TestingAssertHelperId::AssertIsSome, args, 0)?;
         let option_tokens = self.emit_expr(option)?;
@@ -229,6 +237,7 @@ impl<'a> IrEmitter<'a> {
         }})
     }
 
+    /// Emit an assertion that an option is `None`.
     fn emit_assert_option_none(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
         let option = Self::canonical_assert_arg(TestingAssertHelperId::AssertIsNone, args, 0)?;
         if matches!(option.kind, IrExprKind::None) {
@@ -247,6 +256,7 @@ impl<'a> IrEmitter<'a> {
         }})
     }
 
+    /// Emit an assertion that a result is `Ok`.
     fn emit_assert_result_ok(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
         let result = Self::canonical_assert_arg(TestingAssertHelperId::AssertIsOk, args, 0)?;
         if let Some(payload) = Self::result_constructor_payload(result, ConstructorId::Ok) {
@@ -269,6 +279,7 @@ impl<'a> IrEmitter<'a> {
         }})
     }
 
+    /// Emit an assertion that a result is `Err`.
     fn emit_assert_result_err(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
         let result = Self::canonical_assert_arg(TestingAssertHelperId::AssertIsErr, args, 0)?;
         if let Some(payload) = Self::result_constructor_payload(result, ConstructorId::Err) {
@@ -291,6 +302,7 @@ impl<'a> IrEmitter<'a> {
         }})
     }
 
+    /// Emit an `assert_raises` call.
     fn emit_assert_raises(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
         let call = Self::canonical_assert_arg(TestingAssertHelperId::AssertRaises, args, 0)?;
         let expected = Self::canonical_assert_arg(TestingAssertHelperId::AssertRaises, args, 1)?;

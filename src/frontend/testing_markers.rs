@@ -306,6 +306,7 @@ fn find_stdlib_file(relative: &str) -> Option<PathBuf> {
     None
 }
 
+/// Extract compile-time semantics from a testing marker expression.
 fn extract_testing_marker_semantics(program: &ast::Program) -> Result<TestingMarkerSemantics, TestingMarkerLoadError> {
     let mut semantics = TestingMarkerSemantics::default();
     let mut saw_markers = false;
@@ -348,6 +349,7 @@ fn extract_testing_marker_semantics(program: &ast::Program) -> Result<TestingMar
     Ok(semantics)
 }
 
+/// Validate the compile-time testing marker inventory.
 fn validate_testing_marker_inventory(semantics: &TestingMarkerSemantics) -> Result<(), TestingMarkerLoadError> {
     let expected_names = incan_core::lang::testing::RUNNER_ONLY_MARKER_NAMES;
     let mut missing = Vec::new();

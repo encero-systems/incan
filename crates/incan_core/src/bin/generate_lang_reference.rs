@@ -175,14 +175,17 @@ fn write_feature_inventory_reference(path: &Path) {
     }
 }
 
+/// Escape generated reference text so it is safe inside a Markdown table cell.
 fn markdown_table_cell(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
 }
 
+/// Wrap generated reference text in Markdown code formatting.
 fn markdown_code(value: &str) -> String {
     format!("`{}`", value.replace('`', "\\`"))
 }
 
+/// Render a comma-separated list of Markdown links for generated reference output.
 fn markdown_links(links: &[features::FeatureLink]) -> String {
     links
         .iter()
@@ -191,6 +194,7 @@ fn markdown_links(links: &[features::FeatureLink]) -> String {
         .join(", ")
 }
 
+/// Render the canonical source forms cell for a generated reference table row.
 fn canonical_forms_cell(forms: &[&str]) -> String {
     if forms.is_empty() {
         return "-".to_string();
@@ -202,6 +206,7 @@ fn canonical_forms_cell(forms: &[&str]) -> String {
         .join("<br>")
 }
 
+/// Render the compact feature summary table for the generated language reference.
 fn render_features_summary_section(out: &mut String) {
     start_section(out, "## All features");
 
@@ -226,6 +231,7 @@ fn render_features_summary_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render detailed feature entries for the generated language reference.
 fn render_features_detail_section(out: &mut String) {
     start_section(out, "## Feature details");
 

@@ -9,6 +9,7 @@ use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use incan_core::lang::stdlib;
 use incan_core::lang::traits::{self as core_traits, TraitId};
 
+/// Collect field-alias metadata for exported models.
 pub(super) fn collect_model_field_aliases(
     main: &Program,
     deps: &[(&str, &Program)],
@@ -109,6 +110,7 @@ pub(super) fn collect_externally_reachable_items_by_module(
         .map(|(name, _, path_segments)| path_segments.clone().unwrap_or_else(|| vec![(*name).to_string()]))
         .collect();
 
+    /// Record dependency imports from checked module metadata.
     fn record_imports(
         reachable: &mut HashMap<Vec<String>, HashSet<String>>,
         program: &Program,

@@ -111,6 +111,7 @@ fn queue_implicit_stdlib_helpers(
     Ok(queued)
 }
 
+/// Return the stable key used for dependency graph edges.
 fn dependency_edge_key(path: &Path) -> String {
     path.to_string_lossy().to_string()
 }

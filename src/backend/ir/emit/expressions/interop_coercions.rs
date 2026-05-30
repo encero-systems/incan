@@ -146,6 +146,7 @@ fn emit_structural_borrow_projection(source_tokens: TokenStream, target_ty: &IrT
     }
 }
 
+/// Emit a structural borrow coercion at a Rust call boundary.
 fn emit_structural_borrow_coercion(inner_tokens: TokenStream, target_ty: &IrType) -> Option<TokenStream> {
     match target_ty {
         IrType::List(_) | IrType::Set(_) | IrType::Dict(_, _) | IrType::Option(_) | IrType::Result(_, _) => {

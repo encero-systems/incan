@@ -6,7 +6,7 @@ use super::super::super::decl::{FunctionParam, IrAssociatedType, IrDecl, IrDeclK
 use super::super::super::expr::{IrCallArg, IrCallArgKind, IrExprKind, VarAccess, VarRefKind};
 use super::super::super::stmt::{IrStmt, IrStmtKind};
 use super::super::super::types::IrType;
-use super::super::super::{IrSpan, Mutability, TypedExpr};
+use super::super::super::{FunctionSignature, IrSpan, Mutability, TypedExpr};
 use super::super::AstLowering;
 use super::super::TraitImplLoweringInput;
 use super::super::errors::LoweringError;
@@ -318,10 +318,7 @@ impl AstLowering {
                 continue;
             };
             let static_name = Self::decorator_method_static_binding_name(type_name, &method.node.name);
-            let decorated_ty = IrType::Function {
-                params: params.iter().map(|param| self.lower_resolved_type(&param.ty)).collect(),
-                ret: Box::new(self.lower_resolved_type(&ret)),
-            };
+            let decorated_ty = self.function_type_from_callable_surface(&params, &ret);
             let application = self.decorator_method_application_expr(type_name, &method.node)?;
             let mut value = self.lower_expr_spanned(&application)?;
             value.ty = decorated_ty.clone();
@@ -418,10 +415,11 @@ impl AstLowering {
         }));
         let return_type = self.lower_resolved_type(&ret);
         let static_name = Self::decorator_method_static_binding_name(owner, &method.name);
+        let callable_signature = self.function_signature_from_callable_surface(&params, &ret);
         let static_func = TypedExpr::new(
             IrExprKind::StaticRead { name: static_name },
             IrType::Function {
-                params: params.iter().map(|param| self.lower_resolved_type(&param.ty)).collect(),
+                params: callable_signature.params.iter().map(|param| param.ty.clone()).collect(),
                 ret: Box::new(return_type.clone()),
             },
         );
@@ -438,24 +436,13 @@ impl AstLowering {
                 receiver_ty,
             ),
         });
-        args.extend(wrapper_params.iter().skip(1).map(|param| IrCallArg {
-            name: None,
-            kind: IrCallArgKind::Positional,
-            expr: TypedExpr::new(
-                IrExprKind::Var {
-                    name: param.name.clone(),
-                    access: VarAccess::Read,
-                    ref_kind: VarRefKind::Value,
-                },
-                param.ty.clone(),
-            ),
-        }));
+        args.extend(Self::forwarding_args_from_params(&wrapper_params[1..]));
         let call = TypedExpr::new(
             IrExprKind::Call {
                 func: Box::new(static_func),
                 type_args: Vec::new(),
                 args,
-                callable_signature: None,
+                callable_signature: Some(callable_signature),
                 canonical_path: None,
             },
             return_type.clone(),
@@ -525,22 +512,7 @@ impl AstLowering {
             },
             receiver_ty,
         );
-        let args = adapter_params
-            .iter()
-            .skip(1)
-            .map(|param| IrCallArg {
-                name: None,
-                kind: IrCallArgKind::Positional,
-                expr: TypedExpr::new(
-                    IrExprKind::Var {
-                        name: param.name.clone(),
-                        access: VarAccess::Read,
-                        ref_kind: VarRefKind::Value,
-                    },
-                    param.ty.clone(),
-                ),
-            })
-            .collect();
+        let args = Self::forwarding_args_from_params(&adapter_params[1..]);
         let call = TypedExpr::new(
             IrExprKind::MethodCall {
                 receiver: Box::new(receiver),
@@ -548,7 +520,10 @@ impl AstLowering {
                 dispatch: None,
                 type_args: Vec::new(),
                 args,
-                callable_signature: None,
+                callable_signature: Some(FunctionSignature {
+                    params: adapter_params.iter().skip(1).cloned().collect(),
+                    return_type: return_type.clone(),
+                }),
                 arg_policy: super::super::super::expr::MethodCallArgPolicy::Default,
             },
             return_type.clone(),

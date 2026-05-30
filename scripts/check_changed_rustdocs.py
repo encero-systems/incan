@@ -58,6 +58,7 @@ def changed_rust_files_from_diff_args(args: list[str]) -> dict[Path, set[int]]:
                 or rel.endswith("/tests.rs")
                 or "/examples/" in rel
                 or rel.startswith("examples/")
+                or rel.startswith("crates/third_party/")
             ):
                 current_path = None
                 continue
@@ -72,7 +73,7 @@ def changed_rust_files_from_diff_args(args: list[str]) -> dict[Path, set[int]]:
         count = int(match.group("count") or "1")
         if count == 0:
             continue
-            files[current_path].update(range(start, start + count))
+        files[current_path].update(range(start, start + count))
     return files
 
 
@@ -173,6 +174,32 @@ def quote_macro_lines(lines: list[str]) -> set[int]:
     return quoted
 
 
+def trait_impl_lines(lines: list[str]) -> set[int]:
+    """Return line numbers inside explicit trait implementation blocks."""
+    trait_impls: set[int] = set()
+    brace_depth = 0
+    active_impl_depth: int | None = None
+
+    for index, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        open_braces = line.count("{")
+        close_braces = line.count("}")
+
+        if active_impl_depth is None and stripped.startswith("impl ") and " for " in stripped and "{" in stripped:
+            active_impl_depth = brace_depth + open_braces
+
+        if active_impl_depth is not None:
+            trait_impls.add(index)
+
+        brace_depth += open_braces
+        brace_depth -= close_braces
+
+        if active_impl_depth is not None and brace_depth < active_impl_depth:
+            active_impl_depth = None
+
+    return trait_impls
+
+
 def function_end_line(lines: list[str], fn_index: int) -> int:
     """Return the best-effort inclusive end line for a function starting at `fn_index`."""
     depth = 0
@@ -195,6 +222,7 @@ def missing_docs(path: Path, changed_lines: set[int]) -> list[tuple[int, str]]:
     lines = path.read_text().splitlines()
     test_lines = test_module_lines(lines)
     quoted_lines = quote_macro_lines(lines)
+    trait_impls = trait_impl_lines(lines)
     misses: list[tuple[int, str]] = []
     for index, line in enumerate(lines):
         match = FN_RE.match(line)
@@ -204,6 +232,8 @@ def missing_docs(path: Path, changed_lines: set[int]) -> list[tuple[int, str]]:
         if line_no in test_lines:
             continue
         if line_no in quoted_lines:
+            continue
+        if line_no in trait_impls:
             continue
         end_line = function_end_line(lines, index)
         if not any(line_no <= changed <= end_line for changed in changed_lines):

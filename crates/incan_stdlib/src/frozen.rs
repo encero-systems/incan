@@ -199,6 +199,7 @@ impl<T: 'static> FrozenList<T> {
 }
 
 impl<T: 'static> AsRef<[T]> for FrozenList<T> {
+    /// Return a borrowed view of this value.
     fn as_ref(&self) -> &[T] {
         self.data
     }
@@ -207,6 +208,7 @@ impl<T: 'static> AsRef<[T]> for FrozenList<T> {
 impl<T: 'static> core::ops::Deref for FrozenList<T> {
     type Target = [T];
 
+    /// Return the underlying target for deref coercions.
     fn deref(&self) -> &Self::Target {
         self.data
     }

@@ -84,6 +84,7 @@ pub enum RunProfile {
 }
 
 impl ProjectGenerator {
+    /// Create a project generator for an Incan build target.
     pub fn new(output_dir: impl AsRef<Path>, name: &str, is_binary: bool) -> Self {
         Self {
             output_dir: output_dir.as_ref().to_path_buf(),
@@ -167,6 +168,7 @@ impl ProjectGenerator {
         Some(Self::resolve_target_dir(raw))
     }
 
+    /// Resolve the cargo target directory for a generated project.
     pub(super) fn resolve_target_dir(target_dir: PathBuf) -> PathBuf {
         if target_dir.is_absolute() {
             target_dir
@@ -192,6 +194,7 @@ impl ProjectGenerator {
         }
     }
 
+    /// Return a filesystem-safe name for a shared cargo target directory.
     pub(super) fn shared_target_safe_name(name: &str, output_dir: &Path) -> String {
         let mut normalized = name
             .chars()

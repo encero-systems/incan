@@ -122,6 +122,7 @@ impl<'a> IrEmitter<'a> {
         }})
     }
 
+    /// Emit a cached wrapper for a generic decorated function.
     fn emit_cache_generic_decorated_function(
         &self,
         cache_name: &str,
@@ -554,6 +555,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit the scrutinee expression for a match statement.
     pub(super) fn emit_match_scrutinee(&self, scrutinee: &TypedExpr) -> Result<TokenStream, EmitError> {
         if matches!(scrutinee.ty, IrType::Unknown) || Self::type_is_result_like(&scrutinee.ty) {
             return self.emit_expr(scrutinee);
@@ -653,6 +655,7 @@ impl<'a> IrEmitter<'a> {
         rewritten
     }
 
+    /// Emit storage access while preserving a shared reference.
     pub(super) fn emit_storage_with_ref(&self, expr: &TypedExpr, body: TokenStream) -> Result<TokenStream, EmitError> {
         let local_name = format_ident!("__incan_static_value");
         match Self::expr_storage_root(expr) {
@@ -672,6 +675,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit storage access while preserving a mutable reference.
     pub(super) fn emit_storage_with_mut(&self, expr: &TypedExpr, body: TokenStream) -> Result<TokenStream, EmitError> {
         let local_name = format_ident!("__incan_static_value");
         match Self::expr_storage_root(expr) {

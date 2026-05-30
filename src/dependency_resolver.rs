@@ -66,6 +66,7 @@ fn with_rust_import_context(error: CompileError, import: &InlineRustImport) -> C
         .with_hint("Verify the Rust crate/module/item path in the import statement")
 }
 
+/// Resolve dependency specifications for a package graph.
 pub fn resolve_dependencies(
     manifest: Option<&ProjectManifest>,
     inline_imports: &[InlineRustImport],
@@ -81,6 +82,7 @@ pub fn resolve_dependencies(
     )
 }
 
+/// Resolve dependencies reachable from entrypoint modules.
 pub fn resolve_reachable_dependencies(
     manifest: Option<&ProjectManifest>,
     inline_imports: &[InlineRustImport],
@@ -96,6 +98,7 @@ pub fn resolve_reachable_dependencies(
     )
 }
 
+/// Resolve dependencies for an explicit dependency scope.
 fn resolve_dependencies_with_scope(
     manifest: Option<&ProjectManifest>,
     inline_imports: &[InlineRustImport],
@@ -210,6 +213,7 @@ fn matching_dep_spec<'a>(
         .or_else(|| deps.get_key_value(&crate_name.replace('-', "_")))
 }
 
+/// Merge inline import dependency requirements.
 fn merge_inline_imports(
     inline_imports: &[InlineRustImport],
     manifest_deps: &HashMap<String, DependencySpec>,
@@ -405,6 +409,7 @@ fn merge_inline_imports(
     }
 }
 
+/// Select manifest dependencies that are relevant to the active build scope.
 fn select_manifest_dependencies(
     deps: &HashMap<String, DependencySpec>,
     selected_keys: &HashSet<String>,
@@ -559,6 +564,7 @@ fn validate_optional_imports(
 // Known-good defaults (RFC 013)
 // ============================================================================
 
+/// Return a conservative dependency specification for a known-good crate.
 fn known_good_spec(crate_name: &str) -> Option<DependencySpec> {
     if let Some(spec) = known_good_spec_from_stdlib(crate_name) {
         return Some(spec);

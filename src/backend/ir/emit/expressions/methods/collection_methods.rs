@@ -16,6 +16,7 @@ pub(super) fn emit_dict_lookup_key(receiver: &TypedExpr, arg: &TypedExpr, emitte
     plan_dict_lookup_key(&receiver.ty, &arg.ty).apply(emitted)
 }
 
+/// Return the element type for a collection IR type.
 fn collection_element_type(ty: &IrType) -> Option<&IrType> {
     match ty {
         IrType::List(elem) | IrType::Set(elem) => Some(elem.as_ref()),
@@ -24,6 +25,7 @@ fn collection_element_type(ty: &IrType) -> Option<&IrType> {
     }
 }
 
+/// Return whether a type stores owned string values.
 fn is_string_storage_type(ty: &IrType) -> bool {
     matches!(
         ty,

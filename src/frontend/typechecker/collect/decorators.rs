@@ -398,6 +398,7 @@ impl TypeChecker {
         !is_stdlib_decorator_function
     }
 
+    /// Resolve a decorator identifier through import aliases.
     fn decorator_id_with_import_aliases(&self, dec: &Decorator) -> Option<DecoratorId> {
         let resolved = resolve_decorator_path(dec, &self.symbols);
         if let Some(id) = decorators::from_segments(&resolved) {
@@ -408,6 +409,7 @@ impl TypeChecker {
         decorators::from_segments(&alias_resolved)
     }
 
+    /// Validate one lint name passed to `@rust.allow`.
     fn validate_single_rust_allow_lint(&mut self, name: &str, span: Span, seen: &mut HashSet<String>) {
         if name.is_empty() || name.trim() != name || !Self::is_valid_rust_lint_path(name) {
             self.errors.push(errors::rust_allow_invalid_lint_name(name, span));
@@ -424,10 +426,12 @@ impl TypeChecker {
         }
     }
 
+    /// Return whether a Rust lint path has valid syntax.
     fn is_valid_rust_lint_path(name: &str) -> bool {
         name.split("::").all(Self::is_valid_rust_lint_segment)
     }
 
+    /// Return whether one Rust lint path segment is valid.
     fn is_valid_rust_lint_segment(segment: &str) -> bool {
         let mut chars = segment.chars();
         let Some(first) = chars.next() else {
@@ -436,6 +440,7 @@ impl TypeChecker {
         (first == '_' || first.is_ascii_alphabetic()) && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
     }
 
+    /// Return whether a Rust lint group is too broad for `@rust.allow`.
     fn is_broad_rust_lint_group(name: &str) -> bool {
         matches!(
             name,

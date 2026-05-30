@@ -343,6 +343,7 @@ fn checked_alias_export(alias: &AliasDecl, checker: &TypeChecker) -> Option<Chec
     })
 }
 
+/// Return checked exports introduced by an import declaration.
 fn checked_import_exports(import: &ImportDecl, checker: &TypeChecker) -> Vec<CheckedNamedExport> {
     match &import.kind {
         ImportKind::From { module, items } => {
@@ -368,6 +369,7 @@ fn checked_import_exports(import: &ImportDecl, checker: &TypeChecker) -> Vec<Che
     }
 }
 
+/// Return checked exports introduced by one imported item.
 fn checked_import_item_exports(
     items: &[ImportItem],
     base_path: Vec<String>,
@@ -405,6 +407,7 @@ fn checked_alias_function_export(name: &str, info: &FunctionInfo) -> CheckedFunc
     }
 }
 
+/// Return the checked export for a projected callable alias.
 fn checked_projected_function_export(name: &str, kind: &SymbolKind) -> Option<CheckedFunctionExport> {
     match kind {
         SymbolKind::Function(info) => Some(checked_alias_function_export(name, info)),

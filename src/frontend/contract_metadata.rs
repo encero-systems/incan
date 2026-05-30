@@ -40,6 +40,7 @@ impl Default for ContractMetadataPackage {
 }
 
 impl ContractMetadataPackage {
+    /// Create a contract metadata package for canonical model bundles.
     pub fn new(model_bundles: Vec<CanonicalModelBundle>) -> Self {
         Self {
             schema_version: CONTRACT_METADATA_SCHEMA_VERSION,
@@ -99,6 +100,7 @@ pub struct CanonicalModelField {
     pub metadata: BTreeMap<String, String>,
 }
 
+/// Return the default publishable contract metadata for a package.
 fn default_publishable() -> bool {
     true
 }
@@ -229,6 +231,7 @@ impl CanonicalModelBundle {
         })
     }
 
+    /// Return the package bundle name used in contract metadata.
     fn bundle_name(&self) -> String {
         if self.logical_type_name.trim().is_empty() {
             "<unnamed>".to_string()
@@ -238,6 +241,7 @@ impl CanonicalModelBundle {
     }
 }
 
+/// Validate an identifier used in contract metadata.
 fn validate_identifier(value: &str, label: &str, bundle: &str) -> Result<(), ContractMetadataError> {
     let mut chars = value.chars();
     let valid_start = chars.next().is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic());
@@ -252,6 +256,7 @@ fn validate_identifier(value: &str, label: &str, bundle: &str) -> Result<(), Con
     }
 }
 
+/// Validate a type spelling used in contract metadata.
 fn validate_type_spelling(ty: &str, bundle: &str, field: &str) -> Result<(), ContractMetadataError> {
     let trimmed = ty.trim();
     if trimmed.is_empty() {
@@ -269,6 +274,7 @@ fn validate_type_spelling(ty: &str, bundle: &str, field: &str) -> Result<(), Con
     Ok(())
 }
 
+/// Return the source text used for exported field metadata.
 fn field_metadata_source(field: &CanonicalModelField) -> String {
     let mut pairs = Vec::new();
     if let Some(alias) = field.alias.as_deref() {
@@ -284,6 +290,7 @@ fn field_metadata_source(field: &CanonicalModelField) -> String {
     }
 }
 
+/// Return the source text used for exported field type metadata.
 fn field_type_source(field: &CanonicalModelField) -> String {
     let ty = field.ty.trim();
     if field.nullable && !ty.starts_with("Option[") {
@@ -293,6 +300,7 @@ fn field_type_source(field: &CanonicalModelField) -> String {
     }
 }
 
+/// Escape text for use in an Incan string literal.
 fn escape_incan_string(value: &str) -> String {
     value.replace('\\', "\\\\").replace('"', "\\\"")
 }
@@ -389,6 +397,7 @@ pub fn materialize_contract_models(
     Ok(())
 }
 
+/// Validate that generated contract metadata has no source-name collisions.
 fn validate_no_source_collisions(
     program: &Program,
     bundles: &[CanonicalModelBundle],

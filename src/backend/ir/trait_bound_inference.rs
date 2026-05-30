@@ -218,6 +218,7 @@ fn infer_backend_clone_bounds(program: &mut IrProgram) {
     }
 }
 
+/// Return type parameters visible to callable-bound inference.
 fn callable_inference_type_params(func: &IrFunction, owner_type_params: Option<&[IrTypeParam]>) -> Vec<IrTypeParam> {
     let mut type_params = owner_type_params.map_or_else(Vec::new, |params| params.to_vec());
     for type_param in &func.type_params {
@@ -513,6 +514,7 @@ struct BackendCallCloneContext<'a> {
 }
 
 impl BackendCloneInferenceContext {
+    /// Build clone-bound inference context from an IR program.
     fn from_program(program: &IrProgram) -> Self {
         let mut incan_nominal_names = HashSet::new();
         let mut rusttype_alias_names = HashSet::new();
@@ -544,6 +546,7 @@ impl BackendCloneInferenceContext {
         }
     }
 
+    /// Return whether a receiver is an Incan-owned nominal type.
     fn is_incan_owned_nominal_receiver(&self, receiver_ty: &IrType) -> bool {
         match receiver_type_for_method_dispatch(receiver_ty) {
             IrType::Struct(name) | IrType::NamedGeneric(name, _) | IrType::Enum(name) => {
@@ -554,6 +557,7 @@ impl BackendCloneInferenceContext {
         }
     }
 
+    /// Return whether a receiver is a rusttype alias.
     fn is_rusttype_alias_receiver(&self, receiver_ty: &IrType) -> bool {
         match receiver_type_for_method_dispatch(receiver_ty) {
             IrType::Struct(name) | IrType::NamedGeneric(name, _) => self.name_matches(name, &self.rusttype_alias_names),
@@ -561,12 +565,14 @@ impl BackendCloneInferenceContext {
         }
     }
 
+    /// Return whether a fully qualified or short name is in the provided name set.
     fn name_matches(&self, name: &str, names: &HashSet<String>) -> bool {
         let short_name = name.rsplit("::").next().unwrap_or(name);
         names.contains(name) || names.contains(short_name)
     }
 }
 
+/// Return the receiver type used for method-dispatch analysis.
 fn receiver_type_for_method_dispatch(receiver_ty: &IrType) -> &IrType {
     let mut receiver_ty = receiver_ty;
     while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
@@ -575,6 +581,7 @@ fn receiver_type_for_method_dispatch(receiver_ty: &IrType) -> &IrType {
     receiver_ty
 }
 
+/// Add backend clone bounds required by callable return values.
 fn augment_callable_type_params_for_backend_return_clones(
     type_params: &mut [IrTypeParam],
     body: &[IrStmt],
@@ -1527,6 +1534,7 @@ fn collect_backend_clone_bounds_in_expr(
     }
 }
 
+/// Return the reference kind used by a receiver expression.
 fn receiver_ref_kind(receiver: &IrExpr) -> Option<VarRefKind> {
     match &receiver.kind {
         IrExprKind::Var { ref_kind, .. } => Some(*ref_kind),
@@ -1836,6 +1844,7 @@ fn scan_stmt_for_bounds(
     }
 }
 
+/// Return the trait bound implied by a value-level reflection magic method.
 fn reflection_magic_trait_bound(method: &str) -> Option<&'static str> {
     match magic_methods::from_str(method) {
         Some(magic_methods::MagicMethodId::ClassName) => Some(tb::INCAN_CLASS_NAME),
@@ -1844,6 +1853,7 @@ fn reflection_magic_trait_bound(method: &str) -> Option<&'static str> {
     }
 }
 
+/// Return the trait bound implied by a type-level reflection magic method.
 fn type_reflection_magic_trait_bound(method: &str) -> Option<&'static str> {
     match magic_methods::from_str(method) {
         Some(magic_methods::MagicMethodId::ClassName) => Some(tb::INCAN_TYPE_CLASS_NAME),
@@ -2239,6 +2249,7 @@ fn expr_type_param_name(
     None
 }
 
+/// Return the type parameter named by a type-name expression.
 fn type_name_expr_type_param_name(expr: &IrExpr, type_params: &HashSet<&str>) -> Option<String> {
     let IrExprKind::Var {
         name,
@@ -2251,6 +2262,7 @@ fn type_name_expr_type_param_name(expr: &IrExpr, type_params: &HashSet<&str>) ->
     type_params.contains(name.as_str()).then(|| name.clone())
 }
 
+/// Extract a type parameter name from an IR type.
 fn type_param_name_from_ir_type(ty: &IrType, type_params: &HashSet<&str>) -> Option<String> {
     match ty {
         IrType::Generic(name) if type_params.contains(name.as_str()) => Some(name.clone()),
@@ -2259,6 +2271,7 @@ fn type_param_name_from_ir_type(ty: &IrType, type_params: &HashSet<&str>) -> Opt
     }
 }
 
+/// Collect type-parameter mappings between callee and caller types.
 fn collect_type_param_mapping(
     callee_ty: &IrType,
     caller_ty: &IrType,
@@ -2295,6 +2308,7 @@ fn collect_type_param_mapping(
     }
 }
 
+/// Resolve the generic function key for a call target.
 fn resolve_called_generic_key(
     local_name: &str,
     canonical_path: Option<&[String]>,

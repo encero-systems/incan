@@ -37,6 +37,7 @@ struct PendingStandaloneBlock {
     saw_blank_before: bool,
 }
 
+/// Normalize source text before matching comments back to code.
 pub(super) fn normalize_code_for_match(code: &str) -> String {
     code.chars().filter(|c| !c.is_whitespace()).collect()
 }
@@ -207,6 +208,7 @@ fn finalize_pending_standalone_block(
     }
 }
 
+/// Trim blank comment lines from the end of a comment block.
 fn trim_trailing_blank_comment_lines(lines: &[String]) -> Vec<String> {
     let mut out = lines.to_vec();
     while out.last().is_some_and(|l| l.trim().is_empty()) {

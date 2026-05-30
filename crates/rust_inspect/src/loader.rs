@@ -48,6 +48,7 @@ impl RustWorkspace {
         index
     }
 
+    /// Build cargo configuration for the Rust metadata workspace.
     fn metadata_cargo_config() -> CargoConfig {
         CargoConfig::default()
     }

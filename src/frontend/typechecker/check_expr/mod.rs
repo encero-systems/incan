@@ -141,6 +141,7 @@ impl TypeChecker {
         None
     }
 
+    /// Convert function symbol information into a resolved function type.
     fn function_info_to_resolved_function_type(info: &FunctionInfo) -> ResolvedType {
         ResolvedType::Function(info.params.clone(), Box::new(info.return_type.clone()))
     }
@@ -244,6 +245,7 @@ impl TypeChecker {
         ty
     }
 
+    /// Return whether a span identifies a type receiver.
     pub(crate) fn is_type_receiver_span(&self, span: Span) -> bool {
         self.type_receiver_spans
             .iter()

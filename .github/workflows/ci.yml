@@ -29,6 +29,27 @@ jobs:
       - name: Check formatting
         run: cargo +nightly fmt --all -- --check
 
+  rustdoc-gate:
+    name: Rustdoc Gate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Check changed Rust docs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin "${{ github.base_ref }}" --depth=1
+            base_ref="origin/${{ github.base_ref }}"
+          elif [ -n "${{ github.event.before }}" ] && [ "${{ github.event.before }}" != "0000000000000000000000000000000000000000" ]; then
+            base_ref="${{ github.event.before }}"
+          else
+            base_ref="HEAD^"
+          fi
+          python3 scripts/check_changed_rustdocs.py --base "$base_ref"
+
   clippy:
     name: Clippy
     runs-on: ubuntu-latest

@@ -106,11 +106,13 @@ pub fn regular_enum_variant_value_not_allowed(enum_name: &str, variant_name: &st
     .with_hint("Use `enum Name(str):` or `enum Name(int):` for value enums")
 }
 
+/// Build the diagnostic for passing the same call argument more than once.
 pub fn duplicate_call_argument(callee: &str, name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Duplicate argument '{name}' when calling '{callee}'"), span)
         .with_hint("Pass each fixed parameter at most once")
 }
 
+/// Build the diagnostic for a keyword argument that the callee does not accept.
 pub fn unknown_keyword_argument(callee: &str, name: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Unexpected keyword argument '{name}' when calling '{callee}'"),
@@ -119,6 +121,7 @@ pub fn unknown_keyword_argument(callee: &str, name: &str, span: Span) -> Compile
     .with_hint("Add a `**kwargs` rest parameter to capture arbitrary keyword arguments")
 }
 
+/// Build the diagnostic for unpacking call arguments into a callee without a rest parameter.
 pub fn call_unpack_without_rest(callee: &str, unpack: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!(
@@ -128,6 +131,7 @@ pub fn call_unpack_without_rest(callee: &str, unpack: &str, span: Span) -> Compi
     )
 }
 
+/// Build the diagnostic for omitting a required call argument.
 pub fn missing_required_argument(callee: &str, name: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Missing required argument '{name}' when calling '{callee}'"),
@@ -144,6 +148,7 @@ pub fn unsafe_top_level_partial_preset(name: &str, span: Span) -> CompileError {
     .with_hint("Use literals, const paths, or declaration-safe collection/model literals as top-level partial presets")
 }
 
+/// Build the diagnostic for declaring the same rest parameter twice.
 pub fn duplicate_rest_parameter(kind: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Only one `{kind}` rest parameter is allowed in a callable signature"),
@@ -151,10 +156,12 @@ pub fn duplicate_rest_parameter(kind: &str, span: Span) -> CompileError {
     )
 }
 
+/// Build the diagnostic for placing a rest parameter after an invalid parameter kind.
 pub fn invalid_rest_parameter_order(message: &str, span: Span) -> CompileError {
     CompileError::type_error(message.to_string(), span)
 }
 
+/// Build the diagnostic for putting a default value on a rest parameter.
 pub fn rest_parameter_default_not_allowed(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Rest parameter '{name}' cannot declare a default value"), span)
 }
@@ -243,6 +250,7 @@ pub fn reserved_root_namespace(name: &str, span: Span) -> CompileError {
         .with_hint("Choose a different name (reserved: std, rust)")
 }
 
+/// Build the diagnostic for a `@rust.allow` entry that is not a positional string.
 pub fn rust_allow_requires_positional_string(span: Span) -> CompileError {
     CompileError::type_error(
         "@rust.allow requires one or more positional string literal arguments".to_string(),
@@ -251,21 +259,25 @@ pub fn rust_allow_requires_positional_string(span: Span) -> CompileError {
     .with_hint("Example: @rust.allow(\"dead_code\", \"clippy::too_many_arguments\")")
 }
 
+/// Build the diagnostic for named arguments passed to `@rust.allow`.
 pub fn rust_allow_rejects_named_args(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("@rust.allow does not accept named argument '{}'", name), span)
         .with_hint("Pass lint names as positional string literals")
 }
 
+/// Build the diagnostic for an invalid Rust lint name in `@rust.allow`.
 pub fn rust_allow_invalid_lint_name(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Invalid Rust lint name '{}'", name), span)
         .with_hint("Use a Rust lint path like \"dead_code\" or \"clippy::too_many_arguments\"")
 }
 
+/// Build the diagnostic for a duplicate lint in `@rust.allow`.
 pub fn rust_allow_duplicate_lint(name: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("Duplicate Rust lint '{}' in @rust.allow", name), span)
         .with_hint("Each @rust.allow invocation may list a lint only once")
 }
 
+/// Build the diagnostic for a broad lint group rejected by `@rust.allow`.
 pub fn rust_allow_broad_lint_group(name: &str, span: Span) -> CompileError {
     CompileError::type_error(
         format!("Broad Rust lint group '{}' is not allowed in @rust.allow", name),
@@ -274,6 +286,7 @@ pub fn rust_allow_broad_lint_group(name: &str, span: Span) -> CompileError {
     .with_hint("Suppress only specific rustc or Clippy lints")
 }
 
+/// Build the diagnostic for attaching `@rust.allow` to an unsupported declaration.
 pub fn rust_allow_unsupported_attachment(kind: &str, span: Span) -> CompileError {
     CompileError::type_error(format!("@rust.allow cannot be used on {kind} declarations"), span)
         .with_hint("@rust.allow is supported on functions, methods, models, classes, enums, and newtypes")
@@ -441,6 +454,7 @@ pub fn incompatible_error_type(expected: &str, found: &str, span: Span) -> Compi
     .with_hint("Use map_err to convert the error type, or add a From implementation")
 }
 
+/// Build the diagnostic for using `try` in a function that does not return `Result`.
 pub fn try_without_result_return(span: Span) -> CompileError {
     CompileError::type_error(
         "Cannot use '?' here: the enclosing function does not return Result[_, E]".to_string(),

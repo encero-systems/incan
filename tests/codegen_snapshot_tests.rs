@@ -655,6 +655,13 @@ fn test_user_defined_decorators_codegen() {
 }
 
 #[test]
+fn test_decorated_variadic_function_codegen() {
+    let source = load_test_file("decorated_variadic_function");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("decorated_variadic_function", rust_code);
+}
+
+#[test]
 fn test_user_defined_method_decorators_codegen() {
     let source = load_test_file("user_defined_method_decorators");
     let rust_code = generate_rust(&source);

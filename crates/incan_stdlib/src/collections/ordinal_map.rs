@@ -14,12 +14,14 @@
 macro_rules! __incan_ordinal_map_string_fast_impls {
     () => {
         impl OrdinalMap<String> {
+            /// Return whether an ordinal-map key matching the provided string exists.
             #[doc(hidden)]
             #[inline]
             pub fn __incan_ordinal_contains_str(&self, key: &str) -> bool {
                 self.__incan_ordinal_find_str(key, true) >= 0
             }
 
+            /// Return an ordinal-map value for indexing syntax or raise a key error.
             #[doc(hidden)]
             #[inline]
             pub fn __incan_ordinal_getitem_str(&self, key: &str) -> i64 {
@@ -29,6 +31,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                 }
             }
 
+            /// Return an optional ordinal-map value for the provided string key.
             #[doc(hidden)]
             #[inline]
             pub fn __incan_ordinal_get_str(&self, key: &str) -> Option<i64> {
@@ -40,6 +43,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                 }
             }
 
+            /// Return an ordinal-map value for a required string key or raise a key error.
             #[doc(hidden)]
             #[inline]
             pub fn __incan_ordinal_require_str(&self, key: &str) -> Result<i64, OrdinalMapError> {
@@ -53,6 +57,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                 }
             }
 
+            /// Return an ordinal-map value for a known-present string key without rechecking presence.
             #[doc(hidden)]
             #[inline]
             pub fn __incan_ordinal_get_unchecked_str(&self, key: &str) -> i64 {
@@ -64,6 +69,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                 }
             }
 
+            /// Return optional ordinal-map values for a sequence of string keys.
             #[doc(hidden)]
             #[inline]
             pub fn __incan_ordinal_get_many_str(&self, keys: &[String]) -> Vec<Option<i64>> {
@@ -74,6 +80,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                 out
             }
 
+            /// Return required ordinal-map values for a sequence of string keys or raise on the first miss.
             #[doc(hidden)]
             #[inline]
             pub fn __incan_ordinal_require_many_str(&self, keys: &[String]) -> Result<Vec<i64>, OrdinalMapError> {
@@ -93,6 +100,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                 Ok(out)
             }
 
+            /// Return ordinal-map values for known-present string keys without rechecking presence.
             #[doc(hidden)]
             #[inline]
             pub fn __incan_ordinal_get_many_unchecked_str(&self, keys: &[String]) -> Vec<i64> {
@@ -103,6 +111,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                 out
             }
 
+            /// Find the ordinal-map slot for a string key using compact key metadata.
             #[inline]
             fn __incan_ordinal_find_str(&self, key: &str, verify_exact: bool) -> i64 {
                 if self.slot_count_value == 0 {
@@ -134,6 +143,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                 -1i64
             }
 
+            /// Return the ordinal-map value at a precomputed slot index.
             #[inline]
             fn __incan_ordinal_at_fast(&self, record_index: i64) -> i64 {
                 if record_index < 0 {
@@ -151,6 +161,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                 }
             }
 
+            /// Return the compact hash stored for a precomputed ordinal-map slot.
             #[inline]
             fn __incan_ordinal_hash_at_fast(&self, record_index: i64) -> i64 {
                 if record_index < 0 {
@@ -162,6 +173,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                     .unwrap_or(-1i64)
             }
 
+            /// Return the compact slot metadata stored at a precomputed ordinal-map offset.
             #[inline]
             fn __incan_ordinal_slot_at_fast(&self, slot_index: i64) -> i64 {
                 if slot_index < 0 {
@@ -179,6 +191,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                 }
             }
 
+            /// Return whether the compact key bytes at an offset match the provided string key.
             #[inline]
             fn __incan_ordinal_key_bytes_equal_str(&self, record_index: i64, key_bytes: &[u8]) -> bool {
                 if record_index < 0 {
@@ -208,6 +221,7 @@ macro_rules! __incan_ordinal_map_string_fast_impls {
                 }
             }
 
+            /// Read a compact little-endian integer from ordinal-map metadata.
             #[inline]
             fn __incan_ordinal_read_compact_int_fast(&self, data: &[u8], offset: i64, width: i64) -> i64 {
                 if offset < 0 {
