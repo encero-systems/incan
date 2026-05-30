@@ -663,13 +663,13 @@ def callback(args: list[ColumnarValue]) -> Result[ColumnarValue, CallbackError]:
   return Ok(args[0].clone())
 
 def inline_arc_callback_value() -> int:
-  match create_udf("inline", Arc.from((args) => callback(args.to_vec()))):
+  match create_udf(callback=Arc.from((args) => callback(args.to_vec())), name="inline"):
     Ok(value) => return value.value()
     Err(_) => return -1
 
 pub def arc_callback_case() -> str:
   implementation: SliceCallback = Arc.from((args) => callback(args.to_vec()))
-  match create_udf("assigned", implementation):
+  match create_udf(callback=implementation, name="assigned"):
     Ok(value) => return f"arc_callback:{value.value()}:{inline_arc_callback_value()}"
     Err(_) => return "arc_callback:err"
 "#,
@@ -776,7 +776,8 @@ pub fn invoke(callback: SliceCallback) -> Result<ColumnarValue, CallbackError> {
     callback(&args)
 }
 
-pub fn create_udf(_name: &str, callback: crate::SliceCallback) -> Result<ColumnarValue, CallbackError> {
+pub fn create_udf(name: &str, callback: crate::SliceCallback) -> Result<ColumnarValue, CallbackError> {
+    let _ = name;
     let args = vec![ColumnarValue::new(11)];
     callback(&args)
 }

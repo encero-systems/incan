@@ -220,6 +220,18 @@ When a library exposes Rust-backed items, run `incan build --lib` before another
 
 Consumers load that shipped ABI metadata first for Rust-backed imported symbols. `rust_inspect` remains available for producer capture, local workspace imports, and explicit fallback/debug paths, but a packaged dependency should not require consumer-side workspace inspection for signatures that were already published in its `.incnlib`.
 
+### Calling imported Rust functions
+
+Imported Rust free functions use ordinary Incan call syntax. When the compiler has inspected or shipped Rust signature metadata with parameter names, keyword arguments bind to those Rust parameters and lower to the positional Rust call shape that Cargo expects:
+
+```incan
+from rust::demo import create_widget
+
+widget = create_widget(name="primary", enabled=true)
+```
+
+If the Rust metadata does not include the named parameter, the compiler rejects the keyword argument instead of guessing a positional mapping.
+
 ### Qualified backing paths
 
 When a `rust::` import binds a Rust module (or other namespace), you can name a concrete type inside it with `::` after that binding:

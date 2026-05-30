@@ -6,7 +6,7 @@ use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::{CallableParam, ResolvedType, TypeInfo};
 use crate::frontend::typechecker::helpers::collection_type_id;
 use crate::frontend::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
-use incan_core::interop::{CoercionPolicy, RustFunctionSig, admitted_builtin_coercion};
+use incan_core::interop::{CoercionPolicy, RustFunctionSig, RustParam, admitted_builtin_coercion};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics;
 
@@ -18,6 +18,12 @@ enum RustArgBoundaryMatch {
     Coercion(RustArgCoercionKind),
     /// Argument cannot satisfy the Rust parameter shape.
     NoMatch,
+}
+
+struct RustCallArgBinding<'a> {
+    arg: &'a CallArg,
+    arg_ty: &'a ResolvedType,
+    param: &'a RustParam,
 }
 
 impl TypeChecker {
@@ -378,22 +384,145 @@ impl TypeChecker {
         span: Span,
         params: &[incan_core::interop::RustParam],
         owner_path: &str,
+        force_exact: bool,
     ) {
         let params: Vec<CallableParam> = params
             .iter()
             .map(|param| {
-                CallableParam::positional(self.resolved_rust_boundary_target_from_param_display_for_owner_path(
+                let ty = self.resolved_rust_boundary_target_from_param_display_for_owner_path(
                     param.type_display.as_str(),
                     owner_path,
-                ))
+                );
+                CallableParam {
+                    name: param.name.clone(),
+                    ty,
+                    kind: ParamKind::Normal,
+                    has_default: false,
+                }
             })
             .collect();
         // Plain Rust type variables carry by-value shape, but they are not ordinary borrow-boundary snapshots.
-        if params.iter().any(|param| matches!(param.ty, ResolvedType::TypeVar(_))) {
+        if force_exact || params.iter().any(|param| matches!(param.ty, ResolvedType::TypeVar(_))) {
             self.type_info.record_call_site_callable_params_exact(span, &params);
         } else {
             self.type_info.record_call_site_callable_params(span, &params);
         }
+    }
+
+    fn bind_rust_call_args<'a>(
+        &mut self,
+        callable_display: &str,
+        params: &'a [RustParam],
+        args: &'a [CallArg],
+        arg_types: &'a [ResolvedType],
+        span: Span,
+    ) -> Vec<RustCallArgBinding<'a>> {
+        let has_keyword_args = args
+            .iter()
+            .any(|arg| matches!(arg, CallArg::Named(_, _) | CallArg::KeywordUnpack(_)));
+        let has_unpack_args = args
+            .iter()
+            .any(|arg| matches!(arg, CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_)));
+        if !has_keyword_args || has_unpack_args {
+            if arg_types.len() != params.len() {
+                self.errors.push(errors::builtin_arity(
+                    callable_display,
+                    params.len(),
+                    arg_types.len(),
+                    span,
+                ));
+                return Vec::new();
+            }
+            return args
+                .iter()
+                .zip(arg_types.iter())
+                .zip(params.iter())
+                .map(|((arg, arg_ty), param)| RustCallArgBinding { arg, arg_ty, param })
+                .collect();
+        }
+
+        let mut params_by_name = std::collections::HashMap::new();
+        for (idx, param) in params.iter().enumerate() {
+            if let Some(name) = param.name.as_deref() {
+                params_by_name.insert(name, idx);
+            }
+        }
+
+        let mut bound_spans: Vec<Option<Span>> = vec![None; params.len()];
+        let mut named_seen: std::collections::HashMap<&str, Span> = std::collections::HashMap::new();
+        let mut positional_index = 0usize;
+        let mut unexpected_positional = 0usize;
+        let mut bindings = Vec::new();
+
+        for (arg, arg_ty) in args.iter().zip(arg_types.iter()) {
+            let arg_span = Self::call_arg_expr(arg).span;
+            match arg {
+                CallArg::Positional(_) => {
+                    if positional_index >= params.len() {
+                        unexpected_positional += 1;
+                        continue;
+                    }
+                    let param = &params[positional_index];
+                    if let Some(bound_span) = bound_spans[positional_index] {
+                        let name = param.name.as_deref().unwrap_or("<positional>");
+                        self.errors
+                            .push(errors::duplicate_call_argument(callable_display, name, bound_span));
+                    } else {
+                        bound_spans[positional_index] = Some(arg_span);
+                        bindings.push(RustCallArgBinding { arg, arg_ty, param });
+                    }
+                    positional_index += 1;
+                }
+                CallArg::Named(name, _) => {
+                    if let Some(first_span) = named_seen.insert(name.as_str(), arg_span) {
+                        self.errors
+                            .push(errors::duplicate_call_argument(callable_display, name, first_span));
+                    }
+                    let Some(param_index) = params_by_name.get(name.as_str()).copied() else {
+                        self.errors
+                            .push(errors::unknown_keyword_argument(callable_display, name, arg_span));
+                        continue;
+                    };
+                    if bound_spans[param_index].is_some() {
+                        self.errors
+                            .push(errors::duplicate_call_argument(callable_display, name, arg_span));
+                        continue;
+                    }
+                    let param = &params[param_index];
+                    bound_spans[param_index] = Some(arg_span);
+                    bindings.push(RustCallArgBinding { arg, arg_ty, param });
+                }
+                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => {}
+            }
+        }
+
+        if unexpected_positional > 0 {
+            self.errors.push(errors::builtin_arity(
+                callable_display,
+                params.len(),
+                params.len() + unexpected_positional,
+                span,
+            ));
+        }
+
+        let mut missing_unnamed_param = false;
+        for (idx, param) in params.iter().enumerate() {
+            if bound_spans[idx].is_some() {
+                continue;
+            }
+            if let Some(name) = param.name.as_deref() {
+                self.errors
+                    .push(errors::missing_required_argument(callable_display, name, span));
+            } else {
+                missing_unnamed_param = true;
+            }
+        }
+        if missing_unnamed_param {
+            self.errors
+                .push(errors::builtin_arity(callable_display, params.len(), args.len(), span));
+        }
+
+        bindings
     }
 
     /// Return whether a lookup-style Rust method should preserve the probe argument's emitted shape.
@@ -448,20 +577,21 @@ impl TypeChecker {
         } else {
             &sig.params
         };
-        self.record_rust_call_site_params(span, params, callable_display);
+        let has_keyword_args = args
+            .iter()
+            .any(|arg| matches!(arg, CallArg::Named(_, _) | CallArg::KeywordUnpack(_)));
+        self.record_rust_call_site_params(span, params, callable_display, has_keyword_args);
 
-        if arg_types.len() != params.len() {
-            self.errors.push(errors::builtin_arity(
-                callable_display,
-                params.len(),
-                arg_types.len(),
-                span,
-            ));
+        let binding_errors_before = self.errors.len();
+        let bindings = self.bind_rust_call_args(callable_display, params, args, arg_types, span);
+        if self.errors.len() != binding_errors_before {
             return self.resolved_rust_call_type_from_sig(sig, callable_display, span);
         }
 
-        for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(params.iter()) {
-            let arg_expr = Self::call_arg_expr(arg);
+        for binding in bindings {
+            let arg_expr = Self::call_arg_expr(binding.arg);
+            let arg_ty = binding.arg_ty;
+            let param = binding.param;
             let param_display = self.rust_display_for_owner_path(param.type_display.as_str(), callable_display);
             let normalized = param_display.replace(' ', "");
             let target_ty = self.resolved_rust_boundary_target_from_param_display_for_owner_path(
@@ -513,15 +643,20 @@ impl TypeChecker {
         }
         let expected_params = self.rust_params_as_callable_params(&sig.params, path);
         let arg_types = self.check_call_arg_types_for_params(args, &expected_params);
-        self.record_rust_call_site_params(span, &sig.params, path);
-        if arg_types.len() != sig.params.len() {
-            self.errors
-                .push(errors::builtin_arity(path, sig.params.len(), arg_types.len(), span));
+        let has_keyword_args = args
+            .iter()
+            .any(|arg| matches!(arg, CallArg::Named(_, _) | CallArg::KeywordUnpack(_)));
+        self.record_rust_call_site_params(span, &sig.params, path, has_keyword_args);
+        let binding_errors_before = self.errors.len();
+        let bindings = self.bind_rust_call_args(path, &sig.params, args, &arg_types, span);
+        if self.errors.len() != binding_errors_before {
             return self.resolved_rust_call_type_from_sig(sig, path, span);
         }
 
-        for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(sig.params.iter()) {
-            let arg_expr = Self::call_arg_expr(arg);
+        for binding in bindings {
+            let arg_expr = Self::call_arg_expr(binding.arg);
+            let arg_ty = binding.arg_ty;
+            let param = binding.param;
             let param_display = self.rust_display_for_owner_path(param.type_display.as_str(), path);
             let normalized = param_display.replace(' ', "");
             let target_ty =
@@ -716,6 +851,55 @@ mod validate_rust_function_call_tests {
             "expected arity error when call has fewer args than Rust params, errors={:?}",
             checker.errors
         );
+    }
+
+    #[test]
+    fn rust_function_call_binds_keyword_args_by_inspected_param_name() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(0, 60);
+        let text_span = Span::new(10, 20);
+        let count_span = Span::new(30, 31);
+        let args = [
+            CallArg::Named(
+                "text".to_string(),
+                Spanned::new(Expr::Literal(Literal::String("demo".to_string())), text_span),
+            ),
+            CallArg::Named(
+                "count".to_string(),
+                Spanned::new(Expr::Literal(Literal::Int(IntLiteral::synthetic(3))), count_span),
+            ),
+        ];
+        let sig = RustFunctionSig {
+            params: vec![
+                RustParam {
+                    name: Some("count".to_string()),
+                    type_display: "i64".to_string(),
+                },
+                RustParam {
+                    name: Some("text".to_string()),
+                    type_display: "&str".to_string(),
+                },
+            ],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::crate::f", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected keyword Rust call args to bind by parameter name, errors={:?}",
+            checker.errors
+        );
+        let recorded = checker
+            .type_info
+            .calls
+            .call_site_callable_params
+            .get(&(span.start, span.end))
+            .expect("keyword Rust calls should record exact call-site params for lowering");
+        let names: Vec<_> = recorded.iter().filter_map(|param| param.name.as_deref()).collect();
+        assert_eq!(names, vec!["count", "text"]);
     }
 
     #[test]
