@@ -85,6 +85,7 @@ impl TypeChecker {
         substitute_resolved_type(&info.return_type, &type_bindings)
     }
 
+    /// Assert that call-site type parameters have been inferred.
     fn assert_call_site_type_params_inferred(
         &mut self,
         callee: &str,

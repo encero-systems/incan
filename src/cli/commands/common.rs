@@ -367,6 +367,7 @@ pub(crate) fn collect_project_requirements(
     Ok(requirements)
 }
 
+/// Build a dependency specification from a stdlib extra crate requirement.
 fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> CliResult<DependencySpec> {
     let dep = stdlib::find_extra_crate_dep(crate_name).ok_or_else(|| {
         CliError::failure(format!(
@@ -377,6 +378,7 @@ fn dependency_spec_from_stdlib_extra_crate(crate_name: &str) -> CliResult<Depend
     Ok(dependency_spec_from_stdlib_dep(dep, &workspace_root))
 }
 
+/// Build a dependency specification from a stdlib dependency requirement.
 fn dependency_spec_from_stdlib_dep(dep: &StdlibExtraCrateDep, workspace_root: &Path) -> DependencySpec {
     match dep.source {
         StdlibExtraCrateSource::Version(version) => DependencySpec {
@@ -467,6 +469,7 @@ pub(crate) fn merge_project_requirement_dependencies(
     Ok(())
 }
 
+/// Merge project-level dependency requirements into the resolved dependency set.
 pub(crate) fn merge_project_requirements(
     current: &ProjectRequirements,
     extra: &ProjectRequirements,
@@ -501,6 +504,7 @@ pub(crate) fn merge_project_requirements(
     })
 }
 
+/// Merge resolved dependency requirements from multiple sources.
 pub(crate) fn merge_resolved_dependencies(
     current: &ResolvedDependencies,
     extra: &ResolvedDependencies,
@@ -521,6 +525,7 @@ pub(crate) fn merge_resolved_dependencies(
     Ok(merged)
 }
 
+/// Merge one resolved dependency requirement into the dependency map.
 fn merge_resolved_dependency(
     dependencies: &mut Vec<DependencySpec>,
     dev_dependencies: &mut Vec<DependencySpec>,
@@ -746,6 +751,7 @@ fn rust_inspect_workspace_fingerprint(
     )
 }
 
+/// Return the workspace directory used for Rust inspection metadata.
 #[cfg(feature = "rust_inspect")]
 fn rust_inspect_workspace_dir(project_root: &Path, project_name: &str, fingerprint: &str) -> PathBuf {
     let mut safe_name = project_name
@@ -921,6 +927,7 @@ fn parse_rust_inspect_prewarm_env(raw: Option<&str>) -> bool {
     !matches!(raw.trim(), "0" | "false" | "FALSE" | "off" | "OFF" | "no" | "NO")
 }
 
+/// Return whether Rust inspection prewarming is enabled.
 #[cfg(feature = "rust_inspect")]
 fn rust_inspect_prewarm_enabled() -> bool {
     parse_rust_inspect_prewarm_env(std::env::var("INCAN_RUST_INSPECT_PREWARM").ok().as_deref())

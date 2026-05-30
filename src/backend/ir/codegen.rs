@@ -253,6 +253,7 @@ impl<'a> IrCodegen<'a> {
         registry
     }
 
+    /// Apply dependency symbol metadata to generated Rust codegen state.
     fn apply_dependency_symbol_metadata(emitter: &mut IrEmitter<'_>, metadata: &DependencySymbolMetadata) {
         emitter.set_type_module_paths(metadata.module_paths.clone(), metadata.ambiguous_type_names.clone());
         emitter.set_value_module_paths(

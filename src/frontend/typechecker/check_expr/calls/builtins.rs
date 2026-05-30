@@ -55,6 +55,7 @@ impl TypeChecker {
             .unwrap_or(ResolvedType::Unknown)
     }
 
+    /// Validate call arity for a stdlib module helper.
     fn validate_stdlib_module_call_arity(
         &mut self,
         callable: &str,

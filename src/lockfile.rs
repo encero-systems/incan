@@ -276,6 +276,7 @@ fn source_fingerprint(source: &DependencySource, project_root: Option<&Path>) ->
     }
 }
 
+/// Normalize a relative path before adding it to a lockfile fingerprint.
 fn normalize_relative_path_for_fingerprint(path: &Path) -> PathBuf {
     if path.is_absolute() {
         return path.to_path_buf();

@@ -111,6 +111,7 @@ impl FunctionSignature {
         Some(merged)
     }
 
+    /// Return whether parameter lists are compatible for default inheritance.
     fn params_match_for_default_inheritance(
         left: &FunctionSignature,
         right: &FunctionSignature,
@@ -124,6 +125,7 @@ impl FunctionSignature {
                 .all(|(left, right)| Self::param_matches_for_default_inheritance(left, right, types_match))
     }
 
+    /// Return whether one parameter is compatible for default inheritance.
     fn param_matches_for_default_inheritance(
         left: &FunctionParam,
         right: &FunctionParam,

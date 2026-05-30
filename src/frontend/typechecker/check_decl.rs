@@ -39,6 +39,7 @@ fn property_infos_identical(a: &PropertyInfo, b: &PropertyInfo) -> bool {
     a.has_body == b.has_body && a.return_type == b.return_type
 }
 
+/// Resolve the local type used for a checked function parameter.
 fn local_type_for_param(kind: ParamKind, ty: ResolvedType) -> ResolvedType {
     match kind {
         ParamKind::Normal => ty,
@@ -774,6 +775,7 @@ impl TypeChecker {
             }
         }
     }
+    /// Render a named method signature for compatibility diagnostics.
     fn method_sig_string_named(&self, method_name: &str, m: &MethodInfo) -> String {
         let recv = match m.receiver {
             Some(Receiver::Mutable) => "mut self",
@@ -798,6 +800,7 @@ impl TypeChecker {
         )
     }
 
+    /// Return whether two method signatures are compatible.
     pub(in crate::frontend::typechecker) fn method_sigs_compatible(
         &self,
         expected: &MethodInfo,
@@ -2253,6 +2256,7 @@ impl TypeChecker {
         }
     }
 
+    /// Typecheck an inline test module declaration.
     fn check_test_module(&mut self, test_module: &TestModuleDecl) {
         self.symbols.enter_scope(ScopeKind::Block);
         for decl in &test_module.body {
@@ -2618,6 +2622,7 @@ impl TypeChecker {
         result
     }
 
+    /// Validate a model declaration that derives validation support.
     fn check_validate_derive_model(&mut self, model: &ModelDecl) {
         // Validate that validate() exists and has the expected signature.
         let Some(TypeInfo::Model(info)) = self.lookup_type_info(&model.name) else {

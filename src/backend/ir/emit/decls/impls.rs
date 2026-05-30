@@ -312,6 +312,7 @@ impl<'a> IrEmitter<'a> {
         }))
     }
 
+    /// Build reflection metadata entries for model fields.
     pub(in crate::backend::ir::emit) fn reflection_field_info_entries(
         &self,
         struct_name: &str,

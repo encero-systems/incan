@@ -812,6 +812,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit call arguments while preserving rest-argument expansion semantics.
     pub(in super::super) fn emit_rest_aware_call_args(
         &self,
         func: &TypedExpr,
@@ -891,6 +892,7 @@ impl<'a> IrEmitter<'a> {
         Ok(out)
     }
 
+    /// Emit one positional argument that may include rest expansion.
     fn emit_rest_positional_arg(&self, args: &[&IrCallArg], element_ty: &IrType) -> Result<TokenStream, EmitError> {
         let mut statements = Vec::with_capacity(args.len());
         for arg in args {

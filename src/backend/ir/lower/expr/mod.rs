@@ -315,6 +315,7 @@ impl AstLowering {
         }
     }
 
+    /// Classify an IR type as a Rust collection family.
     fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamily> {
         match ty {
             IrType::Struct(name) | IrType::NamedGeneric(name, _) => {
@@ -325,6 +326,7 @@ impl AstLowering {
         }
     }
 
+    /// Return the ordinary argument policy for a method call.
     fn regular_method_call_arg_policy(
         &self,
         receiver_span: crate::frontend::ast::Span,

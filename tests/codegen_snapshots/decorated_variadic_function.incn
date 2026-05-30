@@ -1,0 +1,14 @@
+def preserve[F]() -> ((F) -> F):
+  return (func) => func
+
+@preserve()
+pub def decorated_total(first: int, second: int, *rest: int, **labels: str) -> int:
+  mut total: int = first + second
+  for value in rest:
+    total = total + value
+  if labels["mode"] == "sum":
+    return total
+  return -1
+
+def main() -> int:
+  return decorated_total(1, 2, 3, 4, mode="sum")

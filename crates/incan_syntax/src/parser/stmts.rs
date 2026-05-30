@@ -10,6 +10,7 @@ impl<'a> Parser<'a> {
     // Statements
     // ========================================================================
 
+    /// Parse a statement block.
     fn block(&mut self) -> Result<Vec<Spanned<Statement>>, CompileError> {
         let mut stmts = Vec::new();
         let mut next_leading = self.consume_inter_statement_blank_prefix();
@@ -58,6 +59,7 @@ impl<'a> Parser<'a> {
         )
     }
 
+    /// Parse one statement.
     fn statement(&mut self) -> Result<Spanned<Statement>, CompileError> {
         let start = self.current_span().start;
 
@@ -505,6 +507,7 @@ impl<'a> Parser<'a> {
         Ok(vec![PatternArg::Positional(Spanned::new(pattern, value.span))])
     }
 
+    /// Parse a `break` statement.
     fn break_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::Break), "Expected 'break'")?;
         let value = if !self.check(&TokenKind::Newline)
@@ -634,6 +637,7 @@ impl<'a> Parser<'a> {
         Ok(Statement::While(WhileStmt { condition, body }))
     }
 
+    /// Parse a `loop` statement.
     fn loop_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::Loop), "Expected 'loop'")?;
         self.expect(
@@ -648,6 +652,7 @@ impl<'a> Parser<'a> {
         Ok(Statement::Loop(LoopStmt { body }))
     }
 
+    /// Parse a `for` statement.
     fn for_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::For), "Expected 'for'")?;
         let pattern = self.for_binding_pattern()?;

@@ -179,6 +179,7 @@ nav:
               - std.io: language/reference/stdlib/io.md
               - std.json: language/reference/stdlib/json.md
               - std.logging: language/reference/stdlib/logging.md
+              - std.telemetry: language/reference/stdlib/telemetry.md
               - std.regex: language/reference/stdlib/regex.md
               - std.uuid: language/reference/stdlib/uuid.md
               - std.tempfile: language/reference/stdlib/tempfile.md

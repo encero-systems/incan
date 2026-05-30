@@ -1353,6 +1353,7 @@ pub mod iterator_methods {
         super::info_for_impl(ITERATOR_METHODS, id, "iterator method info missing")
     }
 
+    /// Return static metadata for this language-surface method.
     const fn info(id: IteratorMethodId, canonical: &'static str, description: &'static str) -> IteratorMethodInfo {
         LangItemInfo {
             id,

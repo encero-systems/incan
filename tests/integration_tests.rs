@@ -2907,6 +2907,112 @@ def main() -> None:
     }
 
     #[test]
+    fn test_decorated_variadic_callables_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = incan_command()
+            .args([
+                "run",
+                "-c",
+                r#"
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+@preserve()
+pub def decorated_total(first: int, second: int, *rest: int, **labels: str) -> int:
+    mut total: int = first + second
+    for value in rest:
+        total = total + value
+    if labels["mode"] == "sum":
+        return total
+    return -1
+
+class Box:
+    base: int
+
+    @preserve()
+    def total(self, first: int, *rest: int, **labels: str) -> int:
+        mut total: int = self.base + first
+        for value in rest:
+            total = total + value
+        if labels["mode"] == "sum":
+            return total
+        return -1
+
+def main() -> None:
+    box = Box(base=5)
+    println(decorated_total(1, 2, 3, 4, mode="sum") + box.total(6, 7, 8, mode="sum"))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "decorated variadic callable regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["36"], "unexpected decorated variadic output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_decorated_variadic_library_builds() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(
+            root.join("incan.toml"),
+            "[project]\nname = \"decorated_rest_lib\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(
+            root.join("src/lib.incn"),
+            r#"
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+@preserve()
+pub def decorated_total(first: int, second: int, *rest: int, **labels: str) -> int:
+    mut total: int = first + second
+    for value in rest:
+        total = total + value
+    if labels["mode"] == "sum":
+        return total
+    return -1
+
+pub class Box:
+    base: int
+
+    @preserve()
+    def total(self, first: int, *rest: int, **labels: str) -> int:
+        mut total: int = self.base + first
+        for value in rest:
+            total = total + value
+        if labels["mode"] == "sum":
+            return total
+        return -1
+"#,
+        )?;
+
+        let mut command = incan_command();
+        let output = command
+            .args(["build", "--lib"])
+            .current_dir(root)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "decorated variadic library build failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_string_and_bytes_iteration_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = run_incan_source(
             "def main() -> None:\n  mut out = \"\"\n  for ch in \"Az\":\n    out += ch\n  for index, ch in enumerate(\"xy\"):\n    out += f\"{index}{ch}\"\n  mut total = 0\n  for byte in b\"Az\":\n    total += byte\n  for index, byte in enumerate(b\"\\x01\\x02\"):\n    total += index + byte\n  println(out)\n  println(total)\n",

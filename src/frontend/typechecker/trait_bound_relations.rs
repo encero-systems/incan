@@ -575,6 +575,7 @@ impl TypeChecker {
         )
     }
 
+    /// Return whether a tuple type satisfies a trait bound.
     fn tuple_type_satisfies_bound(&self, items: &[ResolvedType], bound: &str) -> bool {
         match builtin_traits::from_str(bound) {
             Some(
@@ -591,6 +592,7 @@ impl TypeChecker {
         }
     }
 
+    /// Return whether a collection type satisfies a trait bound.
     fn collection_type_satisfies_bound(&self, kind: CollectionTypeId, args: &[ResolvedType], bound: &str) -> bool {
         let all_args_satisfy = || args.iter().all(|arg| self.type_satisfies_explicit_bound(arg, bound));
         match builtin_traits::from_str(bound) {

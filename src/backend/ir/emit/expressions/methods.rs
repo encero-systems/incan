@@ -35,6 +35,7 @@ use fast_paths::emit_registered_method_fast_path;
 use iterator_methods::emit_iterator_method;
 use string_methods::emit_string_method;
 
+/// Return the trait path used for type-level reflection.
 fn type_reflection_trait_path(method: &str) -> Option<&'static str> {
     match magic_methods::from_str(method) {
         Some(magic_methods::MagicMethodId::ClassName) => Some(tb::INCAN_TYPE_CLASS_NAME),
@@ -69,6 +70,7 @@ impl ReceiverInfo {
     }
 }
 
+/// Classify an IR type as a Rust collection family.
 fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamily> {
     match ty {
         IrType::Struct(name) | IrType::NamedGeneric(name, _) => {
@@ -455,6 +457,7 @@ impl<'a> IrEmitter<'a> {
         })
     }
 
+    /// Return whether a receiver type matches without relying on metadata.
     fn metadata_free_receiver_matches(receiver: &TypedExpr, class: MetadataFreeReceiverClass) -> bool {
         match class {
             MetadataFreeReceiverClass::IoValue => Self::receiver_allows_io_method_fallback(receiver),
@@ -465,6 +468,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return whether an argument type matches without relying on metadata.
     fn metadata_free_arg_matches(arg_ty: &IrType, class: MetadataFreeArgClass) -> bool {
         match class {
             MetadataFreeArgClass::StringBuffer => Self::is_string_buffer_type(arg_ty),

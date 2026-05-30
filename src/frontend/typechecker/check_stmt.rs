@@ -731,6 +731,7 @@ impl TypeChecker {
         self.consumed_iterator_bindings.remove(&assign.name);
     }
 
+    /// Check a return statement against the active function context.
     fn check_return(&mut self, expr: Option<&Spanned<Expr>>, span: Span) {
         if matches!(self.current_yield_context, super::YieldContext::Generator { .. }) {
             if let Some(expr) = expr {
@@ -1202,6 +1203,7 @@ impl TypeChecker {
         }
     }
 
+    /// Check an assert statement.
     fn check_assert_stmt(&mut self, assert_stmt: &AssertStmt) {
         match &assert_stmt.kind {
             AssertKind::Condition(condition) => {
@@ -1291,6 +1293,7 @@ impl TypeChecker {
         }
     }
 
+    /// Build an assertion pattern from a parsed pattern.
     fn assert_is_pattern_from_pattern(pattern: &Spanned<Pattern>) -> Option<AssertIsPattern> {
         match &pattern.node {
             Pattern::Constructor(name, args)

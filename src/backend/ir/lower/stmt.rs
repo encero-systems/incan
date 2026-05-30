@@ -1635,6 +1635,7 @@ impl AstLowering {
         self.lower_assert_condition_expr(condition, message)
     }
 
+    /// Lower an `assert` statement into IR.
     fn lower_assert_stmt(&mut self, assert_stmt: &ast::AssertStmt) -> Result<IrStmtKind, LoweringError> {
         match &assert_stmt.kind {
             ast::AssertKind::Condition(condition) => {
@@ -1661,6 +1662,7 @@ impl AstLowering {
         }
     }
 
+    /// Lower an assertion condition into IR.
     fn lower_assert_condition_expr(
         &mut self,
         condition: TypedExpr,
@@ -1698,6 +1700,7 @@ impl AstLowering {
         Ok(IrStmtKind::Expr(call))
     }
 
+    /// Lower an `assert_raises` statement into IR.
     fn lower_assert_raises_stmt(
         &mut self,
         call: &Spanned<ast::Expr>,
@@ -1814,6 +1817,7 @@ impl AstLowering {
         Ok(IrStmtKind::Expr(call))
     }
 
+    /// Build an assertion pattern from an expression.
     fn assert_is_pattern_from_expr(expr: &Spanned<ast::Expr>) -> Option<AssertIsPattern<'_>> {
         let ast::Expr::Binary(scrutinee, ast::BinaryOp::Is, pattern_expr) = &expr.node else {
             return None;
@@ -1857,6 +1861,7 @@ impl AstLowering {
         }
     }
 
+    /// Build an assertion pattern from a parsed pattern.
     fn assert_is_pattern_from_pattern<'a>(
         scrutinee: &'a Spanned<ast::Expr>,
         pattern: &Spanned<ast::Pattern>,
@@ -2024,6 +2029,7 @@ impl AstLowering {
         }
     }
 
+    /// Count reads of an identifier inside a condition expression.
     fn count_condition_ident_reads(&self, condition: &ast::Condition, counts: &mut HashMap<String, usize>) {
         match condition {
             ast::Condition::Expr(expr) => self.count_expr_ident_reads(&expr.node, counts),

@@ -1197,6 +1197,7 @@ impl AstLowering {
         type_args.iter().map(|ty| self.lower_type(&ty.node)).collect()
     }
 
+    /// Return the expression carried by a call argument.
     fn call_arg_expr(arg: &ast::CallArg) -> &ast::Spanned<ast::Expr> {
         match arg {
             ast::CallArg::Positional(e)
@@ -1279,6 +1280,7 @@ impl AstLowering {
         }
     }
 
+    /// Lower a rusttype interop adapter into IR.
     fn lower_rusttype_interop_adapter(
         &mut self,
         arg_ty: &IrType,

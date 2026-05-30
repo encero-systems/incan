@@ -49,6 +49,7 @@ pub trait Visitor {
     fn visit_newtype(&mut self, _newtype: &NewtypeDecl) {}
     fn visit_enum(&mut self, _enum: &EnumDecl) {}
     fn visit_function(&mut self, _func: &FunctionDecl) {}
+    /// Visit an inline test module declaration in the AST.
     fn visit_test_module(&mut self, _test_module: &TestModuleDecl) {}
     fn visit_statement(&mut self, _stmt: &Spanned<Statement>) {}
     fn visit_expr(&mut self, _expr: &Spanned<Expr>) {}

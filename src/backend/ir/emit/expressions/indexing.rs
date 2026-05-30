@@ -85,11 +85,13 @@ impl<'a> IrEmitter<'a> {
         }})
     }
 
+    /// Emit a callable-name expression for a generic callable.
     fn emit_generic_callable_name_expr(&self, object: &TypedExpr) -> Result<TokenStream, EmitError> {
         let object = self.emit_expr(object)?;
         Ok(quote! { __IncanCallableName::__incan_callable_name(&#object) })
     }
 
+    /// Emit the path to a callable-name helper function.
     pub(in crate::backend::ir::emit) fn emit_callable_name_helper_path(
         &self,
         module_path: &[String],

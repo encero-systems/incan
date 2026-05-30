@@ -187,6 +187,7 @@ impl Formatter {
         }
     }
 
+    /// Return whether a declaration needs wider top-level spacing.
     fn decl_needs_wide_top_level_spacing(decl: &Declaration) -> bool {
         matches!(
             decl,

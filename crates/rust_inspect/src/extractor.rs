@@ -117,10 +117,12 @@ fn canonical_adt_path(adt: Adt, db: &RootDatabase) -> Option<String> {
     canonical_module_def_path(ModuleDef::Adt(adt), db)
 }
 
+/// Normalize source type text from Rust inspection display output.
 fn normalize_source_type_text(text: &str) -> String {
     strip_rust_borrow_lifetimes(text).trim().replace(' ', "")
 }
 
+/// Return the source spelling for a borrowed builtin Rust type.
 fn borrowed_builtin_source_display(text: &str) -> Option<String> {
     let normalized = normalize_source_type_text(text);
     let (prefix, inner) = if let Some(inner) = normalized.strip_prefix("&mut") {
@@ -144,6 +146,7 @@ fn borrowed_builtin_source_display(text: &str) -> Option<String> {
     }
 }
 
+/// Return whether a Rust display type is an exact numeric primitive.
 fn is_exact_numeric_display(text: &str) -> bool {
     matches!(
         text,
@@ -230,6 +233,7 @@ fn resolve_source_path(text: &str, crate_name: &str, module: Module, db: &RootDa
     None
 }
 
+/// Classify the source-level shape represented by a Rust display type.
 fn source_type_shape(text: &str, crate_name: &str, module: Module, db: &RootDatabase) -> RustTypeShape {
     let text = normalize_source_type_text(text);
     if text.is_empty() {
@@ -419,6 +423,7 @@ fn rust_type_shape(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> RustT
     RustTypeShape::Unknown
 }
 
+/// Render a Rust signature type in source-oriented form.
 fn function_sig_type_display(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> String {
     let raw = normalize_display_path(format_ty(ty, db, dt).as_str());
     if let Some(display) = exact_numeric_boundary_display(raw.as_str()) {
@@ -615,6 +620,7 @@ fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>,
     Some(rendered)
 }
 
+/// Extract a Rust function signature from inspection metadata.
 fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> RustFunctionSig {
     let params = f
         .assoc_fn_params(db)

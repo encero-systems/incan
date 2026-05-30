@@ -220,10 +220,12 @@ fn expand_inline_match_arm_with_leading_block(
     true
 }
 
+/// Return whether an inline comment still belongs to a formatted node.
 fn inline_comment_matches(inline_comment: &InlineComment, normalized: &str, occurrence: Option<usize>) -> bool {
     inline_comment.anchor == normalized && occurrence.is_some_and(|occ| occ == inline_comment.occurrence)
 }
 
+/// Queue trailing comment blocks for reattachment.
 fn queue_trailing_blocks(
     trailing_standalone: &[AnchoredStandaloneBlock],
     trailing_idx: &mut usize,

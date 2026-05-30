@@ -181,6 +181,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit the Rust function type for a callable value.
     pub(in crate::backend::ir::emit) fn emit_callable_fn_type(&self, params: &[IrType], ret: &IrType) -> TokenStream {
         let previous = self.qualify_internal_canonical_paths.replace(true);
         let param_tokens = params.iter().map(|param| self.emit_type(param)).collect::<Vec<_>>();
@@ -391,6 +392,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Collect string literal patterns from a match pattern tree.
     fn collect_string_literal_patterns<'p>(pattern: &'p Pattern, values: &mut Vec<&'p str>) -> bool {
         match pattern {
             Pattern::Literal(lit) => {

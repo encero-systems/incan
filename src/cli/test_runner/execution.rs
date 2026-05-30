@@ -64,6 +64,7 @@ fn test_preheat_enabled() -> bool {
     parse_test_preheat_env(std::env::var("INCAN_TEST_PREHEAT").ok().as_deref())
 }
 
+/// Collect inline imports required by dependencies of a test source file.
 fn collect_test_dependency_inline_imports(
     test_module: &ParsedModule,
     source_modules: &[ParsedModule],
@@ -236,6 +237,7 @@ struct TopLevelNameSummary {
 
 /// Collect top-level Rust item names that would collide if multiple Incan files were concatenated.
 fn collect_top_level_decl_names(program: &Program) -> TopLevelNames {
+    /// Record a top-level import binding as both a type and value name.
     fn add_import_binding(name: &str, names: &mut TopLevelNames) {
         names.imported_types.insert(name.to_string());
         names.imported_values.insert(name.to_string());
@@ -326,6 +328,7 @@ fn collect_top_level_decl_names(program: &Program) -> TopLevelNames {
     names
 }
 
+/// Collect top-level name information for one test source file.
 fn collect_top_level_name_summary(
     path: &Path,
     source: &str,
@@ -341,6 +344,7 @@ fn collect_top_level_name_summary(
     })
 }
 
+/// Collect top-level name summaries for all files in a test batch.
 fn collect_top_level_name_summaries(
     sources_by_file: &[(PathBuf, String)],
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
@@ -351,6 +355,7 @@ fn collect_top_level_name_summaries(
         .collect()
 }
 
+/// Return whether top-level names collide across test-batch files.
 fn top_level_summaries_have_collision<'a>(summaries: impl IntoIterator<Item = &'a TopLevelNameSummary>) -> bool {
     let mut type_owner: HashMap<String, PathBuf> = HashMap::new();
     let mut value_owner: HashMap<String, PathBuf> = HashMap::new();
@@ -454,6 +459,7 @@ fn partition_collision_free_file_groups(
         .collect()
 }
 
+/// Shift token spans after concatenating test source files.
 fn rebase_token_spans(tokens: &mut [lexer::Token], source_offset: usize) {
     if source_offset == 0 {
         return;
@@ -527,6 +533,7 @@ struct InlineSourceModuleBatch {
     harnesses: Vec<PreparedModuleHarness>,
 }
 
+/// Create an empty synthetic program for a test batch.
 fn empty_test_batch_root(first_path: &Path) -> Program {
     Program {
         declarations: Vec::new(),
@@ -536,6 +543,7 @@ fn empty_test_batch_root(first_path: &Path) -> Program {
     }
 }
 
+/// Return whether a program contains inline test modules.
 fn program_has_inline_test_module(program: &Program) -> bool {
     program
         .declarations
@@ -543,6 +551,7 @@ fn program_has_inline_test_module(program: &Program) -> bool {
         .any(|decl| matches!(decl.node, Declaration::TestModule(_)))
 }
 
+/// Prepare the runner AST and fixture metadata for a test module.
 fn prepare_runner_program(ast: &Program) -> Result<(Program, HashMap<String, FixtureExecutionInfo>), String> {
     let mut runner_ast = ast_with_inline_test_declarations(ast);
     normalize_runner_assert_statements(&mut runner_ast);
@@ -554,6 +563,7 @@ fn prepare_runner_program(ast: &Program) -> Result<(Program, HashMap<String, Fix
     Ok((runner_ast, fixtures))
 }
 
+/// Parse and desugar all source files in a test batch.
 fn parse_and_desugar_test_sources(
     batch_sources: &[(PathBuf, String)],
     library_manifest_index: &LibraryManifestIndex,
@@ -577,6 +587,7 @@ fn parse_and_desugar_test_sources(
     Ok(ast)
 }
 
+/// Build a stable synthetic module name from module path segments.
 fn module_name_for_segments(segments: &[String]) -> String {
     let mut hasher = Sha256::new();
     for segment in segments {
@@ -592,6 +603,7 @@ fn module_name_for_segments(segments: &[String]) -> String {
     format!("{stem}_{}", &digest[..8])
 }
 
+/// Read conftest source files for a test batch.
 fn read_conftest_sources(paths: &[PathBuf]) -> Result<Vec<(PathBuf, String)>, String> {
     let mut sources = Vec::new();
     for path in paths {
@@ -602,6 +614,7 @@ fn read_conftest_sources(paths: &[PathBuf]) -> Result<Vec<(PathBuf, String)>, St
     Ok(sources)
 }
 
+/// Prepare a collision-aware batch of inline source modules.
 fn prepare_inline_source_module_batch(
     sources_by_file: &[(PathBuf, String)],
     conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
@@ -821,6 +834,7 @@ fn shared_cargo_target_dir(project_root: &Path) -> PathBuf {
     }
 }
 
+/// Return the package entry path used for lockfile validation.
 fn lock_validation_entry_path(project_root: &Path, manifest: Option<&ProjectManifest>) -> Option<PathBuf> {
     if let Some(main) = manifest
         .and_then(|m| m.project.as_ref())
@@ -1696,6 +1710,7 @@ fn test_runner_stdlib_features(
     features.into_iter().collect()
 }
 
+/// Collect stdlib feature flags needed by a test batch.
 fn test_runner_stdlib_features_for_batch(
     base: &[String],
     tests: &[TestInfo],
@@ -2054,6 +2069,7 @@ fn inject_file_test_harness(
     inject_file_test_harness_with_indices(rust_code, tests, &test_indices, project_root, fixtures)
 }
 
+/// Inject generated Rust test harness entries using stable test indices.
 fn inject_file_test_harness_with_indices(
     rust_code: &str,
     tests: &[TestInfo],

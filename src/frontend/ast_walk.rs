@@ -225,6 +225,7 @@ where
     }
 }
 
+/// Return whether an assert pattern contains an expression.
 fn assert_has_expr<F>(assert_stmt: &crate::frontend::ast::AssertStmt, pred: &mut F) -> bool
 where
     F: FnMut(&Expr) -> bool,
@@ -241,6 +242,7 @@ where
             .is_some_and(|message| expr_has(&message.node, pred))
 }
 
+/// Return whether a condition pattern contains an expression.
 fn condition_has_expr<F>(condition: &Condition, pred: &mut F) -> bool
 where
     F: FnMut(&Expr) -> bool,

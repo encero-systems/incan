@@ -414,6 +414,7 @@ pub fn public_expression_to_internal(expr: &incan_vocab::IncanExpr) -> Result<as
     public_expr_to_internal(expr)
 }
 
+/// Convert an internal vocab condition expression into the public AST form.
 fn internal_condition_expr_to_public(
     condition: &ast::Condition,
 ) -> Result<incan_vocab::IncanExpr, VocabAstBridgeError> {

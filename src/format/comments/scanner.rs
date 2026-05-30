@@ -30,6 +30,7 @@ pub(super) fn count_line_comments(source: &str) -> usize {
     count
 }
 
+/// Return the byte index where a line comment starts outside strings.
 pub(super) fn comment_start_index(line: &str, state: &mut StringState) -> Option<usize> {
     let mut i = 0usize;
     while i < line.len() {

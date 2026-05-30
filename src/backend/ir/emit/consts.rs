@@ -56,6 +56,7 @@ impl<'a> IrEmitter<'a> {
         self.const_type_emittable_inner(ty, &mut seen_structs)
     }
 
+    /// Return whether a constant type can be emitted in generated Rust.
     fn const_type_emittable_inner(&self, ty: &IrType, seen_structs: &mut std::collections::HashSet<String>) -> bool {
         match ty {
             IrType::Int
@@ -92,6 +93,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return whether a struct constant can be emitted in generated Rust.
     fn const_struct_type_emittable(&self, name: &str, seen_structs: &mut std::collections::HashSet<String>) -> bool {
         if !seen_structs.insert(name.to_string()) {
             return false;

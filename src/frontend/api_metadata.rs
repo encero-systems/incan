@@ -589,12 +589,14 @@ struct ApiAliasProjectionRequest {
     anchor: SourceAnchor,
 }
 
+/// Build the API declaration path for a module-local name.
 fn declaration_path(module_path: &[String], name: &str) -> Vec<String> {
     let mut path = module_path.to_vec();
     path.push(name.to_string());
     path
 }
 
+/// Normalize an API target path by removing a leading `crate` segment.
 fn normalized_api_target_path(path: &[String]) -> Vec<String> {
     if path.first().is_some_and(|segment| segment == "crate") {
         return path[1..].to_vec();
@@ -602,6 +604,7 @@ fn normalized_api_target_path(path: &[String]) -> Vec<String> {
     path.to_vec()
 }
 
+/// Build callable metadata from a checked API function export.
 fn callable_from_function(function: &ApiFunction) -> ApiCallableMetadata {
     ApiCallableMetadata {
         name: function.name.clone(),
@@ -614,6 +617,7 @@ fn callable_from_function(function: &ApiFunction) -> ApiCallableMetadata {
     }
 }
 
+/// Build projected callable metadata for an alias re-export.
 fn projected_function_for_alias(
     alias: &ApiAliasProjectionRequest,
     target: &ApiProjectedFunction,
@@ -624,10 +628,12 @@ fn projected_function_for_alias(
     projected
 }
 
+/// Look up the checked export kind for a public name.
 fn checked_kind<'a>(exports: &'a HashMap<String, CheckedNamedExport>, name: &str) -> Option<&'a CheckedExportKind> {
     exports.get(name).map(|export| &export.kind)
 }
 
+/// Return whether a declaration visibility is public.
 fn public(visibility: Visibility) -> bool {
     matches!(visibility, Visibility::Public)
 }
@@ -701,6 +707,7 @@ fn api_preset_value(value: &CheckedPresetValue) -> PresetValueExport {
     }
 }
 
+/// Convert a source function declaration into API metadata.
 fn api_function(
     function: &FunctionDecl,
     span: Span,
@@ -723,6 +730,7 @@ fn api_function(
     }
 }
 
+/// Convert a source function declaration into callable API metadata.
 fn api_callable_for_function(
     function: &FunctionDecl,
     span: Span,
@@ -766,6 +774,7 @@ fn source_function_params(function: &FunctionDecl, checker: &TypeChecker) -> Vec
         .collect()
 }
 
+/// Resolve the source return type used by function API metadata.
 fn source_function_return_type(function: &FunctionDecl, checker: &TypeChecker) -> TypeRef {
     type_ref_from_resolved(&crate::frontend::symbols::resolve_type(
         &function.return_type.node,
@@ -773,6 +782,7 @@ fn source_function_return_type(function: &FunctionDecl, checker: &TypeChecker) -
     ))
 }
 
+/// Convert a source model declaration into API metadata.
 fn api_model(
     model: &ModelDecl,
     span: Span,
@@ -795,6 +805,7 @@ fn api_model(
     }
 }
 
+/// Convert a source class declaration into API metadata.
 fn api_class(
     class: &ClassDecl,
     span: Span,
@@ -894,6 +905,7 @@ fn api_enum(
     }
 }
 
+/// Convert a source newtype declaration into API metadata.
 fn api_newtype(
     newtype: &NewtypeDecl,
     span: Span,
@@ -915,6 +927,7 @@ fn api_newtype(
     }
 }
 
+/// Convert a source type alias declaration into API metadata.
 fn api_type_alias(
     alias: &TypeAliasDecl,
     span: Span,
@@ -932,6 +945,7 @@ fn api_type_alias(
     }
 }
 
+/// Convert a checked constant declaration into API metadata.
 fn api_const(
     name: &str,
     span: Span,
@@ -947,6 +961,7 @@ fn api_const(
     }
 }
 
+/// Convert an import declaration into API alias metadata.
 fn api_aliases(import: &ImportDecl, span: Span, module_path: &[String]) -> Vec<ApiAlias> {
     match &import.kind {
         ImportKind::From { module, items } => {
@@ -972,6 +987,7 @@ fn api_aliases(import: &ImportDecl, span: Span, module_path: &[String]) -> Vec<A
     }
 }
 
+/// Convert import items into API alias metadata rooted at a base path.
 fn aliases_from_items(
     items: &[ImportItem],
     base_path: Vec<String>,
@@ -1115,6 +1131,7 @@ fn checked_method_shape_matches(ast_method: &MethodDecl, checked: &CheckedMethod
             ))
 }
 
+/// Convert checked type parameters into API metadata exports.
 fn type_params(type_params: &[CheckedTypeParam]) -> Vec<TypeParamExport> {
     type_params
         .iter()
@@ -1135,6 +1152,7 @@ fn type_bound(bound: &CheckedTypeBound) -> TypeBoundExport {
     }
 }
 
+/// Convert checked callable parameters into API metadata exports.
 fn params(params: &[crate::frontend::symbols::CallableParam]) -> Vec<ParamExport> {
     params
         .iter()
@@ -1153,6 +1171,7 @@ fn params(params: &[crate::frontend::symbols::CallableParam]) -> Vec<ParamExport
         .collect()
 }
 
+/// Convert a checked field into API metadata.
 fn field(field: &crate::frontend::library_exports::CheckedField) -> FieldExport {
     FieldExport {
         name: field.name.clone(),
@@ -1163,6 +1182,7 @@ fn field(field: &crate::frontend::library_exports::CheckedField) -> FieldExport 
     }
 }
 
+/// Return checked fields ordered to match the source declaration.
 fn fields_in_source_order(ast_fields: &[Spanned<FieldDecl>], checked_fields: &[CheckedField]) -> Vec<FieldExport> {
     let checked_by_name: HashMap<&str, &CheckedField> = checked_fields
         .iter()
@@ -1187,6 +1207,7 @@ fn fields_in_source_order(ast_fields: &[Spanned<FieldDecl>], checked_fields: &[C
     out
 }
 
+/// Convert source decorators into checked API metadata entries.
 fn decorators_metadata(
     decorators: &[Spanned<Decorator>],
     checker: &TypeChecker,
@@ -1223,6 +1244,7 @@ fn decorators_metadata(
         .collect()
 }
 
+/// Convert a decorator argument into API metadata.
 fn decorator_arg_metadata(arg: &DecoratorArg, checker: &TypeChecker) -> DecoratorArgMetadata {
     match arg {
         DecoratorArg::Positional(expr) => DecoratorArgMetadata::Positional {
@@ -1241,6 +1263,7 @@ fn decorator_arg_metadata(arg: &DecoratorArg, checker: &TypeChecker) -> Decorato
     }
 }
 
+/// Convert a decorator expression into a safe metadata value.
 fn decorator_expr_value(expr: &Spanned<Expr>, checker: &TypeChecker) -> DecoratorValue {
     match &expr.node {
         Expr::Literal(literal) => DecoratorValue::Literal {
@@ -1333,6 +1356,7 @@ fn decorator_expr_value(expr: &Spanned<Expr>, checker: &TypeChecker) -> Decorato
     }
 }
 
+/// Convert a decorator call argument into API metadata.
 fn decorator_call_arg_metadata(arg: &CallArg, checker: &TypeChecker) -> DecoratorCallArgMetadata {
     match arg {
         CallArg::Positional(value) => DecoratorCallArgMetadata::Positional {
@@ -1351,6 +1375,7 @@ fn decorator_call_arg_metadata(arg: &CallArg, checker: &TypeChecker) -> Decorato
     }
 }
 
+/// Return the source path represented by a decorator expression.
 fn decorator_expr_path(expr: &Expr) -> Vec<String> {
     match expr {
         Expr::Ident(name) => vec![name.clone()],
@@ -1366,6 +1391,7 @@ fn decorator_expr_path(expr: &Expr) -> Vec<String> {
     }
 }
 
+/// Return a stable label for a decorator expression shape.
 fn decorator_expr_label(expr: &Expr) -> &'static str {
     match expr {
         Expr::Ident(_) => "identifier",
@@ -1391,6 +1417,7 @@ fn safe_value_from_literal(literal: &crate::frontend::ast::Literal) -> SafeMetad
     }
 }
 
+/// Convert a constant value into a safe metadata value.
 fn safe_value_from_const(value: &ConstValue) -> SafeMetadataValue {
     match value {
         ConstValue::Int(value) => SafeMetadataValue::Int(*value),
@@ -1401,6 +1428,7 @@ fn safe_value_from_const(value: &ConstValue) -> SafeMetadataValue {
     }
 }
 
+/// Extract the leading function docstring expression, when present.
 fn function_docstring(body: &[Spanned<Statement>]) -> Option<String> {
     let first = body.first()?;
     let Statement::Expr(expr) = &first.node else {
@@ -1422,6 +1450,7 @@ pub fn validate_checked_api_docstrings(package: &[CheckedApiMetadata]) -> Vec<Ap
     diagnostics
 }
 
+/// Parse a source docstring into structured API documentation.
 fn parse_docstring(docstring: Option<&str>) -> Option<ApiDocstring> {
     let docstring = docstring?;
     let lines = normalized_docstring_lines(docstring);
@@ -1441,6 +1470,7 @@ fn parse_docstring(docstring: Option<&str>) -> Option<ApiDocstring> {
     Some(parsed.finish())
 }
 
+/// Return normalized docstring body lines.
 fn normalized_docstring_lines(docstring: &str) -> Vec<String> {
     docstring
         .lines()
@@ -1468,6 +1498,7 @@ enum DocstringSection {
 }
 
 impl DocstringSection {
+    /// Map a docstring section heading to its parser state.
     fn from_heading(line: &str) -> Option<Self> {
         match line {
             "Args:" | "Parameters:" => Some(Self::Params),
@@ -1491,6 +1522,7 @@ struct DocstringBuilder {
 }
 
 impl DocstringBuilder {
+    /// Add a normalized docstring line to the active section.
     fn push_line(&mut self, section: DocstringSection, line: &str) {
         match section {
             DocstringSection::Summary => push_prose_line(&mut self.summary_lines, line),
@@ -1502,6 +1534,7 @@ impl DocstringBuilder {
         }
     }
 
+    /// Build the completed structured docstring from accumulated lines.
     fn finish(self) -> ApiDocstring {
         ApiDocstring {
             summary: joined_non_empty(self.summary_lines),
@@ -1514,6 +1547,7 @@ impl DocstringBuilder {
     }
 }
 
+/// Append a normalized prose line to a docstring section.
 fn push_prose_line(lines: &mut Vec<String>, line: &str) {
     if line.is_empty() {
         if !lines.last().is_some_and(String::is_empty) {
@@ -1524,6 +1558,7 @@ fn push_prose_line(lines: &mut Vec<String>, line: &str) {
     lines.push(line.to_string());
 }
 
+/// Append a normalized entry line to a docstring section.
 fn push_entry_line(entries: &mut Vec<ApiDocstringEntry>, line: &str) {
     if line.is_empty() {
         return;
@@ -1546,6 +1581,7 @@ fn push_entry_line(entries: &mut Vec<ApiDocstringEntry>, line: &str) {
     }
 }
 
+/// Parse a docstring return section into structured API documentation.
 fn parse_return_section(lines: Vec<String>) -> Option<ApiDocstringReturn> {
     let description = joined_non_empty(lines)?;
     if let Some((ty, rest)) = description.split_once(':') {
@@ -1560,11 +1596,13 @@ fn parse_return_section(lines: Vec<String>) -> Option<ApiDocstringReturn> {
     Some(ApiDocstringReturn { ty: None, description })
 }
 
+/// Join non-empty docstring lines into a single paragraph.
 fn joined_non_empty(lines: Vec<String>) -> Option<String> {
     let joined = lines.join("\n").trim().to_string();
     if joined.is_empty() { None } else { Some(joined) }
 }
 
+/// Return whether a docstring fragment looks like a type spelling.
 fn looks_like_type_spelling(text: &str) -> bool {
     !text.is_empty()
         && text
@@ -1572,6 +1610,7 @@ fn looks_like_type_spelling(text: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | ':' | '[' | ']' | ',' | ' ' | '&'))
 }
 
+/// Validate docstring coverage for declarations in one API metadata module.
 fn validate_module_docstrings(
     module: &CheckedApiMetadata,
     aliases: &[ApiAlias],
@@ -1689,6 +1728,7 @@ struct DeclarationDocFacts<'a> {
     aliases: Vec<&'a str>,
 }
 
+/// Validate a callable docstring against its exported API shape.
 fn validate_callable_docstring(
     module_path: &[String],
     declaration_name: &str,
@@ -1735,6 +1775,7 @@ fn validate_callable_docstring(
     );
 }
 
+/// Validate a type docstring against its exported API shape.
 fn validate_type_docstring(
     module_path: &[String],
     declaration_name: &str,
@@ -1773,6 +1814,7 @@ fn validate_type_docstring(
     );
 }
 
+/// Validate one exported declaration docstring.
 fn validate_declaration_docstring(
     module_path: &[String],
     declaration_name: &str,
@@ -1802,6 +1844,7 @@ fn validate_declaration_docstring(
     );
 }
 
+/// Validate the return section for a callable docstring.
 fn validate_return_docstring(
     module_path: &[String],
     anchor: &SourceAnchor,
@@ -1830,6 +1873,7 @@ fn validate_return_docstring(
     }
 }
 
+/// Validate decorator documentation entries for an exported callable.
 fn validate_decorator_entries(
     module_path: &[String],
     anchor: &SourceAnchor,
@@ -1858,6 +1902,7 @@ fn validate_decorator_entries(
     );
 }
 
+/// Validate alias documentation entries for exported declarations.
 fn validate_alias_entries(
     module_path: &[String],
     anchor: &SourceAnchor,
@@ -1949,6 +1994,7 @@ fn validate_named_entries(
     }
 }
 
+/// Return the expected docstring section name for a documented noun.
 fn section_name_for_noun(noun: &str) -> &'static str {
     match noun {
         "parameter" => "Args:",
@@ -1959,6 +2005,7 @@ fn section_name_for_noun(noun: &str) -> &'static str {
     }
 }
 
+/// Record an API docstring diagnostic anchored to a source span.
 fn push_docstring_diagnostic(
     diagnostics: &mut Vec<ApiDocstringDiagnostic>,
     module_path: &[String],
@@ -1972,6 +2019,7 @@ fn push_docstring_diagnostic(
     });
 }
 
+/// Return method metadata attached to a class-like declaration.
 fn declaration_methods(declaration: &ApiDeclaration) -> &[ApiMethod] {
     match declaration {
         ApiDeclaration::Model(model) => &model.methods,
@@ -1982,6 +2030,7 @@ fn declaration_methods(declaration: &ApiDeclaration) -> &[ApiMethod] {
     }
 }
 
+/// Return alias metadata exported by a checked package.
 fn package_aliases(package: &[CheckedApiMetadata]) -> Vec<ApiAlias> {
     package
         .iter()
@@ -1993,6 +2042,7 @@ fn package_aliases(package: &[CheckedApiMetadata]) -> Vec<ApiAlias> {
         .collect()
 }
 
+/// Return aliases that target a specific exported declaration.
 fn aliases_for_declaration<'a>(aliases: &'a [ApiAlias], module_path: &[String], name: &str) -> Vec<&'a str> {
     aliases
         .iter()
@@ -2001,6 +2051,7 @@ fn aliases_for_declaration<'a>(aliases: &'a [ApiAlias], module_path: &[String], 
         .collect()
 }
 
+/// Return whether an alias path names a specific exported declaration.
 fn alias_targets_declaration(alias: &ApiAlias, module_path: &[String], name: &str) -> bool {
     let mut declaration_path = module_path.to_vec();
     declaration_path.push(name.to_string());
@@ -2014,6 +2065,7 @@ fn alias_targets_declaration(alias: &ApiAlias, module_path: &[String], name: &st
     false
 }
 
+/// Render a type reference as a docstring-facing type name.
 fn type_ref_doc_name(ty: &TypeRef) -> String {
     match ty {
         TypeRef::Named { name } => name.clone(),
@@ -2037,6 +2089,7 @@ fn type_ref_doc_name(ty: &TypeRef) -> String {
     }
 }
 
+/// Build a source anchor for an API metadata span.
 fn anchor(module_path: &[String], name: &str, span: Span) -> SourceAnchor {
     let mut parts = module_path.to_vec();
     parts.push(name.to_string());
@@ -2046,6 +2099,7 @@ fn anchor(module_path: &[String], name: &str, span: Span) -> SourceAnchor {
     }
 }
 
+/// Convert a concrete span into an API metadata source span.
 fn source_span(span: Span) -> SourceSpan {
     SourceSpan {
         start: span.start,

@@ -181,6 +181,7 @@ impl Formatter {
         self.writer.newline();
     }
 
+    /// Format an assert statement.
     fn format_assert(&mut self, assert_stmt: &AssertStmt) {
         self.writer.write("assert ");
         match &assert_stmt.kind {
@@ -203,6 +204,7 @@ impl Formatter {
         self.writer.newline();
     }
 
+    /// Format an if statement.
     fn format_if(&mut self, if_stmt: &IfStmt) {
         self.writer.write("if ");
         self.format_condition(&if_stmt.condition);
@@ -243,6 +245,7 @@ impl Formatter {
         }
     }
 
+    /// Format a loop statement.
     fn format_loop(&mut self, loop_stmt: &LoopStmt) {
         self.writer.writeln("loop:");
         self.writer.indent();
@@ -255,6 +258,7 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Format a while statement.
     fn format_while(&mut self, while_stmt: &WhileStmt) {
         self.writer.write("while ");
         self.format_condition(&while_stmt.condition);
@@ -299,6 +303,7 @@ impl Formatter {
         }
     }
 
+    /// Format a conditional expression.
     fn format_condition(&mut self, condition: &Condition) {
         match condition {
             Condition::Expr(expr) => self.format_expr(&expr.node),

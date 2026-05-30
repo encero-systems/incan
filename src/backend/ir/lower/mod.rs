@@ -282,6 +282,73 @@ impl AstLowering {
             .collect()
     }
 
+    /// Lower typechecker callable metadata into an IR function signature while preserving the container shape required
+    /// for rest parameters.
+    fn function_signature_from_callable_surface(
+        &mut self,
+        callable_params: &[CallableParam],
+        callable_ret: &crate::frontend::symbols::ResolvedType,
+    ) -> FunctionSignature {
+        FunctionSignature {
+            params: callable_params
+                .iter()
+                .enumerate()
+                .map(|(idx, param)| {
+                    let base_ty = self.lower_resolved_type(&param.ty);
+                    FunctionParam {
+                        name: param.name.clone().unwrap_or_else(|| format!("__incan_arg_{idx}")),
+                        ty: Self::lower_param_container_type(param.kind, base_ty),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: param.kind,
+                        default: None,
+                    }
+                })
+                .collect(),
+            return_type: self.lower_resolved_type(callable_ret),
+        }
+    }
+
+    /// Lower typechecker callable metadata into an IR function type.
+    fn function_type_from_callable_surface(
+        &mut self,
+        callable_params: &[CallableParam],
+        callable_ret: &crate::frontend::symbols::ResolvedType,
+    ) -> IrType {
+        let signature = self.function_signature_from_callable_surface(callable_params, callable_ret);
+        IrType::Function {
+            params: signature.params.into_iter().map(|param| param.ty).collect(),
+            ret: Box::new(signature.return_type),
+        }
+    }
+
+    /// Build forwarding arguments for a wrapper whose IR parameters already encode rest-parameter containers.
+    fn forwarding_args_from_params(params: &[FunctionParam]) -> Vec<IrCallArg> {
+        params
+            .iter()
+            .map(|param| {
+                let kind = match param.kind {
+                    ast::ParamKind::Normal => IrCallArgKind::Positional,
+                    ast::ParamKind::RestPositional => IrCallArgKind::PositionalUnpack,
+                    ast::ParamKind::RestKeyword => IrCallArgKind::KeywordUnpack,
+                };
+                IrCallArg {
+                    name: None,
+                    kind,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: param.name.clone(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        param.ty.clone(),
+                    ),
+                }
+            })
+            .collect()
+    }
+
+    /// Build IR function parameters from source callable metadata.
     fn function_params_from_source_callable_surface(
         &mut self,
         callable_params: &[CallableParam],
@@ -957,6 +1024,7 @@ impl AstLowering {
         }
     }
 
+    /// Collect callable re-exports from checked package metadata.
     fn collect_function_reexports(&self, program: &ast::Program) -> Vec<FunctionReexport> {
         let mut reexports = Vec::new();
         for decl in &program.declarations {
@@ -983,6 +1051,7 @@ impl AstLowering {
         reexports
     }
 
+    /// Return canonical module segments for a source import.
     fn canonical_source_import_module_segments(&self, module: &ast::ImportPath) -> Vec<String> {
         let segments = if module.parent_levels > 0 && !module.is_absolute {
             let mut base = self
@@ -1735,13 +1804,7 @@ impl AstLowering {
 
         let original_name = Self::decorator_original_function_name(&f.name);
         let original = self.lower_function_named(f, original_name.clone(), super::decl::Visibility::Private)?;
-        let decorated_ty = IrType::Function {
-            params: callable_params
-                .iter()
-                .map(|param| self.lower_resolved_type(&param.ty))
-                .collect(),
-            ret: Box::new(self.lower_resolved_type(&callable_ret)),
-        };
+        let decorated_ty = self.function_type_from_callable_surface(&callable_params, &callable_ret);
 
         if !original.type_params.is_empty() {
             let wrapper = self.generic_decorated_function_wrapper(
@@ -1848,27 +1911,16 @@ impl AstLowering {
                 decorated_ty,
             );
         }
-        let args = params
-            .iter()
-            .map(|param| IrCallArg {
-                name: None,
-                kind: IrCallArgKind::Positional,
-                expr: TypedExpr::new(
-                    IrExprKind::Var {
-                        name: param.name.clone(),
-                        access: VarAccess::Read,
-                        ref_kind: VarRefKind::Value,
-                    },
-                    param.ty.clone(),
-                ),
-            })
-            .collect();
+        let args = Self::forwarding_args_from_params(&params);
         let call = TypedExpr::new(
             IrExprKind::Call {
                 func: Box::new(decorated_func),
                 type_args: Vec::new(),
                 args,
-                callable_signature: None,
+                callable_signature: Some(FunctionSignature {
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                }),
                 canonical_path: None,
             },
             return_type.clone(),
@@ -1952,27 +2004,16 @@ impl AstLowering {
                 ret: Box::new(return_type.clone()),
             },
         );
-        let args = params
-            .iter()
-            .map(|param| IrCallArg {
-                name: None,
-                kind: IrCallArgKind::Positional,
-                expr: TypedExpr::new(
-                    IrExprKind::Var {
-                        name: param.name.clone(),
-                        access: VarAccess::Read,
-                        ref_kind: VarRefKind::Value,
-                    },
-                    param.ty.clone(),
-                ),
-            })
-            .collect();
+        let args = Self::forwarding_args_from_params(&params);
         let call = TypedExpr::new(
             IrExprKind::Call {
                 func: Box::new(static_func),
                 type_args: Vec::new(),
                 args,
-                callable_signature: None,
+                callable_signature: Some(FunctionSignature {
+                    params: params.clone(),
+                    return_type: return_type.clone(),
+                }),
                 canonical_path: None,
             },
             return_type.clone(),
@@ -2045,6 +2086,7 @@ impl AstLowering {
             .collect()
     }
 
+    /// Return whether decorated positional parameter shapes match.
     fn decorated_positional_param_shapes_match(
         surface_params: &[CallableParam],
         original_params: &[CallableParam],
@@ -2058,6 +2100,7 @@ impl AstLowering {
                 })
     }
 
+    /// Return whether a decorated parameter shape matches the source parameter.
     fn decorated_param_shape_matches(surface_param: &CallableParam, original_param: &CallableParam) -> bool {
         surface_param.kind == original_param.kind && surface_param.ty == original_param.ty
     }

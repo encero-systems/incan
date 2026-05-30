@@ -130,6 +130,7 @@ impl TypeChecker {
         Some(RustCallableAliasSignature { params, return_ty })
     }
 
+    /// Build the Rust trait-object type for a callable alias.
     fn rust_callable_trait_object(ty: &SynType) -> Option<&syn::TypeTraitObject> {
         match ty {
             SynType::TraitObject(trait_object) => Some(trait_object),
@@ -149,6 +150,7 @@ impl TypeChecker {
         }
     }
 
+    /// Check a closure expression against a Rust callable alias.
     fn check_closure_with_rust_callable_alias(
         &mut self,
         expr: &Spanned<Expr>,
@@ -219,6 +221,7 @@ impl TypeChecker {
         closure_ty
     }
 
+    /// Check a method argument against a Rust callable alias.
     fn check_method_arg_with_rust_callable_alias(
         &mut self,
         arg: &CallArg,
@@ -1271,6 +1274,7 @@ impl TypeChecker {
         }
     }
 
+    /// Validate a reflection magic-method call.
     fn validate_reflection_magic_call(
         &mut self,
         method: &str,
@@ -1327,6 +1331,7 @@ impl TypeChecker {
         }
     }
 
+    /// Return the canonical Rust path for a receiver type.
     fn rust_canonical_path_for_receiver_type(&self, ty: &ResolvedType) -> Option<String> {
         match ty {
             ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.rust_canonical_path_for_receiver_type(inner),
@@ -1339,6 +1344,7 @@ impl TypeChecker {
         }
     }
 
+    /// Return the canonical Rust path for a nominal receiver.
     fn rust_canonical_path_for_nominal_receiver(
         &self,
         name: &str,
@@ -1862,6 +1868,7 @@ impl TypeChecker {
         }
     }
 
+    /// Return whether an active type parameter has a builtin bound.
     fn active_type_param_has_builtin_bound(&self, type_param: &str, trait_id: TraitId) -> bool {
         let expected = core_traits::as_str(trait_id);
         self.current_type_param_bound_details.iter().rev().any(|frame| {

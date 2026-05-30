@@ -129,6 +129,7 @@ fn scan_types_in_call(type_args: &[Spanned<Type>], offset: usize) -> Option<&Spa
     None
 }
 
+/// Scan call arguments for LSP call-site type argument hints.
 fn scan_call_args(args: &[CallArg], offset: usize) -> Option<&Spanned<Type>> {
     for a in args {
         match a {
@@ -304,6 +305,7 @@ fn call_site_types_in_stmts(stmts: &[Spanned<Statement>], offset: usize) -> Opti
     None
 }
 
+/// Find call-site type argument opportunities inside a statement.
 fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Type>> {
     match stmt {
         Statement::Assignment(a) => call_site_type_in_expr(&a.value, offset),
@@ -351,6 +353,7 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
     }
 }
 
+/// Find call-site type argument opportunities inside an assert statement.
 fn call_site_type_in_assert_stmt(
     assert_stmt: &crate::frontend::ast::AssertStmt,
     offset: usize,

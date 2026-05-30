@@ -33,6 +33,7 @@ fn body_contains_yield(body: &[ast::Spanned<ast::Statement>]) -> bool {
     })
 }
 
+/// Collect generic callable-name type parameters referenced by an expression.
 fn collect_generic_callable_name_type_params_from_expr(expr: &super::super::super::IrExpr, out: &mut Vec<String>) {
     match &expr.kind {
         IrExprKind::Field { object, field } => {
@@ -239,6 +240,7 @@ fn collect_generic_callable_name_type_params_from_expr(expr: &super::super::supe
     }
 }
 
+/// Collect generic callable-name type parameters referenced by statements.
 fn collect_generic_callable_name_type_params_from_stmts(stmts: &[IrStmt], out: &mut Vec<String>) {
     for stmt in stmts {
         match &stmt.kind {
@@ -292,6 +294,7 @@ fn collect_generic_callable_name_type_params_from_stmts(stmts: &[IrStmt], out: &
     }
 }
 
+/// Collect generic callable-name type parameters referenced by an assignment target.
 fn collect_generic_callable_name_type_params_from_assign_target(target: &AssignTarget, out: &mut Vec<String>) {
     match target {
         AssignTarget::Field { object, .. } => collect_generic_callable_name_type_params_from_expr(object, out),

@@ -93,6 +93,7 @@ pub(super) fn add_serde_to_newtypes(
     use crate::backend::ir::decl::IrDeclKind;
     use crate::backend::ir::types::IrType;
 
+    /// Return whether a newtype inner type is conservatively safe for serde derives.
     fn is_conservative_serde_safe_newtype_inner(ty: &IrType) -> bool {
         match ty {
             IrType::Unit

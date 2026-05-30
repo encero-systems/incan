@@ -17,6 +17,7 @@ impl Formatter {
         matches!(expr, Expr::Binary(_, op, _) if Self::is_logical_binary_op(op))
     }
 
+    /// Write one formatted call argument.
     fn write_call_arg(&mut self, arg: &CallArg) {
         match arg {
             CallArg::Positional(expr) => self.format_expr(&expr.node),
@@ -53,6 +54,7 @@ impl Formatter {
         }
     }
 
+    /// Format call arguments with line wrapping when needed.
     fn format_call_args_with_wrapping(&mut self, args: &[CallArg]) {
         if args.is_empty() {
             return;
@@ -543,6 +545,7 @@ impl Formatter {
 
     // ---- Call args ----
 
+    /// Format closure parameters.
     fn format_closure_params(&mut self, params: &[Spanned<Param>]) {
         for (i, param) in params.iter().enumerate() {
             if i > 0 {
@@ -552,6 +555,7 @@ impl Formatter {
         }
     }
 
+    /// Format call arguments.
     fn format_call_args(&mut self, args: &[CallArg]) {
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
@@ -575,6 +579,7 @@ impl Formatter {
         }
     }
 
+    /// Format one match arm.
     fn format_match_arm(&mut self, arm: &Spanned<MatchArm>) {
         self.writer.blank_lines(arm.leading_blank_lines as usize);
         let arm = &arm.node;
@@ -607,6 +612,7 @@ impl Formatter {
         }
     }
 
+    /// Try to format a match arm body as an inline statement.
     fn try_format_inline_match_statement(&mut self, stmts: &[Spanned<Statement>]) -> bool {
         let [stmt] = stmts else {
             return false;
@@ -628,6 +634,7 @@ impl Formatter {
         true
     }
 
+    /// Format a statement for inline expression contexts.
     fn format_statement_inline(&mut self, stmt: &Statement) -> bool {
         match stmt {
             Statement::Expr(expr) => self.format_expr(&expr.node),
