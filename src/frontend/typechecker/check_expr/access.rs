@@ -80,11 +80,34 @@ impl TypeChecker {
         let ResolvedType::RustPath(path) = expected_ty else {
             return None;
         };
+        self.rust_callable_alias_target_display_for_path(path, &mut std::collections::HashSet::new())
+    }
+
+    /// Follow Rust type-alias chains until they expose a callable trait object target.
+    fn rust_callable_alias_target_display_for_path(
+        &self,
+        path: &str,
+        seen: &mut std::collections::HashSet<String>,
+    ) -> Option<String> {
+        let canonical_path = Self::normalize_rust_namespace_path(path).to_string();
+        if !seen.insert(canonical_path.clone()) {
+            return None;
+        }
         if let Some(metadata) = self.rust_item_metadata_for_path(path)
             && let RustItemKind::Type(type_info) = &metadata.kind
             && let Some(target) = type_info.alias_target.as_ref()
         {
-            return Some(self.rust_display_for_owner_path(target, path));
+            let display = self.rust_display_for_owner_path(target, canonical_path.as_str());
+            if display.contains("dyn") && display.contains("Fn") {
+                return Some(display);
+            }
+            let (target_base, _) = self.rust_path_base_and_args(display.as_str());
+            if target_base != canonical_path
+                && let Some(expanded) = self.rust_callable_alias_target_display_for_path(target_base.as_str(), seen)
+            {
+                return Some(expanded);
+            }
+            return Some(display).filter(|display| display.contains("dyn") && display.contains("Fn"));
         }
         Some(self.rust_display_for_owner_path(path, path))
             .filter(|display| display.contains("dyn") && display.contains("Fn"))

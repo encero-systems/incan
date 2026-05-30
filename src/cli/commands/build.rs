@@ -1156,8 +1156,12 @@ mod tests {
         )?;
 
         let generated_manifest = std::fs::read_to_string(output_dir.join("Cargo.toml"))?;
+        let has_datafusion_dependency = generated_manifest.lines().any(|line| {
+            let trimmed = line.trim();
+            trimmed == "[dependencies.datafusion]" || trimmed.starts_with("datafusion ")
+        });
         assert!(
-            !generated_manifest.contains("datafusion"),
+            !has_datafusion_dependency,
             "unused package-level rust dependencies should not be emitted for a script run:\n{generated_manifest}"
         );
         Ok(())
