@@ -786,6 +786,17 @@ pub fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Exp
                         .map(|node| ast::CallArg::Positional(ast::Spanned::new(node, ast::Span::default())))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            if let incan_vocab::IncanExpr::Field { object, field } = callee.as_ref() {
+                return Ok(ast::Expr::MethodCall(
+                    Box::new(ast::Spanned::new(
+                        public_expr_to_internal(object)?,
+                        ast::Span::default(),
+                    )),
+                    field.clone(),
+                    Vec::new(),
+                    mapped,
+                ));
+            }
             Ok(ast::Expr::Call(
                 Box::new(ast::Spanned::new(
                     public_expr_to_internal(callee)?,
@@ -1148,6 +1159,26 @@ mod tests {
         let bridged = internal_vocab_block_to_public(&block, ast::Span::default())?;
         assert_eq!(bridged.keyword, "MATCH");
         assert_eq!(bridged.compound_tokens, vec!["AGAINST".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_public_field_callee_calls_back_to_method_calls() -> Result<(), Box<dyn std::error::Error>> {
+        let expr = incan_vocab::IncanExpr::Call {
+            callee: Box::new(incan_vocab::IncanExpr::Field {
+                object: Box::new(incan_vocab::IncanExpr::Name("orders".to_string())),
+                field: "select".to_string(),
+            }),
+            args: vec![incan_vocab::IncanExpr::Name("amount".to_string())],
+        };
+
+        let internal = public_expr_to_internal(&expr)?;
+        let ast::Expr::MethodCall(receiver, method, _, args) = internal else {
+            return Err(format!("expected public field-callee call to bridge as method call, got {internal:?}").into());
+        };
+        assert_eq!(method, "select");
+        assert!(matches!(receiver.node, ast::Expr::Ident(ref name) if name == "orders"));
+        assert_eq!(args.len(), 1);
         Ok(())
     }
 

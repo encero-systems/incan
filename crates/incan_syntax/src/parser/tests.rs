@@ -4562,7 +4562,8 @@ def has_name(name: str | None) -> bool:
 
     #[test]
     fn test_expression_desugaring_vocab_block_parses_in_assignment_value() -> Result<(), Box<dyn std::error::Error>> {
-        let source = "import pub::analytics\n\ndef configure() -> None:\n  value = query:\n    SELECT:\n      amount as total\n";
+        let source =
+            "import pub::analytics\n\ndef configure() -> None:\n  value = query:\n    FROM orders\n    SELECT:\n      amount as total\n";
         let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
 
         let metadata = incan_vocab::VocabRegistration::new()
@@ -4571,6 +4572,7 @@ def has_name(name: str | None) -> bool:
                     incan_vocab::DeclarationSurface::named("query")
                         .with_clause_body()
                         .desugars_to_expression()
+                        .with_clause(incan_vocab::ClauseSurface::expr("FROM").required())
                         .with_clause(incan_vocab::ClauseSurface::expr_list("SELECT").required()),
                 ),
             )
@@ -4596,6 +4598,16 @@ def has_name(name: str | None) -> bool:
         assert_eq!(block.keyword, "query");
         assert!(matches!(
             &block.body[0].node,
+            crate::ast::Statement::VocabBlock(from)
+                if from.keyword == "FROM"
+                    && matches!(
+                        &from.body[0].node,
+                        crate::ast::Statement::Expr(expr)
+                            if matches!(&expr.node, crate::ast::Expr::Ident(name) if name == "orders")
+                    )
+        ));
+        assert!(matches!(
+            &block.body[1].node,
             crate::ast::Statement::VocabBlock(select)
                 if select.keyword == "SELECT"
                     && matches!(

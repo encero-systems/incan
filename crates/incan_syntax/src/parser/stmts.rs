@@ -186,8 +186,21 @@ impl<'a> Parser<'a> {
 
         // Avoid committing to vocab-block parsing unless a top-level header-delimiting `:` is visible ahead. This
         // preserves `assignment_or_expr_stmt` fallback for statements like `route = "/health"`, `route(args)`, and
-        // `route: str = "/health"` when `route` is an imported vocab keyword.
-        if decorators.is_empty() && !self.has_top_level_colon_before_statement_end(self.pos + 1) {
+        // `route: str = "/health"` when `route` is an imported vocab keyword. Clause keywords inside an owning vocab
+        // block may still use an inline body (`FROM orders`), but only when the registered clause body kind makes that
+        // expression payload explicit.
+        let has_header_colon = self.has_top_level_colon_before_statement_end(self.pos + 1);
+        let parses_inline_clause = decorators.is_empty()
+            && parent_keyword.is_some()
+            && matches!(
+                spec_surface_kind,
+                incan_vocab::KeywordSurfaceKind::BlockContextKeyword | incan_vocab::KeywordSurfaceKind::SubBlock
+            )
+            && matches!(
+                spec_clause_body_kind,
+                Some(incan_vocab::ClauseBodyKind::Expression | incan_vocab::ClauseBodyKind::ExpressionList)
+            );
+        if decorators.is_empty() && !has_header_colon && !parses_inline_clause {
             return Ok(None);
         }
 
@@ -195,47 +208,56 @@ impl<'a> Parser<'a> {
         self.consume_vocab_compound_tokens(&spec_compound_tokens)?;
 
         let mut header_args = Vec::new();
-        if !self.check_punct(PunctuationId::Colon) {
-            header_args.push(self.expression()?);
-            while self.match_punct(PunctuationId::Comma) {
+        let body = if parses_inline_clause && !has_header_colon {
+            self.parse_inline_vocab_clause_body(
+                &keyword_name,
+                spec_clause_body_kind,
+                spec_expression_item_modifiers,
+            )?
+        } else {
+            if !self.check_punct(PunctuationId::Colon) {
                 header_args.push(self.expression()?);
-            }
-        }
-        self.expect_punct(PunctuationId::Colon, "Expected ':' after vocab block header")?;
-        self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect_suite_indent("Expected indented block after vocab keyword")?;
-
-        if !spec_valid_decorators.is_empty() {
-            for decorator in &decorators {
-                let decorator_name = decorator.node.name.as_str();
-                let decorator_full_name = decorator.node.path.segments.join(".");
-                let is_valid = spec_valid_decorators.iter().any(|allowed| {
-                    let normalized = allowed.trim().trim_start_matches('@');
-                    normalized == decorator_name || normalized == decorator_full_name
-                });
-                if !is_valid {
-                    return Err(errors::expected_token_message(
-                        &format!(
-                            "Decorator `{decorator_full_name}` is not valid on vocab block `{}`",
-                            spec_keyword_name
-                        ),
-                        &format!("{:?}", decorator.node),
-                        decorator.span,
-                    ));
+                while self.match_punct(PunctuationId::Comma) {
+                    header_args.push(self.expression()?);
                 }
             }
-        }
+            self.expect_punct(PunctuationId::Colon, "Expected ':' after vocab block header")?;
+            self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+            self.expect_suite_indent("Expected indented block after vocab keyword")?;
 
-        self.vocab_block_stack.push(keyword_name.clone());
-        self.vocab_body_kind_stack.push(spec_clause_body_kind);
-        self.vocab_expression_item_modifier_stack
-            .push(spec_expression_item_modifiers);
-        let body = self.block();
-        self.vocab_block_stack.pop();
-        self.vocab_body_kind_stack.pop();
-        self.vocab_expression_item_modifier_stack.pop();
-        let body = body?;
-        self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
+            if !spec_valid_decorators.is_empty() {
+                for decorator in &decorators {
+                    let decorator_name = decorator.node.name.as_str();
+                    let decorator_full_name = decorator.node.path.segments.join(".");
+                    let is_valid = spec_valid_decorators.iter().any(|allowed| {
+                        let normalized = allowed.trim().trim_start_matches('@');
+                        normalized == decorator_name || normalized == decorator_full_name
+                    });
+                    if !is_valid {
+                        return Err(errors::expected_token_message(
+                            &format!(
+                                "Decorator `{decorator_full_name}` is not valid on vocab block `{}`",
+                                spec_keyword_name
+                            ),
+                            &format!("{:?}", decorator.node),
+                            decorator.span,
+                        ));
+                    }
+                }
+            }
+
+            self.vocab_block_stack.push(keyword_name.clone());
+            self.vocab_body_kind_stack.push(spec_clause_body_kind);
+            self.vocab_expression_item_modifier_stack
+                .push(spec_expression_item_modifiers);
+            let body = self.block();
+            self.vocab_block_stack.pop();
+            self.vocab_body_kind_stack.pop();
+            self.vocab_expression_item_modifier_stack.pop();
+            let body = body?;
+            self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
+            body
+        };
 
         Ok(Some(Statement::VocabBlock(VocabBlockStmt {
             keyword: keyword_name,
@@ -251,6 +273,56 @@ impl<'a> Parser<'a> {
             header_args,
             body,
         })))
+    }
+
+    /// Parse an indentation-line clause with an inline expression payload, such as `FROM orders`.
+    fn parse_inline_vocab_clause_body(
+        &mut self,
+        keyword_name: &str,
+        clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
+        expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
+    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        self.vocab_block_stack.push(keyword_name.to_string());
+        self.vocab_body_kind_stack.push(clause_body_kind);
+        self.vocab_expression_item_modifier_stack
+            .push(expression_item_modifiers);
+        let body = match clause_body_kind {
+            Some(incan_vocab::ClauseBodyKind::ExpressionList) => self.inline_vocab_expression_list_body(),
+            Some(incan_vocab::ClauseBodyKind::Expression) => self.inline_vocab_expression_body(),
+            _ => Ok(Vec::new()),
+        };
+        self.vocab_block_stack.pop();
+        self.vocab_body_kind_stack.pop();
+        self.vocab_expression_item_modifier_stack.pop();
+        body
+    }
+
+    /// Parse one inline expression clause body until the physical statement boundary.
+    fn inline_vocab_expression_body(&mut self) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        if self.current_ends_inline_vocab_clause() {
+            return Ok(Vec::new());
+        }
+        let start = self.current_span().start;
+        let expr = self.expression()?;
+        let end = expr.span.end;
+        Ok(vec![Spanned::new(Statement::Expr(expr), Span::new(start, end))])
+    }
+
+    /// Parse comma-separated inline expression-list items until the physical statement boundary.
+    fn inline_vocab_expression_list_body(&mut self) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        let mut body = Vec::new();
+        while !self.current_ends_inline_vocab_clause() {
+            body.push(self.braced_vocab_expression_list_item()?);
+            if !self.match_punct(PunctuationId::Comma) {
+                break;
+            }
+        }
+        Ok(body)
+    }
+
+    /// Return whether the current token ends an inline clause payload.
+    fn current_ends_inline_vocab_clause(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof)
     }
 
     /// Return `true` if there is a top-level block-header `:` before the current statement ends.
