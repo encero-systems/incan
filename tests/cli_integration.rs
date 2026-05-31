@@ -746,6 +746,9 @@ pub def reexport_identity_case() -> str:
 "#,
     )?;
 
+    // Keep this fixture DataFusion-shaped but crate-light. The real DataFusion crate is far too expensive for a
+    // compiler regression test; the behavior under test is the Rust metadata shape:
+    // `ScalarFunctionImplementation -> SliceCallback -> Arc<dyn Fn(...)>`.
     let helper_src = tmp.path().join("rust").join("arc_callback").join("src");
     fs::create_dir_all(&helper_src)?;
     fs::write(

@@ -84,6 +84,10 @@ impl TypeChecker {
     }
 
     /// Follow Rust type-alias chains until they expose a callable trait object target.
+    ///
+    /// This is intentionally metadata-driven rather than crate-specific. DataFusion's
+    /// `ScalarFunctionImplementation -> Arc<dyn Fn(...)>` chain is one motivating surface, but the compiler must not
+    /// special-case DataFusion or require regression tests to compile that heavyweight crate.
     fn rust_callable_alias_target_display_for_path(
         &self,
         path: &str,
