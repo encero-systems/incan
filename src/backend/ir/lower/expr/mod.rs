@@ -1080,6 +1080,19 @@ impl AstLowering {
                         result_ty,
                     )
                 } else {
+                    if let Some(rust_field) = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.rust_field_access_name(expr_span))
+                    {
+                        return Ok(TypedExpr::new(
+                            IrExprKind::Field {
+                                object: Box::new(obj),
+                                field: rust_field.to_string(),
+                            },
+                            IrType::Unknown,
+                        ));
+                    }
                     // RFC 021: resolve field alias to canonical name if object is a known struct type
                     let struct_name = obj.ty.nominal_type_name().or_else(|| match &obj.kind {
                         IrExprKind::Var { name, .. } if name == "self" => self.current_impl_type.as_deref(),

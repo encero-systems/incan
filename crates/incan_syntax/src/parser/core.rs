@@ -28,6 +28,8 @@ struct ActiveImportedKeywordSpec {
     valid_decorators: Vec<String>,
     surface_kind: incan_vocab::KeywordSurfaceKind,
     placement: incan_vocab::KeywordPlacement,
+    clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
+    expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +64,8 @@ pub struct Parser<'a> {
     active_soft_keywords: std::collections::HashSet<KeywordId>,
     active_imported_keyword_specs: std::collections::HashMap<String, Vec<ActiveImportedKeywordSpec>>,
     vocab_block_stack: Vec<String>,
+    vocab_body_kind_stack: Vec<Option<incan_vocab::ClauseBodyKind>>,
+    vocab_expression_item_modifier_stack: Vec<Vec<incan_vocab::ExpressionItemModifierSurface>>,
     module_path: Option<String>,
     library_imported_vocab: ImportedLibraryVocab,
     library_imported_dsl_surfaces: ImportedLibraryDslSurfaces,
@@ -120,6 +124,8 @@ impl<'a> Parser<'a> {
             active_soft_keywords: std::collections::HashSet::new(),
             active_imported_keyword_specs: std::collections::HashMap::new(),
             vocab_block_stack: Vec::new(),
+            vocab_body_kind_stack: Vec::new(),
+            vocab_expression_item_modifier_stack: Vec::new(),
             module_path,
             library_imported_vocab: library_imported_vocab.cloned().unwrap_or_default(),
             library_imported_dsl_surfaces: library_imported_dsl_surfaces.cloned().unwrap_or_default(),
@@ -346,6 +352,10 @@ impl<'a> Parser<'a> {
             }
 
             for keyword in &registration.keywords {
+                let (clause_body_kind, expression_item_modifiers) = self
+                    .active_clause_surface_for_keyword(library, keyword)
+                    .map(|clause| (Some(clause.body_kind), clause.expression_item_modifiers.clone()))
+                    .unwrap_or((None, Vec::new()));
                 let specs = self
                     .active_imported_keyword_specs
                     .entry(keyword.name.clone())
@@ -360,6 +370,8 @@ impl<'a> Parser<'a> {
                     valid_decorators: registration.valid_decorators.clone(),
                     surface_kind: keyword.surface_kind,
                     placement: keyword.placement.clone(),
+                    clause_body_kind,
+                    expression_item_modifiers,
                 });
                 if let Some(id) = incan_core::lang::keywords::from_str(&keyword.name)
                     && incan_core::lang::keywords::is_soft(id)
@@ -368,6 +380,38 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+    }
+
+    /// Return the clause surface declared by a rich DSL surface for one imported keyword.
+    ///
+    /// Low-level keyword registrations do not carry clause-body structure. When the same library also provides the
+    /// author-facing `DslSurface`, parser-only forms such as expression-list item modifiers can be gated by the richer
+    /// public contract instead of guessed later by the AST bridge.
+    fn active_clause_surface_for_keyword(
+        &self,
+        library: &str,
+        keyword: &incan_vocab::KeywordSpec,
+    ) -> Option<&incan_vocab::ClauseSurface> {
+        let surfaces = self.library_imported_dsl_surfaces.get(library)?;
+        for surface in surfaces {
+            if !dsl_surface_applies_to_pub_import(surface, library) {
+                continue;
+            }
+            for declaration in &surface.declarations {
+                let incan_vocab::KeywordPlacement::InBlock(parents) = &keyword.placement else {
+                    continue;
+                };
+                if !parents.iter().any(|parent| parent == &declaration.keyword) {
+                    continue;
+                }
+                for clause in &declaration.clauses {
+                    if clause.keyword == keyword.name && clause.compound_tokens == keyword.compound_tokens {
+                        return Some(clause);
+                    }
+                }
+            }
+        }
+        None
     }
 }
 

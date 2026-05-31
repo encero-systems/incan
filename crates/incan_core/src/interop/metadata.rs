@@ -405,7 +405,10 @@ pub fn split_top_level_rust_args(text: &str) -> Vec<&str> {
 /// A public field surfaced on a Rust struct/union-like type.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RustFieldInfo {
-    /// Field name as it appears in Rust.
+    /// Source-facing Rust field name accepted by Incan, with raw identifier prefixes removed.
+    ///
+    /// A Rust field declared as `r#type` is surfaced as `type`; an ordinary Rust field declared as `type_` remains
+    /// `type_`. Codegen rawifies keyword names when emitting Rust.
     pub name: String,
     /// Pretty-printed type for diagnostics and debug output.
     pub type_display: String,

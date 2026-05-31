@@ -74,7 +74,9 @@ Version 0.2.0 is the RFC 040 release. It adds the stable library-author contract
 Companion crates should export one obvious Rust function:
 
 ```rust
-use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration};
+use incan_vocab::{
+    ClauseSurface, DeclarationSurface, DslSurface, ExpressionItemModifierSurface, VocabRegistration,
+};
 
 pub fn library_vocab() -> VocabRegistration {
     VocabRegistration::new().with_surface(
@@ -84,7 +86,10 @@ pub fn library_vocab() -> VocabRegistration {
                 .desugars_to_expression()
                 .with_clauses([
                     ClauseSurface::expr("FROM").required(),
-                    ClauseSurface::expr_list("SELECT").required().after("FROM"),
+                    ClauseSurface::expr_list("SELECT")
+                        .with_expression_item_modifier(ExpressionItemModifierSurface::expr("for"))
+                        .required()
+                        .after("FROM"),
                 ]),
         ),
     )

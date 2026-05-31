@@ -306,7 +306,7 @@ impl<'a> IrEmitter<'a> {
                     let ident = format_ident!("{}", name);
                     quote! { #ident }
                 };
-                let f = format_ident!("{}", canonical_field);
+                let f = Self::rust_ident(canonical_field);
                 return Ok(quote! { #type_ident::#f });
             }
             if Self::expr_is_type_like(object) {
@@ -318,7 +318,7 @@ impl<'a> IrEmitter<'a> {
                     let ident = format_ident!("{}", name);
                     quote! { #ident }
                 };
-                let f = format_ident!("{}", field);
+                let f = Self::rust_ident(field);
                 return Ok(quote! { #type_ident::#f });
             }
         }
@@ -331,7 +331,7 @@ impl<'a> IrEmitter<'a> {
                 .unwrap_or_else(|_| syn::Index::from(0));
             Ok(quote! { #o.#idx })
         } else {
-            let f = format_ident!("{}", field);
+            let f = Self::rust_ident(field);
             Ok(quote! { #o.#f })
         }
     }

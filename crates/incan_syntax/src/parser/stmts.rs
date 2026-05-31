@@ -180,6 +180,8 @@ impl<'a> Parser<'a> {
         let spec_surface_kind = spec.surface_kind;
         let spec_placement = spec.placement.clone();
         let spec_valid_decorators = spec.valid_decorators.clone();
+        let spec_clause_body_kind = spec.clause_body_kind;
+        let spec_expression_item_modifiers = spec.expression_item_modifiers.clone();
 
         // Avoid committing to vocab-block parsing unless a top-level header-delimiting `:` is visible ahead. This
         // preserves `assignment_or_expr_stmt` fallback for statements like `route = "/health"`, `route(args)`, and
@@ -223,8 +225,13 @@ impl<'a> Parser<'a> {
         }
 
         self.vocab_block_stack.push(keyword_name.clone());
+        self.vocab_body_kind_stack.push(spec_clause_body_kind);
+        self.vocab_expression_item_modifier_stack
+            .push(spec_expression_item_modifiers);
         let body = self.block();
         self.vocab_block_stack.pop();
+        self.vocab_body_kind_stack.pop();
+        self.vocab_expression_item_modifier_stack.pop();
         let body = body?;
         self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
 
@@ -235,6 +242,7 @@ impl<'a> Parser<'a> {
                 activation_namespace: spec_activation_namespace,
                 surface_kind: spec_surface_kind,
                 placement: spec_placement,
+                clause_body_kind: spec_clause_body_kind,
             },
             decorators,
             header_args,
@@ -803,6 +811,10 @@ impl<'a> Parser<'a> {
         // Parse the expression (could be field access like self.field or index like arr[i])
         let expr = self.expression()?;
 
+        if let Some(item) = self.vocab_expression_list_item_tail(expr.clone())? {
+            return Ok(Statement::VocabExpressionItem(item));
+        }
+
         // Check for tuple assignment: expr, expr, ... = value
         // This handles patterns like: arr[i], arr[j] = arr[j], arr[i]
         if self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
@@ -890,6 +902,88 @@ impl<'a> Parser<'a> {
 
         // Otherwise it's an expression statement
         Ok(Statement::Expr(expr))
+    }
+
+    /// Return whether the current vocab body is contractually an expression list.
+    fn vocab_expression_list_items_enabled(&self) -> bool {
+        matches!(
+            self.vocab_body_kind_stack.last(),
+            Some(Some(incan_vocab::ClauseBodyKind::ExpressionList))
+        )
+    }
+
+    /// Parse declared trailing keyword payloads for one expression-list item.
+    fn vocab_expression_list_item_tail(
+        &mut self,
+        expr: Spanned<Expr>,
+    ) -> Result<Option<VocabExpressionItemStmt>, CompileError> {
+        if !self.vocab_expression_list_items_enabled() {
+            return Ok(None);
+        }
+
+        let mut alias = None;
+        let mut modifiers = Vec::new();
+        let mut saw_tail = false;
+
+        while let Some(surface) = self.current_expression_item_modifier_surface() {
+            let keyword_span = self.current_span();
+            self.advance();
+            saw_tail = true;
+            match surface.kind {
+                incan_vocab::ExpressionItemModifierKind::Alias => {
+                    if alias.is_some() {
+                        return Err(CompileError::syntax(
+                            format!("Duplicate expression-list alias modifier `{}`", surface.keyword),
+                            keyword_span,
+                        ));
+                    }
+                    alias = Some(self.identifier()?);
+                }
+                incan_vocab::ExpressionItemModifierKind::Expression => {
+                    let value = self.expression()?;
+                    let span = Span::new(keyword_span.start, value.span.end);
+                    modifiers.push(VocabExpressionItemModifierStmt {
+                        keyword: surface.keyword,
+                        value,
+                        span,
+                    });
+                }
+                _ => {
+                    return Err(CompileError::syntax(
+                        format!("Unsupported expression-list modifier kind for `{}`", surface.keyword),
+                        keyword_span,
+                    ));
+                }
+            }
+        }
+
+        if saw_tail {
+            Ok(Some(VocabExpressionItemStmt {
+                expr,
+                alias,
+                modifiers,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Return the declared expression-list item modifier matching the current token.
+    fn current_expression_item_modifier_surface(&self) -> Option<incan_vocab::ExpressionItemModifierSurface> {
+        let keyword = self.current_vocab_word_token()?;
+        self.vocab_expression_item_modifier_stack
+            .last()
+            .and_then(|modifiers| modifiers.iter().find(|modifier| modifier.keyword == keyword))
+            .cloned()
+    }
+
+    /// Return the current identifier/keyword spelling when it can start a DSL-owned item modifier.
+    fn current_vocab_word_token(&self) -> Option<&str> {
+        match &self.peek().kind {
+            TokenKind::Ident(name) => Some(name.as_str()),
+            TokenKind::Keyword(id) => Some(incan_core::lang::keywords::as_str(*id)),
+            _ => None,
+        }
     }
 
     /// Convert an assignment operator token such as `+=` or `<<=` into its AST compound operator.

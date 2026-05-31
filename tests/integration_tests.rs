@@ -11314,6 +11314,53 @@ pub def display[T](data: DataSet[T]) -> None:
         Ok(())
     }
 
+    fn write_pub_library_with_querykit_select_desugarer(
+        root: &Path,
+        desugarer_bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let artifact_root = root.join("deps").join("querykit").join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("desugarers"))?;
+        write_minimal_library_crate(&artifact_root, "querykit_core")?;
+        let desugarer_path = artifact_root.join("desugarers").join("querykit_desugarer.wasm");
+        std::fs::write(&desugarer_path, desugarer_bytes)?;
+
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_surface(
+                incan_vocab::DslSurface::on_import("querykit.query").with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .with_clause(
+                            incan_vocab::ClauseSurface::expr_list("SELECT")
+                                .with_expression_item_modifiers([
+                                    incan_vocab::ExpressionItemModifierSurface::expr("for"),
+                                    incan_vocab::ExpressionItemModifierSurface::expr("with"),
+                                ])
+                                .required(),
+                        ),
+                ),
+            )
+            .metadata();
+        let mut manifest = LibraryManifest::new("querykit_core", "0.1.0");
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: "vocab_companion".to_string(),
+            package_name: "vocab_companion".to_string(),
+            keyword_registrations: metadata.keyword_registrations,
+            dsl_surfaces: metadata.dsl_surfaces,
+            provider_manifest: incan_vocab::LibraryManifest::default(),
+            desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
+                artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
+                relative_path: "desugarers/querykit_desugarer.wasm".to_string(),
+                target: "wasm32-wasip1".to_string(),
+                profile: "release".to_string(),
+                entrypoint: "desugar_block".to_string(),
+                sha256: hex::encode(Sha256::digest(desugarer_bytes)),
+            }),
+        });
+        manifest.write_to_path(&artifact_root.join("querykit_core.incnlib"))?;
+        Ok(())
+    }
+
     fn write_pub_library_with_vocab_desugarer_and_filter_helper(
         root: &Path,
         dependency_key: &str,
@@ -12611,6 +12658,44 @@ def main() -> None:
             "expected desugarer failure to prove the request substring assertion was active.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&negative_output.stdout),
             String::from_utf8_lossy(&negative_output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_passes_expr_list_item_metadata_to_desugarer_issue724() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::statements(vec![incan_vocab::IncanStatement::Let {
+            name: "query_generated".to_string(),
+            mutable: false,
+            value: incan_vocab::IncanExpr::Int(1),
+        }]);
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing expression-list modifier payload",
+            r#""keyword":"with""#,
+        )?;
+        write_pub_library_with_querykit_select_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  query:
+    SELECT:
+      sum(amount) as total for customer with context
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to pass expression-list item metadata to the desugarer.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
         );
         Ok(())
     }

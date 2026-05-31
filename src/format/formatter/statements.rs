@@ -17,6 +17,20 @@ impl Formatter {
                     self.writer.newline();
                 }
             }
+            Statement::VocabExpressionItem(item) => {
+                self.format_expr(&item.expr.node);
+                if let Some(alias) = &item.alias {
+                    self.writer.write(" as ");
+                    self.writer.write(alias);
+                }
+                for modifier in &item.modifiers {
+                    self.writer.write(" ");
+                    self.writer.write(&modifier.keyword);
+                    self.writer.write(" ");
+                    self.format_expr(&modifier.value.node);
+                }
+                self.writer.newline();
+            }
             Statement::Assert(assert_stmt) => self.format_assert(assert_stmt),
             Statement::Assignment(assign) => {
                 self.format_assignment(assign);

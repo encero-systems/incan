@@ -270,6 +270,48 @@ pub enum ClauseBodyKind {
     NestedItems,
 }
 
+/// Payload parser for a trailing keyword on one expression-list item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+#[non_exhaustive]
+pub enum ExpressionItemModifierKind {
+    /// The trailing keyword captures an alias identifier, such as `expr as name`.
+    #[default]
+    Alias,
+    /// The trailing keyword captures another expression, such as `expr for target`.
+    Expression,
+}
+
+/// One trailing keyword accepted after an expression-list item.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct ExpressionItemModifierSurface {
+    /// Keyword spelling consumed after the leading item expression.
+    pub keyword: String,
+    /// Payload shape consumed after the keyword.
+    pub kind: ExpressionItemModifierKind,
+}
+
+impl ExpressionItemModifierSurface {
+    /// Create an alias modifier such as `expr as alias`.
+    #[must_use]
+    pub fn alias(keyword: &str) -> Self {
+        Self {
+            keyword: keyword.to_string(),
+            kind: ExpressionItemModifierKind::Alias,
+        }
+    }
+
+    /// Create an expression modifier such as `expr for target`.
+    #[must_use]
+    pub fn expr(keyword: &str) -> Self {
+        Self {
+            keyword: keyword.to_string(),
+            kind: ExpressionItemModifierKind::Expression,
+        }
+    }
+}
+
 /// Relative placement of one clause within a declaration's clause grammar.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -309,6 +351,9 @@ pub struct ClauseSurface {
     pub compound_tokens: Vec<String>,
     /// Structured body payload kind for this clause.
     pub body_kind: ClauseBodyKind,
+    /// Trailing keyword payloads accepted after expression-list items.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub expression_item_modifiers: Vec<ExpressionItemModifierSurface>,
     /// Whether the clause is required, optional, or repeatable.
     pub cardinality: ClauseCardinality,
     /// Relative ordering guidance within the owning declaration.
@@ -323,6 +368,7 @@ impl ClauseSurface {
             keyword: keyword.to_string(),
             compound_tokens: Vec::new(),
             body_kind,
+            expression_item_modifiers: default_expression_item_modifiers(body_kind),
             cardinality: ClauseCardinality::Optional,
             placement: ClausePlacement::Anywhere,
         }
@@ -335,6 +381,10 @@ impl ClauseSurface {
     }
 
     /// Create an expression-list clause from its full spelling.
+    ///
+    /// Expression-list clauses preserve each item as [`crate::VocabExpressionItem`]. They accept SQL-style `expr as
+    /// alias` by default and can declare more trailing keyword payloads with
+    /// [`Self::with_expression_item_modifier`].
     #[must_use]
     pub fn expr_list(spelling: &str) -> Self {
         Self::from_spelling(spelling, ClauseBodyKind::ExpressionList)
@@ -358,12 +408,14 @@ impl ClauseSurface {
         Self::from_spelling(spelling, ClauseBodyKind::NestedItems)
     }
 
+    /// Create a clause from a full spelling and attach any defaults implied by its body kind.
     fn from_spelling(spelling: &str, body_kind: ClauseBodyKind) -> Self {
         let (keyword, compound_tokens) = split_spelling(spelling);
         Self {
             keyword,
             compound_tokens,
             body_kind,
+            expression_item_modifiers: default_expression_item_modifiers(body_kind),
             cardinality: ClauseCardinality::Optional,
             placement: ClausePlacement::Anywhere,
         }
@@ -377,6 +429,31 @@ impl ClauseSurface {
         S: Into<String>,
     {
         self.compound_tokens = compound_tokens.into_iter().map(Into::into).collect();
+        self
+    }
+
+    /// Add one trailing keyword parser for expression-list items.
+    #[must_use]
+    pub fn with_expression_item_modifier(mut self, modifier: ExpressionItemModifierSurface) -> Self {
+        if !self
+            .expression_item_modifiers
+            .iter()
+            .any(|existing| existing.keyword == modifier.keyword)
+        {
+            self.expression_item_modifiers.push(modifier);
+        }
+        self
+    }
+
+    /// Add multiple trailing keyword parsers for expression-list items.
+    #[must_use]
+    pub fn with_expression_item_modifiers<I>(mut self, modifiers: I) -> Self
+    where
+        I: IntoIterator<Item = ExpressionItemModifierSurface>,
+    {
+        for modifier in modifiers {
+            self = self.with_expression_item_modifier(modifier);
+        }
         self
     }
 
@@ -413,6 +490,15 @@ impl ClauseSurface {
     pub fn after(mut self, other_clause: &str) -> Self {
         self.placement = ClausePlacement::After(other_clause.to_string());
         self
+    }
+}
+
+/// Return expression-list item modifiers that are part of the built-in high-level clause contract.
+fn default_expression_item_modifiers(body_kind: ClauseBodyKind) -> Vec<ExpressionItemModifierSurface> {
+    if matches!(body_kind, ClauseBodyKind::ExpressionList) {
+        vec![ExpressionItemModifierSurface::alias("as")]
+    } else {
+        Vec::new()
     }
 }
 

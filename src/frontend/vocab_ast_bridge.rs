@@ -149,7 +149,7 @@ fn internal_vocab_clause_to_public(
         .iter()
         .map(|arg| internal_expr_to_public(&arg.node))
         .collect::<Result<Vec<_>, _>>()?;
-    let body = internal_clause_body_to_public(&block.body)?;
+    let body = internal_clause_body_to_public(&block.body, block.keyword_binding.clause_body_kind)?;
     Ok(incan_vocab::VocabClause {
         keyword: block.keyword.clone(),
         compound_tokens: Vec::new(),
@@ -172,9 +172,13 @@ fn internal_vocab_clause_to_public(
 /// Returns the first bridge failure while probing or converting the contained statements.
 fn internal_clause_body_to_public(
     statements: &[ast::Spanned<ast::Statement>],
+    declared_body_kind: Option<incan_vocab::ClauseBodyKind>,
 ) -> Result<incan_vocab::VocabClauseBody, VocabAstBridgeError> {
     if statements.is_empty() {
         return Ok(incan_vocab::VocabClauseBody::Empty);
+    }
+    if matches!(declared_body_kind, Some(incan_vocab::ClauseBodyKind::ExpressionList)) {
+        return expression_list_body_to_public(statements);
     }
     if let Some(fields) = try_internal_field_set(statements)? {
         return Ok(incan_vocab::VocabClauseBody::FieldSet(fields));
@@ -183,30 +187,36 @@ fn internal_clause_body_to_public(
     let expression_only = statements
         .iter()
         .map(|statement| match &statement.node {
-            ast::Statement::Expr(expr) => internal_expr_to_public(&expr.node).map(Some),
+            ast::Statement::Expr(expr) => Ok(Some(incan_vocab::VocabExpressionItem {
+                expr: internal_expr_to_public(&expr.node)?,
+                alias: None,
+                modifiers: Vec::new(),
+                span: public_span(statement.span),
+            })),
             _ => Ok(None),
         })
         .collect::<Result<Vec<_>, _>>()?;
     if expression_only.iter().all(Option::is_some) {
-        let expressions = expression_only
+        let expression_items = expression_only
             .into_iter()
-            .map(|expr| {
-                expr.ok_or(VocabAstBridgeError::UnsupportedInternalStatement(
+            .map(|item| {
+                item.ok_or(VocabAstBridgeError::UnsupportedInternalStatement(
                     "clause expression extraction expected expression statements",
                 ))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        return if expressions.len() == 1 {
+        return if expression_items.len() == 1 {
             Ok(incan_vocab::VocabClauseBody::Expression(
-                expressions
+                expression_items
                     .into_iter()
                     .next()
                     .ok_or(VocabAstBridgeError::UnsupportedInternalStatement(
                         "single-expression clause conversion expected one expression item",
-                    ))?,
+                    ))?
+                    .expr,
             ))
         } else {
-            Ok(incan_vocab::VocabClauseBody::ExpressionList(expressions))
+            Ok(incan_vocab::VocabClauseBody::ExpressionList(expression_items))
         };
     }
 
@@ -215,6 +225,48 @@ fn internal_clause_body_to_public(
         .map(internal_statement_to_body_item)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(incan_vocab::VocabClauseBody::Items(items))
+}
+
+/// Convert a clause body declared as `ClauseBodyKind::ExpressionList`.
+///
+/// This preserves declared trailing keyword metadata as first-class public AST rather than forcing desugarers to
+/// recover DSL item structure from ordinary statements.
+fn expression_list_body_to_public(
+    statements: &[ast::Spanned<ast::Statement>],
+) -> Result<incan_vocab::VocabClauseBody, VocabAstBridgeError> {
+    let mut items = Vec::with_capacity(statements.len());
+    for statement in statements {
+        match &statement.node {
+            ast::Statement::Expr(expr) => items.push(incan_vocab::VocabExpressionItem {
+                expr: internal_expr_to_public(&expr.node)?,
+                alias: None,
+                modifiers: Vec::new(),
+                span: public_span(statement.span),
+            }),
+            ast::Statement::VocabExpressionItem(item) => items.push(incan_vocab::VocabExpressionItem {
+                expr: internal_expr_to_public(&item.expr.node)?,
+                alias: item.alias.clone(),
+                modifiers: item
+                    .modifiers
+                    .iter()
+                    .map(|modifier| {
+                        Ok(incan_vocab::VocabExpressionItemModifier {
+                            keyword: modifier.keyword.clone(),
+                            value: internal_expr_to_public(&modifier.value.node)?,
+                            span: public_span(modifier.span),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, VocabAstBridgeError>>()?,
+                span: public_span(statement.span),
+            }),
+            _ => {
+                return Err(VocabAstBridgeError::UnsupportedInternalStatement(
+                    "expression-list clause body expected expression entries",
+                ));
+            }
+        }
+    }
+    Ok(incan_vocab::VocabClauseBody::ExpressionList(items))
 }
 
 /// Detect whether a clause body is representable as a public field-set payload.
@@ -1029,6 +1081,16 @@ mod tests {
             activation_namespace: "demo.dsl".to_string(),
             surface_kind,
             placement: incan_vocab::KeywordPlacement::TopLevel,
+            clause_body_kind: None,
+        }
+    }
+
+    fn expression_list_clause_binding() -> ast::VocabKeywordBinding {
+        ast::VocabKeywordBinding {
+            surface_kind: incan_vocab::KeywordSurfaceKind::BlockContextKeyword,
+            placement: incan_vocab::KeywordPlacement::in_block(["query"]),
+            clause_body_kind: Some(incan_vocab::ClauseBodyKind::ExpressionList),
+            ..default_keyword_binding(incan_vocab::KeywordSurfaceKind::BlockContextKeyword)
         }
     }
 
@@ -1066,6 +1128,55 @@ mod tests {
                 return Err(format!("expected clause body item, got {other:?}").into());
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_expression_list_clause_alias_items() -> Result<(), Box<dyn std::error::Error>> {
+        let clause_block = ast::VocabBlockStmt {
+            keyword: "SELECT".to_string(),
+            keyword_binding: expression_list_clause_binding(),
+            decorators: Vec::new(),
+            header_args: Vec::new(),
+            body: vec![
+                ast::Spanned::new(
+                    ast::Statement::VocabExpressionItem(ast::VocabExpressionItemStmt {
+                        expr: ast::Spanned::new(ast::Expr::Ident("amount".to_string()), ast::Span::new(10, 16)),
+                        alias: Some("total".to_string()),
+                        modifiers: vec![ast::VocabExpressionItemModifierStmt {
+                            keyword: "for".to_string(),
+                            value: ast::Spanned::new(ast::Expr::Ident("customer".to_string()), ast::Span::new(30, 38)),
+                            span: ast::Span::new(26, 38),
+                        }],
+                    }),
+                    ast::Span::new(10, 38),
+                ),
+                ast::Spanned::new(
+                    ast::Statement::Expr(ast::Spanned::new(
+                        ast::Expr::Ident("region".to_string()),
+                        ast::Span::new(30, 36),
+                    )),
+                    ast::Span::new(30, 36),
+                ),
+            ],
+        };
+
+        let clause = internal_vocab_clause_to_public(&clause_block, ast::Span::default())?;
+        let incan_vocab::VocabClauseBody::ExpressionList(items) = clause.body else {
+            return Err(format!("expected expression-list body, got {:?}", clause.body).into());
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].alias.as_deref(), Some("total"));
+        assert_eq!(items[0].modifiers.len(), 1);
+        assert_eq!(items[0].modifiers[0].keyword, "for");
+        assert_eq!(
+            items[0].modifiers[0].value,
+            incan_vocab::IncanExpr::Name("customer".to_string())
+        );
+        assert_eq!(items[0].expr, incan_vocab::IncanExpr::Name("amount".to_string()));
+        assert_eq!(items[1].alias, None);
+        assert!(items[1].modifiers.is_empty());
+        assert_eq!(items[1].expr, incan_vocab::IncanExpr::Name("region".to_string()));
         Ok(())
     }
 

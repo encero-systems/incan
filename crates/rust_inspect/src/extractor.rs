@@ -324,6 +324,20 @@ fn source_field_type_shape(field: &ra_ap_hir::Field, db: &RootDatabase, crate_na
     Some(source_type_shape(text.as_str(), crate_name, module, db))
 }
 
+/// Return the Rust source spelling for a named field, removing only Rust's raw-identifier prefix.
+///
+/// rust-analyzer may expose a raw field such as `r#type` through a safe internal name. Incan needs the source spelling
+/// instead: `type` should be accepted in Incan and later emitted as `r#type`, while an ordinary Rust field named
+/// `type_` must remain `type_`.
+fn source_field_name(field: &ra_ap_hir::Field, db: &RootDatabase) -> Option<String> {
+    let source = field.source(db)?;
+    let FieldSource::Named(field) = source.value else {
+        return None;
+    };
+    let raw = field.name()?.syntax().text().to_string();
+    Some(raw.strip_prefix("r#").unwrap_or(raw.as_str()).to_string())
+}
+
 fn normalize_variant_payload_shape(shape: RustTypeShape) -> RustTypeShape {
     match shape {
         RustTypeShape::RustPath { path, args }
@@ -694,6 +708,10 @@ fn collect_implemented_traits(ty: Type<'_>, db: &RootDatabase) -> Vec<RustImplem
     traits.into_values().collect()
 }
 
+/// Collect public Rust fields in declaration order with source-facing names and semantic type shapes.
+///
+/// Field names are taken from Rust source when possible so raw identifiers surface to Incan without `r#`, and codegen
+/// can later decide whether that source-facing name needs raw Rust emission.
 fn collect_public_fields(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget, crate_name: &str) -> Vec<RustFieldInfo> {
     if let Some(adt) = ty.as_adt() {
         let type_args: Vec<Type<'_>> = ty.type_arguments().collect();
@@ -713,7 +731,7 @@ fn collect_public_fields(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget, cra
                 type_shape = source_field_type_shape(&field, db, crate_name).unwrap_or(type_shape);
             }
             collected.push(RustFieldInfo {
-                name: field.name(db).as_str().to_owned(),
+                name: source_field_name(&field, db).unwrap_or_else(|| field.name(db).as_str().to_owned()),
                 type_display: format_ty(&field_ty, db, dt),
                 type_shape,
             });
@@ -731,7 +749,7 @@ fn collect_public_fields(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget, cra
             type_shape = source_field_type_shape(&field, db, crate_name).unwrap_or(type_shape);
         }
         fields.push(RustFieldInfo {
-            name: field.name(db).as_str().to_owned(),
+            name: source_field_name(&field, db).unwrap_or_else(|| field.name(db).as_str().to_owned()),
             type_display: format_ty(&field_ty, db, dt),
             type_shape,
         });
@@ -1076,6 +1094,39 @@ edition = "2021"
         };
         let fields = info.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>();
         assert_eq!(fields, ["zeta", "alpha"]);
+        Ok(())
+    }
+
+    #[test]
+    fn type_metadata_unescapes_raw_keyword_fields_without_rewriting_plain_names()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo_raw_field_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )?;
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"pub struct JoinRel {
+    pub r#type: i64,
+    pub type_: i64,
+    pub r#match: i64,
+}
+"#,
+        )?;
+
+        let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let metadata = extract_rust_item(&workspace, "demo_raw_field_probe::JoinRel")?;
+        let RustItemKind::Type(info) = metadata.kind else {
+            return Err(std::io::Error::other("expected type metadata").into());
+        };
+        let fields = info.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>();
+        assert_eq!(fields, ["type", "type_", "match"]);
         Ok(())
     }
 

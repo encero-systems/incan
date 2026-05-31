@@ -3172,6 +3172,91 @@ pub def make_pair() -> Pair:
 
     #[cfg(feature = "rust_inspect")]
     #[test]
+    fn test_codegen_emits_raw_rust_field_names_for_keyword_fields_issue725() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use incan_core::interop::{
+            RustFieldInfo, RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeShape, RustVisibility,
+        };
+
+        let source = r#"
+from rust::demo import JoinRel
+
+pub def get_type(join: JoinRel) -> int:
+  return join.type + join.match + join.type_
+
+pub def rebuild(join: JoinRel) -> JoinRel:
+  return JoinRel(type=join.type, match=join.match, type_=join.type_)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = seeded_rust_inspect_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(manifest_dir.clone());
+        tc.rust_inspect_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: "demo::JoinRel".to_string(),
+                    definition_path: Some("demo::JoinRel".to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Type(RustTypeInfo {
+                        alias_target: None,
+                        methods: Vec::new(),
+                        implemented_traits: Vec::new(),
+                        fields: vec![
+                            RustFieldInfo {
+                                name: "type".to_string(),
+                                type_display: "i64".to_string(),
+                                type_shape: RustTypeShape::Int,
+                            },
+                            RustFieldInfo {
+                                name: "match".to_string(),
+                                type_display: "i64".to_string(),
+                                type_shape: RustTypeShape::Int,
+                            },
+                            RustFieldInfo {
+                                name: "type_".to_string(),
+                                type_display: "i64".to_string(),
+                                type_shape: RustTypeShape::Int,
+                            },
+                        ],
+                        variants: Vec::new(),
+                    }),
+                },
+            )
+            .map_err(|e| std::io::Error::other(format!("seed rust-inspect type: {e}")))?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("join.r#type")
+                && code.contains("join.r#match")
+                && code.contains("join.type_")
+                && code.contains("r#type: join.r#type")
+                && code.contains("r#match: join.r#match")
+                && code.contains("type_: join.type_"),
+            "expected keyword fields to emit raw Rust identifiers while ordinary trailing-underscore fields stay unchanged; got:\n{code}"
+        );
+        assert!(
+            !code.contains("r#type: join.type_") && !code.contains("type_: join.r#type"),
+            "Rust keyword fields and ordinary trailing-underscore fields must not be cross-wired; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
     fn test_codegen_uses_source_field_names_for_metadata_free_rust_type_constructor()
     -> Result<(), Box<dyn std::error::Error>> {
         use crate::frontend::typechecker::TypeChecker;

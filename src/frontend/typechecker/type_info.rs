@@ -172,6 +172,12 @@ pub struct RustInteropArtifacts {
     /// resolved field names so `Range(1, 3)` can emit `Range { start: 1, end: 3 }` instead of an invalid tuple-style
     /// Rust constructor.
     pub named_field_constructor_fields: HashMap<(usize, usize), Vec<String>>,
+    /// Imported Rust field accesses keyed by full field-expression span.
+    ///
+    /// The parser may use an Incan-safe source spelling such as `type_` for a Rust field whose metadata name is the
+    /// Rust keyword `type`. Lowering consumes this resolved Rust field name so emission can use the real Rust field
+    /// identifier rather than guessing from source text.
+    pub field_access_names: HashMap<(usize, usize), String>,
     /// Rust closure parameter displays keyed by closure-expression span.
     ///
     /// This is populated when contextual Rust metadata proves a closure is being used as a Rust callable boundary
@@ -613,6 +619,19 @@ impl TypeCheckInfo {
         self.rust
             .named_field_constructor_fields
             .insert((span.start, span.end), fields);
+    }
+
+    /// Return the Rust field name resolved for one Rust field-access expression, if one was recorded.
+    pub fn rust_field_access_name(&self, span: Span) -> Option<&str> {
+        self.rust
+            .field_access_names
+            .get(&(span.start, span.end))
+            .map(String::as_str)
+    }
+
+    /// Record the Rust field name resolved for one Rust field-access expression.
+    pub(crate) fn record_rust_field_access_name(&mut self, span: Span, field: String) {
+        self.rust.field_access_names.insert((span.start, span.end), field);
     }
 
     /// Return rest-aware callable metadata recorded for the full call expression span, if any.

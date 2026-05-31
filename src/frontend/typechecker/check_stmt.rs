@@ -111,6 +111,12 @@ impl TypeChecker {
             Statement::Expr(expr) => {
                 self.check_expr(expr);
             }
+            Statement::VocabExpressionItem(_item) => {
+                self.errors.push(crate::frontend::diagnostics::CompileError::new(
+                    "raw vocab expression-list item reached typechecker before desugaring".to_string(),
+                    stmt.span,
+                ));
+            }
             Statement::Pass => {}
             Statement::Break(value) => self.check_break_stmt(value.as_ref(), stmt.span),
             Statement::Continue => self.check_continue_stmt(stmt.span),

@@ -28,6 +28,8 @@ pub enum Statement {
     For(ForStmt),
     /// Expression statement
     Expr(Spanned<Expr>),
+    /// DSL-owned expression-list item with declared trailing keyword metadata.
+    VocabExpressionItem(VocabExpressionItemStmt),
     /// `assert expr`, `assert expr, msg`, `assert call() raises Error`, or `assert value is Pattern`.
     Assert(AssertStmt),
     /// `pass` or `...`
@@ -228,6 +230,21 @@ pub struct VocabKeywordBinding {
     pub activation_namespace: String,
     pub surface_kind: incan_vocab::KeywordSurfaceKind,
     pub placement: incan_vocab::KeywordPlacement,
+    pub clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VocabExpressionItemStmt {
+    pub expr: Spanned<Expr>,
+    pub alias: Option<Ident>,
+    pub modifiers: Vec<VocabExpressionItemModifierStmt>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct VocabExpressionItemModifierStmt {
+    pub keyword: String,
+    pub value: Spanned<Expr>,
+    pub span: Span,
 }
 
 /// Raw vocab block statement captured before desugaring.

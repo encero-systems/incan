@@ -1767,6 +1767,13 @@ fn local_signature_in_statement(
             .find_map(|target| local_signature_in_expr(target, ast, source, offset))
             .or_else(|| local_signature_in_expr(&assign.value, ast, source, offset)),
         Statement::ChainedAssignment(assignment) => local_signature_in_expr(&assignment.value, ast, source, offset),
+        Statement::VocabExpressionItem(item) => {
+            local_signature_in_expr(&item.expr, ast, source, offset).or_else(|| {
+                item.modifiers
+                    .iter()
+                    .find_map(|modifier| local_signature_in_expr(&modifier.value, ast, source, offset))
+            })
+        }
         Statement::Surface(surface) => match &surface.payload {
             crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(args) => args
                 .iter()
@@ -3420,6 +3427,12 @@ fn scoped_symbol_in_statement<'a>(
         Statement::ChainedAssignment(assign) => {
             scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found);
         }
+        Statement::VocabExpressionItem(item) => {
+            scoped_symbol_in_expr(&item.expr, ident, symbol_span, surfaces, found);
+            for modifier in &item.modifiers {
+                scoped_symbol_in_expr(&modifier.value, ident, symbol_span, surfaces, found);
+            }
+        }
         Statement::TupleAssign(assign) => {
             for target in &assign.targets {
                 scoped_symbol_in_expr(target, ident, symbol_span, surfaces, found);
@@ -3952,6 +3965,12 @@ fn scoped_symbol_context_in_statement(stmt: &Spanned<Statement>, offset: usize, 
         Statement::CompoundAssignment(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
         Statement::TupleUnpack(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
         Statement::ChainedAssignment(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
+        Statement::VocabExpressionItem(item) => {
+            scoped_symbol_context_in_expr(&item.expr, offset, context);
+            for modifier in &item.modifiers {
+                scoped_symbol_context_in_expr(&modifier.value, offset, context);
+            }
+        }
         Statement::TupleAssign(assign) => {
             for target in &assign.targets {
                 scoped_symbol_context_in_expr(target, offset, context);

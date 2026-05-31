@@ -124,6 +124,33 @@ pub struct VocabFieldSpec {
     pub span: Span,
 }
 
+/// One trailing keyword payload parsed after an expression-list item.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct VocabExpressionItemModifier {
+    /// Keyword that introduced this payload.
+    pub keyword: String,
+    /// Expression payload captured after the keyword.
+    pub value: IncanExpr,
+    /// Source span for this modifier.
+    pub span: Span,
+}
+
+/// One expression-list entry parsed inside a DSL-owned clause body.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
+pub struct VocabExpressionItem {
+    /// Expression payload.
+    pub expr: IncanExpr,
+    /// Optional SQL-style alias from `expr as alias`.
+    pub alias: Option<String>,
+    /// Additional declared trailing keyword payloads, such as `expr for target with context`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub modifiers: Vec<VocabExpressionItemModifier>,
+    /// Source span for this expression-list item.
+    pub span: Span,
+}
+
 /// A DSL-owned clause such as `FROM`, `SELECT`, `config`, or `input`.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
@@ -152,8 +179,8 @@ pub enum VocabClauseBody {
     Empty,
     /// A single expression payload.
     Expression(IncanExpr),
-    /// A list of expressions, typically separated by commas or lines.
-    ExpressionList(Vec<IncanExpr>),
+    /// A list of expression entries, typically separated by commas or lines.
+    ExpressionList(Vec<VocabExpressionItem>),
     /// An opaque host-language type payload.
     Type(VocabTypeExpr),
     /// A field/config-style body.

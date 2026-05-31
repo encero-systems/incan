@@ -4498,6 +4498,69 @@ def has_name(name: str | None) -> bool:
     }
 
     #[test]
+    fn test_expression_list_clause_accepts_declared_item_modifiers() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  query:\n    SELECT:\n      sum(amount) as total for customer with context\n      amount\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_surface(
+                incan_vocab::DslSurface::on_import("analytics.query").with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .with_clause(
+                            incan_vocab::ClauseSurface::expr_list("SELECT")
+                                .with_expression_item_modifiers([
+                                    incan_vocab::ExpressionItemModifierSurface::expr("for"),
+                                    incan_vocab::ExpressionItemModifierSurface::expr("with"),
+                                ])
+                                .required(),
+                        ),
+                ),
+            )
+            .metadata();
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert("analytics".to_string(), metadata.keyword_registrations);
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert("analytics".to_string(), metadata.dsl_surfaces);
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(query_block) = &function.body[0].node else {
+            return Err(format!("expected query vocab block, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Statement::VocabBlock(select_block) = &query_block.body[0].node else {
+            return Err(format!("expected SELECT clause block, got {:?}", query_block.body[0].node).into());
+        };
+        assert_eq!(
+            select_block.keyword_binding.clause_body_kind,
+            Some(incan_vocab::ClauseBodyKind::ExpressionList)
+        );
+        assert!(matches!(
+            &select_block.body[0].node,
+            crate::ast::Statement::VocabExpressionItem(item)
+                if item.alias.as_deref() == Some("total")
+                    && item.modifiers.len() == 2
+                    && item.modifiers[0].keyword == "for"
+                    && matches!(&item.modifiers[0].value.node, crate::ast::Expr::Ident(name) if name == "customer")
+                    && item.modifiers[1].keyword == "with"
+                    && matches!(&item.modifiers[1].value.node, crate::ast::Expr::Ident(name) if name == "context")
+                    && matches!(&item.expr.node, crate::ast::Expr::Call(callee, _, _)
+                        if matches!(&callee.node, crate::ast::Expr::Ident(name) if name == "sum"))
+        ));
+        assert!(matches!(
+            &select_block.body[1].node,
+            crate::ast::Statement::Expr(expr)
+                if matches!(&expr.node, crate::ast::Expr::Ident(name) if name == "amount")
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn test_scoped_symbol_descriptor_does_not_change_call_outside_vocab_block()
     -> Result<(), Box<dyn std::error::Error>> {
         let source = "import pub::analytics\n\ndef configure() -> None:\n  sum(amount)\n";

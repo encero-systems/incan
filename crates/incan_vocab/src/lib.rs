@@ -45,8 +45,8 @@ pub use ast::{
     Decorator, DecoratorArg, DecoratorArgValue, IncanBinaryOp, IncanExpr, IncanRaceForArm, IncanRaceForBody,
     IncanRaceForExpr, IncanScopedSurfaceExpr, IncanScopedSurfaceOwner, IncanScopedSurfacePayload,
     IncanScopedSymbolCall, IncanStatement, IncanUnaryOp, Span, VocabBodyItem, VocabClause, VocabClauseBody,
-    VocabDeclaration, VocabDeclarationHead, VocabFieldSpec, VocabKeywordMetadata, VocabParameter, VocabSyntaxNode,
-    VocabTypeExpr,
+    VocabDeclaration, VocabDeclarationHead, VocabExpressionItem, VocabExpressionItemModifier, VocabFieldSpec,
+    VocabKeywordMetadata, VocabParameter, VocabSyntaxNode, VocabTypeExpr,
 };
 #[cfg(feature = "serde")]
 pub use desugar::execute_desugar_request;
@@ -56,12 +56,13 @@ pub use desugar::{
 };
 pub use keywords::{
     ClauseBodyKind, ClauseCardinality, ClausePlacement, ClauseSurface, DeclarationBodyKind, DeclarationHeadKind,
-    DeclarationSurface, DesugarTarget, DslSurface, KeywordActivation, KeywordPlacement, KeywordRegistration,
-    KeywordSpec, KeywordSurfaceKind, ScopedSurfaceChainMode, ScopedSurfaceDescriptor, ScopedSurfaceDiagnosticKind,
-    ScopedSurfaceDiagnosticTemplate, ScopedSurfaceEligibility, ScopedSurfaceFamily, ScopedSurfaceFormatHint,
-    ScopedSurfaceMisuseScope, ScopedSurfacePosition, ScopedSurfaceReceiver, ScopedSurfaceSyntax,
-    ScopedSymbolDescriptor, ScopedSymbolDiagnosticKind, ScopedSymbolDiagnosticTemplate, ScopedSymbolEligibility,
-    ScopedSymbolFamily, ScopedSymbolMisuseScope, ScopedSymbolPosition, ScopedSymbolRoleMetadata,
+    DeclarationSurface, DesugarTarget, DslSurface, ExpressionItemModifierKind, ExpressionItemModifierSurface,
+    KeywordActivation, KeywordPlacement, KeywordRegistration, KeywordSpec, KeywordSurfaceKind, ScopedSurfaceChainMode,
+    ScopedSurfaceDescriptor, ScopedSurfaceDiagnosticKind, ScopedSurfaceDiagnosticTemplate, ScopedSurfaceEligibility,
+    ScopedSurfaceFamily, ScopedSurfaceFormatHint, ScopedSurfaceMisuseScope, ScopedSurfacePosition,
+    ScopedSurfaceReceiver, ScopedSurfaceSyntax, ScopedSymbolDescriptor, ScopedSymbolDiagnosticKind,
+    ScopedSymbolDiagnosticTemplate, ScopedSymbolEligibility, ScopedSymbolFamily, ScopedSymbolMisuseScope,
+    ScopedSymbolPosition, ScopedSymbolRoleMetadata,
 };
 pub use manifest::{
     CargoDependency, CargoDependencySource, FieldExport, FunctionExport, HelperBinding, LibraryManifest,

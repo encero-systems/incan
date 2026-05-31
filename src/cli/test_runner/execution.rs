@@ -1098,6 +1098,13 @@ fn statement_references_name(stmt: &Statement, name: &str) -> bool {
         Statement::ChainedAssignment(assign) => expr_references_name(&assign.value.node, name),
         Statement::Return(None) | Statement::Pass | Statement::Break(None) | Statement::Continue => false,
         Statement::Break(Some(expr)) => expr_references_name(&expr.node, name),
+        Statement::VocabExpressionItem(item) => {
+            expr_references_name(&item.expr.node, name)
+                || item
+                    .modifiers
+                    .iter()
+                    .any(|modifier| expr_references_name(&modifier.value.node, name))
+        }
         Statement::Surface(_) | Statement::VocabBlock(_) => false,
     }
 }

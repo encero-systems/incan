@@ -183,6 +183,13 @@ where
         }
         Statement::Return(Some(expr)) => expr_has(&expr.node, pred),
         Statement::Expr(expr) => expr_has(&expr.node, pred),
+        Statement::VocabExpressionItem(item) => {
+            expr_has(&item.expr.node, pred)
+                || item
+                    .modifiers
+                    .iter()
+                    .any(|modifier| expr_has(&modifier.value.node, pred))
+        }
         Statement::CompoundAssignment(a) => expr_has(&a.value.node, pred),
         Statement::TupleUnpack(u) => expr_has(&u.value.node, pred),
         Statement::TupleAssign(a) => {

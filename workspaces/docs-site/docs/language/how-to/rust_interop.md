@@ -48,6 +48,8 @@ from rust::my_crate::proto import type as proto_type
 
 The same rule applies to path segments after `rust::` (for example `rust::substrait::proto::type::Binary`).
 
+For Rust struct fields whose real Rust identifier is a keyword, use the keyword spelling in Incan field access and named constructor arguments. For example, a Rust field declared as `r#type` is available as `value.type` and `TypeName(type=value)` in Incan source; generated Rust still uses the real raw identifier. An ordinary Rust field named `type_` remains `value.type_`.
+
 ## Dependency Management
 
 When you use `import rust::crate_name`, Incan automatically adds the dependency to your generated `Cargo.toml`. Dependencies are resolved using a three-tier precedence system:

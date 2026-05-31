@@ -13,7 +13,7 @@ use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::TypeChecker;
 
@@ -445,11 +445,6 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
-        let fields_by_name: HashMap<&str, &RustFieldInfo> = type_info
-            .fields
-            .iter()
-            .map(|field| (field.name.as_str(), field))
-            .collect();
         let mut selected_fields = Vec::with_capacity(args.len());
         let mut provided = HashSet::new();
         let mut positional_index = 0usize;
@@ -483,7 +478,7 @@ impl TypeChecker {
                     selected_fields.push(field.name.clone());
                 }
                 CallArg::Named(field_name, expr) => {
-                    let Some(field) = fields_by_name.get(field_name.as_str()) else {
+                    let Some(field) = Self::rust_field_for_source_name(&type_info.fields, field_name.as_str()) else {
                         self.check_expr(expr);
                         self.errors.push(errors::missing_field(path, field_name, expr.span));
                         has_shape_error = true;

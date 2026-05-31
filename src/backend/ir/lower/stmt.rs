@@ -1067,7 +1067,12 @@ impl AstLowering {
             ast::Statement::FieldAssignment(fa) => IrStmtKind::Assign {
                 target: AssignTarget::Field {
                     object: Box::new(self.lower_expr_spanned(&fa.object)?),
-                    field: fa.field.clone(),
+                    field: self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.rust_field_access_name(fa.target_span))
+                        .unwrap_or(fa.field.as_str())
+                        .to_string(),
                 },
                 value: self.lower_expr_spanned(&fa.value)?,
             },
@@ -1357,6 +1362,12 @@ impl AstLowering {
             }
 
             ast::Statement::Surface(surface_stmt) => self.lower_surface_statement(surface_stmt)?,
+            ast::Statement::VocabExpressionItem(_item) => {
+                return Err(LoweringError {
+                    message: "raw vocab expression-list item reached lowering before desugaring".to_string(),
+                    span: IrSpan::default(),
+                });
+            }
             ast::Statement::VocabBlock(vocab_block) => {
                 return Err(LoweringError {
                     message: format!(
@@ -2012,6 +2023,12 @@ impl AstLowering {
                 }
             }
             ast::Statement::Expr(expr) => self.count_expr_ident_reads(&expr.node, counts),
+            ast::Statement::VocabExpressionItem(item) => {
+                self.count_expr_ident_reads(&item.expr.node, counts);
+                for modifier in &item.modifiers {
+                    self.count_expr_ident_reads(&modifier.value.node, counts);
+                }
+            }
             ast::Statement::Break(Some(expr)) => self.count_expr_ident_reads(&expr.node, counts),
             ast::Statement::Pass | ast::Statement::Break(None) | ast::Statement::Continue => {}
             ast::Statement::CompoundAssignment(ca) => {

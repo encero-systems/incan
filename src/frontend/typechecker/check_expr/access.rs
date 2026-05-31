@@ -13,7 +13,9 @@ use crate::frontend::typechecker::helpers::{
     option_ty, string_method_return,
 };
 use crate::frontend::typechecker::type_info::{RustMethodTraitImportUse, RustTraitImportInfo};
-use incan_core::interop::{RustCollectionFamily, RustFunctionSig, RustItemKind, metadata_free_method_signature};
+use incan_core::interop::{
+    RustCollectionFamily, RustFieldInfo, RustFunctionSig, RustItemKind, metadata_free_method_signature,
+};
 use incan_core::lang::magic_methods;
 use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
 use incan_core::lang::surface::types as surface_types;
@@ -75,6 +77,19 @@ fn rust_receiver_display(path: &str) -> String {
 }
 
 impl TypeChecker {
+    /// Resolve a source-facing Rust field spelling to the metadata field it names.
+    ///
+    /// Rust raw identifier fields should be written with the Rust source name at Incan field-use sites. For example, a
+    /// Rust field declared as `r#type` is accessed as `obj.type` and constructed with `TypeName(type=...)`; emission
+    /// rawifies the keyword identifier back to `r#type`. An ordinary Rust field declared as `type_` remains available
+    /// only as `obj.type_`.
+    pub(in crate::frontend::typechecker::check_expr) fn rust_field_for_source_name<'a>(
+        fields: &'a [RustFieldInfo],
+        source_name: &str,
+    ) -> Option<&'a RustFieldInfo> {
+        fields.iter().find(|field| field.name == source_name)
+    }
+
     /// Return the target display for a Rust type alias when the expected destination type names one.
     fn rust_callable_alias_target_display(&self, expected_ty: &ResolvedType) -> Option<String> {
         let ResolvedType::RustPath(path) = expected_ty else {
@@ -1489,7 +1504,7 @@ impl TypeChecker {
                     }
                     if let Some(meta) = self.rust_item_metadata_for_path(path)
                         && let RustItemKind::Type(info) = &meta.kind
-                        && let Some(rust_field) = info.fields.iter().find(|f| f.name == field)
+                        && let Some(rust_field) = Self::rust_field_for_source_name(&info.fields, field)
                     {
                         return Some(self.resolved_type_from_rust_shape(&rust_field.type_shape));
                     }
@@ -2745,8 +2760,10 @@ impl TypeChecker {
                         return ResolvedType::Function(params, Box::new(ResolvedType::RustPath(path.to_string())));
                     }
                     if let RustItemKind::Type(info) = &meta.kind
-                        && let Some(rust_field) = info.fields.iter().find(|f| f.name == field)
+                        && let Some(rust_field) = Self::rust_field_for_source_name(&info.fields, field)
                     {
+                        self.type_info
+                            .record_rust_field_access_name(span, rust_field.name.clone());
                         return self.resolved_type_from_rust_shape(&rust_field.type_shape);
                     }
                     // Metadata may still be missing constants, type aliases, trait-provided items, or private fields.

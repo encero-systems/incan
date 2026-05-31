@@ -341,6 +341,11 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
             .find_map(|e| call_site_type_in_expr(e, offset))
             .or_else(|| call_site_type_in_expr(&t.value, offset)),
         Statement::ChainedAssignment(c) => call_site_type_in_expr(&c.value, offset),
+        Statement::VocabExpressionItem(item) => call_site_type_in_expr(&item.expr, offset).or_else(|| {
+            item.modifiers
+                .iter()
+                .find_map(|modifier| call_site_type_in_expr(&modifier.value, offset))
+        }),
         Statement::Assert(assert_stmt) => call_site_type_in_assert_stmt(assert_stmt, offset),
         Statement::Surface(s) => match &s.payload {
             crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(exprs) => {

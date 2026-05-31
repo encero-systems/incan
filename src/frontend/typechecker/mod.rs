@@ -2528,6 +2528,16 @@ impl TypeChecker {
             Statement::Break(Some(expr)) => {
                 self.collect_static_initializer_static_writes_from_expr(expr, current_static, visiting_functions);
             }
+            Statement::VocabExpressionItem(item) => {
+                self.collect_static_initializer_static_writes_from_expr(&item.expr, current_static, visiting_functions);
+                for modifier in &item.modifiers {
+                    self.collect_static_initializer_static_writes_from_expr(
+                        &modifier.value,
+                        current_static,
+                        visiting_functions,
+                    );
+                }
+            }
             Statement::Return(None)
             | Statement::Pass
             | Statement::Break(None)
@@ -2640,6 +2650,12 @@ impl TypeChecker {
             }
             Statement::ChainedAssignment(assign) => {
                 self.collect_static_dependencies_from_expr(&assign.value.node, deps, visiting_functions);
+            }
+            Statement::VocabExpressionItem(item) => {
+                self.collect_static_dependencies_from_expr(&item.expr.node, deps, visiting_functions);
+                for modifier in &item.modifiers {
+                    self.collect_static_dependencies_from_expr(&modifier.value.node, deps, visiting_functions);
+                }
             }
             Statement::Assert(assert_stmt) => {
                 match &assert_stmt.kind {
