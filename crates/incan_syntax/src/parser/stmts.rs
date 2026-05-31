@@ -175,6 +175,7 @@ impl<'a> Parser<'a> {
             ));
         };
         let spec_keyword_name = spec.keyword_name.clone();
+        let spec_compound_tokens = spec.compound_tokens.clone();
         let spec_dependency_key = spec.dependency_key.clone();
         let spec_activation_namespace = spec.activation_namespace.clone();
         let spec_surface_kind = spec.surface_kind;
@@ -191,6 +192,7 @@ impl<'a> Parser<'a> {
         }
 
         self.advance();
+        self.consume_vocab_compound_tokens(&spec_compound_tokens)?;
 
         let mut header_args = Vec::new();
         if !self.check_punct(PunctuationId::Colon) {
@@ -241,6 +243,7 @@ impl<'a> Parser<'a> {
                 dependency_key: spec_dependency_key,
                 activation_namespace: spec_activation_namespace,
                 surface_kind: spec_surface_kind,
+                compound_tokens: spec_compound_tokens,
                 placement: spec_placement,
                 clause_body_kind: spec_clause_body_kind,
             },
@@ -295,6 +298,7 @@ impl<'a> Parser<'a> {
         false
     }
 
+    /// Find the active vocab block metadata for the current keyword and parent block context.
     fn find_active_vocab_block_spec(
         &self,
         keyword_name: &str,
@@ -307,7 +311,8 @@ impl<'a> Parser<'a> {
                 incan_vocab::KeywordSurfaceKind::BlockDeclaration
                     | incan_vocab::KeywordSurfaceKind::BlockContextKeyword
                     | incan_vocab::KeywordSurfaceKind::SubBlock
-            ) && match (&spec.placement, parent_keyword) {
+            ) && self.vocab_compound_tokens_match_at(&spec.compound_tokens, self.pos + 1)
+                && match (&spec.placement, parent_keyword) {
                 (incan_vocab::KeywordPlacement::TopLevel, None) => true,
                 (incan_vocab::KeywordPlacement::TopLevel, Some(_)) => false,
                 (incan_vocab::KeywordPlacement::InBlock(allowed), Some(parent)) => {
@@ -317,6 +322,65 @@ impl<'a> Parser<'a> {
                 _ => false,
             }
         })
+    }
+
+    /// Return whether the current token starts a registered vocab block in the requested parent context.
+    fn current_starts_vocab_block_for_parent(&self, parent_keyword: Option<&str>) -> bool {
+        let Some(keyword_name) = self.current_vocab_keyword_name() else {
+            return false;
+        };
+        self.find_active_vocab_block_spec(&keyword_name, parent_keyword)
+            .is_some()
+    }
+
+    /// Return the current identifier or keyword spelling if it can name a vocab keyword.
+    fn current_vocab_keyword_name(&self) -> Option<String> {
+        match &self.peek().kind {
+            TokenKind::Ident(name) => Some(name.clone()),
+            TokenKind::Keyword(id) => Some(incan_core::lang::keywords::as_str(*id).to_string()),
+            _ => None,
+        }
+    }
+
+    /// Return true when the token stream contains the expected compound keyword tail at `start_idx`.
+    fn vocab_compound_tokens_match_at(&self, compound_tokens: &[String], start_idx: usize) -> bool {
+        compound_tokens.iter().enumerate().all(|(offset, expected)| {
+            self.tokens
+                .get(start_idx + offset)
+                .and_then(|token| Self::vocab_word_token_from_kind(&token.kind))
+                .is_some_and(|actual| actual == expected)
+        })
+    }
+
+    /// Consume a compound keyword tail already selected by metadata-driven lookahead.
+    fn consume_vocab_compound_tokens(&mut self, compound_tokens: &[String]) -> Result<(), CompileError> {
+        for expected in compound_tokens {
+            let Some(actual) = Self::vocab_word_token_from_kind(&self.peek().kind) else {
+                return Err(errors::expected_token_message(
+                    &format!("Expected compound vocab keyword token `{expected}`"),
+                    &format!("{:?}", self.peek().kind),
+                    self.current_span(),
+                ));
+            };
+            if actual != expected {
+                return Err(errors::expected_token_message(
+                    &format!("Expected compound vocab keyword token `{expected}`"),
+                    actual,
+                    self.current_span(),
+                ));
+            }
+            self.advance();
+        }
+        Ok(())
+    }
+
+    /// Return a token spelling usable for metadata-driven vocab keyword matching.
+    fn vocab_word_token_from_kind(kind: &TokenKind) -> Option<&str> {
+        match kind {
+            TokenKind::Ident(name) => Some(name.as_str()),
+            TokenKind::Keyword(id) => Some(incan_core::lang::keywords::as_str(*id)),
+            _ => None,
+        }
     }
 
     /// Parse a generic soft-keyword statement payload (`kw expr[, expr]`) and hand off to semantics.

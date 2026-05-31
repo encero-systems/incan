@@ -670,6 +670,10 @@ impl<'a> Parser<'a> {
             return self.race_for_expr(start);
         }
 
+        if let Some(expr) = self.try_vocab_block_expression(start)? {
+            return Ok(expr);
+        }
+
         // self
         if self.match_token(&TokenKind::Keyword(KeywordId::SelfKw)) {
             let end = self.tokens[self.pos - 1].span.end;
@@ -726,6 +730,360 @@ impl<'a> Parser<'a> {
             &format!("{:?}", self.peek().kind),
             self.current_span(),
         ))
+    }
+
+    /// Parse a metadata-declared vocab block in expression position.
+    ///
+    /// Only declarations whose rich DSL surface says `desugars_to_expression()` are accepted here. The low-level
+    /// keyword activation still supplies the parser entrypoint, while the rich declaration metadata decides whether the
+    /// raw block can occupy a value position.
+    fn try_vocab_block_expression(&mut self, start: usize) -> Result<Option<Spanned<Expr>>, CompileError> {
+        let Some(keyword_name) = self.current_vocab_keyword_name() else {
+            return Ok(None);
+        };
+        let parent_keyword = self.vocab_block_stack.last().cloned();
+        let Some(spec) = self
+            .find_active_vocab_block_spec(&keyword_name, parent_keyword.as_deref())
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        if spec.desugar_target != incan_vocab::DesugarTarget::Expression {
+            return Ok(None);
+        }
+        if !self.has_top_level_colon_before_statement_end(self.pos + 1)
+            && !self.vocab_expression_block_has_brace_delimiter(&spec)
+        {
+            return Ok(None);
+        }
+
+        let block = self.parse_vocab_expression_block(keyword_name, spec)?;
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Some(Spanned::new(
+            Expr::VocabBlock(Box::new(block)),
+            Span::new(start, end),
+        )))
+    }
+
+    /// Return whether a vocab expression declaration has a top-level `{` delimiter after its optional header args.
+    fn vocab_expression_block_has_brace_delimiter(&self, spec: &ActiveImportedKeywordSpec) -> bool {
+        let mut idx = self.pos + 1 + spec.compound_tokens.len();
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+
+        while let Some(token) = self.tokens.get(idx) {
+            match token.kind {
+                TokenKind::Punctuation(PunctuationId::LParen) => paren_depth += 1,
+                TokenKind::Punctuation(PunctuationId::RParen) => {
+                    paren_depth = paren_depth.saturating_sub(1);
+                }
+                TokenKind::Punctuation(PunctuationId::LBracket) => bracket_depth += 1,
+                TokenKind::Punctuation(PunctuationId::RBracket) => {
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                }
+                TokenKind::Punctuation(PunctuationId::LBrace)
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>
+                {
+                    return true;
+                }
+                TokenKind::Punctuation(PunctuationId::LBrace) => brace_depth += 1,
+                TokenKind::Punctuation(PunctuationId::RBrace) => {
+                    brace_depth = brace_depth.saturating_sub(1);
+                }
+                TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>
+                {
+                    return false;
+                }
+                _ => {}
+            }
+            idx += 1;
+        }
+
+        false
+    }
+
+    /// Parse the raw block carrier shared by expression-position vocab declarations.
+    fn parse_vocab_expression_block(
+        &mut self,
+        keyword_name: String,
+        spec: ActiveImportedKeywordSpec,
+    ) -> Result<VocabBlockStmt, CompileError> {
+        let spec_compound_tokens = spec.compound_tokens.clone();
+        self.advance();
+        self.consume_vocab_compound_tokens(&spec_compound_tokens)?;
+
+        let mut header_args = Vec::new();
+        while !self.check_punct(PunctuationId::Colon) && !self.check_punct(PunctuationId::LBrace) {
+            header_args.push(self.expression()?);
+            if !self.match_punct(PunctuationId::Comma) {
+                break;
+            }
+        }
+
+        let body = if self.match_punct(PunctuationId::Colon) {
+            self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+            self.expect_suite_indent("Expected indented block after vocab keyword")?;
+            let body = self.parse_scoped_vocab_indented_body(
+                &keyword_name,
+                spec.clause_body_kind,
+                spec.expression_item_modifiers.clone(),
+            )?;
+            self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
+            body
+        } else if self.match_punct(PunctuationId::LBrace) {
+            self.parse_scoped_vocab_braced_body(
+                &keyword_name,
+                spec.clause_body_kind,
+                spec.expression_item_modifiers.clone(),
+            )?
+        } else {
+            return Err(errors::expected_token_message(
+                "Expected ':' or '{' after vocab expression declaration header",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        };
+
+        Ok(VocabBlockStmt {
+            keyword: keyword_name,
+            keyword_binding: VocabKeywordBinding {
+                dependency_key: spec.dependency_key,
+                activation_namespace: spec.activation_namespace,
+                surface_kind: spec.surface_kind,
+                compound_tokens: spec_compound_tokens,
+                placement: spec.placement,
+                clause_body_kind: spec.clause_body_kind,
+            },
+            decorators: Vec::new(),
+            header_args,
+            body,
+        })
+    }
+
+    /// Parse an indentation-delimited vocab body with the same scoped context used by statement vocab blocks.
+    fn parse_scoped_vocab_indented_body(
+        &mut self,
+        keyword_name: &str,
+        clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
+        expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
+    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        self.vocab_block_stack.push(keyword_name.to_string());
+        self.vocab_body_kind_stack.push(clause_body_kind);
+        self.vocab_expression_item_modifier_stack
+            .push(expression_item_modifiers);
+        let body = self.block();
+        self.vocab_block_stack.pop();
+        self.vocab_body_kind_stack.pop();
+        self.vocab_expression_item_modifier_stack.pop();
+        body
+    }
+
+    /// Parse a brace-delimited vocab body.
+    ///
+    /// Braced vocab syntax does not receive lexer newline/indent tokens, so clause boundaries are recognized from the
+    /// active child keyword metadata for the owning declaration rather than from source line breaks.
+    fn parse_scoped_vocab_braced_body(
+        &mut self,
+        keyword_name: &str,
+        clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
+        expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
+    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        self.vocab_block_stack.push(keyword_name.to_string());
+        self.vocab_body_kind_stack.push(clause_body_kind);
+        self.vocab_expression_item_modifier_stack
+            .push(expression_item_modifiers);
+        let body = self.braced_vocab_body(None);
+        self.vocab_block_stack.pop();
+        self.vocab_body_kind_stack.pop();
+        self.vocab_expression_item_modifier_stack.pop();
+        body
+    }
+
+    /// Parse braced body items until the matching `}`.
+    fn braced_vocab_body(
+        &mut self,
+        sibling_parent_keyword: Option<String>,
+    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        let mut body = Vec::new();
+        self.skip_newlines();
+        while !self.check_punct(PunctuationId::RBrace) && !self.is_at_end() {
+            if self.braced_vocab_body_boundary(sibling_parent_keyword.as_deref()) {
+                break;
+            }
+            if let Some(child) = self.try_braced_vocab_child()? {
+                body.push(child);
+            } else if self.vocab_expression_list_items_enabled() {
+                body.push(self.braced_vocab_expression_list_item()?);
+            } else {
+                let start = self.current_span().start;
+                let stmt = self.assignment_or_expr_stmt()?;
+                let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+                body.push(Spanned::new(stmt, Span::new(start, end)));
+            }
+            self.skip_newlines();
+            self.match_punct(PunctuationId::Comma);
+            self.skip_newlines();
+        }
+        if sibling_parent_keyword.is_none() {
+            self.expect_punct(PunctuationId::RBrace, "Expected '}' after vocab expression block")?;
+        }
+        Ok(body)
+    }
+
+    /// Parse one child clause/declaration inside a braced vocab body when metadata says the current token starts one.
+    fn try_braced_vocab_child(&mut self) -> Result<Option<Spanned<Statement>>, CompileError> {
+        let parent_keyword = self.vocab_block_stack.last().cloned();
+        let Some(keyword_name) = self.current_vocab_keyword_name() else {
+            return Ok(None);
+        };
+        let Some(spec) = self
+            .find_active_vocab_block_spec(&keyword_name, parent_keyword.as_deref())
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let start = self.current_span().start;
+        let block = self.parse_braced_vocab_child_from_spec(keyword_name, spec, parent_keyword)?;
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Some(Spanned::new(
+            Statement::VocabBlock(block),
+            Span::new(start, end),
+        )))
+    }
+
+    /// Parse one metadata-selected child item in braced vocab syntax.
+    fn parse_braced_vocab_child_from_spec(
+        &mut self,
+        keyword_name: String,
+        spec: ActiveImportedKeywordSpec,
+        sibling_parent_keyword: Option<String>,
+    ) -> Result<VocabBlockStmt, CompileError> {
+        let spec_compound_tokens = spec.compound_tokens.clone();
+        self.advance();
+        self.consume_vocab_compound_tokens(&spec_compound_tokens)?;
+
+        let body = if self.match_punct(PunctuationId::Colon) {
+            self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+            self.expect_suite_indent("Expected indented block after vocab keyword")?;
+            let body = self.parse_scoped_vocab_indented_body(
+                &keyword_name,
+                spec.clause_body_kind,
+                spec.expression_item_modifiers.clone(),
+            )?;
+            self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
+            body
+        } else if self.match_punct(PunctuationId::LBrace) {
+            self.parse_scoped_vocab_braced_body(
+                &keyword_name,
+                spec.clause_body_kind,
+                spec.expression_item_modifiers.clone(),
+            )?
+        } else {
+            self.parse_braced_vocab_inline_body(
+                &keyword_name,
+                spec.clause_body_kind,
+                spec.expression_item_modifiers.clone(),
+                sibling_parent_keyword,
+            )?
+        };
+
+        Ok(VocabBlockStmt {
+            keyword: keyword_name,
+            keyword_binding: VocabKeywordBinding {
+                dependency_key: spec.dependency_key,
+                activation_namespace: spec.activation_namespace,
+                surface_kind: spec.surface_kind,
+                compound_tokens: spec_compound_tokens,
+                placement: spec.placement,
+                clause_body_kind: spec.clause_body_kind,
+            },
+            decorators: Vec::new(),
+            header_args: Vec::new(),
+            body,
+        })
+    }
+
+    /// Parse the inline body after a braced child keyword, e.g. `FROM orders` or `SELECT amount as total`.
+    fn parse_braced_vocab_inline_body(
+        &mut self,
+        keyword_name: &str,
+        clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
+        expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
+        sibling_parent_keyword: Option<String>,
+    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        self.vocab_block_stack.push(keyword_name.to_string());
+        self.vocab_body_kind_stack.push(clause_body_kind);
+        self.vocab_expression_item_modifier_stack
+            .push(expression_item_modifiers);
+
+        let body = match clause_body_kind {
+            Some(incan_vocab::ClauseBodyKind::ExpressionList) => {
+                self.braced_expression_items_until_boundary(sibling_parent_keyword.as_deref())
+            }
+            Some(incan_vocab::ClauseBodyKind::Expression) | None => {
+                self.braced_single_expression_until_boundary(sibling_parent_keyword.as_deref())
+            }
+            _ => self.braced_vocab_body(sibling_parent_keyword),
+        };
+
+        self.vocab_block_stack.pop();
+        self.vocab_body_kind_stack.pop();
+        self.vocab_expression_item_modifier_stack.pop();
+        body
+    }
+
+    /// Parse one expression clause body in braced syntax.
+    fn braced_single_expression_until_boundary(
+        &mut self,
+        sibling_parent_keyword: Option<&str>,
+    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        if self.braced_vocab_body_boundary(sibling_parent_keyword) {
+            return Ok(Vec::new());
+        }
+        let start = self.current_span().start;
+        let expr = self.expression()?;
+        let end = expr.span.end;
+        Ok(vec![Spanned::new(Statement::Expr(expr), Span::new(start, end))])
+    }
+
+    /// Parse expression-list entries in braced syntax until the next sibling clause/declaration.
+    fn braced_expression_items_until_boundary(
+        &mut self,
+        sibling_parent_keyword: Option<&str>,
+    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        let mut statements = Vec::new();
+        while !self.braced_vocab_body_boundary(sibling_parent_keyword) {
+            statements.push(self.braced_vocab_expression_list_item()?);
+            self.skip_newlines();
+            if !self.match_punct(PunctuationId::Comma) && self.braced_vocab_body_boundary(sibling_parent_keyword) {
+                break;
+            }
+            self.skip_newlines();
+        }
+        Ok(statements)
+    }
+
+    /// Parse one expression-list item in braced syntax.
+    fn braced_vocab_expression_list_item(&mut self) -> Result<Spanned<Statement>, CompileError> {
+        let start = self.current_span().start;
+        let expr = self.expression()?;
+        let statement = if let Some(item) = self.vocab_expression_list_item_tail(expr.clone())? {
+            Statement::VocabExpressionItem(item)
+        } else {
+            Statement::Expr(expr)
+        };
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Spanned::new(statement, Span::new(start, end)))
+    }
+
+    /// Return whether braced parsing reached a terminator for the current inline body.
+    fn braced_vocab_body_boundary(&self, sibling_parent_keyword: Option<&str>) -> bool {
+        self.check_punct(PunctuationId::RBrace)
+            || self.is_at_end()
+            || sibling_parent_keyword
+                .is_some_and(|parent| self.current_starts_vocab_block_for_parent(Some(parent)))
     }
 
     /// Parse `partial Target(name=value)` after the `partial` marker has already been consumed.
@@ -1487,6 +1845,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             },
+            Expr::VocabBlock(_) => {}
         }
     }
 

@@ -1978,6 +1978,14 @@ impl TypeChecker {
                     self.collect_static_dependencies_from_call_args(args, deps, visiting_functions);
                 }
             },
+            Expr::VocabBlock(block) => {
+                for arg in &block.header_args {
+                    self.collect_static_dependencies_from_expr(&arg.node, deps, visiting_functions);
+                }
+                for stmt in &block.body {
+                    self.collect_static_dependencies_from_statement(&stmt.node, deps, visiting_functions);
+                }
+            }
         }
     }
 
@@ -2288,6 +2296,14 @@ impl TypeChecker {
                     );
                 }
             },
+            Expr::VocabBlock(block) => {
+                for arg in &block.header_args {
+                    self.collect_static_initializer_static_writes_from_expr(arg, current_static, visiting_functions);
+                }
+                for stmt in &block.body {
+                    self.collect_static_initializer_static_writes_from_stmt(stmt, current_static, visiting_functions);
+                }
+            }
         }
     }
 

@@ -859,6 +859,7 @@ impl TypeChecker {
             | Expr::Range { .. }
             | Expr::Field(_, _)
             | Expr::Surface(_)
+            | Expr::VocabBlock(_)
             | Expr::Try(_)
             | Expr::Paren(_)
             | Expr::Constructor(_, _)

@@ -230,6 +230,16 @@ impl TypeChecker {
                 end,
                 inclusive: _,
             } => self.check_range_expr(start, end),
+            Expr::VocabBlock(block) => {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Vocab expression declaration `{}` reached typechecking before desugaring",
+                        block.keyword
+                    ),
+                    expr.span,
+                ));
+                ResolvedType::Unknown
+            }
         };
 
         // Record for downstream stages (lowering/codegen).

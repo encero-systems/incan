@@ -253,6 +253,26 @@ impl Formatter {
                 }
                 _ => self.writer.write("<surface_expr>"),
             },
+            Expr::VocabBlock(block) => {
+                self.writer.write(&block.keyword);
+                for token in &block.keyword_binding.compound_tokens {
+                    self.writer.write(" ");
+                    self.writer.write(token);
+                }
+                for arg in &block.header_args {
+                    self.writer.write(" ");
+                    self.format_expr(&arg.node);
+                }
+                self.writer.writeln(":");
+                self.writer.indent();
+                for stmt in &block.body {
+                    self.format_statement(stmt);
+                }
+                if block.body.is_empty() {
+                    self.writer.writeln("pass");
+                }
+                self.writer.dedent();
+            }
             Expr::Try(inner) => {
                 self.format_expr(&inner.node);
                 self.writer.write("?");

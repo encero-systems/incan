@@ -284,6 +284,11 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
                 })
             }
         },
+        Expr::VocabBlock(block) => block
+            .header_args
+            .iter()
+            .find_map(|arg| call_site_type_in_expr(arg, offset))
+            .or_else(|| call_site_types_in_stmts(&block.body, offset)),
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr => None,
     }
 }

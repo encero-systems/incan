@@ -388,6 +388,9 @@ where
             crate::frontend::ast::FStringPart::Expr { expr, .. } => expr_has(&expr.node, pred),
         }),
         Expr::Yield(Some(expr)) => expr_has(&expr.node, pred),
+        Expr::VocabBlock(block) => {
+            block.header_args.iter().any(|arg| expr_has(&arg.node, pred)) || any_expr_in_body_impl(&block.body, pred)
+        }
         Expr::Yield(None) | Expr::Partial(_) => false,
     }
 }

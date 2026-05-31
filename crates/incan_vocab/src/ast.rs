@@ -195,6 +195,9 @@ pub enum VocabClauseBody {
 pub struct VocabDeclaration {
     /// The leading keyword that introduced the declaration.
     pub keyword: String,
+    /// Additional tokens for compound declaration spellings such as `MATCH AGAINST`.
+    #[cfg_attr(feature = "serde", serde(default))]
+    pub compound_tokens: Vec<String>,
     /// Optional parser-provided keyword metadata for resolver/runtime routing.
     pub keyword_metadata: Option<VocabKeywordMetadata>,
     /// Structured declaration head preserved across the parse/desugar boundary.

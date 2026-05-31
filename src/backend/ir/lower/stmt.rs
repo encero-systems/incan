@@ -2225,6 +2225,14 @@ impl AstLowering {
                 self.count_expr_ident_reads(&start.node, counts);
                 self.count_expr_ident_reads(&end.node, counts);
             }
+            ast::Expr::VocabBlock(block) => {
+                for arg in &block.header_args {
+                    self.count_expr_ident_reads(&arg.node, counts);
+                }
+                for stmt in &block.body {
+                    self.count_statement_ident_reads(&stmt.node, counts);
+                }
+            }
         }
     }
 }
