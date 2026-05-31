@@ -80,34 +80,48 @@ impl TypeChecker {
         let ResolvedType::RustPath(path) = expected_ty else {
             return None;
         };
+        self.rust_callable_alias_target_display_for_path(path, &mut std::collections::HashSet::new())
+    }
+
+    /// Follow Rust type-alias chains until they expose a callable trait object target.
+    ///
+    /// This is intentionally metadata-driven rather than crate-specific. DataFusion's
+    /// `ScalarFunctionImplementation -> Arc<dyn Fn(...)>` chain is one motivating surface, but the compiler must not
+    /// special-case DataFusion or require regression tests to compile that heavyweight crate.
+    fn rust_callable_alias_target_display_for_path(
+        &self,
+        path: &str,
+        seen: &mut std::collections::HashSet<String>,
+    ) -> Option<String> {
+        let canonical_path = Self::normalize_rust_namespace_path(path).to_string();
+        if !seen.insert(canonical_path.clone()) {
+            return None;
+        }
         if let Some(metadata) = self.rust_item_metadata_for_path(path)
             && let RustItemKind::Type(type_info) = &metadata.kind
             && let Some(target) = type_info.alias_target.as_ref()
         {
-            return Some(self.rust_display_for_owner_path(target, path));
+            let display = self.rust_display_for_owner_path(target, canonical_path.as_str());
+            if Self::rust_display_has_callable_fn_bound(display.as_str()) {
+                return Some(display);
+            }
+            let (target_base, _) = self.rust_path_base_and_args(display.as_str());
+            if target_base != canonical_path
+                && let Some(expanded) = self.rust_callable_alias_target_display_for_path(target_base.as_str(), seen)
+            {
+                return Some(expanded);
+            }
+            return None;
         }
         Some(self.rust_display_for_owner_path(path, path))
-            .filter(|display| display.contains("dyn") && display.contains("Fn"))
+            .filter(|display| Self::rust_display_has_callable_fn_bound(display.as_str()))
     }
 
     /// Parse a Rust callable alias target such as `Arc<dyn Fn(&[T]) -> Result<U, E> + Send + Sync>`.
     fn rust_callable_alias_signature(&self, expected_ty: &ResolvedType) -> Option<RustCallableAliasSignature> {
         let target_display = self.rust_callable_alias_target_display(expected_ty)?;
         let ty = syn::parse_str::<SynType>(&target_display).ok()?;
-        let trait_object = Self::rust_callable_trait_object(&ty)?;
-        let fn_bound = trait_object.bounds.iter().find_map(|bound| {
-            let TypeParamBound::Trait(trait_bound) = bound else {
-                return None;
-            };
-            let segment = trait_bound.path.segments.last()?;
-            if !matches!(segment.ident.to_string().as_str(), "Fn" | "FnMut" | "FnOnce") {
-                return None;
-            }
-            let PathArguments::Parenthesized(args) = &segment.arguments else {
-                return None;
-            };
-            Some(args)
-        })?;
+        let fn_bound = Self::rust_callable_fn_bound(&ty)?;
 
         let params = fn_bound
             .inputs
@@ -130,7 +144,33 @@ impl TypeChecker {
         Some(RustCallableAliasSignature { params, return_ty })
     }
 
-    /// Build the Rust trait-object type for a callable alias.
+    /// Return whether a Rust display type contains a callable trait-object target.
+    fn rust_display_has_callable_fn_bound(display: &str) -> bool {
+        let Ok(ty) = syn::parse_str::<SynType>(display) else {
+            return false;
+        };
+        Self::rust_callable_fn_bound(&ty).is_some()
+    }
+
+    /// Return the `Fn(...) -> ...` bound carried by a Rust callable trait-object target.
+    fn rust_callable_fn_bound(ty: &SynType) -> Option<&syn::ParenthesizedGenericArguments> {
+        let trait_object = Self::rust_callable_trait_object(ty)?;
+        trait_object.bounds.iter().find_map(|bound| {
+            let TypeParamBound::Trait(trait_bound) = bound else {
+                return None;
+            };
+            let segment = trait_bound.path.segments.last()?;
+            if !matches!(segment.ident.to_string().as_str(), "Fn" | "FnMut" | "FnOnce") {
+                return None;
+            }
+            let PathArguments::Parenthesized(args) = &segment.arguments else {
+                return None;
+            };
+            Some(args)
+        })
+    }
+
+    /// Find the Rust trait-object type wrapped by a callable alias target.
     fn rust_callable_trait_object(ty: &SynType) -> Option<&syn::TypeTraitObject> {
         match ty {
             SynType::TraitObject(trait_object) => Some(trait_object),

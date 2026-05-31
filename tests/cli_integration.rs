@@ -656,7 +656,7 @@ def main() -> None:
     )?;
     fs::write(
         tmp.path().join("src").join("arc_callback.incn"),
-        r#"from rust::arc_callback import CallbackError, ColumnarValue, SliceCallback, create_udf
+        r#"from rust::arc_callback import CallbackError, ColumnarValue, DataType, ScalarFunctionImplementation, SliceCallback, Volatility, create_udf, create_udf_full
 from rust::std::sync import Arc
 
 def callback(args: list[ColumnarValue]) -> Result[ColumnarValue, CallbackError]:
@@ -667,10 +667,21 @@ def inline_arc_callback_value() -> int:
     Ok(value) => return value.value()
     Err(_) => return -1
 
+def inline_datafusion_shaped_callback_value() -> int:
+  match create_udf_full(
+    name="sha1",
+    input_types=[DataType.Utf8],
+    return_type=DataType.Utf8,
+    volatility=Volatility.Immutable,
+    fun=Arc.from((args) => callback(args.to_vec())),
+  ):
+    Ok(value) => return value.value()
+    Err(_) => return -1
+
 pub def arc_callback_case() -> str:
   implementation: SliceCallback = Arc.from((args) => callback(args.to_vec()))
   match create_udf(callback=implementation, name="assigned"):
-    Ok(value) => return f"arc_callback:{value.value()}:{inline_arc_callback_value()}"
+    Ok(value) => return f"arc_callback:{value.value()}:{inline_arc_callback_value()}:{inline_datafusion_shaped_callback_value()}"
     Err(_) => return "arc_callback:err"
 "#,
     )?;
@@ -735,6 +746,9 @@ pub def reexport_identity_case() -> str:
 "#,
     )?;
 
+    // Keep this fixture DataFusion-shaped but crate-light. The real DataFusion crate is far too expensive for a
+    // compiler regression test; the behavior under test is the Rust metadata shape:
+    // `ScalarFunctionImplementation -> SliceCallback -> Arc<dyn Fn(...)>`.
     let helper_src = tmp.path().join("rust").join("arc_callback").join("src");
     fs::create_dir_all(&helper_src)?;
     fs::write(
@@ -770,6 +784,17 @@ impl ColumnarValue {
 pub struct CallbackError;
 
 pub type SliceCallback = Arc<dyn Fn(&[ColumnarValue]) -> Result<ColumnarValue, CallbackError> + Send + Sync>;
+pub type ScalarFunctionImplementation = crate::SliceCallback;
+
+#[derive(Clone)]
+pub enum DataType {
+    Utf8,
+}
+
+#[derive(Clone)]
+pub enum Volatility {
+    Immutable,
+}
 
 pub fn invoke(callback: SliceCallback) -> Result<ColumnarValue, CallbackError> {
     let args = vec![ColumnarValue::new(7)];
@@ -780,6 +805,21 @@ pub fn create_udf(name: &str, callback: crate::SliceCallback) -> Result<Columnar
     let _ = name;
     let args = vec![ColumnarValue::new(11)];
     callback(&args)
+}
+
+pub fn create_udf_full(
+    name: &str,
+    input_types: Vec<DataType>,
+    return_type: DataType,
+    volatility: Volatility,
+    fun: crate::ScalarFunctionImplementation,
+) -> Result<ColumnarValue, CallbackError> {
+    let _ = name;
+    let _ = input_types;
+    let _ = return_type;
+    let _ = volatility;
+    let args = vec![ColumnarValue::new(13)];
+    fun(&args)
 }
 "#,
     )?;
@@ -988,7 +1028,7 @@ impl Expr {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert_eq!(
         stdout.trim(),
-        "arc_callback:11:11\nborrowed:1\nby_value:ok\ntrait_by_value:ok\ncross_crate:ok\nreexport_identity:ok",
+        "arc_callback:11:11:13\nborrowed:1\nby_value:ok\ntrait_by_value:ok\ncross_crate:ok\nreexport_identity:ok",
         "expected batched generic Rust param output, got:\n{stdout}"
     );
     Ok(())

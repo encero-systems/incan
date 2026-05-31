@@ -1122,10 +1122,11 @@ mod tests {
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         let scripts_dir = project_root.join("scripts");
+        let declared_unused_rust_dependencies = ["itoa", "ryu"];
         std::fs::create_dir_all(&scripts_dir)?;
         std::fs::write(
             project_root.join("incan.toml"),
-            "[project]\nname = \"unused_rust_dep_run_repro\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\ndatafusion = \"53\"\n",
+            "[project]\nname = \"unused_rust_dep_run_repro\"\nversion = \"0.1.0\"\n\n[rust-dependencies]\nitoa = \"1\"\nryu = \"1\"\n",
         )?;
         std::fs::write(
             scripts_dir.join("check.incn"),
@@ -1156,9 +1157,19 @@ mod tests {
         )?;
 
         let generated_manifest = std::fs::read_to_string(output_dir.join("Cargo.toml"))?;
+        let manifest = toml::from_str::<toml::Value>(&generated_manifest)?;
+        let dependency_table = manifest
+            .get("dependencies")
+            .and_then(toml::Value::as_table)
+            .ok_or("generated manifest should contain a dependencies table")?;
+        let emitted_unused_dependencies = declared_unused_rust_dependencies
+            .iter()
+            .filter(|dependency| dependency_table.contains_key(**dependency))
+            .copied()
+            .collect::<Vec<_>>();
         assert!(
-            !generated_manifest.contains("datafusion"),
-            "unused package-level rust dependencies should not be emitted for a script run:\n{generated_manifest}"
+            emitted_unused_dependencies.is_empty(),
+            "unused package-level rust dependencies should not be emitted for a script run; emitted {emitted_unused_dependencies:?}:\n{generated_manifest}"
         );
         Ok(())
     }
