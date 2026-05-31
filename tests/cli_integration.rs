@@ -680,8 +680,6 @@ def inline_datafusion_shaped_callback_value() -> int:
 
 pub def arc_callback_case() -> str:
   implementation: SliceCallback = Arc.from((args) => callback(args.to_vec()))
-  chained_implementation: ScalarFunctionImplementation = Arc.from((args) => callback(args.to_vec()))
-  _ = chained_implementation
   match create_udf(callback=implementation, name="assigned"):
     Ok(value) => return f"arc_callback:{value.value()}:{inline_arc_callback_value()}:{inline_datafusion_shaped_callback_value()}"
     Err(_) => return "arc_callback:err"
