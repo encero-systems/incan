@@ -11329,6 +11329,7 @@ pub def display[T](data: DataSet[T]) -> None:
                 incan_vocab::DslSurface::on_import("querykit.query").with_declaration(
                     incan_vocab::DeclarationSurface::named("query")
                         .with_clause_body()
+                        .desugars_to_expression()
                         .with_clause(
                             incan_vocab::ClauseSurface::expr_list("SELECT")
                                 .with_expression_item_modifiers([
@@ -11337,6 +11338,51 @@ pub def display[T](data: DataSet[T]) -> None:
                                 ])
                                 .required(),
                         ),
+                ),
+            )
+            .metadata();
+        let mut manifest = LibraryManifest::new("querykit_core", "0.1.0");
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: "vocab_companion".to_string(),
+            package_name: "vocab_companion".to_string(),
+            keyword_registrations: metadata.keyword_registrations,
+            dsl_surfaces: metadata.dsl_surfaces,
+            provider_manifest: incan_vocab::LibraryManifest::default(),
+            desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
+                artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
+                relative_path: "desugarers/querykit_desugarer.wasm".to_string(),
+                target: "wasm32-wasip1".to_string(),
+                profile: "release".to_string(),
+                entrypoint: "desugar_block".to_string(),
+                sha256: hex::encode(Sha256::digest(desugarer_bytes)),
+            }),
+        });
+        manifest.write_to_path(&artifact_root.join("querykit_core.incnlib"))?;
+        Ok(())
+    }
+
+    fn write_pub_library_with_querykit_expression_clause_desugarer(
+        root: &Path,
+        desugarer_bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let artifact_root = root.join("deps").join("querykit").join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("desugarers"))?;
+        write_minimal_library_crate(&artifact_root, "querykit_core")?;
+        let desugarer_path = artifact_root.join("desugarers").join("querykit_desugarer.wasm");
+        std::fs::write(&desugarer_path, desugarer_bytes)?;
+
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_surface(
+                incan_vocab::DslSurface::on_import("querykit.query").with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .desugars_to_expression()
+                        .with_clauses([
+                            incan_vocab::ClauseSurface::expr("FROM").required(),
+                            incan_vocab::ClauseSurface::expr_list("GROUP BY").optional(),
+                            incan_vocab::ClauseSurface::expr_list("SELECT").required(),
+                        ]),
                 ),
             )
             .metadata();
@@ -12694,6 +12740,188 @@ def main() -> None:
         assert!(
             output.status.success(),
             "expected check to pass expression-list item metadata to the desugarer.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugars_colon_vocab_expression_in_assignment_issue727() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing expression-desugaring declaration payload",
+            r#""keyword":"query""#,
+        )?;
+        write_pub_library_with_querykit_select_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  value: int = query:
+    SELECT:
+      amount as total
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to desugar expression-position vocab block in assignment.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugars_colon_vocab_expression_in_return_issue727() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing expression-desugaring declaration payload",
+            r#""keyword":"query""#,
+        )?;
+        write_pub_library_with_querykit_select_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def build_value() -> int:
+  return query:
+    SELECT:
+      amount as total
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to desugar expression-position vocab block in return.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugars_colon_vocab_expression_preserves_inline_clauses_issue727()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing inline FROM clause payload",
+            r#""keyword":"FROM""#,
+        )?;
+        write_pub_library_with_querykit_expression_clause_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  selected: int = query:
+    FROM orders
+    SELECT:
+      amount as total
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to pass inline colon-expression clauses to the desugarer.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugars_braced_vocab_expression_with_compound_clauses_issue727()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing compound clause payload",
+            r#""compound_tokens":["BY"]"#,
+        )?;
+        write_pub_library_with_querykit_expression_clause_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  value: int = query { FROM orders GROUP BY amount as grouped SELECT total as total }
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to desugar braced expression-position vocab block.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugared_public_field_callee_call_typechecks_as_method_issue727()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
+            callee: Box::new(incan_vocab::IncanExpr::Field {
+                object: Box::new(incan_vocab::IncanExpr::Name("orders".to_string())),
+                field: "select".to_string(),
+            }),
+            args: Vec::new(),
+        });
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing FROM clause payload",
+            r#""keyword":"FROM""#,
+        )?;
+        write_pub_library_with_querykit_expression_clause_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+class LazyFrame:
+  def select(self) -> Self:
+    return self
+
+def main() -> None:
+  orders = LazyFrame()
+  selected: LazyFrame = query { FROM orders SELECT amount as amount }
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected public field-callee desugar output to typecheck as a method call.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );

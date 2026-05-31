@@ -127,6 +127,7 @@ Key rules:
 
 - `DslSurface::on_import("routekit")` must match the consumer-facing import spelling after `pub::`.
 - Declarations own their clause grammar directly, so nested DSL structure stays close to the declaration that introduces it.
+- Use `DeclarationSurface::desugars_to_expression()` when the DSL declaration produces a value. Expression-desugaring declarations can be used in ordinary expression positions such as assignment values and returns, and the compiler desugars them before typechecking.
 - Use `ClauseSurface::expr_list("SELECT")` for SQL-shaped projection clauses that accept entries such as `sum(amount) as total`; add declared item modifiers with `ExpressionItemModifierSurface::expr("for")` or similar when a projection item needs metadata such as `sum(amount) for customer with context`. The desugarer receives structured expression-list items with alias and modifier metadata, while `ClauseSurface::fields(...)` remains for config-style `name = value` sections.
 - `LibraryManifest` is where you describe exported module metadata plus any Cargo dependencies or stdlib features that must travel with the library artifact.
 - `KeywordRegistration` remains available only as a lower-level escape hatch for especially simple or incremental cases.

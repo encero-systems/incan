@@ -81,6 +81,7 @@ pub fn internal_vocab_block_to_public(
 
     Ok(incan_vocab::VocabDeclaration {
         keyword: block.keyword.clone(),
+        compound_tokens: block.keyword_binding.compound_tokens.clone(),
         keyword_metadata: Some(incan_vocab::VocabKeywordMetadata {
             dependency_key: block.keyword_binding.dependency_key.clone(),
             activation_namespace: block.keyword_binding.activation_namespace.clone(),
@@ -152,7 +153,7 @@ fn internal_vocab_clause_to_public(
     let body = internal_clause_body_to_public(&block.body, block.keyword_binding.clause_body_kind)?;
     Ok(incan_vocab::VocabClause {
         keyword: block.keyword.clone(),
-        compound_tokens: Vec::new(),
+        compound_tokens: block.keyword_binding.compound_tokens.clone(),
         head,
         body,
         span: public_span(span),
@@ -714,7 +715,7 @@ fn internal_race_for_to_public(race: &ast::RaceForExpr) -> Result<incan_vocab::I
 /// # Errors
 ///
 /// Returns [`VocabAstBridgeError::UnsupportedPublicExpression`] for unsupported public expression kinds or operators.
-fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, VocabAstBridgeError> {
+pub fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, VocabAstBridgeError> {
     match expr {
         incan_vocab::IncanExpr::Name(name) => Ok(ast::Expr::Ident(name.clone())),
         incan_vocab::IncanExpr::Str(value) => Ok(ast::Expr::Literal(ast::Literal::String(value.clone()))),
@@ -785,6 +786,17 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
                         .map(|node| ast::CallArg::Positional(ast::Spanned::new(node, ast::Span::default())))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            if let incan_vocab::IncanExpr::Field { object, field } = callee.as_ref() {
+                return Ok(ast::Expr::MethodCall(
+                    Box::new(ast::Spanned::new(
+                        public_expr_to_internal(object)?,
+                        ast::Span::default(),
+                    )),
+                    field.clone(),
+                    Vec::new(),
+                    mapped,
+                ));
+            }
             Ok(ast::Expr::Call(
                 Box::new(ast::Spanned::new(
                     public_expr_to_internal(callee)?,
@@ -1080,6 +1092,7 @@ mod tests {
             dependency_key: "demo".to_string(),
             activation_namespace: "demo.dsl".to_string(),
             surface_kind,
+            compound_tokens: Vec::new(),
             placement: incan_vocab::KeywordPlacement::TopLevel,
             clause_body_kind: None,
         }
@@ -1128,6 +1141,44 @@ mod tests {
                 return Err(format!("expected clause body item, got {other:?}").into());
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_compound_declaration_tokens() -> Result<(), Box<dyn std::error::Error>> {
+        let mut keyword_binding = default_keyword_binding(incan_vocab::KeywordSurfaceKind::BlockDeclaration);
+        keyword_binding.compound_tokens = vec!["AGAINST".to_string()];
+        let block = ast::VocabBlockStmt {
+            keyword: "MATCH".to_string(),
+            keyword_binding,
+            decorators: Vec::new(),
+            header_args: Vec::new(),
+            body: Vec::new(),
+        };
+
+        let bridged = internal_vocab_block_to_public(&block, ast::Span::default())?;
+        assert_eq!(bridged.keyword, "MATCH");
+        assert_eq!(bridged.compound_tokens, vec!["AGAINST".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_public_field_callee_calls_back_to_method_calls() -> Result<(), Box<dyn std::error::Error>> {
+        let expr = incan_vocab::IncanExpr::Call {
+            callee: Box::new(incan_vocab::IncanExpr::Field {
+                object: Box::new(incan_vocab::IncanExpr::Name("orders".to_string())),
+                field: "select".to_string(),
+            }),
+            args: vec![incan_vocab::IncanExpr::Name("amount".to_string())],
+        };
+
+        let internal = public_expr_to_internal(&expr)?;
+        let ast::Expr::MethodCall(receiver, method, _, args) = internal else {
+            return Err(format!("expected public field-callee call to bridge as method call, got {internal:?}").into());
+        };
+        assert_eq!(method, "select");
+        assert!(matches!(receiver.node, ast::Expr::Ident(ref name) if name == "orders"));
+        assert_eq!(args.len(), 1);
         Ok(())
     }
 

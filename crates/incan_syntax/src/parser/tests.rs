@@ -4561,6 +4561,139 @@ def has_name(name: str | None) -> bool:
     }
 
     #[test]
+    fn test_expression_desugaring_vocab_block_parses_in_assignment_value() -> Result<(), Box<dyn std::error::Error>> {
+        let source =
+            "import pub::analytics\n\ndef configure() -> None:\n  value = query:\n    FROM orders\n    SELECT:\n      amount as total\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_surface(
+                incan_vocab::DslSurface::on_import("analytics.query").with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .desugars_to_expression()
+                        .with_clause(incan_vocab::ClauseSurface::expr("FROM").required())
+                        .with_clause(incan_vocab::ClauseSurface::expr_list("SELECT").required()),
+                ),
+            )
+            .metadata();
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert("analytics".to_string(), metadata.keyword_registrations);
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert("analytics".to_string(), metadata.dsl_surfaces);
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::Assignment(assign) = &function.body[0].node else {
+            return Err(format!("expected assignment, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Expr::VocabBlock(block) = &assign.value.node else {
+            return Err(format!("expected vocab expression block, got {:?}", assign.value.node).into());
+        };
+        assert_eq!(block.keyword, "query");
+        assert!(matches!(
+            &block.body[0].node,
+            crate::ast::Statement::VocabBlock(from)
+                if from.keyword == "FROM"
+                    && matches!(
+                        &from.body[0].node,
+                        crate::ast::Statement::Expr(expr)
+                            if matches!(&expr.node, crate::ast::Expr::Ident(name) if name == "orders")
+                    )
+        ));
+        assert!(matches!(
+            &block.body[1].node,
+            crate::ast::Statement::VocabBlock(select)
+                if select.keyword == "SELECT"
+                    && matches!(
+                        &select.body[0].node,
+                        crate::ast::Statement::VocabExpressionItem(item)
+                            if item.alias.as_deref() == Some("total")
+                    )
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_braced_expression_vocab_block_uses_clause_metadata_boundaries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source =
+            "import pub::analytics\n\ndef configure() -> None:\n  value = query { FROM orders GROUP BY amount as grouped SELECT total as total }\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_surface(
+                incan_vocab::DslSurface::on_import("analytics.query").with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .desugars_to_expression()
+                        .with_clauses([
+                            incan_vocab::ClauseSurface::expr("FROM").required(),
+                            incan_vocab::ClauseSurface::expr_list("GROUP BY").optional(),
+                            incan_vocab::ClauseSurface::expr_list("SELECT").required(),
+                        ]),
+                ),
+            )
+            .metadata();
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert("analytics".to_string(), metadata.keyword_registrations);
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert("analytics".to_string(), metadata.dsl_surfaces);
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::Assignment(assign) = &function.body[0].node else {
+            return Err(format!("expected assignment, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Expr::VocabBlock(block) = &assign.value.node else {
+            return Err(format!("expected vocab expression block, got {:?}", assign.value.node).into());
+        };
+        assert_eq!(block.body.len(), 3);
+        assert!(matches!(
+            &block.body[0].node,
+            crate::ast::Statement::VocabBlock(from)
+                if from.keyword == "FROM"
+                    && matches!(
+                        &from.body[0].node,
+                        crate::ast::Statement::Expr(expr)
+                            if matches!(&expr.node, crate::ast::Expr::Ident(name) if name == "orders")
+                    )
+        ));
+        assert!(matches!(
+            &block.body[1].node,
+            crate::ast::Statement::VocabBlock(group)
+                if group.keyword == "GROUP"
+                    && group.keyword_binding.compound_tokens == vec!["BY".to_string()]
+                    && matches!(
+                        &group.body[0].node,
+                        crate::ast::Statement::VocabExpressionItem(item)
+                            if item.alias.as_deref() == Some("grouped")
+                    )
+        ));
+        assert!(matches!(
+            &block.body[2].node,
+            crate::ast::Statement::VocabBlock(select)
+                if select.keyword == "SELECT"
+                    && matches!(
+                        &select.body[0].node,
+                        crate::ast::Statement::VocabExpressionItem(item)
+                            if item.alias.as_deref() == Some("total")
+                    )
+        ));
+        Ok(())
+    }
+
+    #[test]
     fn test_scoped_symbol_descriptor_does_not_change_call_outside_vocab_block()
     -> Result<(), Box<dyn std::error::Error>> {
         let source = "import pub::analytics\n\ndef configure() -> None:\n  sum(amount)\n";

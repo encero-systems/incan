@@ -1971,6 +1971,11 @@ fn local_signature_in_expr(
                 local_signature_in_call_args(args, ast, source, offset)
             }
         },
+        Expr::VocabBlock(block) => block
+            .header_args
+            .iter()
+            .find_map(|arg| local_signature_in_expr(arg, ast, source, offset))
+            .or_else(|| local_signature_in_statements(&block.body, ast, source, offset)),
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr => None,
     }
 }
@@ -3617,6 +3622,12 @@ fn scoped_symbol_in_expr<'a>(
             }
             SurfaceExprPayload::LeadingDotPath { .. } => {}
         },
+        Expr::VocabBlock(block) => {
+            for arg in &block.header_args {
+                scoped_symbol_in_expr(arg, ident, symbol_span, surfaces, found);
+            }
+            scoped_symbol_in_statements(&block.body, ident, symbol_span, surfaces, found);
+        }
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
         Expr::Field(inner, _) => scoped_symbol_in_expr(inner, ident, symbol_span, surfaces, found),
     }
@@ -4140,6 +4151,21 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
             }
             SurfaceExprPayload::LeadingDotPath { .. } => {}
         },
+        Expr::VocabBlock(block) => {
+            let previous_len = context.vocab_stack.len();
+            context.vocab_stack.push(block.keyword.clone());
+            for arg in &block.header_args {
+                scoped_symbol_context_in_expr(arg, offset, context);
+            }
+            scoped_symbol_context_in_statements(&block.body, offset, context);
+            let matched_body = block
+                .body
+                .iter()
+                .any(|stmt| stmt.span.start <= offset && offset <= stmt.span.end);
+            if !matched_body {
+                context.vocab_stack.truncate(previous_len);
+            }
+        }
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
         Expr::Field(inner, _) => scoped_symbol_context_in_expr(inner, offset, context),
     }

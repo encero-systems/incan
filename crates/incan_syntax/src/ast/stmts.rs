@@ -229,6 +229,7 @@ pub struct VocabKeywordBinding {
     pub dependency_key: String,
     pub activation_namespace: String,
     pub surface_kind: incan_vocab::KeywordSurfaceKind,
+    pub compound_tokens: Vec<String>,
     pub placement: incan_vocab::KeywordPlacement,
     pub clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
 }

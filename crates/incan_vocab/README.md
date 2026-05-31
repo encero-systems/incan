@@ -98,6 +98,8 @@ pub fn library_vocab() -> VocabRegistration {
 
 `VocabRegistration` is the source of truth for one library's activated DSL surfaces, machine-readable manifest metadata, and optional Rust desugarer.
 
+Declarations marked with `DeclarationSurface::desugars_to_expression()` are value-producing DSL forms. The compiler accepts them in expression positions such as assignments and returns, then hands the structured `VocabDeclaration` to the desugarer before typechecking the returned expression. Clause boundaries, expression-list aliases/modifiers, and compound clause tokens such as `GROUP BY` are preserved in the public AST instead of being reparsed from source text.
+
 ### High-level surface types
 
 These are the main author-facing types:

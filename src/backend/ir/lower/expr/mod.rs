@@ -1155,6 +1155,16 @@ impl AstLowering {
                 }
             }
 
+            ast::Expr::VocabBlock(block) => {
+                return Err(LoweringError {
+                    message: format!(
+                        "vocab expression declaration `{}` reached lowering before desugaring",
+                        block.keyword
+                    ),
+                    span: super::super::IrSpan::default(),
+                });
+            }
+
             // ---- Try (?) ----
             ast::Expr::Try(e) => {
                 let inner = self.lower_expr_spanned(e)?;

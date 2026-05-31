@@ -1040,6 +1040,13 @@ fn expr_references_name(expr: &Expr, name: &str) -> bool {
         Expr::Range { start, end, .. } => {
             expr_references_name(&start.node, name) || expr_references_name(&end.node, name)
         }
+        Expr::VocabBlock(block) => {
+            block
+                .header_args
+                .iter()
+                .any(|arg| expr_references_name(&arg.node, name))
+                || body_references_name(&block.body, name)
+        }
         Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) | Expr::Partial(_) | Expr::Surface(_) => false,
     }
 }
