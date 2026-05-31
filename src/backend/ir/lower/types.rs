@@ -116,6 +116,7 @@ impl AstLowering {
             (IrType::Generic(existing_name), IrType::Struct(inferred_name)) if existing_name == &inferred_name => {
                 existing.clone()
             }
+            (IrType::RustDisplay(_), _) => existing.clone(),
             (IrType::Ref(existing_inner), IrType::Ref(inferred_inner)) => {
                 IrType::Ref(Box::new(Self::merge_inferred_ir_type(existing_inner, *inferred_inner)))
             }
@@ -736,6 +737,25 @@ mod tests {
                     vec![IrType::Generic("T".to_string())]
                 )]
             )
+        );
+    }
+
+    #[test]
+    fn merge_inferred_ir_type_preserves_exact_rust_display_types() {
+        let merged = AstLowering::merge_inferred_ir_type(
+            &IrType::RustDisplay("querykit::__IncanUniond6a8fda7c78e7109".to_string()),
+            IrType::NamedGeneric(
+                crate::backend::ir::types::IR_UNION_TYPE_NAME.to_string(),
+                vec![
+                    IrType::Struct("IntLiteralExpr".to_string()),
+                    IrType::Struct("StringLiteralExpr".to_string()),
+                ],
+            ),
+        );
+
+        assert_eq!(
+            merged,
+            IrType::RustDisplay("querykit::__IncanUniond6a8fda7c78e7109".to_string())
         );
     }
 }

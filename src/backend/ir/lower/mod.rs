@@ -33,6 +33,7 @@ mod stmt;
 mod types;
 
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
 use super::TypedExpr;
 use super::decl::{FunctionParam, IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier, IrTypeParam};
@@ -42,6 +43,7 @@ use super::types::IrType;
 use super::{FunctionReexport, FunctionSignature, IrProgram, Mutability};
 use crate::frontend::ast;
 use crate::frontend::decorator_resolution;
+use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint};
 use crate::frontend::typechecker::TypeCheckInfo;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
@@ -117,6 +119,8 @@ pub struct AstLowering {
     pub(super) iterator_adopter_names: HashSet<String>,
     /// Optional typechecker output used to drive lowering (avoid heuristics).
     pub(super) type_info: Option<TypeCheckInfo>,
+    /// Public dependency manifests used to rehydrate callable defaults across `pub::` boundaries.
+    pub(super) library_manifest_index: Option<Arc<LibraryManifestIndex>>,
     /// Newtype -> chosen validated constructor method name (e.g. "from_underlying", "from_str"),
     /// used for checked construction lowering of `T(x)` at call sites.
     pub(super) newtype_checked_ctor: HashMap<String, String>,
@@ -233,6 +237,7 @@ impl AstLowering {
             active_trait_default_function_paths: Vec::new(),
             iterator_adopter_names: HashSet::new(),
             type_info: None,
+            library_manifest_index: None,
             newtype_checked_ctor: HashMap::new(),
             newtype_constraints: HashMap::new(),
             current_impl_type: None,
@@ -256,6 +261,11 @@ impl AstLowering {
     /// Override the source module name used for compiler-provided call-site metadata.
     pub fn set_current_source_module_name(&mut self, name: Option<String>) {
         self.current_source_module_name = name;
+    }
+
+    /// Provide public dependency manifests for lowering metadata-backed call signatures.
+    pub fn set_library_manifest_index(&mut self, index: Option<Arc<LibraryManifestIndex>>) {
+        self.library_manifest_index = index;
     }
 
     /// Lower one typechecker-resolved callable surface into IR parameters, attaching an already-planned default

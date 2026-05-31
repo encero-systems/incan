@@ -30,6 +30,7 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
             },
             kind: ParamKindExport::Normal,
             has_default: false,
+            default: None,
         }],
         return_type: TypeRef::Function {
             params: vec![TypeRef::Tuple {
@@ -79,6 +80,7 @@ fn manifest_io_round_trip_preserves_partial_exports() -> Result<(), Box<dyn std:
                 },
                 kind: ParamKindExport::Normal,
                 has_default: true,
+                default: None,
             },
             ParamExport {
                 name: "path".to_string(),
@@ -87,6 +89,7 @@ fn manifest_io_round_trip_preserves_partial_exports() -> Result<(), Box<dyn std:
                 },
                 kind: ParamKindExport::Normal,
                 has_default: false,
+                default: None,
             },
         ],
         return_type: TypeRef::Named {
@@ -102,6 +105,104 @@ fn manifest_io_round_trip_preserves_partial_exports() -> Result<(), Box<dyn std:
 
     assert_eq!(loaded, manifest);
     Ok(())
+}
+
+#[test]
+fn manifest_io_round_trip_preserves_parameter_defaults() -> Result<(), Box<dyn std::error::Error>> {
+    let mut manifest = LibraryManifest::new("mylib", "0.1.0");
+    manifest.exports.functions.push(FunctionExport {
+        name: "with_default".to_string(),
+        type_params: Vec::new(),
+        params: vec![ParamExport {
+            name: "value".to_string(),
+            ty: TypeRef::Named {
+                name: "int".to_string(),
+            },
+            kind: ParamKindExport::Normal,
+            has_default: true,
+            default: Some(ParamDefaultExport::Call {
+                path: vec!["fallback".to_string()],
+                args: vec![ParamDefaultCallArgExport {
+                    name: None,
+                    value: ParamDefaultExport::Int(0),
+                }],
+                signature: None,
+            }),
+        }],
+        return_type: TypeRef::Named {
+            name: "int".to_string(),
+        },
+        is_async: false,
+    });
+
+    let tmp = tempfile::tempdir()?;
+    let path = tmp.path().join("defaults.incnlib");
+    manifest.write_to_path(&path)?;
+    let loaded = LibraryManifest::read_from_path(&path)?;
+
+    assert_eq!(loaded, manifest);
+    Ok(())
+}
+
+#[test]
+fn function_export_from_checked_marks_only_materializable_defaults_as_omittable() {
+    let export = super::model::function_export_from_checked(&crate::frontend::library_exports::CheckedFunctionExport {
+        name: "with_default".to_string(),
+        type_params: Vec::new(),
+        params: vec![
+            crate::frontend::symbols::CallableParam::named_with_default(
+                "ok",
+                crate::frontend::symbols::ResolvedType::Int,
+                crate::frontend::ast::ParamKind::Normal,
+                true,
+            ),
+            crate::frontend::symbols::CallableParam::named_with_default(
+                "not_exportable",
+                crate::frontend::symbols::ResolvedType::Int,
+                crate::frontend::ast::ParamKind::Normal,
+                true,
+            ),
+        ],
+        param_defaults: vec![
+            Some(crate::frontend::library_exports::CheckedParamDefault::Int(1)),
+            Some(crate::frontend::library_exports::CheckedParamDefault::Unsupported),
+        ],
+        return_type: crate::frontend::symbols::ResolvedType::Unit,
+        is_async: false,
+    });
+
+    assert!(export.params[0].has_default);
+    assert_eq!(export.params[0].default, Some(ParamDefaultExport::Int(1)));
+    assert!(!export.params[1].has_default);
+    assert_eq!(export.params[1].default, None);
+}
+
+#[test]
+fn parameter_default_materializability_is_all_or_nothing() {
+    let empty_call = ParamDefaultExport::Call {
+        path: Vec::new(),
+        args: Vec::new(),
+        signature: None,
+    };
+    let partially_unsupported_list =
+        ParamDefaultExport::List(vec![ParamDefaultExport::Int(1), ParamDefaultExport::Unsupported]);
+    let partially_unsupported_dict = ParamDefaultExport::Dict(vec![ParamDefaultDictEntryExport {
+        key: ParamDefaultExport::String("key".to_string()),
+        value: ParamDefaultExport::Unsupported,
+    }]);
+    let partially_unsupported_call = ParamDefaultExport::Call {
+        path: vec!["fallback".to_string()],
+        args: vec![ParamDefaultCallArgExport {
+            name: None,
+            value: ParamDefaultExport::Unsupported,
+        }],
+        signature: None,
+    };
+
+    assert!(!empty_call.is_materializable());
+    assert!(!partially_unsupported_list.is_materializable());
+    assert!(!partially_unsupported_dict.is_materializable());
+    assert!(!partially_unsupported_call.is_materializable());
 }
 
 #[test]
@@ -315,6 +416,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
                 },
                 kind: ParamKindExport::RestPositional,
                 has_default: false,
+                default: None,
             },
             ParamExport {
                 name: "labels".to_string(),
@@ -323,6 +425,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
                 },
                 kind: ParamKindExport::RestKeyword,
                 has_default: false,
+                default: None,
             },
         ],
         return_type: TypeRef::Named {
@@ -350,6 +453,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
                 },
                 kind: ParamKindExport::RestPositional,
                 has_default: false,
+                default: None,
             }],
             return_type: TypeRef::Named {
                 name: "int".to_string(),
@@ -382,6 +486,7 @@ fn manifest_validation_rejects_invalid_rest_parameter_metadata() -> Result<(), B
                 },
                 kind: ParamKindExport::RestKeyword,
                 has_default: false,
+                default: None,
             },
             ParamExport {
                 name: "value".to_string(),
@@ -390,6 +495,7 @@ fn manifest_validation_rejects_invalid_rest_parameter_metadata() -> Result<(), B
                 },
                 kind: ParamKindExport::Normal,
                 has_default: false,
+                default: None,
             },
         ],
         return_type: TypeRef::Named {
@@ -663,6 +769,7 @@ fn manifest_io_round_trip_preserves_generic_method_type_params() -> Result<(), B
                 ty: TypeRef::TypeParam { name: "T".to_string() },
                 kind: ParamKindExport::Normal,
                 has_default: false,
+                default: None,
             }],
             return_type: TypeRef::TypeParam { name: "T".to_string() },
             is_async: false,

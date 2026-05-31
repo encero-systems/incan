@@ -14,9 +14,9 @@ use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport,
     FunctionExport, LibraryContractMetadata, LibraryExports, LibraryManifest, LibraryRustAbi, MethodExport,
-    ModelExport, ParamExport, ParamKindExport, PartialExport, PartialPresetExport, PartialTargetKindExport,
-    PresetValueExport, ReceiverExport, StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport,
-    TypeRef,
+    ModelExport, ParamDefaultCallArgExport, ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport,
+    ParamKindExport, PartialExport, PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport,
+    StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
@@ -1411,6 +1411,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     },
                     kind: ParamKindExport::Normal,
                     has_default: true,
+                    default: None,
                 }],
                 return_type: TypeRef::Named {
                     name: "Widget".to_string(),
@@ -1437,6 +1438,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     },
                     kind: ParamKindExport::Normal,
                     has_default: false,
+                    default: None,
                 }],
                 return_type: TypeRef::Named {
                     name: "Widget".to_string(),
@@ -1555,6 +1557,7 @@ fn library_index_with_callable_alias_export() -> LibraryManifestIndex {
                         },
                         kind: ParamKindExport::Normal,
                         has_default: false,
+                        default: None,
                     }],
                     return_type: TypeRef::Named {
                         name: "int".to_string(),
@@ -1839,6 +1842,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                     },
                                     kind: ParamKindExport::Normal,
                                     has_default: false,
+                                    default: None,
                                 },
                                 ParamExport {
                                     name: "uri".to_string(),
@@ -1847,6 +1851,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                     },
                                     kind: ParamKindExport::Normal,
                                     has_default: false,
+                                    default: None,
                                 },
                             ],
                             return_type: TypeRef::Applied {
@@ -1877,6 +1882,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                 },
                                 kind: ParamKindExport::Normal,
                                 has_default: false,
+                                default: None,
                             }],
                             return_type: TypeRef::Applied {
                                 name: "Result".to_string(),
@@ -1957,6 +1963,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                     },
                     kind: ParamKindExport::Normal,
                     has_default: false,
+                    default: None,
                 }],
                 return_type: TypeRef::Named {
                     name: none_constructor_name(),
@@ -13066,6 +13073,86 @@ pub model Reading with Convert[int], Convert[float]:
             .iter()
             .any(|ty| matches!(ty, TypeRef::Named { name } if name == "float")),
         "missing float convert overload: {convert_returns:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_checked_public_exports_qualify_default_expression_provider_paths() -> Result<(), Box<dyn std::error::Error>> {
+    let defaults_source = r#"
+pub const FALLBACK: str = "fallback"
+
+pub def make_label(value: str) -> str:
+  return value
+"#;
+    let source = r#"
+from defaults import FALLBACK, make_label
+
+pub const LOCAL_SENTINEL: str = "local"
+
+pub def imported_default(label: str = make_label(FALLBACK)) -> str:
+  return label
+
+pub def local_default(label: str = LOCAL_SENTINEL) -> str:
+  return label
+"#;
+
+    let defaults_tokens = lexer::lex(defaults_source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let defaults_ast = parser::parse(&defaults_tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["helpers".to_string()]));
+    checker
+        .check_with_imports(&ast, &[("defaults", &defaults_ast)])
+        .map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let manifest = LibraryManifest::from_checked_exports("querykit".to_string(), "0.1.0".to_string(), &exports);
+    let imported = manifest
+        .exports
+        .functions
+        .iter()
+        .find(|function| function.name == "imported_default")
+        .ok_or("missing imported_default export")?;
+    let local = manifest
+        .exports
+        .functions
+        .iter()
+        .find(|function| function.name == "local_default")
+        .ok_or("missing local_default export")?;
+
+    assert_eq!(
+        imported.params[0].default,
+        Some(ParamDefaultExport::Call {
+            path: vec!["defaults".to_string(), "make_label".to_string()],
+            args: vec![ParamDefaultCallArgExport {
+                name: None,
+                value: ParamDefaultExport::ConstRef(vec!["defaults".to_string(), "FALLBACK".to_string()]),
+            }],
+            signature: Some(ParamDefaultCallSignatureExport {
+                params: vec![ParamExport {
+                    name: "value".to_string(),
+                    ty: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    kind: ParamKindExport::Normal,
+                    has_default: false,
+                    default: None,
+                }],
+                return_type: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+            }),
+        })
+    );
+    assert_eq!(
+        local.params[0].default,
+        Some(ParamDefaultExport::ConstRef(vec![
+            "helpers".to_string(),
+            "LOCAL_SENTINEL".to_string(),
+        ]))
     );
     Ok(())
 }

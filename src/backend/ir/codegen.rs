@@ -566,6 +566,7 @@ impl<'a> IrCodegen<'a> {
 
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
+        lowering.set_library_manifest_index(self.library_manifest_index.clone());
         lowering.set_current_source_module_name(
             program
                 .source_path
@@ -724,6 +725,7 @@ impl<'a> IrCodegen<'a> {
     pub fn try_generate_module(&mut self, module_name: &str, program: &Program) -> Result<String, GenerationError> {
         // Use the IR pipeline for module generation too
         let mut lowering = AstLowering::new();
+        lowering.set_library_manifest_index(self.library_manifest_index.clone());
         lowering.set_current_source_module_name(
             program
                 .source_path
@@ -741,6 +743,7 @@ impl<'a> IrCodegen<'a> {
                 continue;
             }
             let mut dep_lowering = AstLowering::new();
+            dep_lowering.set_library_manifest_index(self.library_manifest_index.clone());
             dep_lowering.set_current_source_module_name(
                 dep_path_segments
                     .clone()
@@ -869,6 +872,7 @@ impl<'a> IrCodegen<'a> {
                 }
             };
             let mut lowering = AstLowering::new_with_type_info(module_type_info);
+            lowering.set_library_manifest_index(self.library_manifest_index.clone());
             lowering.set_current_source_module_name(Some(
                 path_segments
                     .clone()
@@ -1104,6 +1108,7 @@ impl<'a> IrCodegen<'a> {
                     }
                 };
                 let mut lowering = AstLowering::new_with_type_info(module_type_info);
+                lowering.set_library_manifest_index(self.library_manifest_index.clone());
                 lowering.set_current_source_module_name(Some(path.join(".")));
                 lowering.seed_dependency_trait_decls(&self.dependency_modules);
                 lowering.seed_struct_field_aliases(global_aliases.clone());
@@ -2368,6 +2373,7 @@ def main() -> None:
                 },
                 kind: ParamKindExport::Normal,
                 has_default: false,
+                default: None,
             }],
             return_type: TypeRef::Named {
                 name: "Widget".to_string(),
@@ -3011,7 +3017,7 @@ def main() -> None:
         codegen.set_library_manifest_index(library_index_with_widgets_exports());
         let code = must_ok(codegen.try_generate(&ast));
         assert!(
-            code.contains("let _w: Widget = make_widget(DEFAULT_NAME);"),
+            code.contains("let _w: Widget = widgets::make_widget(DEFAULT_NAME.to_string());"),
             "Generated code did not match expected. Code was:\n{code}"
         );
     }

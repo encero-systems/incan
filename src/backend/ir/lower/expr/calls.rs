@@ -12,9 +12,14 @@ use super::super::super::{FunctionSignature, IrStmt, Mutability, TypedExpr};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast::{self, TypeConstraintKey};
+use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
 use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType};
 use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind, ValidatedNewtypeCoercionMode};
 use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
+use crate::library_manifest::{
+    FunctionExport, ParamDefaultCallArgExport, ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport,
+    ParamKindExport, resolved_type_from_manifest_type_ref,
+};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
 use incan_core::lang::stdlib::{STDLIB_BUILTINS, STDLIB_ROOT};
@@ -134,6 +139,341 @@ impl AstLowering {
                 })
                 .collect(),
             return_type: self.lower_type(&func.return_type.node),
+        }
+    }
+
+    /// Resolve a callable signature from a public dependency manifest, including materialized default expressions.
+    fn callable_signature_for_imported_pub_path(&mut self, path: &[String]) -> Option<FunctionSignature> {
+        if path.len() < 3 || path.first().map(String::as_str) != Some("pub") {
+            return None;
+        }
+        let library = path.get(1)?;
+        let function_name = path.last()?;
+        let function = self.pub_function_export(library, function_name)?;
+        Some(self.callable_signature_from_pub_function_export(library, &function))
+    }
+
+    /// Resolve the canonical imported callee path for identifier and module-qualified calls.
+    fn imported_callee_path_for_expr(&self, expr: &ast::Expr) -> Option<Vec<String>> {
+        match expr {
+            ast::Expr::Ident(name) => self
+                .active_trait_default_function_path(name)
+                .or_else(|| self.import_aliases.get(name).cloned()),
+            ast::Expr::Field(object, field) => {
+                let mut path = self.imported_field_base_path(&object.node)?;
+                path.push(field.clone());
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    /// Resolve the imported module path that roots a field-chain callee such as `widgets.make_widget`.
+    fn imported_field_base_path(&self, expr: &ast::Expr) -> Option<Vec<String>> {
+        match expr {
+            ast::Expr::Ident(name) => self.import_aliases.get(name).cloned(),
+            ast::Expr::Field(object, field) => {
+                let mut path = self.imported_field_base_path(&object.node)?;
+                path.push(field.clone());
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    /// Resolve `module.function(...)` syntax when the receiver is an imported public dependency module.
+    pub(in crate::backend::ir::lower) fn imported_pub_method_callee_path(
+        &self,
+        receiver: &ast::Expr,
+        method_name: &str,
+    ) -> Option<Vec<String>> {
+        let mut path = self.imported_field_base_path(receiver)?;
+        if path.first().map(String::as_str) != Some("pub") {
+            return None;
+        }
+        let library = path.get(1)?;
+        self.pub_function_export(library, method_name)?;
+        path.push(method_name.to_string());
+        Some(path)
+    }
+
+    /// Fetch the public function export or projected alias export that backs an imported public callable.
+    fn pub_function_export(&self, library: &str, function_name: &str) -> Option<FunctionExport> {
+        let index = self.library_manifest_index.as_ref()?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = index.get(library)? else {
+            return None;
+        };
+        if let Some(function) = manifest
+            .exports
+            .functions
+            .iter()
+            .find(|function| function.name == function_name)
+        {
+            return Some(function.clone());
+        }
+        manifest
+            .exports
+            .aliases
+            .iter()
+            .find(|alias| alias.name == function_name)
+            .and_then(|alias| alias.projected_function.clone())
+    }
+
+    /// Rebuild a public dependency callable signature from manifest metadata, including materialized parameter
+    /// defaults.
+    fn callable_signature_from_pub_function_export(
+        &mut self,
+        library: &str,
+        function: &FunctionExport,
+    ) -> FunctionSignature {
+        FunctionSignature {
+            params: function
+                .params
+                .iter()
+                .map(|param| {
+                    let base_ty = self.lower_resolved_type(&resolved_type_from_manifest_type_ref(&param.ty));
+                    let kind = param_kind_from_manifest(param.kind);
+                    FunctionParam {
+                        name: param.name.clone(),
+                        ty: Self::lower_param_container_type(kind, base_ty),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind,
+                        default: self.lower_pub_param_default(library, param),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_resolved_type(&resolved_type_from_manifest_type_ref(&function.return_type)),
+        }
+    }
+
+    /// Lower one exported parameter default into IR so omitted public dependency arguments can be emitted at call
+    /// sites.
+    fn lower_pub_param_default(&mut self, library: &str, param: &ParamExport) -> Option<TypedExpr> {
+        match param.default.as_ref() {
+            Some(ParamDefaultExport::Unsupported) | None => None,
+            Some(default) if default.is_materializable() => self.lower_pub_default_expr(library, default),
+            Some(_) => None,
+        }
+    }
+
+    /// Lower a metadata-safe exported default expression into the subset of IR that can be materialized by consumers.
+    fn lower_pub_default_expr(&mut self, library: &str, default: &ParamDefaultExport) -> Option<TypedExpr> {
+        match default {
+            ParamDefaultExport::Int(value) => Some(TypedExpr::new(IrExprKind::Int(*value), IrType::Int)),
+            ParamDefaultExport::Float(value) => value
+                .parse::<f64>()
+                .ok()
+                .map(|value| TypedExpr::new(IrExprKind::Float(value), IrType::Float)),
+            ParamDefaultExport::Bool(value) => Some(TypedExpr::new(IrExprKind::Bool(*value), IrType::Bool)),
+            ParamDefaultExport::String(value) => Some(TypedExpr::new(
+                IrExprKind::Literal(IrLiteral::StaticStr(value.clone())),
+                IrType::StaticStr,
+            )),
+            ParamDefaultExport::Bytes(value) => Some(TypedExpr::new(IrExprKind::Bytes(value.clone()), IrType::Bytes)),
+            ParamDefaultExport::None => Some(TypedExpr::new(IrExprKind::None, IrType::Unit)),
+            ParamDefaultExport::List(values) => {
+                let entries = values
+                    .iter()
+                    .map(|value| self.lower_pub_default_expr(library, value).map(IrListEntry::Element))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(TypedExpr::new(
+                    IrExprKind::List(entries),
+                    IrType::List(Box::new(IrType::Unknown)),
+                ))
+            }
+            ParamDefaultExport::Dict(entries) => {
+                let entries = entries
+                    .iter()
+                    .map(|entry| {
+                        Some(IrDictEntry::Pair(
+                            self.lower_pub_default_expr(library, &entry.key)?,
+                            Box::new(self.lower_pub_default_expr(library, &entry.value)?),
+                        ))
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(TypedExpr::new(
+                    IrExprKind::Dict(entries),
+                    IrType::Dict(Box::new(IrType::Unknown), Box::new(IrType::Unknown)),
+                ))
+            }
+            ParamDefaultExport::ConstRef(path) => self.lower_pub_default_const_ref(library, path),
+            ParamDefaultExport::Call { path, args, signature } => {
+                self.lower_pub_default_call(library, path, args, signature.as_ref())
+            }
+            ParamDefaultExport::Unsupported => None,
+        }
+    }
+
+    /// Lower a default constant reference as a dependency-qualified value expression.
+    fn lower_pub_default_const_ref(&mut self, library: &str, path: &[String]) -> Option<TypedExpr> {
+        if path.is_empty() {
+            return None;
+        }
+        let mut expr = TypedExpr::new(
+            IrExprKind::Var {
+                name: library.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::ExternalName,
+            },
+            IrType::Unknown,
+        );
+        for segment in path {
+            expr = TypedExpr::new(
+                IrExprKind::Field {
+                    object: Box::new(expr),
+                    field: segment.clone(),
+                },
+                IrType::Unknown,
+            );
+        }
+        Some(expr)
+    }
+
+    /// Lower an exported default call while preserving the public dependency canonical path for nested call planning.
+    fn lower_pub_default_call(
+        &mut self,
+        library: &str,
+        path: &[String],
+        args: &[ParamDefaultCallArgExport],
+        signature: Option<&ParamDefaultCallSignatureExport>,
+    ) -> Option<TypedExpr> {
+        let function_name = path.last()?.clone();
+        let canonical_path = self.pub_default_canonical_path(library, path);
+        let function = self.pub_function_export(library, &function_name);
+        let callable_signature = signature
+            .map(|signature| self.callable_signature_from_pub_default_call_signature(library, signature))
+            .or_else(|| {
+                function
+                    .as_ref()
+                    .map(|function| self.callable_signature_from_pub_function_export(library, function))
+            });
+        let return_type = signature
+            .map(|signature| self.lower_resolved_type(&resolved_type_from_manifest_type_ref(&signature.return_type)))
+            .or_else(|| {
+                function.as_ref().map(|function| {
+                    self.lower_resolved_type(&resolved_type_from_manifest_type_ref(&function.return_type))
+                })
+            })
+            .unwrap_or(IrType::Unknown);
+        let args = args
+            .iter()
+            .map(|arg| {
+                Some(IrCallArg {
+                    name: arg.name.clone(),
+                    kind: if arg.name.is_some() {
+                        IrCallArgKind::Named
+                    } else {
+                        IrCallArgKind::Positional
+                    },
+                    expr: self.lower_pub_default_expr(library, &arg.value)?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: function_name,
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Unknown,
+                )),
+                type_args: Vec::new(),
+                args,
+                callable_signature,
+                canonical_path: Some(canonical_path),
+            },
+            self.pub_external_type(library, return_type),
+        ))
+    }
+
+    /// Rebuild the source callable surface captured for a provider-owned default helper call.
+    fn callable_signature_from_pub_default_call_signature(
+        &mut self,
+        library: &str,
+        signature: &ParamDefaultCallSignatureExport,
+    ) -> FunctionSignature {
+        FunctionSignature {
+            params: signature
+                .params
+                .iter()
+                .map(|param| {
+                    let base_ty = self.lower_resolved_type(&resolved_type_from_manifest_type_ref(&param.ty));
+                    let kind = param_kind_from_manifest(param.kind);
+                    FunctionParam {
+                        name: param.name.clone(),
+                        ty: Self::lower_param_container_type(kind, base_ty),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind,
+                        default: self.lower_pub_param_default(library, param),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_resolved_type(&resolved_type_from_manifest_type_ref(&signature.return_type)),
+        }
+    }
+
+    /// Convert a default-expression path from manifest-local spelling into a public dependency canonical path.
+    fn pub_default_canonical_path(&self, library: &str, path: &[String]) -> Vec<String> {
+        let mut canonical = vec!["pub".to_string(), library.to_string()];
+        canonical.extend(path.iter().cloned());
+        canonical
+    }
+
+    /// Rewrite dependency-owned anonymous union types to exact Rust display paths so consumers do not re-own them.
+    fn pub_external_type(&self, library: &str, ty: IrType) -> IrType {
+        if let Some(union_name) = ty.union_type_name() {
+            return IrType::RustDisplay(format!("{library}::{union_name}"));
+        }
+        match ty {
+            IrType::List(inner) => IrType::List(Box::new(self.pub_external_type(library, *inner))),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(self.pub_external_type(library, *key)),
+                Box::new(self.pub_external_type(library, *value)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(self.pub_external_type(library, *inner))),
+            IrType::Tuple(items) => IrType::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| self.pub_external_type(library, item))
+                    .collect(),
+            ),
+            IrType::Option(inner) => IrType::Option(Box::new(self.pub_external_type(library, *inner))),
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(self.pub_external_type(library, *ok)),
+                Box::new(self.pub_external_type(library, *err)),
+            ),
+            IrType::Function { params, ret } => IrType::Function {
+                params: params
+                    .into_iter()
+                    .map(|param| self.pub_external_type(library, param))
+                    .collect(),
+                ret: Box::new(self.pub_external_type(library, *ret)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(self.pub_external_type(library, *inner))),
+            IrType::RefMut(inner) => IrType::RefMut(Box::new(self.pub_external_type(library, *inner))),
+            IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
+                name,
+                args.into_iter()
+                    .map(|arg| self.pub_external_type(library, arg))
+                    .collect(),
+            ),
+            other => other,
+        }
+    }
+
+    /// Build the emitted function type for a public dependency callable without losing semantic call-planning metadata.
+    fn pub_external_function_type(&self, library: &str, signature: &FunctionSignature) -> IrType {
+        IrType::Function {
+            params: signature
+                .params
+                .iter()
+                .map(|param| self.pub_external_type(library, param.ty.clone()))
+                .collect(),
+            ret: Box::new(self.pub_external_type(library, signature.return_type.clone())),
         }
     }
 
@@ -1605,12 +1945,7 @@ impl AstLowering {
             }
         }
 
-        let imported_callee_path = match &f.node {
-            ast::Expr::Ident(name) => self
-                .active_trait_default_function_path(name)
-                .or_else(|| self.import_aliases.get(name).cloned()),
-            _ => None,
-        };
+        let imported_callee_path = self.imported_callee_path_for_expr(&f.node);
         let mut func = self.lower_expr_spanned(f)?;
         if let Some(resolved_operator) = self
             .type_info
@@ -1713,6 +2048,7 @@ impl AstLowering {
             .as_ref()
             .and_then(|info| info.resolved_operator_call(call_span).cloned())
             && resolved_operator.kind == ResolvedOperatorKind::Call
+            && imported_callee_path.is_none()
         {
             let ret_ty = self
                 .type_info
@@ -1735,7 +2071,10 @@ impl AstLowering {
         }
         let callable_signature = imported_callee_path
             .as_deref()
-            .and_then(|path| self.callable_signature_for_imported_stdlib_path(path))
+            .and_then(|path| {
+                self.callable_signature_for_imported_stdlib_path(path)
+                    .or_else(|| self.callable_signature_for_imported_pub_path(path))
+            })
             .or_else(|| match &f.node {
                 ast::Expr::Ident(name) => self.lookup_local_callable_signature(name),
                 ast::Expr::Partial(_) => self.partial_expr_signature_for_span(f.span),
@@ -1744,9 +2083,23 @@ impl AstLowering {
             .or_else(|| self.callable_signature_for_call_span(call_span))
             .or_else(|| self.callable_signature_for_callee_span(f.span));
         let callable_signature = self.refine_function_typed_local_call(&mut func, &args_ir, callable_signature);
+        let imported_pub_library = imported_callee_path.as_deref().and_then(|path| {
+            if path.first().is_some_and(|segment| segment == "pub") {
+                path.get(1)
+            } else {
+                None
+            }
+        });
+        if let (Some(library), Some(signature)) = (imported_pub_library, callable_signature.as_ref()) {
+            func.ty = self.pub_external_function_type(library, signature);
+        }
 
         let ret_ty = if let IrType::Function { ret, .. } = &func.ty {
-            (**ret).clone()
+            let ret_ty = (**ret).clone();
+            match imported_pub_library {
+                Some(library) => self.pub_external_type(library, ret_ty),
+                None => ret_ty,
+            }
         } else {
             IrType::Unknown
         };
@@ -2105,6 +2458,15 @@ impl AstLowering {
                 IrDictEntry::Spread(_) => None,
             })
             .collect()
+    }
+}
+
+/// Convert manifest parameter kind metadata back to the frontend enum used by IR call signatures.
+fn param_kind_from_manifest(kind: ParamKindExport) -> ast::ParamKind {
+    match kind {
+        ParamKindExport::Normal => ast::ParamKind::Normal,
+        ParamKindExport::RestPositional => ast::ParamKind::RestPositional,
+        ParamKindExport::RestKeyword => ast::ParamKind::RestKeyword,
     }
 }
 

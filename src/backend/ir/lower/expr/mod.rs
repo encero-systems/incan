@@ -552,7 +552,22 @@ impl AstLowering {
                         IrType::Struct("Logger".to_string()),
                     ));
                 }
-                let access = self.select_var_access_for_ident(&lowered_name, &ty);
+                // Imported string-like bindings are dependency-owned path references, not local owned strings that can
+                // be consumed by the current block's last-use analysis.
+                let inferred_import_ty = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.expr_type(expr_span).cloned())
+                    .map(|ty| self.lower_resolved_type(&ty));
+                let access = if self.import_aliases.contains_key(name)
+                    && matches!(
+                        inferred_import_ty.as_ref().unwrap_or(&ty),
+                        IrType::String | IrType::StaticStr | IrType::StrRef | IrType::FrozenStr
+                    ) {
+                    VarAccess::Read
+                } else {
+                    self.select_var_access_for_ident(&lowered_name, &ty)
+                };
                 (
                     IrExprKind::Var {
                         name: lowered_name.clone(),
@@ -793,6 +808,13 @@ impl AstLowering {
 
             // ---- Method calls ----
             ast::Expr::MethodCall(o, m, type_args, args) => {
+                if self.imported_pub_method_callee_path(&o.node, m).is_some() {
+                    let callee = ast::Spanned::new(ast::Expr::Field(o.clone(), m.clone()), expr_span);
+                    return self
+                        .lower_call_expr(&callee, type_args, args, expr_span)
+                        .map(|(kind, ty)| TypedExpr::new(kind, ty));
+                }
+
                 if Self::is_explicit_builtin_namespace_expr(o)
                     && let Some(builtin) = BuiltinFn::from_name(m)
                 {

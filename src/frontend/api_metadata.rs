@@ -770,6 +770,7 @@ fn source_function_params(function: &FunctionDecl, checker: &TypeChecker) -> Vec
                 crate::frontend::ast::ParamKind::RestKeyword => ParamKindExport::RestKeyword,
             },
             has_default: param.node.default.is_some(),
+            default: None,
         })
         .collect()
 }
@@ -1166,6 +1167,7 @@ fn params(params: &[crate::frontend::symbols::CallableParam]) -> Vec<ParamExport
                     crate::frontend::ast::ParamKind::RestKeyword => ParamKindExport::RestKeyword,
                 },
                 has_default: param.has_default,
+                default: None,
             })
         })
         .collect()

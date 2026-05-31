@@ -549,7 +549,11 @@ impl<'a> IrEmitter<'a> {
             }
         }
 
-        let f = if let Some(path) = canonical_path {
+        let f = if canonical_path.is_some_and(|path| path.first().map(String::as_str) == Some("pub"))
+            && Self::callee_is_imported_module_path(func)
+        {
+            self.emit_expr(func)?
+        } else if let Some(path) = canonical_path {
             self.emit_canonical_callee_path(path)?.unwrap_or(self.emit_expr(func)?)
         } else {
             self.emit_expr(func)?
@@ -812,6 +816,17 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return whether the callee is already spelled as a module-rooted path in source, such as `lib.function`.
+    fn callee_is_imported_module_path(func: &TypedExpr) -> bool {
+        match &func.kind {
+            IrExprKind::Field { object, .. } => Self::callee_is_imported_module_path(object),
+            IrExprKind::Var { ref_kind, .. } => {
+                matches!(ref_kind, VarRefKind::ExternalName | VarRefKind::ExternalRustName)
+            }
+            _ => false,
+        }
+    }
+
     /// Emit call arguments while preserving rest-argument expansion semantics.
     pub(in super::super) fn emit_rest_aware_call_args(
         &self,
@@ -1033,6 +1048,16 @@ impl<'a> IrEmitter<'a> {
             for seg in module_path.iter().skip(1) {
                 let ident = Self::rust_ident(seg);
                 segments.push(quote! { #ident });
+            }
+            segments
+        } else if module_path.first().map(String::as_str) == Some("pub") {
+            let mut segments = Vec::new();
+            for seg in module_path.iter().skip(1) {
+                let ident = Self::rust_ident(seg);
+                segments.push(quote! { #ident });
+            }
+            if segments.is_empty() {
+                return Ok(None);
             }
             segments
         } else if *self.qualify_internal_canonical_paths.borrow() && self.is_internal_module_path(&module_path) {

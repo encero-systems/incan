@@ -11451,6 +11451,7 @@ pub def display[T](data: DataSet[T]) -> None:
                 },
                 kind: incan::library_manifest::ParamKindExport::Normal,
                 has_default: false,
+                default: None,
             }],
             return_type: TypeRef::Named {
                 name: "int".to_string(),
@@ -11494,6 +11495,231 @@ pub def display[T](data: DataSet[T]) -> None:
             }),
         });
         manifest.write_to_path(&artifact_root.join(format!("{manifest_name}.incnlib")))?;
+        Ok(())
+    }
+
+    fn write_pub_library_with_vocab_desugarer_and_string_helper(
+        root: &Path,
+        desugarer_bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dependency_key = "helperkit";
+        let manifest_name = "helperkit_core";
+        let artifact_root = root.join("deps").join(dependency_key).join("target").join("lib");
+
+        // ---- Context: helperkit Rust artifact and desugarer asset ----
+        std::fs::create_dir_all(artifact_root.join("desugarers"))?;
+        write_library_crate_with_source(
+            &artifact_root,
+            manifest_name,
+            "pub fn lit(value: i64) -> i64 {\n    value\n}\n\npub fn aggregate_as(_value: i64, label: String) -> String {\n    label\n}\n",
+        )?;
+        let desugarer_path = artifact_root.join("desugarers").join("helperkit_desugarer.wasm");
+        std::fs::write(&desugarer_path, desugarer_bytes)?;
+
+        // ---- Context: public helper manifest surface ----
+        let mut manifest = LibraryManifest::new(manifest_name, "0.1.0");
+        manifest.exports.functions.push(FunctionExport {
+            name: "lit".to_string(),
+            type_params: Vec::new(),
+            params: vec![ParamExport {
+                name: "value".to_string(),
+                ty: TypeRef::Named {
+                    name: "int".to_string(),
+                },
+                kind: incan::library_manifest::ParamKindExport::Normal,
+                has_default: false,
+                default: None,
+            }],
+            return_type: TypeRef::Named {
+                name: "int".to_string(),
+            },
+            is_async: false,
+        });
+        manifest.exports.functions.push(FunctionExport {
+            name: "aggregate_as".to_string(),
+            type_params: Vec::new(),
+            params: vec![
+                ParamExport {
+                    name: "value".to_string(),
+                    ty: TypeRef::Named {
+                        name: "int".to_string(),
+                    },
+                    kind: incan::library_manifest::ParamKindExport::Normal,
+                    has_default: false,
+                    default: None,
+                },
+                ParamExport {
+                    name: "label".to_string(),
+                    ty: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    kind: incan::library_manifest::ParamKindExport::Normal,
+                    has_default: false,
+                    default: None,
+                },
+            ],
+            return_type: TypeRef::Named {
+                name: "str".to_string(),
+            },
+            is_async: false,
+        });
+
+        // ---- Context: vocab activation and helper bindings ----
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: "vocab_companion".to_string(),
+            package_name: "vocab_companion".to_string(),
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "helperkit.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "where".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+            dsl_surfaces: Vec::new(),
+            provider_manifest: incan_vocab::LibraryManifest {
+                helper_bindings: vec![
+                    incan_vocab::HelperBinding {
+                        key: "lit".to_string(),
+                        exported_name: "lit".to_string(),
+                    },
+                    incan_vocab::HelperBinding {
+                        key: "aggregate_as".to_string(),
+                        exported_name: "aggregate_as".to_string(),
+                    },
+                ],
+                ..incan_vocab::LibraryManifest::default()
+            },
+            desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
+                artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
+                relative_path: "desugarers/helperkit_desugarer.wasm".to_string(),
+                target: "wasm32-wasip1".to_string(),
+                profile: "release".to_string(),
+                entrypoint: "desugar_block".to_string(),
+                sha256: hex::encode(Sha256::digest(desugarer_bytes)),
+            }),
+        });
+        manifest.write_to_path(&artifact_root.join(format!("{manifest_name}.incnlib")))?;
+        Ok(())
+    }
+
+    fn write_source_pub_library_with_vocab_desugarer_and_query_helpers(
+        root: &Path,
+        desugarer_bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let producer_root = root.join("deps").join("querykit");
+
+        // ---- Context: source-backed helper library ----
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"querykit\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/helpers.incn"),
+            r#"pub model IntLiteralExpr:
+  value: int
+
+pub model StringLiteralExpr:
+  value: str
+
+pub type LiteralValue = Union[int, str]
+pub type ColumnExpr = Union[IntLiteralExpr, StringLiteralExpr]
+
+pub model AggregateMeasure:
+  expr: ColumnExpr
+  label: str
+
+pub const DEFAULT_LABEL: str = "orders"
+pub const COUNT_SENTINEL: str = "__querykit_count_no_argument__"
+
+pub def lit(value: LiteralValue) -> ColumnExpr:
+  match value:
+    int(number) => return IntLiteralExpr(value=number)
+    str(text) => return StringLiteralExpr(value=text)
+
+pub def col(name: str) -> ColumnExpr:
+  return StringLiteralExpr(value=name)
+
+pub def count(expr: ColumnExpr = col(COUNT_SENTINEL)) -> ColumnExpr:
+  return expr
+
+pub def aggregate_as(expr: ColumnExpr, output_name: str) -> AggregateMeasure:
+  return AggregateMeasure(expr=expr, label=output_name)
+
+pub def aggregate_default(expr: ColumnExpr, output_name: str = DEFAULT_LABEL) -> AggregateMeasure:
+  return AggregateMeasure(expr=expr, label=output_name)
+"#,
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub from helpers import IntLiteralExpr, StringLiteralExpr, LiteralValue, ColumnExpr, AggregateMeasure, DEFAULT_LABEL, lit, count, aggregate_as, aggregate_default\n",
+        )?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected querykit producer build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+
+        // ---- Context: vocab activation attached to the built library manifest ----
+        let artifact_root = producer_root.join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("desugarers"))?;
+        let desugarer_path = artifact_root.join("desugarers").join("querykit_desugarer.wasm");
+        std::fs::write(&desugarer_path, desugarer_bytes)?;
+        let manifest_path = artifact_root.join("querykit.incnlib");
+        let mut manifest = LibraryManifest::read_from_path(&manifest_path)?;
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: "vocab_companion".to_string(),
+            package_name: "vocab_companion".to_string(),
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "querykit.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "where".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+            dsl_surfaces: Vec::new(),
+            provider_manifest: incan_vocab::LibraryManifest {
+                helper_bindings: vec![
+                    incan_vocab::HelperBinding {
+                        key: "lit".to_string(),
+                        exported_name: "lit".to_string(),
+                    },
+                    incan_vocab::HelperBinding {
+                        key: "count".to_string(),
+                        exported_name: "count".to_string(),
+                    },
+                    incan_vocab::HelperBinding {
+                        key: "aggregate_as".to_string(),
+                        exported_name: "aggregate_as".to_string(),
+                    },
+                ],
+                ..incan_vocab::LibraryManifest::default()
+            },
+            desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
+                artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
+                relative_path: "desugarers/querykit_desugarer.wasm".to_string(),
+                target: "wasm32-wasip1".to_string(),
+                profile: "release".to_string(),
+                entrypoint: "desugar_block".to_string(),
+                sha256: hex::encode(Sha256::digest(desugarer_bytes)),
+            }),
+        });
+        manifest.write_to_path(&manifest_path)?;
         Ok(())
     }
 
@@ -12642,6 +12868,190 @@ def main() -> Result[None, SessionError]:
         assert!(
             generated_main_rs.contains("filterkit::filter"),
             "expected generated Rust to import the provider helper from the dependency crate, got:\n{generated_main_rs}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_build_plans_vocab_helper_calls_like_ordinary_calls_issue729() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
+            callee: Box::new(incan_vocab::IncanExpr::Helper("aggregate_as".to_string())),
+            args: vec![
+                incan_vocab::IncanExpr::Call {
+                    callee: Box::new(incan_vocab::IncanExpr::Helper("lit".to_string())),
+                    args: vec![incan_vocab::IncanExpr::Int(5)],
+                },
+                incan_vocab::IncanExpr::Str("total".to_string()),
+            ],
+        });
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm(0, &output_payload, "")?;
+        write_pub_library_with_vocab_desugarer_and_string_helper(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nhelperkit = { path = \"deps/helperkit\" }\n",
+            r#"import pub::helperkit
+
+def main() -> None:
+  where true:
+    pass
+"#,
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let output = run_build(&main_path, &out_dir)?;
+        assert!(
+            output.status.success(),
+            "expected helper-backed desugared calls to use normal call planning.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        let normalized: String = generated_main_rs.chars().filter(|ch| !ch.is_whitespace()).collect();
+        assert!(
+            normalized.contains("helperkit::aggregate_as(helperkit::lit(5),\"total\".to_string()")
+                || normalized.contains(
+                    "__incan_vocab_helper_helperkit_aggregate_as(__incan_vocab_helper_helperkit_lit(5),\"total\".to_string()"
+                ),
+            "expected nested helper calls to keep independent call planning, got:\n{generated_main_rs}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_build_plans_source_backed_vocab_helper_calls_with_defaults_and_unions_issue729()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Tuple(vec![
+            incan_vocab::IncanExpr::Call {
+                callee: Box::new(incan_vocab::IncanExpr::Helper("aggregate_as".to_string())),
+                args: vec![
+                    incan_vocab::IncanExpr::Call {
+                        callee: Box::new(incan_vocab::IncanExpr::Helper("lit".to_string())),
+                        args: vec![incan_vocab::IncanExpr::Int(5)],
+                    },
+                    incan_vocab::IncanExpr::Str("adjusted".to_string()),
+                ],
+            },
+            incan_vocab::IncanExpr::Call {
+                callee: Box::new(incan_vocab::IncanExpr::Helper("aggregate_as".to_string())),
+                args: vec![
+                    incan_vocab::IncanExpr::Call {
+                        callee: Box::new(incan_vocab::IncanExpr::Helper("count".to_string())),
+                        args: Vec::new(),
+                    },
+                    incan_vocab::IncanExpr::Str("order_count".to_string()),
+                ],
+            },
+        ]));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm(0, &output_payload, "")?;
+        write_source_pub_library_with_vocab_desugarer_and_query_helpers(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  where true:
+    pass
+"#,
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let output = run_build(&main_path, &out_dir)?;
+        let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs")).unwrap_or_default();
+        assert!(
+            output.status.success(),
+            "expected source-backed helper calls to keep defaults, union wrapping, and string planning.\ngenerated main.rs:\n{}\nstdout:\n{}\nstderr:\n{}",
+            generated_main_rs,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        assert!(
+            generated_main_rs.contains("querykit::count(")
+                || generated_main_rs.contains("__incan_vocab_helper_querykit_count("),
+            "expected omitted count() argument to be filled from the helper's default expression, got:\n{generated_main_rs}"
+        );
+        assert!(
+            !generated_main_rs.contains("__incan_vocab_helper_querykit_count()"),
+            "helper default planning must not emit a zero-argument Rust count call, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains("querykit::helpers::COUNT_SENTINEL"),
+            "dependency-owned const defaults must keep the defining provider module path, got:\n{generated_main_rs}"
+        );
+        assert!(
+            !generated_main_rs.contains("pub enum __IncanUnion"),
+            "public dependency helper unions must stay owned by the dependency crate, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains(".to_string()"),
+            "expected helper string arguments to use normal owned-string conversion, got:\n{generated_main_rs}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_build_plans_source_backed_pub_helper_calls_with_defaults_and_unions_issue729()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let wasm = compile_desugarer_wasm(0, "[]", "")?;
+        write_source_pub_library_with_vocab_desugarer_and_query_helpers(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"from pub::querykit import aggregate_as, aggregate_default, count, lit
+
+def main() -> None:
+  aggregate_as(lit(5), "adjusted")
+  aggregate_as(count(), "order_count")
+  aggregate_default(lit(7))
+"#,
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let output = run_build(&main_path, &out_dir)?;
+        let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs")).unwrap_or_default();
+        assert!(
+            output.status.success(),
+            "expected ordinary pub helper calls to share exported default, union, and string planning.\ngenerated main.rs:\n{}\nstdout:\n{}\nstderr:\n{}",
+            generated_main_rs,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            generated_main_rs.contains("querykit::count(")
+                || generated_main_rs.contains("__incan_vocab_helper_querykit_count("),
+            "expected omitted count() argument to be filled from the helper's default expression, got:\n{generated_main_rs}"
+        );
+        assert!(
+            !generated_main_rs.contains("querykit::count()")
+                && !generated_main_rs.contains("__incan_vocab_helper_querykit_count()"),
+            "ordinary pub helper default planning must not emit a zero-argument Rust count call, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains("querykit::helpers::COUNT_SENTINEL"),
+            "ordinary public dependency const defaults must keep the defining provider module path, got:\n{generated_main_rs}"
+        );
+        assert!(
+            !generated_main_rs.contains("pub enum __IncanUnion"),
+            "ordinary public dependency calls must not re-own dependency anonymous unions, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains(".to_string()"),
+            "expected ordinary pub helper string arguments to use normal owned-string conversion, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains("querykit::helpers::DEFAULT_LABEL"),
+            "expected public const defaults to emit through their provider module path, got:\n{generated_main_rs}"
         );
         Ok(())
     }

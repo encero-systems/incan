@@ -792,6 +792,7 @@ pub fn build_library(
     for (idx, module) in modules.iter().enumerate() {
         let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
         let mut checker = typechecker::TypeChecker::new();
+        checker.set_current_module_path(Some(module.path_segments.clone()));
         checker.set_declared_crate_names(declared.clone());
         checker.set_library_manifest_index(library_manifest_index.clone());
         #[cfg(feature = "rust_inspect")]
@@ -1350,6 +1351,7 @@ mod tests {
                 name: "filter_ds".to_string(),
                 type_params: Vec::new(),
                 params: Vec::new(),
+                param_defaults: Vec::new(),
                 return_type: ResolvedType::Named("DataSet".to_string()),
                 is_async: false,
             }),
@@ -1402,6 +1404,7 @@ mod tests {
                 name: "filter_ds".to_string(),
                 type_params: Vec::new(),
                 params: Vec::new(),
+                param_defaults: Vec::new(),
                 return_type: ResolvedType::Named("DataSet".to_string()),
                 is_async: false,
             }),

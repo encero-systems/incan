@@ -2,7 +2,7 @@ use crate::frontend::ast;
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::vocab_ast_bridge::{
-    internal_vocab_block_to_public, public_expr_to_internal, public_statements_to_internal,
+    internal_vocab_block_to_public, public_expr_to_internal_with_anchor, public_statements_to_internal_with_anchor,
 };
 
 use super::helper_bindings::{
@@ -407,7 +407,7 @@ fn rewrite_statement_list(
                     continue;
                 }
 
-                let mut lowered = match public_statements_to_internal(&public_statements) {
+                let mut lowered = match public_statements_to_internal_with_anchor(&public_statements, span) {
                     Ok(stmts) => stmts,
                     Err(source) => {
                         errors.push(error_from_pass_error(
@@ -1467,7 +1467,7 @@ fn desugar_vocab_block_to_expression(
         )
     })?;
 
-    public_expr_to_internal(expression).map_err(|source| {
+    public_expr_to_internal_with_anchor(expression, span).map_err(|source| {
         error_from_pass_error(
             VocabDesugarPassError::Bridge {
                 keyword: bridged_keyword,

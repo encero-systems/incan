@@ -15,9 +15,9 @@ use crate::frontend::typechecker::TypeChecker;
 use crate::frontend::typechecker::type_info::RustTraitImportInfo;
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
-    FunctionExport, LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamExport, ParamKindExport,
-    PartialExport, ReceiverExport, StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport,
-    resolved_type_from_manifest_type_ref,
+    FunctionExport, LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamDefaultExport, ParamExport,
+    ParamKindExport, PartialExport, ReceiverExport, StaticExport, TraitExport, TypeAliasExport, TypeBoundExport,
+    TypeParamExport, resolved_type_from_manifest_type_ref,
 };
 use incan_core::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
@@ -1526,7 +1526,10 @@ impl TypeChecker {
                     param.name.clone(),
                     resolved_type_from_manifest_type_ref(&param.ty),
                     param_kind_from_manifest(param.kind),
-                    param.has_default,
+                    param
+                        .default
+                        .as_ref()
+                        .map_or(param.has_default, ParamDefaultExport::is_materializable),
                 )
             })
             .collect()

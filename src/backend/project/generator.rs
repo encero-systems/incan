@@ -330,9 +330,10 @@ impl ProjectGenerator {
             // Add mod declarations for each module (sorted for deterministic output)
             let mut module_names: Vec<_> = modules.keys().collect();
             module_names.sort();
+            let visibility = if self.is_binary { "" } else { "pub " };
             let mods: String = module_names
                 .iter()
-                .map(|m| Self::render_module_decl(m, &format!("{m}.rs"), ""))
+                .map(|m| Self::render_module_decl(m, &format!("{m}.rs"), visibility))
                 .collect::<Vec<_>>()
                 .join("\n")
                 + "\n";
@@ -523,6 +524,7 @@ impl ProjectGenerator {
         let mut sorted_top: Vec<_> = top_level_modules.into_iter().collect();
         sorted_top.sort();
         if !sorted_top.is_empty() {
+            let visibility = if self.is_binary { "" } else { "pub " };
             let mods: String = sorted_top
                 .iter()
                 .map(|m| {
@@ -532,7 +534,7 @@ impl ProjectGenerator {
                     } else {
                         format!("{m}.rs")
                     };
-                    Self::render_module_decl(m, &relative_path, "")
+                    Self::render_module_decl(m, &relative_path, visibility)
                 })
                 .collect::<Vec<_>>()
                 .join("\n")
@@ -775,7 +777,7 @@ mod tests {
         assert!(temp_dir.join("src/type/helpers.rs").exists());
 
         let main_content = fs::read_to_string(temp_dir.join("src/lib.rs"))?;
-        assert!(main_content.contains("#[path = \"type/mod.rs\"]\nmod r#type;"));
+        assert!(main_content.contains("#[path = \"type/mod.rs\"]\npub mod r#type;"));
 
         let mod_rs_content = fs::read_to_string(temp_dir.join("src/api/mod.rs"))?;
         assert!(mod_rs_content.contains("#[path = \"async.rs\"]\npub mod r#async;"));

@@ -13,7 +13,7 @@
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
-use super::super::super::expr::{IrExprKind, TypedExpr, UnaryOp};
+use super::super::super::expr::{IrExprKind, TypedExpr, UnaryOp, VarRefKind};
 use super::super::super::types::IrType;
 use super::super::{EmitError, IrEmitter};
 
@@ -290,8 +290,6 @@ impl<'a> IrEmitter<'a> {
             return self.emit_storage_with_ref(object, quote! { (#inner).clone() });
         }
 
-        let o = self.emit_expr(object)?;
-
         // Check if this is an enum variant access using the actual enum registry, not capitalization heuristics
         if let IrExprKind::Var { name, .. } = &object.kind {
             let key = (name.to_string(), field.to_string());
@@ -322,7 +320,11 @@ impl<'a> IrEmitter<'a> {
                 return Ok(quote! { #type_ident::#f });
             }
         }
+        if let Some(path) = Self::type_like_field_path(object, field) {
+            return Ok(path);
+        }
 
+        let o = self.emit_expr(object)?;
         // Check if field is a numeric index (tuple access)
         if field.chars().all(|c| c.is_ascii_digit()) {
             let idx: syn::Index = field
@@ -333,6 +335,35 @@ impl<'a> IrEmitter<'a> {
         } else {
             let f = Self::rust_ident(field);
             Ok(quote! { #o.#f })
+        }
+    }
+
+    /// Emit a field chain rooted in a module-like symbol as a Rust path.
+    fn type_like_field_path(object: &TypedExpr, field: &str) -> Option<TokenStream> {
+        let mut segments = Self::type_like_field_segments(object)?;
+        segments.push(field.to_string());
+        let mut emitted = segments.into_iter().map(|segment| {
+            let ident = Self::rust_ident(&segment);
+            quote! { #ident }
+        });
+        let first = emitted.next()?;
+        Some(emitted.fold(first, |acc, segment| quote! { #acc::#segment }))
+    }
+
+    /// Return the path segments for a field chain rooted in a module-like symbol.
+    fn type_like_field_segments(expr: &TypedExpr) -> Option<Vec<String>> {
+        match &expr.kind {
+            IrExprKind::Var {
+                name,
+                ref_kind: VarRefKind::ExternalName | VarRefKind::ExternalRustName,
+                ..
+            } => Some(vec![name.clone()]),
+            IrExprKind::Field { object, field } => {
+                let mut segments = Self::type_like_field_segments(object)?;
+                segments.push(field.clone());
+                Some(segments)
+            }
+            _ => None,
         }
     }
 
@@ -370,5 +401,74 @@ impl<'a> IrEmitter<'a> {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::ir::FunctionRegistry;
+    use crate::backend::ir::expr::VarAccess;
+
+    fn render(tokens: TokenStream) -> String {
+        tokens.to_string().replace(' ', "")
+    }
+
+    fn module_ref(name: &str) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Var {
+                name: name.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::ExternalName,
+            },
+            IrType::Unknown,
+        )
+    }
+
+    fn type_ref(name: &str) -> TypedExpr {
+        TypedExpr::new(
+            IrExprKind::Var {
+                name: name.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::TypeName,
+            },
+            IrType::Unknown,
+        )
+    }
+
+    #[test]
+    fn module_field_chain_emits_as_path() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let object = TypedExpr::new(
+            IrExprKind::Field {
+                object: Box::new(module_ref("querykit")),
+                field: "helpers".to_string(),
+            },
+            IrType::Unknown,
+        );
+
+        let emitted = emitter.emit_field_expr(&object, "DEFAULT_LABEL")?;
+
+        assert_eq!(render(emitted), "querykit::helpers::DEFAULT_LABEL");
+        Ok(())
+    }
+
+    #[test]
+    fn associated_value_field_chain_keeps_value_field_access() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let object = TypedExpr::new(
+            IrExprKind::Field {
+                object: Box::new(type_ref("Widget")),
+                field: "DEFAULT".to_string(),
+            },
+            IrType::Unknown,
+        );
+
+        let emitted = emitter.emit_field_expr(&object, "name")?;
+
+        assert_eq!(render(emitted), "Widget::DEFAULT.name");
+        Ok(())
     }
 }

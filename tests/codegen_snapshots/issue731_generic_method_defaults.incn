@@ -1,0 +1,24 @@
+"""Issue #731: generic receiver methods should fill default arguments at call sites."""
+
+class Box[T with Clone]:
+    value: T
+
+    def join(self, other: Box[T], suffix: str = "") -> Box[T]:
+        return other
+
+
+model Shelf[T]:
+    item: T
+
+    def relabel(self, suffix: str = "") -> Shelf[T]:
+        return self
+
+
+def main() -> None:
+    left = Box(value=1)
+    right = Box(value=2)
+    joined: Box[int] = left.join(right)
+    joined_named: Box[int] = left.join(other=right)
+
+    shelf: Shelf[int] = Shelf(item=1)
+    relabeled: Shelf[int] = shelf.relabel()

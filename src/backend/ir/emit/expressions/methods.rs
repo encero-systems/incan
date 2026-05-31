@@ -267,7 +267,8 @@ impl<'a> IrEmitter<'a> {
             Some(IrType::Result(ok_ty, _)) => Some(ok_ty.as_ref()),
             other => other,
         };
-        let specialized_signature =
+        let receiver_specialized_signature = self.specialized_method_signature_for_receiver(&receiver.ty, method);
+        let target_specialized_signature =
             receiver_target_ty.and_then(|ty| self.specialized_method_signature_for_receiver(ty, method));
         let result_specialized_call_signature = callable_signature.and_then(|signature| {
             result_target_ty.and_then(|ty| Self::specialize_signature_by_result_target(signature, ty))
@@ -279,9 +280,10 @@ impl<'a> IrEmitter<'a> {
             .as_ref()
             .or(receiver_specialized_call_signature.as_ref())
             .or(callable_signature);
-        let receiver_signature = self
-            .method_signature_for_receiver(&receiver.ty, method)
-            .or(specialized_signature.as_ref());
+        let receiver_signature = receiver_specialized_signature
+            .as_ref()
+            .or_else(|| self.method_signature_for_receiver(&receiver.ty, method))
+            .or(target_specialized_signature.as_ref());
         let has_incan_receiver_signature = receiver_signature.is_some();
         let callable_signature =
             FunctionSignature::merge_default_source_by(callable_signature, receiver_signature, |left, right| {

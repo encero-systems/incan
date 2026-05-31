@@ -1778,7 +1778,7 @@ impl<'a> IrEmitter<'a> {
         Self::collect_union_types_from_type(&expr.ty, out);
         match &expr.kind {
             IrExprKind::Call { func, args, .. } => {
-                Self::collect_union_types_from_expr(func, out);
+                Self::collect_union_types_from_call_callee(func, out);
                 for arg in args {
                     Self::collect_union_types_from_expr(&arg.expr, out);
                 }
@@ -1967,6 +1967,36 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::FieldsList(_)
             | IrExprKind::SerdeToJson
             | IrExprKind::SerdeFromJson(_) => {}
+        }
+    }
+
+    /// Collect anonymous unions needed by a call callee expression without treating the callee's own function type as
+    /// an emitted type position.
+    ///
+    /// Imported public helpers can carry function signatures that mention dependency-owned anonymous unions. Those
+    /// signatures guide argument planning, but the function type itself is not printed into the generated Rust call.
+    /// Only nested value expressions inside the callee need collection.
+    fn collect_union_types_from_call_callee(expr: &TypedExpr, out: &mut HashMap<String, IrType>) {
+        match &expr.kind {
+            IrExprKind::Field { object, .. } => Self::collect_union_types_from_expr(object, out),
+            IrExprKind::Index { object, index } => {
+                Self::collect_union_types_from_expr(object, out);
+                Self::collect_union_types_from_expr(index, out);
+            }
+            IrExprKind::Call { func, args, .. } => {
+                Self::collect_union_types_from_call_callee(func, out);
+                for arg in args {
+                    Self::collect_union_types_from_expr(&arg.expr, out);
+                }
+            }
+            IrExprKind::MethodCall { receiver, args, .. } => {
+                Self::collect_union_types_from_expr(receiver, out);
+                for arg in args {
+                    Self::collect_union_types_from_expr(&arg.expr, out);
+                }
+            }
+            IrExprKind::Var { .. } | IrExprKind::Literal(_) => {}
+            _ => Self::collect_union_types_from_expr(expr, out),
         }
     }
 

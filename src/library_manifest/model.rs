@@ -13,9 +13,9 @@ use crate::frontend::api_metadata::CheckedApiMetadataPackage;
 use crate::frontend::contract_metadata::ContractMetadataPackage as ModelContractMetadataPackage;
 use crate::frontend::library_exports::{
     CheckedAliasExport, CheckedClassExport, CheckedConstExport, CheckedEnumExport, CheckedExportKind,
-    CheckedFunctionExport, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedPartialExport,
-    CheckedPartialTargetKind, CheckedPresetValue, CheckedStaticExport, CheckedTraitExport, CheckedTypeAliasExport,
-    CheckedTypeBound, CheckedTypeParam,
+    CheckedFunctionExport, CheckedModelExport, CheckedNamedExport, CheckedNewtypeExport, CheckedParamDefault,
+    CheckedParamDefaultCallSignature, CheckedPartialExport, CheckedPartialTargetKind, CheckedPresetValue,
+    CheckedStaticExport, CheckedTraitExport, CheckedTypeAliasExport, CheckedTypeBound, CheckedTypeParam,
 };
 use crate::frontend::symbols::{CallableParam, ValueEnumBacking, ValueEnumValue};
 use incan_core::interop::RustItemMetadata;
@@ -359,6 +359,67 @@ pub struct ParamExport {
     pub kind: ParamKindExport,
     #[serde(default)]
     pub has_default: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default: Option<ParamDefaultExport>,
+}
+
+/// Metadata-safe callable parameter default expression.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "value", rename_all = "snake_case")]
+pub enum ParamDefaultExport {
+    Int(i64),
+    Float(String),
+    Bool(bool),
+    String(String),
+    Bytes(Vec<u8>),
+    None,
+    List(Vec<ParamDefaultExport>),
+    Dict(Vec<ParamDefaultDictEntryExport>),
+    ConstRef(Vec<String>),
+    Call {
+        path: Vec<String>,
+        args: Vec<ParamDefaultCallArgExport>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        signature: Option<ParamDefaultCallSignatureExport>,
+    },
+    Unsupported,
+}
+
+impl ParamDefaultExport {
+    /// Return whether a consumer can materialize this exported default expression at its own call site.
+    pub fn is_materializable(&self) -> bool {
+        match self {
+            Self::Int(_) | Self::Float(_) | Self::Bool(_) | Self::String(_) | Self::Bytes(_) | Self::None => true,
+            Self::ConstRef(path) => !path.is_empty(),
+            Self::List(values) => values.iter().all(Self::is_materializable),
+            Self::Dict(entries) => entries
+                .iter()
+                .all(|entry| entry.key.is_materializable() && entry.value.is_materializable()),
+            Self::Call { path, args, .. } => !path.is_empty() && args.iter().all(|arg| arg.value.is_materializable()),
+            Self::Unsupported => false,
+        }
+    }
+}
+
+/// One metadata-safe dict default entry.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParamDefaultDictEntryExport {
+    pub key: ParamDefaultExport,
+    pub value: ParamDefaultExport,
+}
+
+/// One metadata-safe call default argument.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParamDefaultCallArgExport {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub value: ParamDefaultExport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParamDefaultCallSignatureExport {
+    pub params: Vec<ParamExport>,
+    pub return_type: TypeRef,
 }
 
 /// Exported callable parameter kind.
@@ -704,7 +765,7 @@ fn partial_export_from_checked(export: &CheckedPartialExport) -> PartialExport {
             })
             .collect(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
-        params: params_from_checked(&export.params),
+        params: params_from_checked(&export.params, &[]),
         return_type: type_ref_from_resolved(&export.return_type),
         is_async: export.is_async,
     }
@@ -758,6 +819,60 @@ fn preset_value_from_checked(value: &CheckedPresetValue) -> PresetValueExport {
     }
 }
 
+/// Convert checked parameter defaults into the manifest default-expression vocabulary when consumers can materialize
+/// them.
+fn param_default_from_checked(value: &CheckedParamDefault) -> Option<ParamDefaultExport> {
+    match value {
+        CheckedParamDefault::Int(value) => Some(ParamDefaultExport::Int(*value)),
+        CheckedParamDefault::Float(value) => Some(ParamDefaultExport::Float(value.to_string())),
+        CheckedParamDefault::Bool(value) => Some(ParamDefaultExport::Bool(*value)),
+        CheckedParamDefault::String(value) => Some(ParamDefaultExport::String(value.clone())),
+        CheckedParamDefault::Bytes(value) => Some(ParamDefaultExport::Bytes(value.clone())),
+        CheckedParamDefault::None => Some(ParamDefaultExport::None),
+        CheckedParamDefault::List(values) => values
+            .iter()
+            .map(param_default_from_checked)
+            .collect::<Option<Vec<_>>>()
+            .map(ParamDefaultExport::List),
+        CheckedParamDefault::Dict(entries) => entries
+            .iter()
+            .map(|(key, value)| {
+                Some(ParamDefaultDictEntryExport {
+                    key: param_default_from_checked(key)?,
+                    value: param_default_from_checked(value)?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(ParamDefaultExport::Dict),
+        CheckedParamDefault::ConstRef(path) => Some(ParamDefaultExport::ConstRef(path.clone())),
+        CheckedParamDefault::Call { path, args, signature } => args
+            .iter()
+            .map(|arg| {
+                Some(ParamDefaultCallArgExport {
+                    name: arg.name.clone(),
+                    value: param_default_from_checked(&arg.value)?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()
+            .map(|args| ParamDefaultExport::Call {
+                path: path.clone(),
+                args,
+                signature: signature.as_ref().map(param_default_call_signature_from_checked),
+            }),
+        CheckedParamDefault::Unsupported => None,
+    }
+}
+
+/// Convert a checked default-helper callable surface into manifest metadata.
+fn param_default_call_signature_from_checked(
+    signature: &CheckedParamDefaultCallSignature,
+) -> ParamDefaultCallSignatureExport {
+    ParamDefaultCallSignatureExport {
+        params: params_from_checked(&signature.params, &[]),
+        return_type: type_ref_from_resolved(&signature.return_type),
+    }
+}
+
 fn type_param_from_checked(type_param: &CheckedTypeParam) -> TypeParamExport {
     TypeParamExport {
         name: type_param.name.clone(),
@@ -776,15 +891,27 @@ fn type_bound_from_checked(bound: &CheckedTypeBound) -> TypeBoundExport {
 }
 
 /// Convert checked callable parameters into library-manifest parameter records.
-fn params_from_checked(params: &[CallableParam]) -> Vec<ParamExport> {
+fn params_from_checked(params: &[CallableParam], defaults: &[Option<CheckedParamDefault>]) -> Vec<ParamExport> {
     params
         .iter()
+        .enumerate()
         .filter_map(|param| {
+            let (idx, param) = param;
+            let default = defaults
+                .get(idx)
+                .and_then(|default| default.as_ref())
+                .and_then(param_default_from_checked);
+            let has_default = if defaults.is_empty() {
+                param.has_default
+            } else {
+                default.is_some()
+            };
             Some(ParamExport {
                 name: param.name.clone()?,
                 ty: type_ref_from_resolved(&param.ty),
                 kind: param_kind_from_ast(param.kind),
-                has_default: param.has_default,
+                has_default,
+                default,
             })
         })
         .collect()
@@ -813,7 +940,7 @@ fn method_from_checked(method: &crate::frontend::library_exports::CheckedMethod)
         alias_of: method.alias_of.clone(),
         type_params: method.type_params.iter().map(type_param_from_checked).collect(),
         receiver: receiver_from_checked(method.receiver),
-        params: params_from_checked(&method.params),
+        params: params_from_checked(&method.params, &[]),
         return_type: type_ref_from_resolved(&method.return_type),
         is_async: method.is_async,
         has_body: method.has_body,
@@ -830,11 +957,12 @@ fn field_from_checked(field: &crate::frontend::library_exports::CheckedField) ->
     }
 }
 
-fn function_export_from_checked(export: &CheckedFunctionExport) -> FunctionExport {
+/// Convert a checked source function export into manifest metadata, including the materializable default subset.
+pub(super) fn function_export_from_checked(export: &CheckedFunctionExport) -> FunctionExport {
     FunctionExport {
         name: export.name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
-        params: params_from_checked(&export.params),
+        params: params_from_checked(&export.params, &export.param_defaults),
         return_type: type_ref_from_resolved(&export.return_type),
         is_async: export.is_async,
     }

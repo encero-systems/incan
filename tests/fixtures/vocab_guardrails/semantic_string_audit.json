@@ -93,8 +93,8 @@
     {
       "path": "src/backend/ir/emit/expressions/calls.rs",
       "category": "testing helper and public-module emission compatibility",
-      "expected_count": 2,
-      "expected_fingerprint": "0x823a39e4d5d80958"
+      "expected_count": 4,
+      "expected_fingerprint": "0x15874c8f43b4e099"
     },
     {
       "path": "src/backend/ir/emit/expressions/comprehensions.rs",
@@ -182,9 +182,9 @@
     },
     {
       "path": "src/backend/ir/lower/expr/calls.rs",
-      "category": "testing assert-raises lowering policy",
-      "expected_count": 2,
-      "expected_fingerprint": "0x88708e083b004857"
+      "category": "public dependency call/default lowering and assert-raises policy",
+      "expected_count": 5,
+      "expected_fingerprint": "0x2a9295afdba175d8"
     },
     {
       "path": "src/backend/ir/lower/expr/mod.rs",

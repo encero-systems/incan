@@ -18,6 +18,62 @@ use crate::frontend::symbols::{
 };
 use crate::frontend::typechecker::TypeChecker;
 
+#[derive(Clone, Copy)]
+struct DefaultPathContext<'a> {
+    checker: &'a TypeChecker,
+    owner_module_path: Option<&'a [String]>,
+}
+
+impl<'a> DefaultPathContext<'a> {
+    /// Build the default-expression path context for the checker currently exporting one source module.
+    fn for_checker(checker: &'a TypeChecker) -> Self {
+        Self {
+            checker,
+            owner_module_path: non_root_module_path(checker.current_module_path.as_deref()),
+        }
+    }
+
+    /// Resolve a default-expression value path to the module that owns it.
+    fn canonical_value_path(self, path: Vec<String>) -> Vec<String> {
+        let Some(first) = path.first() else {
+            return path;
+        };
+        if let Some(imported_path) = self.checker.import_aliases.get(first) {
+            let mut canonical = imported_path.clone();
+            canonical.extend(path.into_iter().skip(1));
+            return canonical;
+        }
+        if path_is_already_absolute(&path) {
+            return path;
+        }
+        let Some(owner_module_path) = self.owner_module_path else {
+            return path;
+        };
+        if path.starts_with(owner_module_path) {
+            return path;
+        }
+        let mut canonical = owner_module_path.to_vec();
+        canonical.extend(path);
+        canonical
+    }
+}
+
+/// Return the non-root source module path that should qualify provider-owned default expressions.
+fn non_root_module_path(path: Option<&[String]>) -> Option<&[String]> {
+    let path = path?;
+    if matches!(path, [segment] if segment == "main" || segment == "lib") {
+        None
+    } else {
+        Some(path)
+    }
+}
+
+/// Return whether a default-expression path is already rooted in a compiler-known namespace.
+fn path_is_already_absolute(path: &[String]) -> bool {
+    matches!(path.first().map(String::as_str), Some("std" | "rust" | "pub"))
+        || path.first().map(String::as_str) == Some(incan_core::lang::stdlib::INCAN_STD_NAMESPACE)
+}
+
 #[derive(Debug, Clone)]
 pub struct CheckedTypeParam {
     pub name: String,
@@ -58,8 +114,40 @@ pub struct CheckedFunctionExport {
     pub name: String,
     pub type_params: Vec<CheckedTypeParam>,
     pub params: Vec<CallableParam>,
+    pub param_defaults: Vec<Option<CheckedParamDefault>>,
     pub return_type: ResolvedType,
     pub is_async: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum CheckedParamDefault {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    String(String),
+    Bytes(Vec<u8>),
+    None,
+    List(Vec<CheckedParamDefault>),
+    Dict(Vec<(CheckedParamDefault, CheckedParamDefault)>),
+    ConstRef(Vec<String>),
+    Call {
+        path: Vec<String>,
+        args: Vec<CheckedParamDefaultArg>,
+        signature: Option<CheckedParamDefaultCallSignature>,
+    },
+    Unsupported,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckedParamDefaultArg {
+    pub name: Option<String>,
+    pub value: CheckedParamDefault,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct CheckedParamDefaultCallSignature {
+    pub params: Vec<CallableParam>,
+    pub return_type: ResolvedType,
 }
 
 #[derive(Debug, Clone)]
@@ -402,6 +490,7 @@ fn checked_alias_function_export(name: &str, info: &FunctionInfo) -> CheckedFunc
         name: name.to_string(),
         type_params: checked_function_type_params(info),
         params: info.params.clone(),
+        param_defaults: vec![None; info.params.len()],
         return_type: info.return_type.clone(),
         is_async: info.is_async,
     }
@@ -418,6 +507,7 @@ fn checked_projected_function_export(name: &str, kind: &SymbolKind) -> Option<Ch
             name: name.to_string(),
             type_params: Vec::new(),
             params: params.clone(),
+            param_defaults: vec![None; params.len()],
             return_type: return_type.as_ref().clone(),
             is_async: false,
         }),
@@ -431,6 +521,7 @@ fn checked_partial_export(partial: &PartialDecl, checker: &TypeChecker) -> Optio
     let SymbolKind::Function(info) = &symbol.kind else {
         return None;
     };
+    let default_context = DefaultPathContext::for_checker(checker);
     let presets = partial
         .args
         .iter()
@@ -442,7 +533,7 @@ fn checked_partial_export(partial: &PartialDecl, checker: &TypeChecker) -> Optio
                 .find(|param| param.name() == Some(arg.name.as_str()))
                 .map(|param| param.ty.clone())
                 .unwrap_or(ResolvedType::Unknown),
-            value: checked_preset_value(&arg.value.node),
+            value: checked_preset_value(&arg.value.node, default_context),
         })
         .collect();
     Some(CheckedPartialExport {
@@ -488,24 +579,24 @@ fn checked_partial_target_kind(partial: &PartialDecl, checker: &TypeChecker) -> 
 }
 
 /// Convert a preset expression into the metadata-safe subset used by public partial provenance.
-fn checked_preset_value(expr: &Expr) -> CheckedPresetValue {
+fn checked_preset_value(expr: &Expr, context: DefaultPathContext<'_>) -> CheckedPresetValue {
     match expr {
         Expr::Literal(literal) => checked_preset_literal(literal),
-        Expr::Ident(name) => CheckedPresetValue::ConstRef(vec![name.clone()]),
+        Expr::Ident(name) => CheckedPresetValue::ConstRef(context.canonical_value_path(vec![name.clone()])),
         Expr::Field(base, field) => {
             let mut path = checked_preset_path(&base.node);
             if path.is_empty() {
                 CheckedPresetValue::Unsupported
             } else {
                 path.push(field.clone());
-                CheckedPresetValue::ConstRef(path)
+                CheckedPresetValue::ConstRef(context.canonical_value_path(path))
             }
         }
         Expr::List(entries) => CheckedPresetValue::List(
             entries
                 .iter()
                 .map(|entry| match entry {
-                    ListEntry::Element(value) => checked_preset_value(&value.node),
+                    ListEntry::Element(value) => checked_preset_value(&value.node, context),
                     ListEntry::Spread(_) => CheckedPresetValue::Unsupported,
                 })
                 .collect(),
@@ -514,7 +605,10 @@ fn checked_preset_value(expr: &Expr) -> CheckedPresetValue {
             let pairs = entries
                 .iter()
                 .map(|entry| match entry {
-                    DictEntry::Pair(key, value) => (checked_preset_value(&key.node), checked_preset_value(&value.node)),
+                    DictEntry::Pair(key, value) => (
+                        checked_preset_value(&key.node, context),
+                        checked_preset_value(&value.node, context),
+                    ),
                     DictEntry::Spread(_) => (CheckedPresetValue::Unsupported, CheckedPresetValue::Unsupported),
                 })
                 .collect();
@@ -530,7 +624,7 @@ fn checked_preset_value(expr: &Expr) -> CheckedPresetValue {
                 let crate::frontend::ast::CallArg::Named(field, value) = arg else {
                     return CheckedPresetValue::Unsupported;
                 };
-                fields.push((field.clone(), checked_preset_value(&value.node)));
+                fields.push((field.clone(), checked_preset_value(&value.node, context)));
             }
             CheckedPresetValue::ModelLiteral {
                 name: name.clone(),
@@ -543,7 +637,7 @@ fn checked_preset_value(expr: &Expr) -> CheckedPresetValue {
                 let crate::frontend::ast::CallArg::Named(field, value) = arg else {
                     return CheckedPresetValue::Unsupported;
                 };
-                fields.push((field.clone(), checked_preset_value(&value.node)));
+                fields.push((field.clone(), checked_preset_value(&value.node, context)));
             }
             CheckedPresetValue::ModelLiteral {
                 name: name.clone(),
@@ -551,6 +645,134 @@ fn checked_preset_value(expr: &Expr) -> CheckedPresetValue {
             }
         }
         _ => CheckedPresetValue::Unsupported,
+    }
+}
+
+/// Convert a source parameter default into the metadata-safe subset that public library consumers can materialize.
+fn checked_param_default(expr: &Spanned<Expr>, context: DefaultPathContext<'_>) -> CheckedParamDefault {
+    match &expr.node {
+        Expr::Literal(literal) => checked_param_default_literal(literal),
+        Expr::Ident(name) => CheckedParamDefault::ConstRef(context.canonical_value_path(vec![name.clone()])),
+        Expr::Field(base, field) => {
+            let mut path = checked_preset_path(&base.node);
+            if path.is_empty() {
+                CheckedParamDefault::Unsupported
+            } else {
+                path.push(field.clone());
+                CheckedParamDefault::ConstRef(context.canonical_value_path(path))
+            }
+        }
+        Expr::List(entries) => CheckedParamDefault::List(
+            entries
+                .iter()
+                .map(|entry| match entry {
+                    ListEntry::Element(value) => checked_param_default(value, context),
+                    ListEntry::Spread(_) => CheckedParamDefault::Unsupported,
+                })
+                .collect(),
+        ),
+        Expr::Dict(entries) => CheckedParamDefault::Dict(
+            entries
+                .iter()
+                .map(|entry| match entry {
+                    DictEntry::Pair(key, value) => (
+                        checked_param_default(key, context),
+                        checked_param_default(value, context),
+                    ),
+                    DictEntry::Spread(_) => (CheckedParamDefault::Unsupported, CheckedParamDefault::Unsupported),
+                })
+                .collect(),
+        ),
+        Expr::Call(callee, _type_args, args) => {
+            let path = context.canonical_value_path(checked_preset_path(&callee.node));
+            if path.is_empty() {
+                return CheckedParamDefault::Unsupported;
+            }
+            let args = args
+                .iter()
+                .map(|arg| match arg {
+                    crate::frontend::ast::CallArg::Positional(value) => CheckedParamDefaultArg {
+                        name: None,
+                        value: checked_param_default(value, context),
+                    },
+                    crate::frontend::ast::CallArg::Named(name, value) => CheckedParamDefaultArg {
+                        name: Some(name.clone()),
+                        value: checked_param_default(value, context),
+                    },
+                    crate::frontend::ast::CallArg::PositionalUnpack(_)
+                    | crate::frontend::ast::CallArg::KeywordUnpack(_) => CheckedParamDefaultArg {
+                        name: None,
+                        value: CheckedParamDefault::Unsupported,
+                    },
+                })
+                .collect();
+            CheckedParamDefault::Call {
+                path,
+                args,
+                signature: checked_param_default_call_signature(callee, context.checker),
+            }
+        }
+        _ => CheckedParamDefault::Unsupported,
+    }
+}
+
+/// Capture the checked callable surface for a default-expression helper call.
+fn checked_param_default_call_signature(
+    callee: &Spanned<Expr>,
+    checker: &TypeChecker,
+) -> Option<CheckedParamDefaultCallSignature> {
+    let callee_ty = checker
+        .type_info()
+        .expr_type(callee.span)
+        .cloned()
+        .or_else(|| checked_param_default_callee_symbol_type(&callee.node, checker))?;
+    let ResolvedType::Function(params, return_type) = callee_ty else {
+        return None;
+    };
+    Some(CheckedParamDefaultCallSignature {
+        params,
+        return_type: return_type.as_ref().clone(),
+    })
+}
+
+/// Fallback callable-surface lookup for default calls whose callee span has no recorded type.
+fn checked_param_default_callee_symbol_type(callee: &Expr, checker: &TypeChecker) -> Option<ResolvedType> {
+    let path = checked_preset_path(callee);
+    if path.is_empty() {
+        return None;
+    }
+    let symbol_names = [(path.len() > 1).then(|| path.join(".")), path.last().cloned()];
+    for name in symbol_names.into_iter().flatten() {
+        let Some(symbol) = checker.lookup_symbol(&name) else {
+            continue;
+        };
+        match &symbol.kind {
+            SymbolKind::Function(info) => {
+                return Some(ResolvedType::Function(
+                    info.params.clone(),
+                    Box::new(info.return_type.clone()),
+                ));
+            }
+            SymbolKind::Variable(VariableInfo {
+                ty: ResolvedType::Function(params, return_type),
+                ..
+            }) => return Some(ResolvedType::Function(params.clone(), return_type.clone())),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Convert a literal parameter default into checked public metadata.
+fn checked_param_default_literal(literal: &Literal) -> CheckedParamDefault {
+    match literal {
+        Literal::Int(value) => CheckedParamDefault::Int(value.value),
+        Literal::Float(value) => CheckedParamDefault::Float(value.value),
+        Literal::Decimal(value) => CheckedParamDefault::String(value.repr.clone()),
+        Literal::String(value) => CheckedParamDefault::String(value.clone()),
+        Literal::Bytes(value) => CheckedParamDefault::Bytes(value.clone()),
+        Literal::Bool(value) => CheckedParamDefault::Bool(*value),
+        Literal::None => CheckedParamDefault::None,
     }
 }
 
@@ -604,9 +826,21 @@ fn checked_function_export(function: &FunctionDecl, checker: &TypeChecker) -> Op
         _ => return None,
     };
 
+    let default_context = DefaultPathContext::for_checker(checker);
     Some(CheckedFunctionExport {
         name: function.name.clone(),
         type_params: checked_type_params(&function.type_params, checker),
+        param_defaults: function
+            .params
+            .iter()
+            .map(|param| {
+                param
+                    .node
+                    .default
+                    .as_ref()
+                    .map(|default| checked_param_default(default, default_context))
+            })
+            .collect(),
         params,
         return_type,
         is_async,
@@ -995,6 +1229,10 @@ mod tests {
             "method".to_string(),
         );
 
-        assert_eq!(checked_preset_value(&value), CheckedPresetValue::Unsupported);
+        let checker = TypeChecker::new();
+        assert_eq!(
+            checked_preset_value(&value, DefaultPathContext::for_checker(&checker)),
+            CheckedPresetValue::Unsupported
+        );
     }
 }

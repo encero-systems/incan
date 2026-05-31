@@ -72,6 +72,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
             },
             kind: ParamKindExport::Normal,
             has_default: false,
+            default: None,
         }],
         return_type: TypeRef::Named {
             name: "Widget".to_string(),
@@ -498,6 +499,7 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str) -> Strin
             },
             kind: ParamKindExport::Normal,
             has_default: false,
+            default: None,
         }],
         return_type: TypeRef::Named {
             name: "int".to_string(),
@@ -1769,6 +1771,13 @@ fn test_generic_methods_codegen() {
     let source = load_test_file("generic_methods");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("generic_methods", rust_code);
+}
+
+#[test]
+fn test_issue731_generic_method_defaults_codegen() {
+    let source = load_test_file("issue731_generic_method_defaults");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("issue731_generic_method_defaults", rust_code);
 }
 
 #[test]
