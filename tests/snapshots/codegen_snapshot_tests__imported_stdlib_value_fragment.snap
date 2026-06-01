@@ -21,7 +21,7 @@ fn main() {
         }),
     );
     let out = crate::__incan_std::datetime::civil::naive::ordinal_key_byte(7);
-    if (::std::convert::identity(out.len() as i64)) != (1) {
+    if ::std::convert::identity(out.len() as i64) != 1 {
         panic!("AssertionError: left != right");
     }
 }

@@ -402,6 +402,40 @@ fn build_reuses_stale_lockfile_without_rewriting_by_default() -> Result<(), Box<
 }
 
 #[test]
+fn build_assert_string_inequality_in_list_loop_issue739() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "list_str_loop_assert_compare"
+version = "0.1.0"
+"#,
+    )?;
+    let main_path = src_dir.join("main.incn");
+    fs::write(
+        &main_path,
+        r#"
+def validate(values: list[str], target: str) -> None:
+    for value in values:
+        assert value != target, "duplicate"
+
+
+def main() -> None:
+    validate(["a"], "b")
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&build_output, "incan build for assert string inequality in list loop");
+    Ok(())
+}
+
+#[test]
 fn test_reuses_stale_lockfile_without_rewriting_by_default() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_default_stale_lock_test_project", "")?;

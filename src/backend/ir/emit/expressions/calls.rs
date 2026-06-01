@@ -1362,10 +1362,7 @@ mod tests {
         let tokens = emitter
             .emit_call_expr(&func, &[], &[pos_arg(left), pos_arg(right)], None, Some(&path))
             .map_err(|err| std::io::Error::other(format!("canonical assert_eq should emit: {err:?}")))?;
-        assert_eq!(
-            render(tokens),
-            "if(left)!=(right){panic!(\"AssertionError:left!=right\");}"
-        );
+        assert_eq!(render(tokens), "ifleft!=right{panic!(\"AssertionError:left!=right\");}");
         Ok(())
     }
 
@@ -1389,7 +1386,7 @@ mod tests {
             .map_err(|err| std::io::Error::other(format!("canonical assert_eq with message should emit: {err:?}")))?;
         assert_eq!(
             render(tokens),
-            "if(left)!=(right){{let__incan_assert_msg=msg;if__incan_assert_msg.is_empty(){panic!(\"AssertionError:left!=right\");}else{panic!(\"AssertionError:{};{}\",__incan_assert_msg,\"left!=right\");}}}"
+            "ifleft!=right{{let__incan_assert_msg=msg;if__incan_assert_msg.is_empty(){panic!(\"AssertionError:left!=right\");}else{panic!(\"AssertionError:{};{}\",__incan_assert_msg,\"left!=right\");}}}"
         );
         Ok(())
     }
@@ -1426,7 +1423,25 @@ mod tests {
             })?;
         assert_eq!(
             render(tokens),
-            "if(encoded>0)!=(true){panic!(\"AssertionError:left!=right\");}"
+            "if(encoded>0)!=true{panic!(\"AssertionError:left!=right\");}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn emit_canonical_assert_ne_reuses_string_binop_plan() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let func = rust_call_target("assert_ne");
+        let left = local_arg("value", IrType::Ref(Box::new(IrType::String)));
+        let right = local_arg("target", IrType::String);
+        let path = canonical_testing_path("assert_ne");
+        let tokens = emitter
+            .emit_call_expr(&func, &[], &[pos_arg(left), pos_arg(right)], None, Some(&path))
+            .map_err(|err| std::io::Error::other(format!("canonical assert_ne should emit: {err:?}")))?;
+        assert_eq!(
+            render(tokens),
+            "ifincan_stdlib::strings::str_eq(&value,&target){panic!(\"AssertionError:left==right\");}"
         );
         Ok(())
     }

@@ -2,7 +2,7 @@ use proc_macro2::TokenStream;
 use quote::quote;
 
 use crate::backend::ir::emit::{EmitError, IrEmitter};
-use crate::backend::ir::expr::{IrCallArg, IrExprKind, TypedExpr};
+use crate::backend::ir::expr::{BinOp, IrCallArg, IrExprKind, TypedExpr};
 use crate::backend::ir::types::IrType;
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::testing::{self, TestingAssertHelperId};
@@ -195,27 +195,22 @@ impl<'a> IrEmitter<'a> {
         let name = testing::assert_helper_as_str(helper_id);
         let left = Self::canonical_assert_arg(helper_id, args, 0)?;
         let right = Self::canonical_assert_arg(helper_id, args, 1)?;
-        let left_tokens = self.emit_expr(left)?;
-        let right_tokens = self.emit_expr(right)?;
         let message = args.get(2).map(|arg| &arg.expr);
         let failure_kind = testing::assert_comparison_failure_kind(helper_id).ok_or_else(|| {
             EmitError::Unsupported(format!("std.testing.{name} is not a comparison assertion helper"))
         })?;
-        if helper_id == TestingAssertHelperId::AssertEq {
-            let failure = self.emit_assert_comparison_failure(failure_kind, message)?;
-            Ok(quote! {
-                if (#left_tokens) != (#right_tokens) {
-                    #failure
-                }
-            })
+        let failure_op = if helper_id == TestingAssertHelperId::AssertEq {
+            BinOp::Ne
         } else {
-            let failure = self.emit_assert_comparison_failure(failure_kind, message)?;
-            Ok(quote! {
-                if (#left_tokens) == (#right_tokens) {
-                    #failure
-                }
-            })
-        }
+            BinOp::Eq
+        };
+        let failure_condition = self.emit_binop_expr(&failure_op, left, right)?;
+        let failure = self.emit_assert_comparison_failure(failure_kind, message)?;
+        Ok(quote! {
+            if #failure_condition {
+                #failure
+            }
+        })
     }
 
     /// Emit an assertion that an option is `Some`.
