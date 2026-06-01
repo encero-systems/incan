@@ -103,6 +103,9 @@ impl TypeChecker {
     /// This is intentionally metadata-driven rather than crate-specific. DataFusion's
     /// `ScalarFunctionImplementation -> Arc<dyn Fn(...)>` chain is one motivating surface, but the compiler must not
     /// special-case DataFusion or require regression tests to compile that heavyweight crate.
+    ///
+    /// Use blocking metadata reads here so contextual closure typing does not depend on whether a transitive alias was
+    /// already imported elsewhere or happened to be warmed by an earlier arm in the same expression.
     fn rust_callable_alias_target_display_for_path(
         &self,
         path: &str,
@@ -112,7 +115,7 @@ impl TypeChecker {
         if !seen.insert(canonical_path.clone()) {
             return None;
         }
-        if let Some(metadata) = self.rust_item_metadata_for_path(path)
+        if let Some(metadata) = self.rust_item_metadata_for_path_blocking(path)
             && let RustItemKind::Type(type_info) = &metadata.kind
             && let Some(target) = type_info.alias_target.as_ref()
         {

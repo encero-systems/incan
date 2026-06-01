@@ -1035,6 +1035,150 @@ impl Expr {
 }
 
 #[test]
+fn run_types_rust_callback_closures_in_every_match_arm_issue733() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(
+        tmp.path(),
+        "cli_rust_match_arm_callback_context",
+        r#"
+
+[rust-dependencies]
+arc_match_callback = { path = "rust/arc_match_callback" }
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from rust::arc_match_callback import CallbackError, ColumnarValue, DataType, ScalarUDF, Volatility, create_udf
+from rust::std::sync import Arc
+
+
+@derive(Clone)
+enum ReproFunction(str):
+  First = "first"
+  Second = "second"
+
+
+def callback(args: list[ColumnarValue]) -> Result[ColumnarValue, CallbackError]:
+  return Ok(args[0].clone())
+
+
+def make_udf(function: ReproFunction) -> ScalarUDF:
+  match function:
+    ReproFunction.First =>
+      return create_udf(
+        name=function.value(),
+        input_types=[DataType.Utf8],
+        return_type=DataType.Utf8,
+        volatility=Volatility.Immutable,
+        fun=Arc.from((args) => callback(args.to_vec())),
+      )
+    ReproFunction.Second =>
+      return create_udf(
+        name=function.value(),
+        input_types=[DataType.Utf8],
+        return_type=DataType.Utf8,
+        volatility=Volatility.Immutable,
+        fun=Arc.from((args) => callback(args.to_vec())),
+      )
+
+
+def main() -> None:
+  first = make_udf(ReproFunction.First)
+  second = make_udf(ReproFunction.Second)
+  println(f"match-callback:{first.value()}:{second.value()}")
+"#,
+    )?;
+
+    // Keep the regression DataFusion-shaped without compiling DataFusion. The issue is the metadata contract for a
+    // transitive callback alias used by an inspected Rust function parameter.
+    let helper_src = tmp.path().join("rust").join("arc_match_callback").join("src");
+    fs::create_dir_all(&helper_src)?;
+    fs::write(
+        helper_src
+            .parent()
+            .ok_or("arc_match_callback src has no parent")?
+            .join("Cargo.toml"),
+        r#"[package]
+name = "arc_match_callback"
+version = "0.1.0"
+edition = "2021"
+"#,
+    )?;
+    fs::write(
+        helper_src.join("lib.rs"),
+        r#"use std::sync::Arc;
+
+#[derive(Clone)]
+pub struct ColumnarValue {
+    value: i64,
+}
+
+impl ColumnarValue {
+    pub fn new(value: i64) -> Self {
+        Self { value }
+    }
+
+    pub fn value(&self) -> i64 {
+        self.value
+    }
+}
+
+pub struct CallbackError;
+
+pub type SliceCallback = Arc<dyn Fn(&[ColumnarValue]) -> Result<ColumnarValue, CallbackError> + Send + Sync>;
+pub type ScalarFunctionImplementation = crate::SliceCallback;
+
+#[derive(Clone)]
+pub struct ScalarUDF {
+    value: i64,
+}
+
+impl ScalarUDF {
+    pub fn value(&self) -> i64 {
+        self.value
+    }
+}
+
+#[derive(Clone)]
+pub enum DataType {
+    Utf8,
+}
+
+#[derive(Clone)]
+pub enum Volatility {
+    Immutable,
+}
+
+pub fn create_udf(
+    name: &str,
+    input_types: Vec<DataType>,
+    return_type: DataType,
+    volatility: Volatility,
+    fun: crate::ScalarFunctionImplementation,
+) -> ScalarUDF {
+    let _ = name;
+    let _ = input_types;
+    let _ = return_type;
+    let _ = volatility;
+    let args = vec![ColumnarValue::new(13)];
+    let value = fun(&args).map(|value| value.value()).unwrap_or(-1);
+    ScalarUDF { value }
+}
+"#,
+    )?;
+
+    let output = run_incan(tmp.path(), &["run"])?;
+    assert_success(&output, "rust callback closure context inside match arms");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert_eq!(
+        stdout.trim(),
+        "match-callback:13:13",
+        "unexpected callback output:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_runner_prefers_project_sibling_import_over_unimported_stdlib_stub_type()
 -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
