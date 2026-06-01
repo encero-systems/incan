@@ -94,7 +94,7 @@
       "path": "src/backend/ir/emit/expressions/calls.rs",
       "category": "testing helper and public-module emission compatibility",
       "expected_count": 4,
-      "expected_fingerprint": "0x15874c8f43b4e099"
+      "expected_fingerprint": "0x2505362ad25e41c1"
     },
     {
       "path": "src/backend/ir/emit/expressions/comprehensions.rs",

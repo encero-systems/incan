@@ -35,7 +35,7 @@ use quote::{format_ident, quote};
 
 use super::decl::{IrDeclKind, IrEnumValue, IrEnumValueType, IrStruct, VariantFields, Visibility};
 use super::expr::TypedExpr;
-use super::types::IrType;
+use super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::{FunctionRegistry, FunctionSignature, IrProgram};
 use incan_core::lang::rust_keywords;
 
@@ -663,6 +663,23 @@ impl<'a> IrEmitter<'a> {
                 Box::new(self.resolve_type_aliases_for_emit_inner(ok, visiting)),
                 Box::new(self.resolve_type_aliases_for_emit_inner(err, visiting)),
             ),
+            IrType::NamedGeneric(name, args) if name == IR_UNION_TYPE_NAME => {
+                let mut members = Vec::new();
+                for arg in args {
+                    match self.resolve_type_aliases_for_emit_inner(arg, visiting) {
+                        IrType::NamedGeneric(inner_name, inner_args) if inner_name == IR_UNION_TYPE_NAME => {
+                            members.extend(inner_args);
+                        }
+                        resolved => members.push(resolved),
+                    }
+                }
+                members.sort_by_key(IrType::rust_name);
+                members.dedup();
+                match members.as_slice() {
+                    [single] => single.clone(),
+                    _ => IrType::NamedGeneric(name.clone(), members),
+                }
+            }
             IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
                 name.clone(),
                 args.iter()

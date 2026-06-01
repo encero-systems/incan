@@ -239,6 +239,122 @@ impl<'a> IrEmitter<'a> {
             .cloned()
     }
 
+    /// Return whether a source anonymous union can be widened into the target anonymous union.
+    pub(in super::super) fn union_widening_needed(&self, source_ty: &IrType, target_ty: &IrType) -> bool {
+        let source_ty = self.resolve_type_aliases_for_emit(source_ty);
+        let target_ty = self.resolve_type_aliases_for_emit(target_ty);
+        source_ty != target_ty
+            && source_ty.union_members().is_some_and(|members| !members.is_empty())
+            && target_ty.union_members().is_some_and(|members| !members.is_empty())
+            && Self::union_widening_variant_map(&source_ty, &target_ty).is_some()
+    }
+
+    /// Return the semantic union type and owner qualifier that should drive wrapper widening for an expression.
+    ///
+    /// Imported public call results are carried as exact Rust display types so consumers do not define their own copy
+    /// of provider-owned wrappers. Their callable metadata still carries the semantic union shape needed for
+    /// widening.
+    pub(in super::super) fn union_widening_source_for_expr(&self, expr: &TypedExpr) -> (IrType, Option<Vec<String>>) {
+        match &expr.kind {
+            IrExprKind::Call {
+                callable_signature: Some(signature),
+                canonical_path,
+                ..
+            } if self
+                .resolve_type_aliases_for_emit(&signature.return_type)
+                .union_members()
+                .is_some() =>
+            {
+                (
+                    signature.return_type.clone(),
+                    Self::pub_library_union_qualifier(canonical_path.as_deref()),
+                )
+            }
+            IrExprKind::MethodCall {
+                callable_signature: Some(signature),
+                ..
+            } if self
+                .resolve_type_aliases_for_emit(&signature.return_type)
+                .union_members()
+                .is_some() =>
+            {
+                (signature.return_type.clone(), None)
+            }
+            _ => (expr.ty.clone(), None),
+        }
+    }
+
+    /// Emit a conversion from one generated anonymous union wrapper to a wider generated anonymous union wrapper.
+    pub(in super::super) fn emit_union_widening_value(
+        &self,
+        source_ty: &IrType,
+        target_ty: &IrType,
+        source_tokens: TokenStream,
+        source_qualifier: Option<&[String]>,
+        target_qualifier: Option<&[String]>,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let source_ty = self.resolve_type_aliases_for_emit(source_ty);
+        let target_ty = self.resolve_type_aliases_for_emit(target_ty);
+        let Some(variant_map) = Self::union_widening_variant_map(&source_ty, &target_ty) else {
+            return Ok(None);
+        };
+
+        let source_path = self.emit_union_type_path_with_qualifier(&source_ty, source_qualifier);
+        let target_path = self.emit_union_type_path_with_qualifier(&target_ty, target_qualifier);
+        let arms = variant_map.into_iter().map(|(source_idx, target_idx)| {
+            let source_variant = quote::format_ident!("{}", IrType::union_variant_name(source_idx));
+            let target_variant = quote::format_ident!("{}", IrType::union_variant_name(target_idx));
+            quote! {
+                #source_path :: #source_variant(__incan_union_value) => {
+                    #target_path :: #target_variant(__incan_union_value)
+                }
+            }
+        });
+
+        Ok(Some(quote! {
+            match #source_tokens {
+                #(#arms),*
+            }
+        }))
+    }
+
+    /// Return the dependency qualifier for generated anonymous union wrappers referenced through a public library call.
+    fn pub_library_union_qualifier(canonical_path: Option<&[String]>) -> Option<Vec<String>> {
+        canonical_path.and_then(|path| {
+            if path.first().map(String::as_str) == Some("pub") {
+                path.get(1).map(|library| vec![library.clone()])
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Map each source union variant onto the matching target variant for a widening conversion.
+    ///
+    /// This is stricter than ordinary value-to-union injection: the payload already lives inside the source wrapper,
+    /// so the generated conversion can only move it into a target variant with the same emitted payload type.
+    fn union_widening_variant_map(source_ty: &IrType, target_ty: &IrType) -> Option<Vec<(usize, usize)>> {
+        if source_ty == target_ty {
+            return None;
+        }
+        let source_members = source_ty.union_members()?;
+        let target_members = target_ty.union_members()?;
+        if source_members.is_empty() || target_members.is_empty() {
+            return None;
+        }
+
+        source_members
+            .iter()
+            .enumerate()
+            .map(|(source_idx, source_member)| {
+                target_members
+                    .iter()
+                    .position(|target_member| target_member == source_member)
+                    .map(|target_idx| (source_idx, target_idx))
+            })
+            .collect()
+    }
+
     /// Emit a type-seeded literal argument for `None`/`Ok`/`Err` when possible.
     ///
     /// This helper rewrites constructor-shaped arguments into explicit generic forms (for example `None::<T>`, `Ok::<T,
@@ -558,13 +674,7 @@ impl<'a> IrEmitter<'a> {
         } else {
             self.emit_expr(func)?
         };
-        let pub_library_union_qualifier: Option<Vec<String>> = canonical_path.and_then(|path| {
-            if path.first().map(String::as_str) == Some("pub") {
-                path.get(1).map(|library| vec![library.clone()])
-            } else {
-                None
-            }
-        });
+        let pub_library_union_qualifier: Option<Vec<String>> = Self::pub_library_union_qualifier(canonical_path);
         let turbofish = if type_args.is_empty() {
             quote! {}
         } else {
@@ -719,6 +829,11 @@ impl<'a> IrEmitter<'a> {
                 };
                 let target_aware_aggregate_literal_arg =
                     aggregate_literal_arg && !matches!(use_site, ValueUseSite::ExternalCallArg { .. });
+                let (widening_source_ty, _) = self.union_widening_source_for_expr(a);
+                let target_aware_union_widening_arg = target_ty
+                    .is_some_and(|target_ty| self.union_widening_needed(&widening_source_ty, target_ty))
+                    && !matches!(use_site, ValueUseSite::ExternalCallArg { .. });
+                let target_aware_value_arg = target_aware_aggregate_literal_arg || target_aware_union_widening_arg;
                 let arg_plan = ArgumentPassingPlan::for_use_site(a, use_site);
                 let previous_qualify = if *from_default {
                     Some(self.qualify_internal_canonical_paths.replace(true))
@@ -745,13 +860,21 @@ impl<'a> IrEmitter<'a> {
                             )? {
                                 emitted_from_seed = true;
                                 seed
-                            } else if target_aware_aggregate_literal_arg {
-                                self.emit_expr_for_use(a, use_site)?
+                            } else if target_aware_value_arg {
+                                self.emit_expr_for_use_with_union_qualifier(
+                                    a,
+                                    use_site,
+                                    pub_library_union_qualifier.as_deref(),
+                                )?
                             } else {
                                 self.emit_expr(a)?
                             }
-                        } else if target_aware_aggregate_literal_arg {
-                            self.emit_expr_for_use(a, use_site)?
+                        } else if target_aware_value_arg {
+                            self.emit_expr_for_use_with_union_qualifier(
+                                a,
+                                use_site,
+                                pub_library_union_qualifier.as_deref(),
+                            )?
                         } else {
                             self.emit_expr(a)?
                         }
@@ -765,8 +888,12 @@ impl<'a> IrEmitter<'a> {
                         )? {
                             emitted_from_seed = true;
                             seed
-                        } else if target_aware_aggregate_literal_arg {
-                            self.emit_expr_for_use(a, use_site)?
+                        } else if target_aware_value_arg {
+                            self.emit_expr_for_use_with_union_qualifier(
+                                a,
+                                use_site,
+                                pub_library_union_qualifier.as_deref(),
+                            )?
                         } else {
                             self.emit_expr(a)?
                         }
@@ -782,7 +909,7 @@ impl<'a> IrEmitter<'a> {
                     return Ok(adapter);
                 }
 
-                let tokens = if emitted_from_seed || target_aware_aggregate_literal_arg {
+                let tokens = if emitted_from_seed || target_aware_value_arg {
                     arg_plan.apply_after_value_plan(emitted)
                 } else {
                     arg_plan.apply_full(emitted)

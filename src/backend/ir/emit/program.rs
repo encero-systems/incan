@@ -2137,6 +2137,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit the generated Rust enum for one normalized anonymous union shape.
     fn emit_generated_union_type(&self, ty: &IrType) -> Option<TokenStream> {
+        let ty = self.resolve_type_aliases_for_emit(ty);
         let name = ty.union_type_name()?;
         let members = ty.union_members()?;
         let name_ident = format_ident!("{}", name);
@@ -2730,7 +2731,14 @@ impl<'a> IrEmitter<'a> {
                     }
                 }
             }
-            let mut union_type_items: Vec<_> = union_types.into_iter().collect();
+            let mut canonical_union_types = HashMap::new();
+            for (_, union_ty) in union_types {
+                let union_ty = self.resolve_type_aliases_for_emit(&union_ty);
+                if let Some(name) = union_ty.union_type_name() {
+                    canonical_union_types.insert(name, union_ty);
+                }
+            }
+            let mut union_type_items: Vec<_> = canonical_union_types.into_iter().collect();
             union_type_items.sort_by(|(left, _), (right, _)| left.cmp(right));
             for (_, union_ty) in union_type_items {
                 if let Some(item) = self.emit_generated_union_type(&union_ty) {

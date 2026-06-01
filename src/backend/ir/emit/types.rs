@@ -22,6 +22,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit the generated Rust type path for an anonymous ordinary union with an optional explicit module qualifier.
     pub(super) fn emit_union_type_path_with_qualifier(&self, ty: &IrType, qualifier: Option<&[String]>) -> TokenStream {
+        let ty = self.resolve_type_aliases_for_emit(ty);
         let union_name = ty
             .union_type_name()
             .unwrap_or_else(|| super::super::types::IR_UNION_TYPE_NAME.to_string());

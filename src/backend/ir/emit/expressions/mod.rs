@@ -181,12 +181,14 @@ impl<'a> IrEmitter<'a> {
         &self,
         item: &TypedExpr,
         item_target_ty: Option<&IrType>,
+        target_union_qualifier: Option<&[String]>,
     ) -> Result<TokenStream, EmitError> {
-        self.emit_expr_for_use(
+        self.emit_expr_for_use_with_union_qualifier(
             item,
             ValueUseSite::CollectionElement {
                 target_ty: item_target_ty,
             },
+            target_union_qualifier,
         )
     }
 
@@ -195,12 +197,15 @@ impl<'a> IrEmitter<'a> {
         &self,
         items: &[IrListEntry],
         item_target_ty: Option<&IrType>,
+        target_union_qualifier: Option<&[String]>,
     ) -> Result<TokenStream, EmitError> {
         if items.iter().all(|entry| matches!(entry, IrListEntry::Element(_))) {
             let item_tokens: Vec<TokenStream> = items
                 .iter()
                 .map(|entry| match entry {
-                    IrListEntry::Element(item) => self.emit_list_literal_item(item, item_target_ty),
+                    IrListEntry::Element(item) => {
+                        self.emit_list_literal_item(item, item_target_ty, target_union_qualifier)
+                    }
                     IrListEntry::Spread(_) => Err(EmitError::Unsupported(
                         "internal error: unexpected list spread in direct-only literal emission".to_string(),
                     )),
@@ -213,7 +218,7 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .map(|entry| match entry {
                 IrListEntry::Element(item) => {
-                    let item_tokens = self.emit_list_literal_item(item, item_target_ty)?;
+                    let item_tokens = self.emit_list_literal_item(item, item_target_ty, target_union_qualifier)?;
                     Ok(quote! { __incan_list.push(#item_tokens); })
                 }
                 IrListEntry::Spread(value) => {
@@ -221,7 +226,8 @@ impl<'a> IrEmitter<'a> {
                         let mut pushes = Vec::with_capacity(items.len());
                         for (idx, item_ty) in items.iter().enumerate() {
                             let item = Self::tuple_field_expr(value, idx, item_ty.clone());
-                            let item_tokens = self.emit_list_literal_item(&item, item_target_ty)?;
+                            let item_tokens =
+                                self.emit_list_literal_item(&item, item_target_ty, target_union_qualifier)?;
                             pushes.push(quote! { __incan_list.push(#item_tokens); });
                         }
                         Ok(quote! { #(#pushes)* })
@@ -246,6 +252,7 @@ impl<'a> IrEmitter<'a> {
         pairs: &[IrDictEntry],
         key_target_ty: Option<&IrType>,
         value_target_ty: Option<&IrType>,
+        target_union_qualifier: Option<&[String]>,
     ) -> Result<TokenStream, EmitError> {
         if pairs.is_empty() {
             return Ok(quote! { std::collections::HashMap::new() });
@@ -256,17 +263,19 @@ impl<'a> IrEmitter<'a> {
                 .iter()
                 .map(|entry| match entry {
                     IrDictEntry::Pair(key, value) => {
-                        let key_tokens = self.emit_expr_for_use(
+                        let key_tokens = self.emit_expr_for_use_with_union_qualifier(
                             key,
                             ValueUseSite::CollectionElement {
                                 target_ty: key_target_ty,
                             },
+                            target_union_qualifier,
                         )?;
-                        let value_tokens = self.emit_expr_for_use(
+                        let value_tokens = self.emit_expr_for_use_with_union_qualifier(
                             value,
                             ValueUseSite::CollectionElement {
                                 target_ty: value_target_ty,
                             },
+                            target_union_qualifier,
                         )?;
                         Ok(quote! { (#key_tokens, #value_tokens) })
                     }
@@ -282,17 +291,19 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .map(|entry| match entry {
                 IrDictEntry::Pair(key, value) => {
-                    let key_tokens = self.emit_expr_for_use(
+                    let key_tokens = self.emit_expr_for_use_with_union_qualifier(
                         key,
                         ValueUseSite::CollectionElement {
                             target_ty: key_target_ty,
                         },
+                        target_union_qualifier,
                     )?;
-                    let value_tokens = self.emit_expr_for_use(
+                    let value_tokens = self.emit_expr_for_use_with_union_qualifier(
                         value,
                         ValueUseSite::CollectionElement {
                             target_ty: value_target_ty,
                         },
+                        target_union_qualifier,
                     )?;
                     Ok(quote! { __incan_dict.insert(#key_tokens, #value_tokens); })
                 }
@@ -384,6 +395,20 @@ impl<'a> IrEmitter<'a> {
     /// expression is emitted. Non-aggregate expressions are emitted normally, then the planned conversion is applied to
     /// the resulting token stream.
     pub(super) fn emit_expr_for_use(&self, expr: &TypedExpr, site: ValueUseSite<'_>) -> Result<TokenStream, EmitError> {
+        self.emit_expr_for_use_with_union_qualifier(expr, site, None)
+    }
+
+    /// Emit an expression for a value-use site while preserving the owner of generated anonymous union wrappers.
+    ///
+    /// Public dependency calls use provider-owned wrapper types. Passing the qualifier through target-aware aggregate
+    /// and union-widening emission keeps nested generated wrapper paths rooted in the dependency instead of
+    /// accidentally re-owning them in the consuming crate.
+    pub(super) fn emit_expr_for_use_with_union_qualifier(
+        &self,
+        expr: &TypedExpr,
+        site: ValueUseSite<'_>,
+        target_union_qualifier: Option<&[String]>,
+    ) -> Result<TokenStream, EmitError> {
         let resolved_target_ty = Self::use_site_target_ty(site).map(|ty| self.resolve_type_aliases_for_emit(ty));
         if let Some(target_ty) = resolved_target_ty.as_ref() {
             if let Some(wrapped) = self.emit_union_payload_arg_for_site(expr, target_ty, None, site)? {
@@ -404,13 +429,13 @@ impl<'a> IrEmitter<'a> {
                         IrExprKind::List(_) | IrExprKind::Dict(_) | IrExprKind::Set(_) | IrExprKind::Tuple(_)
                     ) =>
             {
-                return self.emit_expr_for_use(inner, site);
+                return self.emit_expr_for_use_with_union_qualifier(inner, site, target_union_qualifier);
             }
             IrExprKind::InteropCoerce { expr: inner, .. }
                 if Self::use_site_target_ty(site).is_some()
                     && matches!(inner.kind, IrExprKind::Call { .. } | IrExprKind::MethodCall { .. }) =>
             {
-                return self.emit_expr_for_use(inner, site);
+                return self.emit_expr_for_use_with_union_qualifier(inner, site, target_union_qualifier);
             }
             IrExprKind::List(items) => {
                 let site_item_ty = match resolved_target_ty.as_ref() {
@@ -422,7 +447,7 @@ impl<'a> IrEmitter<'a> {
                     _ => None,
                 };
                 let item_target_ty = Self::concrete_literal_target(site_item_ty, inferred_item_ty);
-                return self.emit_list_literal_entries(items, item_target_ty);
+                return self.emit_list_literal_entries(items, item_target_ty, target_union_qualifier);
             }
             IrExprKind::Dict(pairs) => {
                 let (site_key_ty, site_value_ty) = match resolved_target_ty.as_ref() {
@@ -435,7 +460,7 @@ impl<'a> IrEmitter<'a> {
                 };
                 let key_target_ty = Self::concrete_literal_target(site_key_ty, inferred_key_ty);
                 let value_target_ty = Self::concrete_literal_target(site_value_ty, inferred_value_ty);
-                return self.emit_dict_literal_entries(pairs, key_target_ty, value_target_ty);
+                return self.emit_dict_literal_entries(pairs, key_target_ty, value_target_ty, target_union_qualifier);
             }
             IrExprKind::Set(items) => {
                 if items.is_empty() {
@@ -453,11 +478,12 @@ impl<'a> IrEmitter<'a> {
                 let item_tokens: Vec<TokenStream> = items
                     .iter()
                     .map(|item| {
-                        self.emit_expr_for_use(
+                        self.emit_expr_for_use_with_union_qualifier(
                             item,
                             ValueUseSite::CollectionElement {
                                 target_ty: item_target_ty,
                             },
+                            target_union_qualifier,
                         )
                     })
                     .collect::<Result<_, _>>()?;
@@ -479,7 +505,11 @@ impl<'a> IrEmitter<'a> {
                         let site_item_ty = site_tuple_items.and_then(|items| items.get(idx));
                         let inferred_item_ty = inferred_tuple_items.and_then(|items| items.get(idx));
                         let item_target_ty = Self::concrete_literal_target(site_item_ty, inferred_item_ty);
-                        self.emit_expr_for_use(item, Self::tuple_item_use_site(site, item_target_ty))
+                        self.emit_expr_for_use_with_union_qualifier(
+                            item,
+                            Self::tuple_item_use_site(site, item_target_ty),
+                            target_union_qualifier,
+                        )
                     })
                     .collect::<Result<_, _>>()?;
                 return Ok(quote! { (#(#item_tokens),*) });
@@ -489,7 +519,11 @@ impl<'a> IrEmitter<'a> {
                 let inner_tokens = if let Some(inner_target_ty) =
                     site_target_ty.and_then(|target_ty| self.try_inner_target_type(target_ty, inner))
                 {
-                    self.emit_expr_for_use(inner, Self::retarget_value_use_site(site, Some(&inner_target_ty)))?
+                    self.emit_expr_for_use_with_union_qualifier(
+                        inner,
+                        Self::retarget_value_use_site(site, Some(&inner_target_ty)),
+                        target_union_qualifier,
+                    )?
                 } else {
                     self.emit_expr(inner)?
                 };
@@ -504,7 +538,7 @@ impl<'a> IrEmitter<'a> {
                 callable_signature,
                 arg_policy,
             } => {
-                return self.emit_method_call_expr_for_use(
+                let emitted = self.emit_method_call_expr_for_use(
                     receiver,
                     method,
                     dispatch.as_ref(),
@@ -513,7 +547,20 @@ impl<'a> IrEmitter<'a> {
                     callable_signature.as_ref(),
                     *arg_policy,
                     site,
-                );
+                )?;
+                if let Some(target_ty) = resolved_target_ty.as_ref() {
+                    let (source_ty, source_qualifier) = self.union_widening_source_for_expr(expr);
+                    if let Some(converted) = self.emit_union_widening_value(
+                        &source_ty,
+                        target_ty,
+                        emitted.clone(),
+                        source_qualifier.as_deref(),
+                        target_union_qualifier,
+                    )? {
+                        return Ok(converted);
+                    }
+                }
+                return Ok(emitted);
             }
             IrExprKind::Call {
                 func,
@@ -527,21 +574,47 @@ impl<'a> IrEmitter<'a> {
                 } else {
                     site
                 };
-                return self.emit_call_expr_for_use(
+                let emitted = self.emit_call_expr_for_use(
                     func,
                     type_args,
                     args,
                     callable_signature.as_ref(),
                     canonical_path.as_deref(),
                     target_site,
-                );
+                )?;
+                if let Some(target_ty) = resolved_target_ty.as_ref() {
+                    let (source_ty, source_qualifier) = self.union_widening_source_for_expr(expr);
+                    if let Some(converted) = self.emit_union_widening_value(
+                        &source_ty,
+                        target_ty,
+                        emitted.clone(),
+                        source_qualifier.as_deref(),
+                        target_union_qualifier,
+                    )? {
+                        return Ok(converted);
+                    }
+                }
+                return Ok(emitted);
             }
             _ => {}
         }
 
         let emitted = self.emit_expr(expr)?;
         let plan = plan_value_use(expr, site);
-        Ok(plan.apply(emitted))
+        let emitted = plan.apply(emitted);
+        if let Some(target_ty) = resolved_target_ty.as_ref() {
+            let (source_ty, source_qualifier) = self.union_widening_source_for_expr(expr);
+            if let Some(converted) = self.emit_union_widening_value(
+                &source_ty,
+                target_ty,
+                emitted.clone(),
+                source_qualifier.as_deref(),
+                target_union_qualifier,
+            )? {
+                return Ok(converted);
+            }
+        }
+        Ok(emitted)
     }
 
     /// Return whether match scrutinee emission should preserve a `Result` value without extra ownership shaping.
@@ -897,7 +970,7 @@ impl<'a> IrEmitter<'a> {
                     IrType::List(elem) => Some(elem.as_ref()),
                     _ => None,
                 };
-                self.emit_list_literal_entries(items, item_target_ty)
+                self.emit_list_literal_entries(items, item_target_ty, None)
             }
 
             IrExprKind::Dict(pairs) => {
@@ -905,7 +978,7 @@ impl<'a> IrEmitter<'a> {
                     IrType::Dict(key, value) => (Some(key.as_ref()), Some(value.as_ref())),
                     _ => (None, None),
                 };
-                self.emit_dict_literal_entries(pairs, key_target_ty, value_target_ty)
+                self.emit_dict_literal_entries(pairs, key_target_ty, value_target_ty, None)
             }
 
             IrExprKind::Set(items) => {

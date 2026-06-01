@@ -878,6 +878,16 @@ impl<'a> IrEmitter<'a> {
         {
             return Ok(wrapped);
         }
+        if let Some(target_ty) = expected_ty
+            && self.union_widening_needed(&value.ty, target_ty)
+        {
+            return self.emit_expr_for_use(
+                value,
+                ValueUseSite::Assignment {
+                    target_ty: Some(target_ty),
+                },
+            );
+        }
 
         if let Some(target_ty) = expected_ty
             && let Some(seed) = self.emit_inference_seeded_literal_arg(value, target_ty)?

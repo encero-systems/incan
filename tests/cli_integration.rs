@@ -436,6 +436,187 @@ def main() -> None:
 }
 
 #[test]
+fn build_union_widening_converts_generated_wrappers_issue741() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        r#"[project]
+name = "union_widening_conversion"
+version = "0.1.0"
+"#,
+    )?;
+    let main_path = src_dir.join("main.incn");
+    fs::write(
+        &main_path,
+        r#"
+pub model A:
+    value: str
+
+
+pub model B:
+    value: str
+
+
+pub model Holder:
+    value: Extended
+
+
+pub type Base = Union[A, B]
+pub type Extra = Union[int, A]
+pub type Extended = Union[Base, Extra, B]
+
+
+pub def make_base() -> Base:
+    return A(value="x")
+
+
+pub def accept_extended(value: Extended) -> Extended:
+    return value
+
+
+pub def widen_argument(value: Base) -> Extended:
+    return accept_extended(value)
+
+
+pub def widen_assignment(value: Base) -> Extended:
+    widened: Extended = value
+    return widened
+
+
+pub def widen_field(value: Base) -> Extended:
+    holder = Holder(value=value)
+    return holder.value
+
+
+pub def widen_list_item(value: Base) -> None:
+    values: list[Extended] = [value]
+    return
+
+
+pub def widen_return() -> Extended:
+    return make_base()
+
+
+pub def main() -> None:
+    source = make_base()
+    accept_extended(source)
+    accept_extended(make_base())
+    accept_extended(widen_argument(source))
+    accept_extended(widen_assignment(source))
+    accept_extended(widen_field(source))
+    widen_list_item(source)
+    accept_extended(widen_return())
+    return
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &build_output,
+        "incan build for union widening generated wrapper conversion",
+    );
+
+    let generated_main = fs::read_to_string(tmp.path().join("target/incan/union_widening_conversion/src/main.rs"))?;
+    assert!(
+        generated_main.contains("match make_base()"),
+        "expected generated Rust to convert call-result union wrappers through a match, got:\n{generated_main}"
+    );
+    assert!(
+        generated_main.contains("__incan_union_value"),
+        "expected generated Rust to rebuild the wider union wrapper variant-by-variant, got:\n{generated_main}"
+    );
+
+    let producer_root = tmp.path().join("union_lib");
+    let producer_src = producer_root.join("src");
+    fs::create_dir_all(&producer_src)?;
+    fs::write(
+        producer_root.join("incan.toml"),
+        r#"[project]
+name = "union_lib"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        producer_src.join("defs.incn"),
+        r#"
+pub model A:
+    value: str
+
+
+pub model B:
+    value: str
+
+
+pub type Base = Union[A, B]
+pub type Extra = Union[int, A]
+pub type Extended = Union[Base, Extra, B]
+
+
+pub def make_base() -> Base:
+    return A(value="x")
+
+
+pub def accept_extended(value: Extended) -> Extended:
+    return value
+"#,
+    )?;
+    fs::write(
+        producer_src.join("lib.incn"),
+        r#"pub from defs import accept_extended, make_base
+"#,
+    )?;
+    let producer_build = run_incan(&producer_root, &["build", "--lib"])?;
+    assert_success(
+        &producer_build,
+        "producer build --lib for public union widening issue741",
+    );
+
+    let consumer_root = tmp.path().join("union_consumer");
+    let consumer_main = write_minimal_project(
+        &consumer_root,
+        "union_consumer",
+        r#"
+[dependencies]
+union_lib = { path = "../union_lib" }
+"#,
+    )?;
+    fs::write(
+        &consumer_main,
+        r#"from pub::union_lib import accept_extended, make_base
+
+
+def main() -> None:
+    accept_extended(make_base())
+    return
+"#,
+    )?;
+    let consumer_build = run_incan(
+        &consumer_root,
+        &[
+            "build",
+            consumer_main.to_str().ok_or("consumer main path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(&consumer_build, "pub consumer build for public union widening issue741");
+
+    let generated_consumer = fs::read_to_string(consumer_root.join("target/incan/union_consumer/src/main.rs"))?;
+    assert!(
+        generated_consumer.contains("match union_lib::make_base()"),
+        "expected public consumer to convert dependency-owned union call results through a match, got:\n{generated_consumer}"
+    );
+    assert!(
+        generated_consumer.contains("union_lib::__IncanUnion"),
+        "expected public consumer union conversion to use dependency-owned wrapper paths, got:\n{generated_consumer}"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_reuses_stale_lockfile_without_rewriting_by_default() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_default_stale_lock_test_project", "")?;
