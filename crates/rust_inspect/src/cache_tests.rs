@@ -77,6 +77,7 @@ name = "foo_bar"
     Ok(())
 }
 
+/// Inserted metadata should survive a disk-cache round trip through a fresh cache instance.
 #[test]
 fn disk_cache_round_trips_inserted_items() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -91,7 +92,7 @@ fn disk_cache_round_trips_inserted_items() -> Result<(), Box<dyn std::error::Err
             .inner
             .lock()
             .map_err(|_| std::io::Error::other("poisoned cache"))?;
-        persist_item_to_disk_cache(&inner, tmp.path(), &dummy_type_metadata("demo::Thing"))?;
+        persist_item_to_disk_cache(&inner, tmp.path().canonicalize()?.as_path())?;
     }
 
     let payload = fs::read_to_string(disk_cache_path(tmp.path()))?;
@@ -137,8 +138,8 @@ fn disk_cache_invalidates_when_workspace_fingerprint_changes() -> Result<(), Box
     Ok(())
 }
 
-#[test]
 /// Malformed on-disk cache payloads are ignored instead of poisoning later lookups.
+#[test]
 fn malformed_disk_cache_is_treated_as_miss() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     fs::write(
@@ -197,6 +198,20 @@ fn definition_path_alias_hits_existing_cached_reexport() -> Result<(), Box<dyn s
         tmp.path(),
         dummy_reexported_type_metadata("bridge::ScalarUDF", "bridge::udf::ScalarUDF"),
     )?;
+    {
+        let inner = cache
+            .inner
+            .lock()
+            .map_err(|_| std::io::Error::other("poisoned cache"))?;
+        assert_eq!(
+            inner
+                .definition_aliases
+                .get(&(tmp.path().canonicalize()?, "bridge::udf::ScalarUDF".to_string()))
+                .map(String::as_str),
+            Some("bridge::ScalarUDF"),
+            "definition-path aliases should be indexed when metadata enters the cache"
+        );
+    }
 
     let hit = cache
         .get_cached(tmp.path(), "bridge::udf::ScalarUDF")?

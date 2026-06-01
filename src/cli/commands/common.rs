@@ -933,6 +933,14 @@ fn rust_inspect_prewarm_enabled() -> bool {
     parse_rust_inspect_prewarm_env(std::env::var("INCAN_RUST_INSPECT_PREWARM").ok().as_deref())
 }
 
+/// Surface rust-inspect preparation progress from explicit CLI prewarm phases.
+#[cfg(feature = "rust_inspect")]
+fn print_rust_inspect_prewarm_progress(message: String) {
+    if message.starts_with("rust-inspect prewarm") {
+        eprintln!("{message}");
+    }
+}
+
 /// Eagerly load rust-inspect metadata before typechecking/codegen hot paths.
 ///
 /// Prewarm defaults to enabled because lazy rust-analyzer extraction can dominate warm CLI runs.
@@ -946,12 +954,14 @@ pub(crate) fn prewarm_rust_inspect_workspace(manifest_dir: &Path, query_paths: &
         return Ok(());
     }
     let inspector = Inspector::new(InspectorConfig::new(manifest_dir.to_path_buf()));
-    inspector.prewarm(query_paths.iter().cloned(), &|_| ()).map_err(|err| {
-        CliError::failure(format!(
-            "failed to prewarm rust-inspect cache from {}: {err}",
-            manifest_dir.display()
-        ))
-    })
+    inspector
+        .prewarm(query_paths.iter().cloned(), &print_rust_inspect_prewarm_progress)
+        .map_err(|err| {
+            CliError::failure(format!(
+                "failed to prewarm rust-inspect cache from {}: {err}",
+                manifest_dir.display()
+            ))
+        })
 }
 
 /// Resolve the source path for a stdlib module path (e.g. `["std", "testing"]`).
