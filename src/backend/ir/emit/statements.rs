@@ -62,6 +62,12 @@ fn for_body_needs_mut_iteration(pattern: &Pattern, body: &[IrStmt]) -> bool {
             IrExprKind::Race { arms, .. } => arms
                 .iter()
                 .any(|arm| expr_contains_mutation(&arm.awaitable, var) || expr_contains_mutation(&arm.body, var)),
+            IrExprKind::Match { arms, .. } => arms.iter().any(|arm| {
+                arm.bindings
+                    .iter()
+                    .any(|binding| expr_contains_mutation(&binding.value, var))
+                    || expr_contains_mutation(&arm.body, var)
+            }),
             _ => false,
         }
     }
@@ -84,7 +90,12 @@ fn for_body_needs_mut_iteration(pattern: &Pattern, body: &[IrStmt]) -> bool {
             IrStmtKind::For { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
             IrStmtKind::Loop { body, .. } => body.iter().any(|s| stmt_mutates_var(s, var)),
             IrStmtKind::Block(stmts) => stmts.iter().any(|s| stmt_mutates_var(s, var)),
-            IrStmtKind::Match { arms, .. } => arms.iter().any(|arm| expr_contains_mutation(&arm.body, var)),
+            IrStmtKind::Match { arms, .. } => arms.iter().any(|arm| {
+                arm.bindings
+                    .iter()
+                    .any(|binding| expr_contains_mutation(&binding.value, var))
+                    || expr_contains_mutation(&arm.body, var)
+            }),
             IrStmtKind::Break { label: _, value } => {
                 value.as_ref().is_some_and(|value| expr_contains_mutation(value, var))
             }
@@ -258,6 +269,9 @@ fn expr_mutates_storage_binding(expr: &super::super::expr::IrExpr, names: &mut H
         IrExprKind::Match { scrutinee, arms } => {
             expr_mutates_storage_binding(scrutinee, names);
             for arm in arms {
+                for binding in &arm.bindings {
+                    expr_mutates_storage_binding(&binding.value, names);
+                }
                 if let Some(guard) = &arm.guard {
                     expr_mutates_storage_binding(guard, names);
                 }
@@ -373,6 +387,9 @@ fn stmt_mutates_storage_binding(stmt: &IrStmt, names: &mut HashSet<String>) {
         IrStmtKind::Match { scrutinee, arms } => {
             expr_mutates_storage_binding(scrutinee, names);
             for arm in arms {
+                for binding in &arm.bindings {
+                    expr_mutates_storage_binding(&binding.value, names);
+                }
                 if let Some(guard) = &arm.guard {
                     expr_mutates_storage_binding(guard, names);
                 }
@@ -588,9 +605,13 @@ fn match_arm_uses_binding_name(arm: &MatchArm, binding_name: &str) -> bool {
     if pattern_binds_binding_name(&arm.pattern, binding_name) {
         return false;
     }
-    arm.guard
-        .as_ref()
-        .is_some_and(|guard| expr_uses_binding_name(guard, binding_name))
+    arm.bindings
+        .iter()
+        .any(|binding| expr_uses_binding_name(&binding.value, binding_name))
+        || arm
+            .guard
+            .as_ref()
+            .is_some_and(|guard| expr_uses_binding_name(guard, binding_name))
         || expr_uses_binding_name(&arm.body, binding_name)
 }
 
@@ -1324,7 +1345,7 @@ impl<'a> IrEmitter<'a> {
                     .iter()
                     .map(|arm| {
                         let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty);
-                        let body = self.emit_expr(&arm.body)?;
+                        let body = self.emit_match_arm_body(arm)?;
                         let guard = match (&pattern_guard, &arm.guard) {
                             (Some(pattern_guard), Some(arm_guard)) => {
                                 let arm_guard = self.emit_expr(arm_guard)?;

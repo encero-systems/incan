@@ -2819,7 +2819,13 @@ impl TypeChecker {
                     .map(|arg| self.expand_type_aliases_inner(arg, expanding))
                     .collect::<Vec<_>>();
                 self.expand_named_type_alias(name.clone(), expanded_args.clone(), expanding)
-                    .unwrap_or(ResolvedType::Generic(name, expanded_args))
+                    .unwrap_or_else(|| {
+                        if name == UNION_TYPE_NAME {
+                            union_ty(expanded_args)
+                        } else {
+                            ResolvedType::Generic(name, expanded_args)
+                        }
+                    })
             }
             ResolvedType::Function(params, ret) => ResolvedType::Function(
                 params

@@ -7,9 +7,9 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use super::super::decl::Visibility;
-use super::super::expr::{IrExprKind, Pattern};
+use super::super::expr::{IrExprKind, MatchArm, Pattern};
 use super::super::types::IrType;
-use super::IrEmitter;
+use super::{EmitError, IrEmitter};
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::types::numerics;
@@ -443,5 +443,29 @@ impl<'a> IrEmitter<'a> {
         }
 
         (self.emit_pattern(pattern), None)
+    }
+
+    /// Emit a match arm body, including compiler-introduced bindings required by narrowed pattern lowering.
+    pub(super) fn emit_match_arm_body(&self, arm: &MatchArm) -> Result<TokenStream, EmitError> {
+        let body = self.emit_expr(&arm.body)?;
+        if arm.bindings.is_empty() {
+            return Ok(body);
+        }
+
+        let bindings = arm
+            .bindings
+            .iter()
+            .map(|binding| {
+                let name = Self::rust_ident(&binding.name);
+                let ty = self.emit_type(&binding.ty);
+                let value = self.emit_expr(&binding.value)?;
+                Ok(quote! { let #name: #ty = #value; })
+            })
+            .collect::<Result<Vec<_>, EmitError>>()?;
+
+        Ok(quote! {{
+            #(#bindings)*
+            #body
+        }})
     }
 }

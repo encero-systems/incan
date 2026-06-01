@@ -683,6 +683,7 @@ impl AstLowering {
                 variant,
                 fields: vec![IrPattern::Var(pattern_binding)],
             },
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(IrExprKind::Block { stmts, value: None }, IrType::Unit),
         })
@@ -730,6 +731,7 @@ impl AstLowering {
 
         Ok(MatchArm {
             pattern,
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(IrExprKind::Block { stmts, value: None }, IrType::Unit),
         })
@@ -768,6 +770,7 @@ impl AstLowering {
                     variant,
                     fields: vec![IrPattern::Var(test.binding.clone())],
                 },
+                bindings: Vec::new(),
                 guard: None,
                 body: TypedExpr::new(
                     IrExprKind::Block {
@@ -805,6 +808,7 @@ impl AstLowering {
             };
             let mut arms = vec![MatchArm {
                 pattern: test.true_pattern,
+                bindings: Vec::new(),
                 guard: None,
                 body: TypedExpr::new(
                     IrExprKind::Block {
@@ -893,11 +897,13 @@ impl AstLowering {
                 arms: vec![
                     MatchArm {
                         pattern: then_pattern,
+                        bindings: Vec::new(),
                         guard: None,
                         body: then_body,
                     },
                     MatchArm {
                         pattern: else_pattern,
+                        bindings: Vec::new(),
                         guard: None,
                         body: else_body,
                     },
@@ -1152,11 +1158,13 @@ impl AstLowering {
                                 arms: vec![
                                     MatchArm {
                                         pattern: self.lower_pattern(&pattern.node),
+                                        bindings: Vec::new(),
                                         guard: None,
                                         body: then_body,
                                     },
                                     MatchArm {
                                         pattern: IrPattern::Wildcard,
+                                        bindings: Vec::new(),
                                         guard: None,
                                         body: fallback_body,
                                     },
@@ -1208,11 +1216,13 @@ impl AstLowering {
                                     arms: vec![
                                         MatchArm {
                                             pattern: self.lower_pattern(&pattern.node),
+                                            bindings: Vec::new(),
                                             guard: None,
                                             body: body_expr,
                                         },
                                         MatchArm {
                                             pattern: IrPattern::Wildcard,
+                                            bindings: Vec::new(),
                                             guard: None,
                                             body: break_expr,
                                         },
@@ -1324,6 +1334,7 @@ impl AstLowering {
                                 arms: vec![
                                     MatchArm {
                                         pattern: some_pattern,
+                                        bindings: Vec::new(),
                                         guard: None,
                                         body: TypedExpr::new(
                                             IrExprKind::Block {
@@ -1335,6 +1346,7 @@ impl AstLowering {
                                     },
                                     MatchArm {
                                         pattern: none_pattern,
+                                        bindings: Vec::new(),
                                         guard: None,
                                         body: TypedExpr::new(
                                             IrExprKind::Block {

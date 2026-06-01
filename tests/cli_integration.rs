@@ -499,6 +499,25 @@ pub def widen_return() -> Extended:
     return make_base()
 
 
+pub def base_from_alias_pattern(value: Extended) -> Base:
+    match value:
+        Base(expr) => return expr
+        int(number) => return A(value=f"{number}")
+
+
+pub def base_from_explicit_variants(value: Extended) -> Base:
+    match value:
+        A(expr) => return expr
+        B(expr) => return expr
+        int(number) => return A(value=f"{number}")
+
+
+pub def base_from_fallback_binding(value: Extended) -> Base:
+    match value:
+        int(number) => return A(value=f"{number}")
+        other => return other
+
+
 pub def main() -> None:
     source = make_base()
     accept_extended(source)
@@ -508,6 +527,9 @@ pub def main() -> None:
     accept_extended(widen_field(source))
     widen_list_item(source)
     accept_extended(widen_return())
+    accept_extended(base_from_alias_pattern(source))
+    accept_extended(base_from_explicit_variants(source))
+    accept_extended(base_from_fallback_binding(source))
     return
 "#,
     )?;

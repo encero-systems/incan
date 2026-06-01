@@ -179,6 +179,9 @@ fn collect_generic_callable_name_type_params_from_expr(expr: &super::super::supe
         IrExprKind::Match { scrutinee, arms } => {
             collect_generic_callable_name_type_params_from_expr(scrutinee, out);
             for arm in arms {
+                for binding in &arm.bindings {
+                    collect_generic_callable_name_type_params_from_expr(&binding.value, out);
+                }
                 if let Some(guard) = &arm.guard {
                     collect_generic_callable_name_type_params_from_expr(guard, out);
                 }
@@ -283,6 +286,9 @@ fn collect_generic_callable_name_type_params_from_stmts(stmts: &[IrStmt], out: &
             IrStmtKind::Match { scrutinee, arms } => {
                 collect_generic_callable_name_type_params_from_expr(scrutinee, out);
                 for arm in arms {
+                    for binding in &arm.bindings {
+                        collect_generic_callable_name_type_params_from_expr(&binding.value, out);
+                    }
                     if let Some(guard) = &arm.guard {
                         collect_generic_callable_name_type_params_from_expr(guard, out);
                     }

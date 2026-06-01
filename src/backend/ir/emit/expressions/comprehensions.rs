@@ -686,7 +686,11 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::Match { scrutinee, arms } => {
                 Self::expr_contains_try(scrutinee)
                     || arms.iter().any(|arm| {
-                        arm.guard.as_ref().is_some_and(Self::expr_contains_try) || Self::expr_contains_try(&arm.body)
+                        arm.bindings
+                            .iter()
+                            .any(|binding| Self::expr_contains_try(&binding.value))
+                            || arm.guard.as_ref().is_some_and(Self::expr_contains_try)
+                            || Self::expr_contains_try(&arm.body)
                     })
             }
             IrExprKind::Closure { body, .. } => Self::expr_contains_try(body),
@@ -793,7 +797,11 @@ impl<'a> IrEmitter<'a> {
             IrStmtKind::Match { scrutinee, arms } => {
                 Self::expr_contains_try(scrutinee)
                     || arms.iter().any(|arm| {
-                        arm.guard.as_ref().is_some_and(Self::expr_contains_try) || Self::expr_contains_try(&arm.body)
+                        arm.bindings
+                            .iter()
+                            .any(|binding| Self::expr_contains_try(&binding.value))
+                            || arm.guard.as_ref().is_some_and(Self::expr_contains_try)
+                            || Self::expr_contains_try(&arm.body)
                     })
             }
             IrStmtKind::Continue(_) => false,

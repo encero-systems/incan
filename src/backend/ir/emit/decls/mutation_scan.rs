@@ -115,6 +115,9 @@ impl<'a> IrEmitter<'a> {
             IrStmtKind::Match { scrutinee, arms } => {
                 self.scan_expr_for_param_writes(scrutinee, param_names, mutated);
                 for arm in arms {
+                    for binding in &arm.bindings {
+                        self.scan_expr_for_param_writes(&binding.value, param_names, mutated);
+                    }
                     if let Some(guard) = &arm.guard {
                         self.scan_expr_for_param_writes(guard, param_names, mutated);
                     }
@@ -286,6 +289,9 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::Match { scrutinee, arms } => {
                 self.scan_expr_for_param_writes(scrutinee, param_names, mutated);
                 for arm in arms {
+                    for binding in &arm.bindings {
+                        self.scan_expr_for_param_writes(&binding.value, param_names, mutated);
+                    }
                     if let Some(guard) = &arm.guard {
                         self.scan_expr_for_param_writes(guard, param_names, mutated);
                     }

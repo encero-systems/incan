@@ -155,6 +155,9 @@ pub struct AstLowering {
     pub(super) callable_param_scopes: Vec<HashSet<String>>,
     /// Module-level symbol aliases mapped from alias name to canonical target name.
     pub(super) symbol_aliases: HashMap<String, String>,
+    /// Local transparent type aliases keyed by alias name, retained so pattern lowering can use the same semantic
+    /// target shape as the typechecker.
+    pub(super) source_type_alias_targets: HashMap<String, ast::Type>,
     /// Imported item bindings mapped to their original import paths for public alias re-export emission.
     pub(super) imported_alias_targets: HashMap<String, ImportedAliasTarget>,
     /// Cached stdlib metadata used to resolve rust.module-backed decorators/derives.
@@ -249,6 +252,7 @@ impl AstLowering {
             rust_import_aliases: HashMap::new(),
             callable_param_scopes: Vec::new(),
             symbol_aliases: HashMap::new(),
+            source_type_alias_targets: HashMap::new(),
             imported_alias_targets: HashMap::new(),
             stdlib_cache: StdlibAstCache::new(),
             rusttype_underlying: HashMap::new(),
@@ -1122,6 +1126,20 @@ impl AstLowering {
                     return None;
                 };
                 Some((alias.name.clone(), target.clone()))
+            })
+            .collect();
+        self.source_type_alias_targets = program
+            .declarations
+            .iter()
+            .filter_map(|decl| {
+                let ast::Declaration::TypeAlias(alias) = &decl.node else {
+                    return None;
+                };
+                if alias.type_params.is_empty() {
+                    Some((alias.name.clone(), alias.target.node.clone()))
+                } else {
+                    None
+                }
             })
             .collect();
 

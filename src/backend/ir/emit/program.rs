@@ -465,6 +465,10 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 self.scan_expr(scrutinee);
                 for arm in arms {
                     self.scan_pattern(&arm.pattern);
+                    for binding in &arm.bindings {
+                        self.scan_type(&binding.ty);
+                        self.scan_expr(&binding.value);
+                    }
                     if let Some(guard) = &arm.guard {
                         self.scan_expr(guard);
                     }
@@ -752,6 +756,10 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 self.scan_expr(scrutinee);
                 for arm in arms {
                     self.scan_pattern(&arm.pattern);
+                    for binding in &arm.bindings {
+                        self.scan_type(&binding.ty);
+                        self.scan_expr(&binding.value);
+                    }
                     if let Some(guard) = &arm.guard {
                         self.scan_expr(guard);
                     }
@@ -1868,6 +1876,10 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::Match { scrutinee, arms } => {
                 Self::collect_union_types_from_expr(scrutinee, out);
                 for arm in arms {
+                    for binding in &arm.bindings {
+                        Self::collect_union_types_from_type(&binding.ty, out);
+                        Self::collect_union_types_from_expr(&binding.value, out);
+                    }
                     if let Some(guard) = &arm.guard {
                         Self::collect_union_types_from_expr(guard, out);
                     }
@@ -2050,6 +2062,10 @@ impl<'a> IrEmitter<'a> {
             IrStmtKind::Match { scrutinee, arms } => {
                 Self::collect_union_types_from_expr(scrutinee, out);
                 for arm in arms {
+                    for binding in &arm.bindings {
+                        Self::collect_union_types_from_type(&binding.ty, out);
+                        Self::collect_union_types_from_expr(&binding.value, out);
+                    }
                     if let Some(guard) = &arm.guard {
                         Self::collect_union_types_from_expr(guard, out);
                     }

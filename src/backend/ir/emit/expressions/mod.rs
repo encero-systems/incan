@@ -1048,7 +1048,7 @@ impl<'a> IrEmitter<'a> {
                     .iter()
                     .map(|arm| {
                         let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty);
-                        let body = self.emit_expr(&arm.body)?;
+                        let body = self.emit_match_arm_body(arm)?;
                         let guard = match (&pattern_guard, &arm.guard) {
                             (Some(pattern_guard), Some(arm_guard)) => {
                                 let arm_guard = self.emit_expr(arm_guard)?;

@@ -602,6 +602,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Ok).to_string(),
                 fields: vec![Pattern::Var(value_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(
                 IrExprKind::Var {
@@ -619,6 +620,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Err).to_string(),
                 fields: vec![Pattern::Var(err_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(
                 IrExprKind::Call {
@@ -1088,6 +1090,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Ok).to_string(),
                 fields: vec![Pattern::Var(value_name)],
             },
+            bindings: Vec::new(),
             guard: None,
             body: Self::validated_newtype_step_result_expr(
                 next_name,
@@ -1103,6 +1106,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Err).to_string(),
                 fields: vec![Pattern::Var(error_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: Self::result_err_expr(
                 TypedExpr::new(
@@ -1172,6 +1176,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Ok).to_string(),
                 fields: vec![Pattern::Var(value_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: Self::result_ok_expr(
                 TypedExpr::new(
@@ -1199,6 +1204,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Err).to_string(),
                 fields: vec![Pattern::Var(error_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(
                 IrExprKind::Block {
@@ -1254,6 +1260,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Ok).to_string(),
                 fields: vec![Pattern::Var(value_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(
                 IrExprKind::Var {
@@ -1270,6 +1277,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Err).to_string(),
                 fields: vec![Pattern::Var(err_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(
                 IrExprKind::Call {

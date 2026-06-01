@@ -2983,6 +2983,35 @@ def describe(value: MaybeText) -> str:
 }
 
 #[test]
+fn test_nested_union_aliases_flatten_for_match_narrowing() -> Result<(), String> {
+    let source = r#"
+model A:
+  value: str
+
+model B:
+  value: str
+
+type Base = Union[A, B]
+type Input = Union[Base, int]
+
+def from_alias(value: Input) -> Base:
+  match value:
+    Base(expr) =>
+      return expr
+    int(number) =>
+      return A(value=str(number))
+
+def from_fallback(value: Input) -> Base:
+  match value:
+    int(number) =>
+      return A(value=str(number))
+    other =>
+      return other
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
 fn test_union_match_requires_exhaustive_type_patterns() {
     let source = r#"
 def normalize(value: int | str) -> str:

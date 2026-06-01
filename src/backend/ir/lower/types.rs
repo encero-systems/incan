@@ -75,7 +75,7 @@ fn ast_decimal_type_arg_u8(ty: &ast::Type) -> Option<u8> {
 }
 
 /// Construct the canonical IR shape for an anonymous union.
-fn union_ir_type(members: Vec<IrType>) -> IrType {
+pub(super) fn union_ir_type(members: Vec<IrType>) -> IrType {
     let mut has_none = false;
     let mut flattened = Vec::new();
 

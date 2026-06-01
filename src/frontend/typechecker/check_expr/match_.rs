@@ -49,21 +49,39 @@ impl TypeChecker {
         }
     }
 
-    /// Resolve the member type targeted by a union type pattern.
-    fn union_pattern_member_type(&self, expected_ty: &ResolvedType, name: &str) -> Option<ResolvedType> {
+    /// Resolve the semantic type captured by a union type pattern.
+    ///
+    /// A constructor pattern over a union may name either one concrete member (`A(value)`) or a transparent alias whose
+    /// expanded union members are a subset of the scrutinee union (`Base(value)` where `Input = Union[Base, int]`).
+    fn union_pattern_target_type(&self, expected_ty: &ResolvedType, name: &str) -> Option<ResolvedType> {
         let target_ty = self.expand_type_aliases(resolve_type(&Type::Simple(name.to_string()), &self.symbols));
-        let members = if let Some(members) = expected_ty.union_members() {
-            members
-        } else if let Some(inner) = expected_ty.option_inner_type() {
-            inner.union_members()?
-        } else {
-            return None;
-        };
+        let members = Self::expected_union_members(expected_ty)?;
+
+        if let Some(target_members) = target_ty.union_members()
+            && target_members.iter().all(|target| {
+                members
+                    .iter()
+                    .any(|member| self.match_union_member_matches(member, target))
+            })
+        {
+            return Some(union_ty(target_members.to_vec()));
+        }
 
         members
             .iter()
             .find(|member| self.types_compatible(member, &target_ty) && self.types_compatible(&target_ty, member))
             .cloned()
+    }
+
+    /// Return the active union member set for a match subject, including `Option[Union[...]]`.
+    fn expected_union_members(expected_ty: &ResolvedType) -> Option<&[ResolvedType]> {
+        if let Some(members) = expected_ty.union_members() {
+            Some(members)
+        } else if let Some(inner) = expected_ty.option_inner_type() {
+            inner.union_members()
+        } else {
+            None
+        }
     }
 
     /// Type-check a `match` expression and return its resolved type.
@@ -157,9 +175,17 @@ impl TypeChecker {
             Pattern::Constructor(name, _) => {
                 let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.as_str());
                 if enum_qualifier_opt.is_none()
-                    && let Some(member_ty) = self.union_pattern_member_type(subject_ty, ctor_name)
+                    && let Some(member_ty) = self.union_pattern_target_type(subject_ty, ctor_name)
                 {
-                    remaining.retain(|member| !self.match_union_member_matches(member, &member_ty));
+                    if let Some(target_members) = member_ty.union_members() {
+                        remaining.retain(|member| {
+                            !target_members
+                                .iter()
+                                .any(|target| self.match_union_member_matches(member, target))
+                        });
+                    } else {
+                        remaining.retain(|member| !self.match_union_member_matches(member, &member_ty));
+                    }
                 }
             }
             Pattern::Or(alternatives) => {
@@ -203,7 +229,7 @@ impl TypeChecker {
             Pattern::Constructor(name, sub_patterns) => {
                 let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.as_str());
                 if enum_qualifier_opt.is_none()
-                    && let Some(member_ty) = self.union_pattern_member_type(expected_ty, ctor_name)
+                    && let Some(member_ty) = self.union_pattern_target_type(expected_ty, ctor_name)
                 {
                     let mut positional = None;
                     for arg in sub_patterns {
@@ -742,8 +768,14 @@ impl TypeChecker {
                         .option_inner_type()
                         .is_some_and(|inner| inner.union_members().is_some())
                 {
-                    self.expand_type_aliases(resolve_type(&Type::Simple(name.clone()), &self.symbols))
-                        .to_string()
+                    let target_ty = self.expand_type_aliases(resolve_type(&Type::Simple(name.clone()), &self.symbols));
+                    if let Some(target_members) = target_ty.union_members() {
+                        for member in target_members {
+                            covered.insert(member.to_string());
+                        }
+                        return;
+                    }
+                    target_ty.to_string()
                 } else if name.contains("::") {
                     name.split("::").last().unwrap_or(name).to_string()
                 } else {
