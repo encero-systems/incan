@@ -49,6 +49,22 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
+        self.check_call_with_expected(callee, type_args, args, span, None)
+    }
+
+    /// Type-check a call expression with an optional expected result type.
+    ///
+    /// Contextual return hints are part of the generic call plan, not a desugaring special case. They let direct
+    /// source, vocab-produced AST, and nested call arguments all use the same inference path when a destination
+    /// type is known.
+    pub(in crate::frontend::typechecker::check_expr) fn check_call_with_expected(
+        &mut self,
+        callee: &Spanned<Expr>,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
         if let Some(name) = Self::explicit_builtin_member_name(callee) {
             let result = self.check_explicit_builtin_call(name, args, span);
             if !type_args.is_empty() {
@@ -105,7 +121,14 @@ impl TypeChecker {
             let _ = self.check_ident(module_name.as_str(), base.span);
             if let Some(func_info) = self.resolve_imported_module_function_member(&module_path, method.as_str()) {
                 let callable = format!("{module_name}.{method}");
-                return self.validate_stdlib_module_function_call(callable.as_str(), &func_info, type_args, args, span);
+                return self.validate_stdlib_module_function_call(
+                    callable.as_str(),
+                    &func_info,
+                    type_args,
+                    args,
+                    span,
+                    expected_return_ty,
+                );
             }
         }
 
@@ -238,7 +261,14 @@ impl TypeChecker {
                         return explicit_constructor_ty.unwrap_or(constructor_ty);
                     }
                     SymbolKind::Function(func_info) => {
-                        return self.validate_function_call(name, &func_info, type_args, args, span);
+                        return self.validate_function_call(
+                            name,
+                            &func_info,
+                            type_args,
+                            args,
+                            span,
+                            expected_return_ty,
+                        );
                     }
                     SymbolKind::RustItem(info) => {
                         if !type_args.is_empty() {
@@ -395,7 +425,7 @@ impl TypeChecker {
                 type_param_bounds: binding.type_param_bounds,
                 type_param_bound_details: binding.type_param_bound_details,
             };
-            return self.validate_function_call(name, &info, type_args, args, span);
+            return self.validate_function_call(name, &info, type_args, args, span, expected_return_ty);
         }
 
         if !type_args.is_empty() {
@@ -406,10 +436,22 @@ impl TypeChecker {
 
         match callee_ty {
             ResolvedType::Function(params, ret) => {
-                let arg_types = self.check_call_arg_types_for_params(args, &params);
                 let mut type_bindings = std::collections::HashMap::new();
-                self.validate_callable_arg_bindings("<callable>", &params, args, &arg_types, &mut type_bindings, span);
-                self.type_info.record_call_site_callable_params(span, &params);
+                if let Some(expected) = expected_return_ty {
+                    self.infer_type_param_bindings(&ret, expected, &mut type_bindings);
+                }
+                let resolved_params = Self::substitute_callable_params(&params, &type_bindings);
+                let arg_types = self.check_call_arg_types_for_params(args, &resolved_params);
+                self.validate_callable_arg_bindings(
+                    "<callable>",
+                    &resolved_params,
+                    args,
+                    &arg_types,
+                    &mut type_bindings,
+                    span,
+                );
+                let final_params = Self::substitute_callable_params(&resolved_params, &type_bindings);
+                self.type_info.record_call_site_callable_params(span, &final_params);
                 substitute_resolved_type(&ret, &type_bindings)
             }
             ty if self.is_user_operator_receiver(&ty)

@@ -452,7 +452,7 @@ impl TypeChecker {
         } else {
             ResolvedType::Generic(type_name.to_string(), resolved_type_args)
         };
-        Some(self.check_generic_method_call(TYPE_CONSTRUCTOR_HOOK, hook, &[], args, &[], span, &receiver_ty))
+        Some(self.check_generic_method_call(TYPE_CONSTRUCTOR_HOOK, hook, &[], args, &[], span, &receiver_ty, None))
     }
 
     /// Return whether a call's named arguments exactly describe normal model/class field construction.
