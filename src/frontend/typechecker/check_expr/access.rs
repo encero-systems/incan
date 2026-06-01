@@ -2104,6 +2104,7 @@ impl TypeChecker {
                 arg_types,
                 call_site_span,
                 receiver_ty,
+                expected_return_ty,
             ));
         }
         if let Some(trait_adoptions) = trait_adoptions {
@@ -2185,6 +2186,7 @@ impl TypeChecker {
                     arg_types,
                     call_site_span,
                     receiver_ty,
+                    expected_return_ty,
                 )
             });
         }
@@ -2213,6 +2215,7 @@ impl TypeChecker {
                 arg_types,
                 call_site_span,
                 receiver_ty,
+                expected_return_ty,
             ));
         }
 
@@ -2234,6 +2237,7 @@ impl TypeChecker {
         type_args: &[Spanned<Type>],
         args: &[CallArg],
         span: Span,
+        expected_return_ty: Option<&ResolvedType>,
     ) -> Option<ResolvedType> {
         let type_name = match base_ty {
             ResolvedType::Named(name) | ResolvedType::Generic(name, _) => name,
@@ -2254,7 +2258,16 @@ impl TypeChecker {
                     Some(_) => return None,
                     None => model.methods.get(method)?.clone(),
                 };
-                Some(self.check_generic_method_call(method, method_info, type_args, args, &[], span, base_ty))
+                Some(self.check_generic_method_call(
+                    method,
+                    method_info,
+                    type_args,
+                    args,
+                    &[],
+                    span,
+                    base_ty,
+                    expected_return_ty,
+                ))
             }
             TypeInfo::Class(class) => {
                 let method_info = match class.method_overloads.get(method) {
@@ -2262,7 +2275,16 @@ impl TypeChecker {
                     Some(_) => return None,
                     None => class.methods.get(method)?.clone(),
                 };
-                Some(self.check_generic_method_call(method, method_info, type_args, args, &[], span, base_ty))
+                Some(self.check_generic_method_call(
+                    method,
+                    method_info,
+                    type_args,
+                    args,
+                    &[],
+                    span,
+                    base_ty,
+                    expected_return_ty,
+                ))
             }
             TypeInfo::Enum(en) => {
                 let method_info = match en.method_overloads.get(method) {
@@ -2270,7 +2292,16 @@ impl TypeChecker {
                     Some(_) => return None,
                     None => en.methods.get(method)?.clone(),
                 };
-                Some(self.check_generic_method_call(method, method_info, type_args, args, &[], span, base_ty))
+                Some(self.check_generic_method_call(
+                    method,
+                    method_info,
+                    type_args,
+                    args,
+                    &[],
+                    span,
+                    base_ty,
+                    expected_return_ty,
+                ))
             }
             TypeInfo::Newtype(nt) => {
                 let resolved_method = self.resolve_newtype_method_name(&nt, method);
@@ -2279,8 +2310,16 @@ impl TypeChecker {
                     Some(_) => return None,
                     None => nt.methods.get(resolved_method)?.clone(),
                 };
-                let ret =
-                    self.check_generic_method_call(resolved_method, method_info, type_args, args, &[], span, base_ty);
+                let ret = self.check_generic_method_call(
+                    resolved_method,
+                    method_info,
+                    type_args,
+                    args,
+                    &[],
+                    span,
+                    base_ty,
+                    expected_return_ty,
+                );
                 if nt.is_rusttype {
                     self.maybe_record_rusttype_return_coercion(&nt, resolved_method, &ret, span);
                 }
@@ -3065,16 +3104,28 @@ impl TypeChecker {
         if let Some((module_name, module_path)) = self.imported_module_for_expr(base) {
             if let Some(info) = self.resolve_imported_module_function_member(&module_path, method) {
                 let callable = format!("{module_name}.{method}");
-                return self.validate_stdlib_module_function_call(callable.as_str(), &info, type_args, args, span);
+                return self.validate_stdlib_module_function_call(
+                    callable.as_str(),
+                    &info,
+                    type_args,
+                    args,
+                    span,
+                    expected_return_ty,
+                );
             }
             self.errors
                 .push(errors::missing_method(module_name.as_str(), method, span));
             return ResolvedType::Unknown;
         }
 
-        if let Some(ret) =
-            self.resolve_unambiguous_source_method_without_arg_prepass(&base_ty, method, type_args, args, span)
-        {
+        if let Some(ret) = self.resolve_unambiguous_source_method_without_arg_prepass(
+            &base_ty,
+            method,
+            type_args,
+            args,
+            span,
+            expected_return_ty,
+        ) {
             return ret;
         }
 
@@ -3786,7 +3837,7 @@ impl TypeChecker {
             ));
             return Some(ResolvedType::Unknown);
         }
-        Some(self.check_generic_method_call(method, method_info, type_args, args, arg_types, span, receiver_ty))
+        Some(self.check_generic_method_call(method, method_info, type_args, args, arg_types, span, receiver_ty, None))
     }
 
     /// Return known method result types for Rust imports when rust-inspect metadata is not specific enough.

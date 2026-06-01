@@ -93,9 +93,11 @@ impl TypeChecker {
         explicit_type_args: &[Spanned<Type>],
         args: &[CallArg],
         call_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let arity_ok = self.validate_stdlib_module_call_arity(callable, &info.params, args, call_span);
-        let resolved = self.validate_function_call(callable, info, explicit_type_args, args, call_span);
+        let resolved =
+            self.validate_function_call(callable, info, explicit_type_args, args, call_span, expected_return_ty);
         if arity_ok { resolved } else { ResolvedType::Unknown }
     }
 

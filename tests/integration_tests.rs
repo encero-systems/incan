@@ -13339,6 +13339,89 @@ def main() -> None:
     }
 
     #[test]
+    fn consumer_check_desugared_generic_method_call_uses_expected_return_type_issue735()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
+            callee: Box::new(incan_vocab::IncanExpr::Field {
+                object: Box::new(incan_vocab::IncanExpr::Name("orders".to_string())),
+                field: "select".to_string(),
+            }),
+            args: vec![incan_vocab::IncanExpr::List(vec![incan_vocab::IncanExpr::Call {
+                callee: Box::new(incan_vocab::IncanExpr::Name("with_column_assignment".to_string())),
+                args: vec![
+                    incan_vocab::IncanExpr::Str("customer".to_string()),
+                    incan_vocab::IncanExpr::Call {
+                        callee: Box::new(incan_vocab::IncanExpr::Name("current_field".to_string())),
+                        args: vec![
+                            incan_vocab::IncanExpr::Name("orders".to_string()),
+                            incan_vocab::IncanExpr::Str("customer_id".to_string()),
+                        ],
+                    },
+                ],
+            }])],
+        });
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing SELECT clause payload",
+            r#""keyword":"SELECT""#,
+        )?;
+        write_pub_library_with_querykit_expression_clause_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+@derive(Clone)
+model Order:
+  customer_id: str
+
+@derive(Clone)
+model Selected:
+  customer: str
+
+@derive(Clone)
+model ColumnExpr:
+  source: str
+
+@derive(Clone)
+model ColumnAssignment[T with Clone]:
+  name: str
+
+def current_field[T with Clone](_frame: LazyFrame[T], source: str) -> ColumnExpr:
+  return ColumnExpr(source=source)
+
+def with_column_assignment[T with Clone](name: str, _expr: ColumnExpr) -> ColumnAssignment[T]:
+  return ColumnAssignment[T](name=name)
+
+@derive(Clone)
+class LazyFrame[T with Clone]:
+  _type_witness: list[T]
+
+  def select[U with Clone](self, columns: list[ColumnAssignment[U]]) -> LazyFrame[U]:
+    return LazyFrame[U](_type_witness=[])
+
+def direct_method_call(orders: LazyFrame[Order]) -> LazyFrame[Selected]:
+  return orders.select([with_column_assignment("customer", current_field(orders, "customer_id"))])
+
+def query_block_call(orders: LazyFrame[Order]) -> LazyFrame[Selected]:
+  return query { FROM orders SELECT customer_id as customer }
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected desugared generic method call to use the same contextual return type as direct source.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn equivalent_helper_backed_keywords_typecheck() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {

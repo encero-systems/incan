@@ -7,7 +7,8 @@ use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_
 use crate::frontend::symbols::{CallableParam, FunctionInfo, MethodInfo, ResolvedType, TypeInfo};
 
 impl TypeChecker {
-    /// Validate generic function call type arguments, value arguments, and explicit type-parameter bounds.
+    /// Validate generic function call type arguments, contextual return bindings, value arguments, and explicit
+    /// type-parameter bounds.
     pub(in crate::frontend::typechecker::check_expr::calls) fn validate_function_call(
         &mut self,
         func_name: &str,
@@ -15,6 +16,7 @@ impl TypeChecker {
         explicit_type_args: &[Spanned<Type>],
         args: &[CallArg],
         call_span: Span,
+        expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let mut seeded_type_bindings: std::collections::HashMap<String, ResolvedType> =
             std::collections::HashMap::new();
@@ -34,16 +36,10 @@ impl TypeChecker {
                 seeded_type_bindings = type_param_subst_map_call_site(&info.type_params, &resolved_explicit);
             }
         }
-        let params_with_explicit: Vec<CallableParam> = info
-            .params
-            .iter()
-            .map(|param| CallableParam {
-                name: param.name.clone(),
-                ty: substitute_resolved_type(&param.ty, &seeded_type_bindings),
-                kind: param.kind,
-                has_default: param.has_default,
-            })
-            .collect();
+        if let Some(expected) = expected_return_ty {
+            self.infer_type_param_bindings(&info.return_type, expected, &mut seeded_type_bindings);
+        }
+        let params_with_explicit = Self::substitute_callable_params(&info.params, &seeded_type_bindings);
         let arg_types = self.check_call_arg_types_for_params(args, &params_with_explicit);
         let mut type_bindings = seeded_type_bindings;
         self.validate_callable_arg_bindings(
@@ -54,15 +50,7 @@ impl TypeChecker {
             &mut type_bindings,
             call_span,
         );
-        let resolved_params: Vec<CallableParam> = params_with_explicit
-            .iter()
-            .map(|param| CallableParam {
-                name: param.name.clone(),
-                ty: substitute_resolved_type(&param.ty, &type_bindings),
-                kind: param.kind,
-                has_default: param.has_default,
-            })
-            .collect();
+        let resolved_params = Self::substitute_callable_params(&params_with_explicit, &type_bindings);
         self.type_info
             .record_call_site_callable_params(call_span, &resolved_params);
         self.emit_explicit_bound_errors(
@@ -158,7 +146,7 @@ impl TypeChecker {
     }
 
     /// Apply type bindings to callable parameters while preserving names, default markers, and parameter kind.
-    fn substitute_callable_params(
+    pub(in crate::frontend::typechecker::check_expr) fn substitute_callable_params(
         params: &[CallableParam],
         bindings: &std::collections::HashMap<String, ResolvedType>,
     ) -> Vec<CallableParam> {
@@ -181,9 +169,9 @@ impl TypeChecker {
     ///
     /// This runs the full generic call-site path for methods:
     /// - Validates arity when `explicit_type_args` is nonempty.
-    /// - Builds a partial substitution map (skipping [`ResolvedType::CallSiteInfer`] for `_` slots), applies it to the
-    ///   method’s declared parameter and return types, then substitutes call-site `Self` via
-    ///   [`TypeChecker::method_types_substituting_call_site_self`].
+    /// - Builds a partial substitution map (skipping [`ResolvedType::CallSiteInfer`] for `_` slots), substitutes
+    ///   call-site `Self` via [`TypeChecker::method_types_substituting_call_site_self`], then uses the optional
+    ///   expected return type to bind still-open method type parameters before argument checking.
     /// - Validates value arguments against the specialized formals, then runs [`Self::infer_type_param_bindings`] so
     ///   remaining type parameters are filled from argument types.
     /// - Enforces explicit `with` bounds, requires every method type parameter to be concretely bound when brackets
@@ -214,6 +202,7 @@ impl TypeChecker {
         _arg_types: &[ResolvedType],
         call_site_span: Span,
         receiver_ty: &ResolvedType,
+        expected_return_ty: Option<&ResolvedType>,
     ) -> ResolvedType {
         let mut type_bindings = self.receiver_type_param_bindings(receiver_ty);
         let explicit_arity_ok =
@@ -239,6 +228,9 @@ impl TypeChecker {
 
         // ---- Call-site `Self`, value-arg compatibility ----
         let (params, return_type) = self.method_types_substituting_call_site_self(&method_info, receiver_ty);
+        if let Some(expected) = expected_return_ty {
+            self.infer_type_param_bindings(&return_type, expected, &mut type_bindings);
+        }
         let params = Self::substitute_callable_params(&params, &type_bindings);
         let return_type = substitute_resolved_type(&return_type, &type_bindings);
         let arg_types = self.check_call_arg_types_for_params(args, &params);
