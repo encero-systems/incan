@@ -36,6 +36,7 @@ use std::sync::Arc;
 use crate::frontend::ast::Program;
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 
 use super::emit::CallableNameResolution;
 use super::scanners::{
@@ -172,6 +173,9 @@ pub struct IrCodegen<'a> {
     public_ordinal_type_identities: HashMap<String, String>,
     /// Whether non-stdlib dependency modules keep public items that are not otherwise reachable.
     preserve_dependency_public_items: bool,
+    /// Shared stdlib source metadata cache reused across the repeated internal typecheck/lowering passes that codegen
+    /// performs for multi-module builds.
+    stdlib_cache: StdlibAstCache,
     /// Manifest/workspace root for rust-inspect-backed typechecking during IR generation.
     #[cfg(feature = "rust_inspect")]
     rust_inspect_manifest_dir: Option<PathBuf>,
@@ -195,6 +199,7 @@ impl<'a> IrCodegen<'a> {
             externally_reachable_items_by_module: HashMap::new(),
             public_ordinal_type_identities: HashMap::new(),
             preserve_dependency_public_items: true,
+            stdlib_cache: StdlibAstCache::new(),
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
@@ -305,6 +310,11 @@ impl<'a> IrCodegen<'a> {
         self.preserve_dependency_public_items = enabled;
     }
 
+    /// Seed codegen with stdlib metadata already collected by an earlier typecheck phase.
+    pub(crate) fn set_stdlib_cache(&mut self, cache: StdlibAstCache) {
+        self.stdlib_cache = cache;
+    }
+
     /// Set declared Rust crate names from `incan.toml [rust-dependencies]`. (RFC 031)
     ///
     /// This is used for validating `rust.module()` paths during the internal typechecking that precedes IR lowering.
@@ -340,6 +350,7 @@ impl<'a> IrCodegen<'a> {
     }
 
     fn configure_typechecker(&self, tc: &mut crate::frontend::typechecker::TypeChecker) {
+        tc.stdlib_cache = self.stdlib_cache.clone();
         if let Some(names) = self.declared_crate_names.clone() {
             tc.set_declared_crate_names(names);
         }
@@ -350,6 +361,15 @@ impl<'a> IrCodegen<'a> {
         if let Some(dir) = self.rust_inspect_manifest_dir.clone() {
             tc.set_rust_inspect_manifest_dir(dir);
         }
+    }
+
+    fn capture_typechecker_stdlib_cache(&mut self, tc: &crate::frontend::typechecker::TypeChecker) {
+        self.stdlib_cache = tc.stdlib_cache.clone();
+    }
+
+    fn configure_lowering(&self, lowering: &mut AstLowering) {
+        lowering.set_stdlib_cache(self.stdlib_cache.clone());
+        lowering.set_library_manifest_index(self.library_manifest_index.clone());
     }
 
     /// Add a dependency module (for multi-file compilation)
@@ -520,7 +540,7 @@ impl<'a> IrCodegen<'a> {
 
     /// Generate code via the IR pipeline (fallible version)
     fn try_generate_via_ir(
-        &self,
+        &mut self,
         program: &Program,
         internal_module_roots: &HashSet<String>,
     ) -> Result<String, GenerationError> {
@@ -529,7 +549,7 @@ impl<'a> IrCodegen<'a> {
 
     /// Generate code via the IR pipeline with optional crate-root union sharing for multi-file source modules.
     fn try_generate_via_ir_with_union_config(
-        &self,
+        &mut self,
         program: &Program,
         internal_module_roots: &HashSet<String>,
         generated_union_types: HashMap<String, super::types::IrType>,
@@ -537,17 +557,14 @@ impl<'a> IrCodegen<'a> {
         mut callable_name_resolutions: Option<&mut HashMap<String, CallableNameResolution>>,
         mut callable_name_used_signature_keys: Option<&mut HashSet<String>>,
     ) -> Result<String, GenerationError> {
-        let deps: Vec<(&str, &Program)> = self
-            .dependency_modules
-            .iter()
-            .map(|(name, ast, _)| (*name, *ast))
-            .collect();
+        let dependency_modules = self.dependency_modules.clone();
+        let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
 
         // RFC 021: Make alias-aware lowering work across module boundaries by seeding alias maps
         // for models declared in dependency modules as well.
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&self.dependency_modules);
-        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &self.dependency_modules);
+        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
+        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
         let ordinal_bridge = self.ordinal_bridge_config(uses_std_ordinal_contract);
         let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
 
@@ -558,22 +575,24 @@ impl<'a> IrCodegen<'a> {
             use crate::frontend::typechecker::TypeChecker;
             let mut tc = TypeChecker::new();
             self.configure_typechecker(&mut tc);
-            match tc.check_with_imports(program, &deps) {
+            let result = match tc.check_with_imports(program, &deps) {
                 Ok(()) => tc.type_info().clone(),
                 Err(errs) => return Err(GenerationError::TypeCheck(errs)),
-            }
+            };
+            self.capture_typechecker_stdlib_cache(&tc);
+            result
         };
 
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
-        lowering.set_library_manifest_index(self.library_manifest_index.clone());
+        self.configure_lowering(&mut lowering);
         lowering.set_current_source_module_name(
             program
                 .source_path
                 .as_deref()
                 .and_then(crate::frontend::module::logical_module_name_from_source_path),
         );
-        lowering.seed_dependency_trait_decls(&self.dependency_modules);
+        lowering.seed_dependency_trait_decls(&dependency_modules);
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
         if self.needs_serde {
@@ -610,17 +629,20 @@ impl<'a> IrCodegen<'a> {
         }
 
         let mut dependency_ir_programs = Vec::new();
-        for (dep_name, dep_ast, dep_path_segments) in &self.dependency_modules {
+        for (dep_name, dep_ast, dep_path_segments) in dependency_modules.clone() {
             let dep_type_info = {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
                 self.configure_typechecker(&mut tc);
-                match tc.check_with_imports_allow_private(dep_ast, &deps) {
+                let result = match tc.check_with_imports_allow_private(dep_ast, &deps) {
                     Ok(()) => tc.type_info().clone(),
                     Err(errs) => return Err(GenerationError::TypeCheck(errs)),
-                }
+                };
+                self.capture_typechecker_stdlib_cache(&tc);
+                result
             };
             let mut dep_lowering = AstLowering::new_with_type_info(dep_type_info);
+            self.configure_lowering(&mut dep_lowering);
             dep_lowering.set_current_source_module_name(
                 dep_path_segments
                     .clone()
@@ -632,13 +654,11 @@ impl<'a> IrCodegen<'a> {
                             .and_then(crate::frontend::module::logical_module_name_from_source_path)
                     }),
             );
-            dep_lowering.seed_dependency_trait_decls(&self.dependency_modules);
+            dep_lowering.seed_dependency_trait_decls(&dependency_modules);
             dep_lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
             super::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
-            let module_path = dep_path_segments
-                .clone()
-                .unwrap_or_else(|| vec![(*dep_name).to_string()]);
+            let module_path = dep_path_segments.clone().unwrap_or_else(|| vec![dep_name.to_string()]);
             dependency_ir_programs.push((module_path, dep_ir));
         }
         let dependency_programs = dependency_ir_programs
@@ -723,27 +743,28 @@ impl<'a> IrCodegen<'a> {
     /// Returns `GenerationError::Lowering` if AST lowering fails, or
     /// `GenerationError::Emission` if IR emission fails.
     pub fn try_generate_module(&mut self, module_name: &str, program: &Program) -> Result<String, GenerationError> {
+        let dependency_modules = self.dependency_modules.clone();
         // Use the IR pipeline for module generation too
         let mut lowering = AstLowering::new();
-        lowering.set_library_manifest_index(self.library_manifest_index.clone());
+        self.configure_lowering(&mut lowering);
         lowering.set_current_source_module_name(
             program
                 .source_path
                 .as_deref()
                 .and_then(crate::frontend::module::logical_module_name_from_source_path),
         );
-        lowering.seed_dependency_trait_decls(&self.dependency_modules);
+        lowering.seed_dependency_trait_decls(&dependency_modules);
         let mut ir_program = lowering.lower_program(program)?;
 
         // RFC 023: Infer trait bounds for generic functions.
         super::trait_bound_inference::infer_trait_bounds(&mut ir_program);
         let mut dependency_ir_programs = Vec::new();
-        for (dep_name, dep_ast, dep_path_segments) in &self.dependency_modules {
-            if *dep_name == module_name {
+        for (dep_name, dep_ast, dep_path_segments) in dependency_modules.clone() {
+            if dep_name == module_name {
                 continue;
             }
             let mut dep_lowering = AstLowering::new();
-            dep_lowering.set_library_manifest_index(self.library_manifest_index.clone());
+            self.configure_lowering(&mut dep_lowering);
             dep_lowering.set_current_source_module_name(
                 dep_path_segments
                     .clone()
@@ -755,7 +776,7 @@ impl<'a> IrCodegen<'a> {
                             .and_then(crate::frontend::module::logical_module_name_from_source_path)
                     }),
             );
-            dep_lowering.seed_dependency_trait_decls(&self.dependency_modules);
+            dep_lowering.seed_dependency_trait_decls(&dependency_modules);
             let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
             super::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
             dependency_ir_programs.push(dep_ir);
@@ -844,42 +865,40 @@ impl<'a> IrCodegen<'a> {
 
         let internal_roots: HashSet<String> = module_names.iter().map(|s| (*s).to_string()).collect();
 
-        let deps: Vec<(&str, &Program)> = self
-            .dependency_modules
-            .iter()
-            .map(|(name, ast, _)| (*name, *ast))
-            .collect();
+        let dependency_modules = self.dependency_modules.clone();
+        let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&self.dependency_modules);
-        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &self.dependency_modules);
+        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
+        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
         let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(uses_std_ordinal_contract);
-        let dependency_reachable_items =
-            collect_externally_reachable_items_by_module(program, &self.dependency_modules);
+        let dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
 
         // Generate module files
         let mut lowered_modules = Vec::new();
-        for (name, ast, path_segments) in &self.dependency_modules {
-            if !module_names.contains(name) {
+        for (name, ast, path_segments) in dependency_modules.clone() {
+            if !module_names.contains(&name) {
                 continue;
             }
             let module_type_info = {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
                 self.configure_typechecker(&mut tc);
-                match tc.check_with_imports_allow_private(ast, &deps) {
+                let result = match tc.check_with_imports_allow_private(ast, &deps) {
                     Ok(()) => tc.type_info().clone(),
                     Err(errs) => return Err(GenerationError::TypeCheck(errs)),
-                }
+                };
+                self.capture_typechecker_stdlib_cache(&tc);
+                result
             };
             let mut lowering = AstLowering::new_with_type_info(module_type_info);
-            lowering.set_library_manifest_index(self.library_manifest_index.clone());
+            self.configure_lowering(&mut lowering);
             lowering.set_current_source_module_name(Some(
                 path_segments
                     .clone()
                     .unwrap_or_else(|| vec![name.to_string()])
                     .join("."),
             ));
-            lowering.seed_dependency_trait_decls(&self.dependency_modules);
+            lowering.seed_dependency_trait_decls(&dependency_modules);
             lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut ir = lowering.lower_program(ast)?;
             // Do not auto-add serde derives to dependency modules.
@@ -1075,22 +1094,18 @@ impl<'a> IrCodegen<'a> {
 
         let internal_roots: HashSet<String> = module_paths.iter().filter_map(|p| p.first().cloned()).collect();
 
-        let deps: Vec<(&str, &Program)> = self
-            .dependency_modules
-            .iter()
-            .map(|(name, ast, _)| (*name, *ast))
-            .collect();
+        let dependency_modules = self.dependency_modules.clone();
+        let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&self.dependency_modules);
-        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &self.dependency_modules);
+        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
+        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
         let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(uses_std_ordinal_contract);
-        let dependency_reachable_items =
-            collect_externally_reachable_items_by_module(program, &self.dependency_modules);
+        let dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
 
         // Generate module files by path
         let mut lowered_modules = Vec::new();
-        for (name, ast, stored_path_segments) in &self.dependency_modules {
-            let matching_path = if let Some(stored_path_segments) = stored_path_segments {
+        for (name, ast, stored_path_segments) in dependency_modules.clone() {
+            let matching_path = if let Some(stored_path_segments) = &stored_path_segments {
                 module_paths.iter().find(|path| *path == stored_path_segments)
             } else {
                 // Legacy callers may still register only a flat module name. Prefer explicit path segments when they
@@ -1102,15 +1117,17 @@ impl<'a> IrCodegen<'a> {
                     use crate::frontend::typechecker::TypeChecker;
                     let mut tc = TypeChecker::new();
                     self.configure_typechecker(&mut tc);
-                    match tc.check_with_imports_allow_private(ast, &deps) {
+                    let result = match tc.check_with_imports_allow_private(ast, &deps) {
                         Ok(()) => tc.type_info().clone(),
                         Err(errs) => return Err(GenerationError::TypeCheck(errs)),
-                    }
+                    };
+                    self.capture_typechecker_stdlib_cache(&tc);
+                    result
                 };
                 let mut lowering = AstLowering::new_with_type_info(module_type_info);
-                lowering.set_library_manifest_index(self.library_manifest_index.clone());
+                self.configure_lowering(&mut lowering);
                 lowering.set_current_source_module_name(Some(path.join(".")));
-                lowering.seed_dependency_trait_decls(&self.dependency_modules);
+                lowering.seed_dependency_trait_decls(&dependency_modules);
                 lowering.seed_struct_field_aliases(global_aliases.clone());
                 let mut ir = lowering.lower_program(ast)?;
                 // Do not auto-add serde derives to dependency modules.

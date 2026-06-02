@@ -116,7 +116,7 @@ fn disk_cache_invalidates_when_workspace_fingerprint_changes() -> Result<(), Box
         tmp.path(),
         &DiskCacheEnvelope {
             cache_format: DISK_CACHE_FORMAT,
-            inspector_version: INSPECTOR_VERSION.to_string(),
+            inspector_version: format!("cache-format-{DISK_CACHE_FORMAT}"),
             workspace_fingerprint: fingerprint,
             items: HashMap::from([("demo::Thing".to_string(), dummy_type_metadata("demo::Thing"))]),
             misses: HashMap::new(),
@@ -150,6 +150,67 @@ fn malformed_disk_cache_is_treated_as_miss() -> Result<(), Box<dyn std::error::E
     let mut inner = CacheInner::default();
     ensure_disk_cache_loaded(&mut inner, tmp.path())?;
     assert!(inner.items.is_empty());
+    Ok(())
+}
+
+#[test]
+fn disk_cache_does_not_invalidate_on_package_version_label() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    let fingerprint = workspace_fingerprint(tmp.path())?;
+    write_disk_cache(
+        tmp.path(),
+        &DiskCacheEnvelope {
+            cache_format: DISK_CACHE_FORMAT,
+            inspector_version: "0.3.0-old-rc-label".to_string(),
+            workspace_fingerprint: fingerprint,
+            items: HashMap::from([("demo::Thing".to_string(), dummy_type_metadata("demo::Thing"))]),
+            misses: HashMap::new(),
+        },
+    )?;
+
+    let mut inner = CacheInner::default();
+    ensure_disk_cache_loaded(&mut inner, tmp.path())?;
+    assert!(
+        inner
+            .items
+            .contains_key(&(tmp.path().to_path_buf(), "demo::Thing".to_string())),
+        "rust-inspect metadata compatibility is controlled by DISK_CACHE_FORMAT, not package version labels"
+    );
+    Ok(())
+}
+
+#[test]
+fn disk_cache_accepts_legacy_versioned_workspace_fingerprint() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    let old_version = "0.3.0-rc43";
+    let fingerprint = legacy_versioned_workspace_fingerprint(tmp.path(), old_version)?;
+    write_disk_cache(
+        tmp.path(),
+        &DiskCacheEnvelope {
+            cache_format: DISK_CACHE_FORMAT,
+            inspector_version: old_version.to_string(),
+            workspace_fingerprint: fingerprint,
+            items: HashMap::from([("demo::Thing".to_string(), dummy_type_metadata("demo::Thing"))]),
+            misses: HashMap::new(),
+        },
+    )?;
+
+    let mut inner = CacheInner::default();
+    ensure_disk_cache_loaded(&mut inner, tmp.path())?;
+    assert!(
+        inner
+            .items
+            .contains_key(&(tmp.path().to_path_buf(), "demo::Thing".to_string())),
+        "rc-bumped toolchains should reuse old versioned rust-inspect caches when dependency inputs still match"
+    );
     Ok(())
 }
 
@@ -280,6 +341,170 @@ fn repeated_missing_lookup_hits_negative_cache_without_new_workspace_load()
     assert_eq!(
         workspaces_after_second, workspaces_after_first,
         "negative-cache hit should avoid loading additional workspaces on repeated misses"
+    );
+    Ok(())
+}
+
+#[test]
+fn dependency_manifest_resolution_is_cached_per_manifest_root() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+
+    let root = tmp.path().canonicalize()?;
+    let mut inner = CacheInner::default();
+    let crate_name = "definitely_missing_dependency";
+
+    assert!(resolve_dependency_manifest_dir(&mut inner, &root, crate_name, Some(&[])).is_none());
+    assert!(inner
+        .dependency_manifest_dirs
+        .contains_key(&(root.clone(), crate_name.to_string())));
+    let cached_entries = inner.dependency_manifest_dirs.len();
+
+    assert!(resolve_dependency_manifest_dir(&mut inner, &root, crate_name, Some(&[])).is_none());
+    assert_eq!(
+        inner.dependency_manifest_dirs.len(),
+        cached_entries,
+        "repeat dependency-root lookups should use the in-memory resolution cache"
+    );
+    Ok(())
+}
+
+#[test]
+fn dependency_manifest_resolution_cache_normalizes_crate_spelling() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+
+    let root = tmp.path().canonicalize()?;
+    let mut inner = CacheInner::default();
+
+    assert!(resolve_dependency_manifest_dir(&mut inner, &root, "foo_bar", Some(&[])).is_none());
+    let cached_entries = inner.dependency_manifest_dirs.len();
+    assert!(resolve_dependency_manifest_dir(&mut inner, &root, "foo-bar", Some(&[])).is_none());
+    assert_eq!(
+        inner.dependency_manifest_dirs.len(),
+        cached_entries,
+        "hyphen and underscore crate spellings should share dependency-root resolution cache entries"
+    );
+    assert!(inner
+        .dependency_manifest_dirs
+        .contains_key(&(root, "foo_bar".to_string())));
+    Ok(())
+}
+
+#[test]
+fn root_out_dir_workspace_is_skipped_for_non_root_crate_misses() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    fs::write(
+        tmp.path().join("Cargo.toml"),
+        "[package]\nname = \"root-probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )?;
+    fs::create_dir_all(tmp.path().join("src"))?;
+    fs::write(tmp.path().join("src/lib.rs"), "pub fn keep() {}\n")?;
+
+    let cache = RustMetadataCache::new();
+    let query = "external_crate::Missing";
+
+    let result = cache.get_or_extract(tmp.path(), query, &|_| ());
+    assert!(matches!(
+        result,
+        Err(RustMetadataError::CrateNotFound(_))
+            | Err(RustMetadataError::PathNotResolved(_))
+            | Err(RustMetadataError::UnsupportedMacro(_))
+    ));
+
+    let root = tmp.path().canonicalize()?;
+    let inner = cache
+        .inner
+        .lock()
+        .map_err(|_| std::io::Error::other("poisoned cache"))?;
+    assert!(
+        !inner.workspaces.contains_key(&(root, true)),
+        "a dependency or stdlib miss should not force the expensive root out-dir workspace route"
+    );
+    Ok(())
+}
+
+#[test]
+fn dependency_reexport_alias_candidate_uses_public_crate_reexports() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let dep_root = tmp.path().join("wrapper-crate");
+    fs::create_dir_all(dep_root.join("src"))?;
+    fs::write(
+        dep_root.join("Cargo.toml"),
+        "[package]\nname = \"wrapper-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"wrapper_crate\"\n",
+    )?;
+    fs::write(
+        dep_root.join("src").join("lib.rs"),
+        "// re-exported dependency\npub use inner_crate;\npub use renamed_crate as renamed;\nuse private_crate;\n",
+    )?;
+
+    let mut inner = CacheInner::default();
+    assert_eq!(
+        dependency_reexport_alias_candidate(&mut inner, dep_root.as_path(), "wrapper_crate::inner_crate::Thing")
+            .as_deref(),
+        Some("inner_crate::Thing")
+    );
+    assert_eq!(
+        dependency_reexport_alias_candidate(&mut inner, dep_root.as_path(), "wrapper_crate::renamed::Thing")
+            .as_deref(),
+        Some("renamed_crate::Thing")
+    );
+    assert_eq!(
+        dependency_reexport_alias_candidate(&mut inner, dep_root.as_path(), "wrapper_crate::private_crate::Thing"),
+        None,
+        "private use declarations must not become public re-export identity aliases"
+    );
+    Ok(())
+}
+
+#[test]
+fn dependency_reexport_alias_miss_skips_wrapper_workspace() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let root = tmp.path().join("root");
+    let wrapper_root = tmp.path().join("wrapper-crate");
+    let inner_root = tmp.path().join("inner-crate");
+    fs::create_dir_all(root.join("src"))?;
+    fs::create_dir_all(wrapper_root.join("src"))?;
+    fs::create_dir_all(inner_root.join("src"))?;
+    fs::write(
+        root.join("Cargo.toml"),
+        "[package]\nname = \"root\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\nwrapper-crate = { path = \"../wrapper-crate\" }\n",
+    )?;
+    fs::write(root.join("src").join("lib.rs"), "pub fn keep() {}\n")?;
+    fs::write(
+        wrapper_root.join("Cargo.toml"),
+        "[package]\nname = \"wrapper-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"wrapper_crate\"\n\n[dependencies]\ninner-crate = { path = \"../inner-crate\" }\n",
+    )?;
+    fs::write(wrapper_root.join("src").join("lib.rs"), "pub use inner_crate;\n")?;
+    fs::write(
+        inner_root.join("Cargo.toml"),
+        "[package]\nname = \"inner-crate\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"inner_crate\"\n",
+    )?;
+    fs::write(inner_root.join("src").join("lib.rs"), "pub struct Present;\n")?;
+
+    let cache = RustMetadataCache::new();
+    let result = cache.get_or_extract(&root, "wrapper_crate::inner_crate::Missing", &|_| ());
+    assert!(matches!(
+        result,
+        Err(RustMetadataError::CrateNotFound(_))
+            | Err(RustMetadataError::PathNotResolved(_))
+            | Err(RustMetadataError::UnsupportedMacro(_))
+    ));
+
+    let wrapper_root = wrapper_root.canonicalize()?;
+    let inner = cache
+        .inner
+        .lock()
+        .map_err(|_| std::io::Error::other("poisoned cache"))?;
+    assert!(
+        !inner.workspaces.contains_key(&(wrapper_root, true)),
+        "a miss through a public crate re-export should not repeat the lookup through the wrapper dependency"
     );
     Ok(())
 }
