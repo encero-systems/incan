@@ -13422,6 +13422,54 @@ def query_block_call(orders: LazyFrame[Order]) -> LazyFrame[Selected]:
     }
 
     #[test]
+    fn consumer_test_activates_dependency_vocab_surfaces_issue730() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing SELECT clause payload",
+            r#""keyword":"SELECT""#,
+        )?;
+        write_pub_library_with_querykit_expression_clause_desugarer(tmp.path(), &wasm)?;
+
+        write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            "def main() -> None:\n  return\n",
+        )?;
+        let tests_dir = tmp.path().join("tests");
+        std::fs::create_dir_all(&tests_dir)?;
+        let test_path = tests_dir.join("test_query_vocab.incn");
+        std::fs::write(
+            &test_path,
+            r#"import pub::querykit
+
+def test_dependency_vocab_query_block() -> None:
+  selected: int = query { FROM orders SELECT amount as total }
+  assert selected == 7
+"#,
+        )?;
+
+        let check_output = run_check(&test_path)?;
+        assert!(
+            check_output.status.success(),
+            "expected ordinary check to parse dependency-activated vocab in a test file.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&check_output.stdout),
+            String::from_utf8_lossy(&check_output.stderr)
+        );
+
+        let test_output = run_test(&test_path)?;
+        assert!(
+            test_output.status.success(),
+            "expected incan test to parse and run dependency-activated vocab in a test file.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn equivalent_helper_backed_keywords_typecheck() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {

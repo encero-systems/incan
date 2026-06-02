@@ -333,10 +333,16 @@ fn collect_top_level_name_summary(
     path: &Path,
     source: &str,
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+    library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
 ) -> Option<TopLevelNameSummary> {
     let tokens = lexer::lex(source).ok()?;
-    let ast =
-        parser::parse_with_context(&tokens, Some(path.to_string_lossy().as_ref()), library_imported_vocab).ok()?;
+    let ast = parser::parse_with_context_and_surfaces(
+        &tokens,
+        Some(path.to_string_lossy().as_ref()),
+        library_imported_vocab,
+        library_imported_dsl_surfaces,
+    )
+    .ok()?;
     let names = collect_top_level_decl_names(&ast_with_inline_test_declarations(&ast));
     Some(TopLevelNameSummary {
         path: path.to_path_buf(),
@@ -348,10 +354,13 @@ fn collect_top_level_name_summary(
 fn collect_top_level_name_summaries(
     sources_by_file: &[(PathBuf, String)],
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+    library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
 ) -> Option<Vec<TopLevelNameSummary>> {
     sources_by_file
         .iter()
-        .map(|(path, source)| collect_top_level_name_summary(path, source, library_imported_vocab))
+        .map(|(path, source)| {
+            collect_top_level_name_summary(path, source, library_imported_vocab, library_imported_dsl_surfaces)
+        })
         .collect()
 }
 
@@ -419,11 +428,12 @@ fn top_level_summaries_have_collision<'a>(summaries: impl IntoIterator<Item = &'
 fn batch_has_cross_file_top_level_collision(
     sources_by_file: &[(PathBuf, String)],
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+    library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
 ) -> bool {
     if sources_by_file.len() <= 1 {
         return false;
     }
-    collect_top_level_name_summaries(sources_by_file, library_imported_vocab)
+    collect_top_level_name_summaries(sources_by_file, library_imported_vocab, library_imported_dsl_surfaces)
         .is_some_and(|summaries| top_level_summaries_have_collision(&summaries))
 }
 
@@ -435,8 +445,11 @@ fn batch_has_cross_file_top_level_collision(
 fn partition_collision_free_file_groups(
     sources_by_file: &[(PathBuf, String)],
     library_imported_vocab: Option<&parser::ImportedLibraryVocab>,
+    library_imported_dsl_surfaces: Option<&parser::ImportedLibraryDslSurfaces>,
 ) -> Vec<Vec<PathBuf>> {
-    let Some(summaries) = collect_top_level_name_summaries(sources_by_file, library_imported_vocab) else {
+    let Some(summaries) =
+        collect_top_level_name_summaries(sources_by_file, library_imported_vocab, library_imported_dsl_surfaces)
+    else {
         return vec![sources_by_file.iter().map(|(path, _)| path.clone()).collect()];
     };
 
@@ -2861,9 +2874,17 @@ pub(super) fn run_file_tests_batch(
     let (runner_ast, fixtures, source_modules, module_harnesses) = if let Some(batch) = inline_module_batch {
         (batch.ast, HashMap::new(), batch.source_modules, batch.harnesses)
     } else {
-        if batch_has_cross_file_top_level_collision(&sources_by_file, Some(&library_imported_vocab)) {
+        if batch_has_cross_file_top_level_collision(
+            &sources_by_file,
+            Some(&library_imported_vocab),
+            Some(&library_imported_dsl_surfaces),
+        ) {
             let mut split_results = Vec::new();
-            for file_group in partition_collision_free_file_groups(&sources_by_file, Some(&library_imported_vocab)) {
+            for file_group in partition_collision_free_file_groups(
+                &sources_by_file,
+                Some(&library_imported_vocab),
+                Some(&library_imported_dsl_surfaces),
+            ) {
                 let file_group = file_group.into_iter().collect::<BTreeSet<_>>();
                 let file_tests = tests
                     .iter()
@@ -3646,7 +3667,7 @@ mod tests {
             ),
         ];
 
-        assert!(batch_has_cross_file_top_level_collision(&sources, None));
+        assert!(batch_has_cross_file_top_level_collision(&sources, None, None));
     }
 
     #[test]
@@ -3662,7 +3683,7 @@ mod tests {
             ),
         ];
 
-        assert!(!batch_has_cross_file_top_level_collision(&sources, None));
+        assert!(!batch_has_cross_file_top_level_collision(&sources, None, None));
     }
 
     #[test]
@@ -3686,7 +3707,7 @@ mod tests {
             ),
         ];
 
-        let groups = partition_collision_free_file_groups(&sources, None);
+        let groups = partition_collision_free_file_groups(&sources, None, None);
 
         assert_eq!(
             groups,
@@ -3935,7 +3956,7 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
             ),
         ];
 
-        let groups = partition_collision_free_file_groups(&sources, None);
+        let groups = partition_collision_free_file_groups(&sources, None, None);
 
         assert_eq!(groups.len(), 2);
     }
@@ -3953,7 +3974,7 @@ test test_runner_76001490ba86f677::__incan_file_tests::incan_harness_1_b ... FAI
             ),
         ];
 
-        let groups = partition_collision_free_file_groups(&sources, None);
+        let groups = partition_collision_free_file_groups(&sources, None, None);
 
         assert_eq!(groups.len(), 1);
     }

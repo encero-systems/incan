@@ -76,8 +76,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4]
-        total: [4]
+        partition: [1, 2, 3, 4, 5]
+        total: [5]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
@@ -118,10 +118,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4]
-        total: [4]
+        partition: [1, 2, 3, 4, 5]
+        total: [5]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
@@ -182,10 +182,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        partition: [1, 2, 3, 4]
-        total: [4]
+        partition: [1, 2, 3, 4, 5]
+        total: [5]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install Rust 1.92.0
         uses: dtolnay/rust-toolchain@master
         with:

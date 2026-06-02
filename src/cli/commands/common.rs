@@ -232,6 +232,23 @@ impl CompilationSession {
             .unwrap_or_default()
     }
 
+    /// Lex and parse one source file using the project-aware vocabulary surfaces, without running desugarers or
+    /// compile-time materialization passes.
+    pub(crate) fn parse_source_for_collection(
+        &self,
+        file_path: &Path,
+        source: &str,
+    ) -> Result<Program, Vec<diagnostics::CompileError>> {
+        let tokens = lexer::lex(source)?;
+        let file_path_display = file_path.to_string_lossy();
+        parser::parse_with_context_and_surfaces(
+            &tokens,
+            Some(file_path_display.as_ref()),
+            Some(&self.library_imported_vocab),
+            Some(&self.library_imported_dsl_surfaces),
+        )
+    }
+
     /// Lex, parse, vocab-desugar, and optionally materialize checked contract models for one source file.
     pub(crate) fn parse_source(
         &self,
@@ -239,14 +256,8 @@ impl CompilationSession {
         source: &str,
         materialize_models: bool,
     ) -> Result<Program, Vec<diagnostics::CompileError>> {
-        let tokens = lexer::lex(source)?;
+        let mut ast = self.parse_source_for_collection(file_path, source)?;
         let file_path_display = file_path.to_string_lossy();
-        let mut ast = parser::parse_with_context_and_surfaces(
-            &tokens,
-            Some(file_path_display.as_ref()),
-            Some(&self.library_imported_vocab),
-            Some(&self.library_imported_dsl_surfaces),
-        )?;
         vocab_desugar_pass::desugar_program_vocab_blocks(
             &mut ast,
             Some(file_path_display.as_ref()),
