@@ -24,6 +24,11 @@ struct UnionPatternTarget {
     variants: Vec<UnionPatternVariant>,
 }
 
+#[derive(Debug, Clone)]
+struct NarrowedUnionCaptureBinding {
+    name: String,
+}
+
 impl AstLowering {
     /// Lower a type while expanding local transparent aliases used in pattern positions.
     fn lower_type_pattern_name_expanded(&self, name: &str) -> IrType {
@@ -235,6 +240,18 @@ impl AstLowering {
         }
     }
 
+    /// Return the direct match subject binding that may need an arm-local narrowed shadow binding.
+    fn direct_match_subject_binding_name(scrutinee: &TypedExpr) -> Option<&str> {
+        match &scrutinee.kind {
+            IrExprKind::Var {
+                name,
+                ref_kind: VarRefKind::Value,
+                ..
+            } => Some(name.as_str()),
+            _ => None,
+        }
+    }
+
     /// Build a value expression that wraps one concrete source union payload into the narrowed target union wrapper.
     fn narrowed_union_binding_value(
         target_ty: &IrType,
@@ -288,8 +305,11 @@ impl AstLowering {
         arm: &Spanned<ast::MatchArm>,
         scrutinee_ty: &IrType,
         target: UnionPatternTarget,
-        binding_name: &str,
+        bindings: &[NarrowedUnionCaptureBinding],
     ) -> Result<Vec<MatchArm>, LoweringError> {
+        let Some(primary_binding) = bindings.first() else {
+            return Ok(Vec::new());
+        };
         let source_union_ty = match scrutinee_ty {
             IrType::Option(inner) if inner.is_union() => inner.as_ref(),
             _ => scrutinee_ty,
@@ -302,7 +322,7 @@ impl AstLowering {
         for variant in target.variants {
             let temp_name = format!(
                 "__incan_union_{}_{}",
-                binding_name,
+                primary_binding.name,
                 IrType::union_variant_name(variant.source_index)
             );
             let union_pattern = Pattern::Enum {
@@ -323,16 +343,11 @@ impl AstLowering {
             } else {
                 union_pattern
             };
-            let binding_value = Self::narrowed_union_binding_value(
-                &target.target_ty,
-                variant.target_index,
-                temp_name.clone(),
-                variant.source_ty.clone(),
-                VarAccess::Move,
-            );
 
             self.push_scope();
-            self.define_local_binding(binding_name.to_string(), target.target_ty.clone(), false);
+            for binding in bindings {
+                self.define_local_binding(binding.name.clone(), target.target_ty.clone(), false);
+            }
             let arm_result = (|| {
                 let guard = arm
                     .node
@@ -353,27 +368,60 @@ impl AstLowering {
                         )
                     }
                 };
-                let guard_value = guard
-                    .as_ref()
-                    .filter(|guard| crate::backend::ir::scanners::expr_uses_binding_name(guard, binding_name))
-                    .map(|_| {
-                        Self::narrowed_union_binding_value(
+                let mut materialized = bindings
+                    .iter()
+                    .filter_map(|binding| {
+                        let guard_uses_binding = guard.as_ref().is_some_and(|guard| {
+                            crate::backend::ir::scanners::expr_uses_binding_name(guard, &binding.name)
+                        });
+                        let body_uses_binding =
+                            crate::backend::ir::scanners::expr_uses_binding_name(&body, &binding.name);
+                        (guard_uses_binding || body_uses_binding).then_some((
+                            binding.name.clone(),
+                            guard_uses_binding,
+                            body_uses_binding,
+                        ))
+                    })
+                    .collect::<Vec<_>>();
+                let move_binding_index = materialized
+                    .last()
+                    .and_then(|(_, _, body_uses_binding)| body_uses_binding.then_some(materialized.len() - 1));
+                let bindings = materialized
+                    .drain(..)
+                    .enumerate()
+                    .map(|(idx, (name, guard_uses_binding, _))| {
+                        let value_access = if move_binding_index == Some(idx) {
+                            VarAccess::Move
+                        } else {
+                            VarAccess::Read
+                        };
+                        let value = Self::narrowed_union_binding_value(
                             &target.target_ty,
                             variant.target_index,
-                            temp_name,
-                            variant.source_ty,
-                            VarAccess::Read,
-                        )
-                    });
-                let binding = MatchArmBinding {
-                    name: binding_name.to_string(),
-                    ty: target.target_ty.clone(),
-                    value: binding_value,
-                    guard_value,
-                };
+                            temp_name.clone(),
+                            variant.source_ty.clone(),
+                            value_access,
+                        );
+                        let guard_value = guard_uses_binding.then(|| {
+                            Self::narrowed_union_binding_value(
+                                &target.target_ty,
+                                variant.target_index,
+                                temp_name.clone(),
+                                variant.source_ty.clone(),
+                                VarAccess::Read,
+                            )
+                        });
+                        MatchArmBinding {
+                            name,
+                            ty: target.target_ty.clone(),
+                            value,
+                            guard_value,
+                        }
+                    })
+                    .collect();
                 Ok(MatchArm {
                     pattern,
-                    bindings: vec![binding],
+                    bindings,
                     guard,
                     body,
                 })
@@ -397,8 +445,10 @@ impl AstLowering {
     pub(in crate::backend::ir::lower) fn lower_match_arms(
         &mut self,
         arms: &[Spanned<ast::MatchArm>],
-        scrutinee_ty: &IrType,
+        scrutinee: &TypedExpr,
     ) -> Result<Vec<MatchArm>, LoweringError> {
+        let scrutinee_ty = &scrutinee.ty;
+        let subject_binding_name = Self::direct_match_subject_binding_name(scrutinee);
         let mut lowered_arms = Vec::new();
         let mut remaining_union_members = scrutinee_ty.union_members().map(|members| members.to_vec());
 
@@ -408,12 +458,31 @@ impl AstLowering {
                 .and_then(|remaining| self.match_arm_remainder_type(&a.node.pattern.node, remaining));
             let expected_ty = narrowed_subject_ty.as_ref().unwrap_or(scrutinee_ty);
 
+            let mut capture_bindings = Vec::new();
             if let Some(binding_name) = Self::narrowed_union_binding_name(&a.node.pattern.node) {
+                capture_bindings.push(NarrowedUnionCaptureBinding {
+                    name: binding_name.to_string(),
+                });
+            }
+            if let (Some(binding_name), Some(narrowed_ty)) = (subject_binding_name, narrowed_subject_ty.as_ref())
+                && narrowed_ty != scrutinee_ty
+                && !capture_bindings.iter().any(|binding| binding.name == binding_name)
+            {
+                capture_bindings.push(NarrowedUnionCaptureBinding {
+                    name: binding_name.to_string(),
+                });
+            }
+
+            if !capture_bindings.is_empty() {
                 let target = match &a.node.pattern.node {
                     ast::Pattern::Constructor(name, _) if !name.contains("::") => self
                         .union_pattern_target(scrutinee_ty, name)
                         .filter(|target| target.target_ty.is_union()),
                     ast::Pattern::Binding(_) => narrowed_subject_ty
+                        .clone()
+                        .filter(IrType::is_union)
+                        .and_then(|target_ty| self.union_subset_target(scrutinee_ty, target_ty)),
+                    ast::Pattern::Wildcard => narrowed_subject_ty
                         .clone()
                         .filter(IrType::is_union)
                         .and_then(|target_ty| self.union_subset_target(scrutinee_ty, target_ty)),
@@ -425,13 +494,17 @@ impl AstLowering {
                             .clone()
                             .filter(IrType::is_union)
                             .and_then(|target_ty| self.union_subset_target(scrutinee_ty, target_ty)),
+                        ast::Pattern::Wildcard => narrowed_subject_ty
+                            .clone()
+                            .filter(IrType::is_union)
+                            .and_then(|target_ty| self.union_subset_target(scrutinee_ty, target_ty)),
                         _ => None,
                     },
                     _ => None,
                 };
 
                 if let Some(target) = target {
-                    let arms = self.lower_narrowed_union_capture_arms(a, scrutinee_ty, target, binding_name)?;
+                    let arms = self.lower_narrowed_union_capture_arms(a, scrutinee_ty, target, &capture_bindings)?;
                     if !arms.is_empty() {
                         lowered_arms.extend(arms);
                         if a.node.guard.is_none()

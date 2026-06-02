@@ -721,6 +721,65 @@ def main() -> None:
 }
 
 #[test]
+fn build_narrowed_union_fallback_helper_calls_issue743() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "narrowed_fallback_call", "")?;
+    fs::write(
+        &main_path,
+        r#"
+pub model A:
+    value: str
+
+
+pub model B:
+    value: str
+
+
+pub model C:
+    value: str
+
+
+pub type Expr = Union[A, B, C]
+
+
+pub def describe(expr: Expr) -> str:
+    return "expr"
+
+
+pub def combine(left: Expr, right: Expr) -> str:
+    return "both"
+
+
+pub def fallback_describe(expr: Expr) -> str:
+    match expr:
+        A(value) => return value.value
+        _ => return describe(expr)
+
+
+pub def fallback_binding_describe(expr: Expr) -> str:
+    match expr:
+        A(value) => return value.value
+        other => return combine(expr, other)
+
+
+pub def main() -> None:
+    fallback_describe(B(value="b"))
+    fallback_describe(C(value="c"))
+    fallback_binding_describe(B(value="b"))
+    fallback_binding_describe(C(value="c"))
+    return
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&build_output, "incan build for narrowed fallback helper calls issue743");
+    Ok(())
+}
+
+#[test]
 fn test_reuses_stale_lockfile_without_rewriting_by_default() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "cli_default_stale_lock_test_project", "")?;
