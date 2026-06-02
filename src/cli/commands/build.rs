@@ -20,6 +20,7 @@ use crate::frontend::contract_metadata::{ContractMetadataPackage, read_project_m
 use crate::frontend::library_exports::{CheckedExportKind, CheckedNamedExport, collect_checked_public_exports};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
+use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 use crate::frontend::{diagnostics, typechecker};
 use crate::library_manifest::LibraryManifest;
 #[cfg(feature = "rust_inspect")]
@@ -788,10 +789,12 @@ pub fn build_library(
     let mut checked_exports_by_module: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
     let mut api_metadata_modules = Vec::new();
     let module_idx_by_key = module_key_index(&modules);
+    let mut stdlib_cache = StdlibAstCache::new();
 
     for (idx, module) in modules.iter().enumerate() {
         let deps_for_module = imported_module_deps_for_with_index(&modules, idx, &module_idx_by_key);
         let mut checker = typechecker::TypeChecker::new();
+        checker.stdlib_cache = stdlib_cache.clone();
         checker.set_current_module_path(Some(module.path_segments.clone()));
         checker.set_declared_crate_names(declared.clone());
         checker.set_library_manifest_index(library_manifest_index.clone());
@@ -819,8 +822,10 @@ pub fn build_library(
                         .map(|export| (export.name.clone(), export))
                         .collect(),
                 );
+                stdlib_cache = checker.stdlib_cache.clone();
             }
             Err(errs) => {
+                stdlib_cache = checker.stdlib_cache.clone();
                 for err in &errs {
                     all_errors.push_str(&diagnostics::format_error(
                         module.file_path.to_string_lossy().as_ref(),
@@ -914,6 +919,7 @@ pub fn build_library(
 
     let mut codegen = IrCodegen::new();
     codegen.set_preserve_dependency_public_items(true);
+    codegen.set_stdlib_cache(stdlib_cache);
     codegen.set_declared_crate_names(declared);
     codegen.set_library_manifest_index(library_manifest_index.clone());
     codegen.set_public_ordinal_type_identities(public_ordinal_type_identities(
@@ -929,31 +935,8 @@ pub fn build_library(
     generator.set_include_dev_dependencies(false);
     generator.set_rust_edition(manifest.build.as_ref().and_then(|build| build.rust_edition.clone()));
     #[cfg(feature = "rust_inspect")]
-    let lock_payload = resolve_lock_payload(LockResolutionRequest {
-        project_root: &project_root,
-        project_name: project_name.as_str(),
-        manifest: Some(&manifest),
-        resolved: &resolved,
-        project_requirements: &project_requirements,
-        cargo_features: &cargo_features,
-        cargo_policy: &cargo_policy,
-        #[cfg(feature = "rust_inspect")]
-        rust_inspect_query_paths: &metadata_query_paths,
-    })?;
-    #[cfg(feature = "rust_inspect")]
-    {
-        let rust_inspect_manifest_dir = ensure_rust_inspect_workspace(
-            &project_root,
-            project_name.as_str(),
-            manifest.build.as_ref().and_then(|build| build.rust_edition.clone()),
-            &resolved,
-            &project_requirements,
-            lock_payload.clone(),
-        )?;
-        prewarm_rust_inspect_workspace(&rust_inspect_manifest_dir, &metadata_query_paths)?;
-        codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir);
-    }
-    generator.set_cargo_lock_payload(lock_payload);
+    codegen.set_rust_inspect_manifest_dir(rust_inspect_manifest_dir.clone());
+    generator.set_cargo_lock_payload(lock_payload_for_typecheck);
     generator.set_cargo_policy_flags(cargo_command_flags(&cargo_policy, &cargo_features));
     generator.set_dependencies(resolved.dependencies);
     generator.set_dev_dependencies(resolved.dev_dependencies);

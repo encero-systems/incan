@@ -72,7 +72,7 @@ pub(crate) struct TraitMeta {
 }
 
 /// Cached stdlib module signatures keyed by dot-joined module path (e.g. `"std.testing"`).
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct StdlibAstCache {
     /// Map from module path (dot-joined) to extracted stdlib module data.
     cache: HashMap<String, StdlibModuleData>,

@@ -267,6 +267,12 @@ impl AstLowering {
         self.current_source_module_name = name;
     }
 
+    /// Provide a warmed stdlib metadata cache for lowering stages that need stdlib-backed decorator or helper
+    /// metadata.
+    pub(crate) fn set_stdlib_cache(&mut self, cache: StdlibAstCache) {
+        self.stdlib_cache = cache;
+    }
+
     /// Provide public dependency manifests for lowering metadata-backed call signatures.
     pub fn set_library_manifest_index(&mut self, index: Option<Arc<LibraryManifestIndex>>) {
         self.library_manifest_index = index;
