@@ -1049,15 +1049,7 @@ impl<'a> IrEmitter<'a> {
                     .map(|arm| {
                         let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty);
                         let body = self.emit_match_arm_body(arm)?;
-                        let guard = match (&pattern_guard, &arm.guard) {
-                            (Some(pattern_guard), Some(arm_guard)) => {
-                                let arm_guard = self.emit_expr(arm_guard)?;
-                                Some(quote! { (#pattern_guard) && (#arm_guard) })
-                            }
-                            (Some(pattern_guard), None) => Some(pattern_guard.clone()),
-                            (None, Some(arm_guard)) => Some(self.emit_expr(arm_guard)?),
-                            (None, None) => None,
-                        };
+                        let guard = self.emit_match_arm_guard(arm, pattern_guard)?;
                         if let Some(guard) = guard {
                             Ok(quote! { #pat if #guard => #body })
                         } else {

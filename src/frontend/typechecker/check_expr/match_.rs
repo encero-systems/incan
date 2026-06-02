@@ -129,6 +129,11 @@ impl TypeChecker {
                 }
             }
 
+            if let Some(guard) = &arm.node.guard {
+                let guard_ty = self.check_expr(guard);
+                self.validate_truthiness_condition(&guard_ty, guard.span);
+            }
+
             let arm_ty = match &arm.node.body {
                 MatchBody::Expr(e) => self.check_expr(e),
                 MatchBody::Block(stmts) => {
@@ -142,7 +147,9 @@ impl TypeChecker {
 
             self.symbols.exit_scope();
 
-            if let Some(remaining) = remaining_union_members.as_mut() {
+            if arm.node.guard.is_none()
+                && let Some(remaining) = remaining_union_members.as_mut()
+            {
                 self.remove_covered_union_members(remaining, &arm.node.pattern, &subject_ty);
             }
         }
@@ -734,6 +741,9 @@ impl TypeChecker {
             let mut has_wildcard = false;
 
             for arm in arms {
+                if arm.node.guard.is_some() {
+                    continue;
+                }
                 self.collect_pattern_coverage(&arm.node.pattern.node, subject_ty, &mut covered, &mut has_wildcard);
             }
 

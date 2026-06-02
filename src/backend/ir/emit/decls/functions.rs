@@ -72,6 +72,9 @@ impl<'a> IrEmitter<'a> {
                 for arm in arms {
                     for binding in &mut arm.bindings {
                         Self::rewrite_borrowed_param_types_in_expr(&mut binding.value, borrowed);
+                        if let Some(guard_value) = &mut binding.guard_value {
+                            Self::rewrite_borrowed_param_types_in_expr(guard_value, borrowed);
+                        }
                     }
                     if let Some(guard) = &mut arm.guard {
                         Self::rewrite_borrowed_param_types_in_expr(guard, borrowed);
@@ -249,6 +252,9 @@ impl<'a> IrEmitter<'a> {
                 for arm in arms {
                     for binding in &mut arm.bindings {
                         Self::rewrite_borrowed_param_types_in_expr(&mut binding.value, borrowed);
+                        if let Some(guard_value) = &mut binding.guard_value {
+                            Self::rewrite_borrowed_param_types_in_expr(guard_value, borrowed);
+                        }
                     }
                     if let Some(guard) = &mut arm.guard {
                         Self::rewrite_borrowed_param_types_in_expr(guard, borrowed);
@@ -1272,6 +1278,9 @@ impl<'a> IrEmitter<'a> {
         Self::shadow_pattern_bindings(&arm.pattern, &mut arm_shadowed);
         for binding in &arm.bindings {
             Self::collect_expr_used_names(&binding.value, param_names, &arm_shadowed, used_names);
+            if let Some(guard_value) = &binding.guard_value {
+                Self::collect_expr_used_names(guard_value, param_names, &arm_shadowed, used_names);
+            }
             arm_shadowed.insert(binding.name.clone());
         }
         if let Some(guard) = &arm.guard {

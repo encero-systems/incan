@@ -241,6 +241,7 @@ impl AstLowering {
         target_index: usize,
         temp_name: String,
         source_ty: IrType,
+        payload_access: VarAccess,
     ) -> TypedExpr {
         let union_name = target_ty
             .union_type_name()
@@ -260,10 +261,10 @@ impl AstLowering {
         let payload = TypedExpr::new(
             IrExprKind::Var {
                 name: temp_name,
-                access: VarAccess::Move,
+                access: payload_access,
                 ref_kind: VarRefKind::Value,
             },
-            source_ty,
+            source_ty.clone(),
         );
         TypedExpr::new(
             IrExprKind::Call {
@@ -322,16 +323,13 @@ impl AstLowering {
             } else {
                 union_pattern
             };
-            let binding = MatchArmBinding {
-                name: binding_name.to_string(),
-                ty: target.target_ty.clone(),
-                value: Self::narrowed_union_binding_value(
-                    &target.target_ty,
-                    variant.target_index,
-                    temp_name,
-                    variant.source_ty,
-                ),
-            };
+            let binding_value = Self::narrowed_union_binding_value(
+                &target.target_ty,
+                variant.target_index,
+                temp_name.clone(),
+                variant.source_ty.clone(),
+                VarAccess::Move,
+            );
 
             self.push_scope();
             self.define_local_binding(binding_name.to_string(), target.target_ty.clone(), false);
@@ -354,6 +352,24 @@ impl AstLowering {
                             IrType::Unit,
                         )
                     }
+                };
+                let guard_value = guard
+                    .as_ref()
+                    .filter(|guard| crate::backend::ir::scanners::expr_uses_binding_name(guard, binding_name))
+                    .map(|_| {
+                        Self::narrowed_union_binding_value(
+                            &target.target_ty,
+                            variant.target_index,
+                            temp_name,
+                            variant.source_ty,
+                            VarAccess::Read,
+                        )
+                    });
+                let binding = MatchArmBinding {
+                    name: binding_name.to_string(),
+                    ty: target.target_ty.clone(),
+                    value: binding_value,
+                    guard_value,
                 };
                 Ok(MatchArm {
                     pattern,
@@ -418,7 +434,9 @@ impl AstLowering {
                     let arms = self.lower_narrowed_union_capture_arms(a, scrutinee_ty, target, binding_name)?;
                     if !arms.is_empty() {
                         lowered_arms.extend(arms);
-                        if let Some(remaining) = remaining_union_members.as_mut() {
+                        if a.node.guard.is_none()
+                            && let Some(remaining) = remaining_union_members.as_mut()
+                        {
                             self.remove_covered_union_members(remaining, &a.node.pattern.node, scrutinee_ty);
                         }
                         continue;
@@ -454,7 +472,9 @@ impl AstLowering {
             self.pop_scope();
             lowered_arms.push(arm_result?);
 
-            if let Some(remaining) = remaining_union_members.as_mut() {
+            if a.node.guard.is_none()
+                && let Some(remaining) = remaining_union_members.as_mut()
+            {
                 self.remove_covered_union_members(remaining, &a.node.pattern.node, scrutinee_ty);
             }
         }

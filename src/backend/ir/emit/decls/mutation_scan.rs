@@ -117,6 +117,9 @@ impl<'a> IrEmitter<'a> {
                 for arm in arms {
                     for binding in &arm.bindings {
                         self.scan_expr_for_param_writes(&binding.value, param_names, mutated);
+                        if let Some(guard_value) = &binding.guard_value {
+                            self.scan_expr_for_param_writes(guard_value, param_names, mutated);
+                        }
                     }
                     if let Some(guard) = &arm.guard {
                         self.scan_expr_for_param_writes(guard, param_names, mutated);
@@ -291,6 +294,9 @@ impl<'a> IrEmitter<'a> {
                 for arm in arms {
                     for binding in &arm.bindings {
                         self.scan_expr_for_param_writes(&binding.value, param_names, mutated);
+                        if let Some(guard_value) = &binding.guard_value {
+                            self.scan_expr_for_param_writes(guard_value, param_names, mutated);
+                        }
                     }
                     if let Some(guard) = &arm.guard {
                         self.scan_expr_for_param_writes(guard, param_names, mutated);

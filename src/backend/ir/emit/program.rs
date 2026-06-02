@@ -468,6 +468,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     for binding in &arm.bindings {
                         self.scan_type(&binding.ty);
                         self.scan_expr(&binding.value);
+                        if let Some(guard_value) = &binding.guard_value {
+                            self.scan_expr(guard_value);
+                        }
                     }
                     if let Some(guard) = &arm.guard {
                         self.scan_expr(guard);
@@ -759,6 +762,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     for binding in &arm.bindings {
                         self.scan_type(&binding.ty);
                         self.scan_expr(&binding.value);
+                        if let Some(guard_value) = &binding.guard_value {
+                            self.scan_expr(guard_value);
+                        }
                     }
                     if let Some(guard) = &arm.guard {
                         self.scan_expr(guard);
@@ -1879,6 +1885,9 @@ impl<'a> IrEmitter<'a> {
                     for binding in &arm.bindings {
                         Self::collect_union_types_from_type(&binding.ty, out);
                         Self::collect_union_types_from_expr(&binding.value, out);
+                        if let Some(guard_value) = &binding.guard_value {
+                            Self::collect_union_types_from_expr(guard_value, out);
+                        }
                     }
                     if let Some(guard) = &arm.guard {
                         Self::collect_union_types_from_expr(guard, out);
@@ -2065,6 +2074,9 @@ impl<'a> IrEmitter<'a> {
                     for binding in &arm.bindings {
                         Self::collect_union_types_from_type(&binding.ty, out);
                         Self::collect_union_types_from_expr(&binding.value, out);
+                        if let Some(guard_value) = &binding.guard_value {
+                            Self::collect_union_types_from_expr(guard_value, out);
+                        }
                     }
                     if let Some(guard) = &arm.guard {
                         Self::collect_union_types_from_expr(guard, out);

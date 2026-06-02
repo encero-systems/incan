@@ -751,6 +751,15 @@ fn collect_backend_clone_bounds_in_stmt(
                         clone_context,
                         clone_params,
                     );
+                    if let Some(guard_value) = &binding.guard_value {
+                        collect_backend_clone_bounds_in_expr(
+                            guard_value,
+                            type_param_names,
+                            self_clone_params,
+                            clone_context,
+                            clone_params,
+                        );
+                    }
                 }
                 if let IrExprKind::Block { stmts, .. } = &arm.body.kind {
                     for stmt in stmts {
@@ -1359,6 +1368,15 @@ fn collect_backend_clone_bounds_in_expr(
                         clone_context,
                         clone_params,
                     );
+                    if let Some(guard_value) = &binding.guard_value {
+                        collect_backend_clone_bounds_in_expr(
+                            guard_value,
+                            type_param_names,
+                            self_clone_params,
+                            clone_context,
+                            clone_params,
+                        );
+                    }
                 }
                 collect_backend_clone_bounds_in_expr(
                     &arm.body,
@@ -1850,6 +1868,9 @@ fn scan_stmt_for_bounds(
             for arm in arms {
                 for binding in &arm.bindings {
                     scan_expr_for_bounds(&binding.value, type_params, params, bounds_map);
+                    if let Some(guard_value) = &binding.guard_value {
+                        scan_expr_for_bounds(guard_value, type_params, params, bounds_map);
+                    }
                 }
                 scan_expr_for_bounds(&arm.body, type_params, params, bounds_map);
                 if let Some(guard) = &arm.guard {
@@ -2088,6 +2109,9 @@ fn scan_expr_for_bounds(
             for arm in arms {
                 for binding in &arm.bindings {
                     scan_expr_for_bounds(&binding.value, type_params, params, bounds_map);
+                    if let Some(guard_value) = &binding.guard_value {
+                        scan_expr_for_bounds(guard_value, type_params, params, bounds_map);
+                    }
                 }
                 scan_expr_for_bounds(&arm.body, type_params, params, bounds_map);
                 if let Some(guard) = &arm.guard {
@@ -2690,6 +2714,9 @@ fn collect_calls_in_stmt(
             for arm in arms {
                 for binding in &arm.bindings {
                     recurse_expr(&binding.value, result);
+                    if let Some(guard_value) = &binding.guard_value {
+                        recurse_expr(guard_value, result);
+                    }
                 }
                 recurse_expr(&arm.body, result);
                 if let Some(guard) = &arm.guard {
@@ -2929,6 +2956,9 @@ fn collect_calls_in_expr(
             for arm in arms {
                 for binding in &arm.bindings {
                     recurse_expr(&binding.value, result);
+                    if let Some(guard_value) = &binding.guard_value {
+                        recurse_expr(guard_value, result);
+                    }
                 }
                 recurse_expr(&arm.body, result);
                 if let Some(guard) = &arm.guard {

@@ -3001,6 +3001,18 @@ def from_alias(value: Input) -> Base:
     int(number) =>
       return A(value=str(number))
 
+def keep_base(value: Base) -> bool:
+  return true
+
+def from_guarded_alias(value: Input) -> Base:
+  match value:
+    case Base(expr) if keep_base(expr):
+      return expr
+    case Base(expr):
+      return expr
+    case int(number):
+      return A(value=str(number))
+
 def from_fallback(value: Input) -> Base:
   match value:
     int(number) =>
@@ -3009,6 +3021,38 @@ def from_fallback(value: Input) -> Base:
       return other
 "#;
     check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn test_guarded_union_alias_patterns_do_not_satisfy_exhaustiveness() {
+    let source = r#"
+model A:
+  value: str
+
+model B:
+  value: str
+
+type Base = Union[A, B]
+type Input = Union[Base, int]
+
+def keep_base(value: Base) -> bool:
+  return true
+
+def guarded_only(value: Input) -> Base:
+  match value:
+    case Base(expr) if keep_base(expr):
+      return expr
+    case int(number):
+      return A(value=str(number))
+"#;
+    let errors = check_str_err(source, "guarded union alias patterns should not prove coverage");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.to_lowercase().contains("non-exhaustive")),
+        "expected non-exhaustive union match diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
 }
 
 #[test]

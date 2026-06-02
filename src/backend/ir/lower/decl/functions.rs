@@ -181,6 +181,9 @@ fn collect_generic_callable_name_type_params_from_expr(expr: &super::super::supe
             for arm in arms {
                 for binding in &arm.bindings {
                     collect_generic_callable_name_type_params_from_expr(&binding.value, out);
+                    if let Some(guard_value) = &binding.guard_value {
+                        collect_generic_callable_name_type_params_from_expr(guard_value, out);
+                    }
                 }
                 if let Some(guard) = &arm.guard {
                     collect_generic_callable_name_type_params_from_expr(guard, out);
@@ -288,6 +291,9 @@ fn collect_generic_callable_name_type_params_from_stmts(stmts: &[IrStmt], out: &
                 for arm in arms {
                     for binding in &arm.bindings {
                         collect_generic_callable_name_type_params_from_expr(&binding.value, out);
+                        if let Some(guard_value) = &binding.guard_value {
+                            collect_generic_callable_name_type_params_from_expr(guard_value, out);
+                        }
                     }
                     if let Some(guard) = &arm.guard {
                         collect_generic_callable_name_type_params_from_expr(guard, out);

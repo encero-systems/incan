@@ -505,6 +505,20 @@ pub def base_from_alias_pattern(value: Extended) -> Base:
         int(number) => return A(value=f"{number}")
 
 
+pub def keep_base(value: Base) -> bool:
+    return true
+
+
+pub def base_from_guarded_alias_pattern(value: Extended) -> Base:
+    match value:
+        case Base(expr) if keep_base(expr):
+            return expr
+        case Base(expr):
+            return expr
+        case int(number):
+            return A(value=f"{number}")
+
+
 pub def base_from_explicit_variants(value: Extended) -> Base:
     match value:
         A(expr) => return expr
@@ -528,6 +542,7 @@ pub def main() -> None:
     widen_list_item(source)
     accept_extended(widen_return())
     accept_extended(base_from_alias_pattern(source))
+    accept_extended(base_from_guarded_alias_pattern(source))
     accept_extended(base_from_explicit_variants(source))
     accept_extended(base_from_fallback_binding(source))
     return

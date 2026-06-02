@@ -576,6 +576,7 @@ pub struct MatchArmBinding {
     pub name: String,
     pub ty: IrType,
     pub value: IrExpr,
+    pub guard_value: Option<IrExpr>,
 }
 
 /// Pattern for match expressions
