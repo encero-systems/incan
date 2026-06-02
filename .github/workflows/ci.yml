@@ -88,8 +88,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: incan-stable
-          # Only one matrix leg writes the shared cache; every leg can restore it.
-          save-if: ${{ github.ref == 'refs/heads/main' && matrix.partition == 1 }}
+          # Only one matrix leg writes the shared cache; every leg can restore it. Release branches and trusted
+          # same-repository PRs must also write, otherwise release validation stays cold after a Rust or lockfile key
+          # change until main happens to refresh the cache.
+          save-if: >-
+            ${{
+              matrix.partition == 1
+              && (
+                (github.event_name == 'push'
+                  && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')))
+                || (github.event_name == 'pull_request'
+                  && github.event.pull_request.head.repo.full_name == github.repository)
+              )
+            }}
+          cache-on-failure: true
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Run test shard
@@ -130,8 +142,20 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: incan-stable
-          # Only one matrix leg writes the shared cache; every leg can restore it.
-          save-if: ${{ github.ref == 'refs/heads/main' && matrix.partition == 1 }}
+          # Only one matrix leg writes the shared cache; every leg can restore it. Release branches and trusted
+          # same-repository PRs must also write, otherwise release validation stays cold after a Rust or lockfile key
+          # change until main happens to refresh the cache.
+          save-if: >-
+            ${{
+              matrix.partition == 1
+              && (
+                (github.event_name == 'push'
+                  && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')))
+                || (github.event_name == 'pull_request'
+                  && github.event.pull_request.head.repo.full_name == github.repository)
+              )
+            }}
+          cache-on-failure: true
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Run test shard
@@ -196,7 +220,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           # Only one matrix leg writes the shared cache; every leg can restore it.
-          save-if: ${{ github.ref == 'refs/heads/main' && matrix.partition == 1 }}
+          save-if: >-
+            ${{
+              matrix.partition == 1
+              && (
+                (github.event_name == 'push'
+                  && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')))
+                || (github.event_name == 'pull_request'
+                  && github.event.pull_request.head.repo.full_name == github.repository)
+              )
+            }}
+          cache-on-failure: true
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Cargo test shard (locked)
