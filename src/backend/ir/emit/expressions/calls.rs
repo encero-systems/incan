@@ -134,6 +134,25 @@ impl<'a> IrEmitter<'a> {
         inner_ty: &IrType,
         union_qualifier: Option<&[String]>,
     ) -> Result<Option<TokenStream>, EmitError> {
+        let (source_ty, _) = self.union_widening_source_for_expr(arg);
+        let source_ty_resolved = self.resolve_type_aliases_for_emit(&source_ty);
+        let inner_ty_resolved = self.resolve_type_aliases_for_emit(inner_ty);
+        if source_ty_resolved.union_members().is_some()
+            && inner_ty_resolved.union_members().is_some()
+            && (source_ty_resolved == inner_ty_resolved || self.union_widening_needed(&source_ty, inner_ty))
+        {
+            let emitted = self.emit_expr_for_use_with_union_qualifier(
+                arg,
+                ValueUseSite::IncanCallArg {
+                    target_ty: Some(inner_ty),
+                    callee_param: None,
+                    in_return: false,
+                },
+                union_qualifier,
+            )?;
+            return Ok(Some(quote! { Some(#emitted) }));
+        }
+
         if let Some(variant_index) = inner_ty.union_variant_index_for_member(&arg.ty) {
             let Some(members) = inner_ty.union_members() else {
                 return Ok(None);
@@ -1720,6 +1739,66 @@ mod tests {
             render(tokens),
             "lit(__IncanUnion43fbd19e99c1db05::V0(\"open\".to_string()))"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn emit_public_union_call_result_as_option_payload_issue745() -> Result<(), Box<dyn std::error::Error>> {
+        let union_ty = IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), vec![IrType::Int, IrType::String]);
+        let public_union_ty = IrType::RustDisplay(format!(
+            "querykit::{}",
+            union_ty.union_type_name().ok_or("expected anonymous union type name")?
+        ));
+        let lit_signature = FunctionSignature {
+            params: Vec::new(),
+            return_type: union_ty.clone(),
+        };
+        let lit = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(local_arg(
+                    "lit",
+                    IrType::Function {
+                        params: Vec::new(),
+                        ret: Box::new(public_union_ty.clone()),
+                    },
+                )),
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: Some(lit_signature),
+                canonical_path: Some(vec!["pub".to_string(), "querykit".to_string(), "lit".to_string()]),
+            },
+            public_union_ty.clone(),
+        );
+        let accept_signature = FunctionSignature {
+            params: vec![FunctionParam {
+                name: "value".to_string(),
+                ty: IrType::Option(Box::new(union_ty)),
+                mutability: Mutability::Immutable,
+                is_self: false,
+                kind: ParamKind::Normal,
+                default: None,
+            }],
+            return_type: IrType::Unit,
+        };
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let accept = local_arg(
+            "accept_optional",
+            IrType::Function {
+                params: vec![IrType::Option(Box::new(public_union_ty))],
+                ret: Box::new(IrType::Unit),
+            },
+        );
+        let path = vec!["pub".to_string(), "querykit".to_string(), "accept_optional".to_string()];
+        let tokens = emitter
+            .emit_call_expr(&accept, &[], &[pos_arg(lit)], Some(&accept_signature), Some(&path))
+            .map_err(|err| {
+                std::io::Error::other(format!(
+                    "public union call result should emit as an Option payload: {err:?}"
+                ))
+            })?;
+
+        assert_eq!(render(tokens), "querykit::accept_optional(Some(querykit::lit()))");
         Ok(())
     }
 

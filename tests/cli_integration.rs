@@ -721,6 +721,107 @@ def main() -> None:
 }
 
 #[test]
+fn build_pub_helper_wraps_union_call_result_as_option_payload_issue745() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let producer_root = tmp.path().join("querykit");
+    let producer_src = producer_root.join("src");
+    fs::create_dir_all(&producer_src)?;
+    fs::write(
+        producer_root.join("incan.toml"),
+        r#"[project]
+name = "querykit"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        producer_src.join("defs.incn"),
+        r#"
+pub model IntExpr:
+    value: int
+
+
+pub model TextExpr:
+    value: str
+
+
+pub type Value = Union[IntExpr, TextExpr]
+
+
+pub def lit(value: int) -> Value:
+    return IntExpr(value=value)
+
+
+pub def fallback() -> Value:
+    return TextExpr(value="fallback")
+
+
+pub def accept_optional(value: Option[Value] = None) -> Value:
+    return fallback()
+
+
+pub def combine(first: Value, second: Option[Value] = None) -> Value:
+    return first
+"#,
+    )?;
+    fs::write(
+        producer_src.join("lib.incn"),
+        r#"pub from defs import accept_optional, combine, fallback, lit
+"#,
+    )?;
+    let producer_build = run_incan(&producer_root, &["build", "--lib"])?;
+    assert_success(
+        &producer_build,
+        "producer build --lib for optional union helper issue745",
+    );
+
+    let consumer_root = tmp.path().join("consumer");
+    let consumer_main = write_minimal_project(
+        &consumer_root,
+        "optional_union_consumer",
+        r#"
+[dependencies]
+querykit = { path = "../querykit" }
+"#,
+    )?;
+    fs::write(
+        &consumer_main,
+        r#"from pub::querykit import accept_optional, combine, lit
+
+
+def main() -> None:
+    accept_optional(lit(2))
+    combine(lit(1), lit(2))
+    combine(lit(1), second=lit(3))
+    return
+"#,
+    )?;
+    let consumer_build = run_incan(
+        &consumer_root,
+        &[
+            "build",
+            consumer_main.to_str().ok_or("consumer main path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(&consumer_build, "pub consumer build for optional union helper issue745");
+
+    let generated_consumer =
+        fs::read_to_string(consumer_root.join("target/incan/optional_union_consumer/src/main.rs"))?;
+    assert!(
+        generated_consumer.contains("querykit::accept_optional(Some(querykit::lit(2)))"),
+        "expected public optional helper call to wrap the dependency-owned union result in Some, got:\n{generated_consumer}"
+    );
+    assert!(
+        generated_consumer.contains("querykit::combine(querykit::lit(1), Some(querykit::lit(2)))"),
+        "expected positional optional union argument to be wrapped in Some, got:\n{generated_consumer}"
+    );
+    assert!(
+        generated_consumer.contains("querykit::combine(querykit::lit(1), Some(querykit::lit(3)))"),
+        "expected named optional union argument to be wrapped in Some, got:\n{generated_consumer}"
+    );
+    Ok(())
+}
+
+#[test]
 fn build_narrowed_union_fallback_helper_calls_issue743() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "narrowed_fallback_call", "")?;
