@@ -70,9 +70,41 @@ jobs:
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
+  test-linux-prewarm:
+    name: Test Suite Cache Warmup (ubuntu-latest, stable)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: incan-stable
+          # The warmup job owns writes for this platform/toolchain. Shards depend on it so a cold run compiles once
+          # here, then every shard restores the warmed cache instead of compiling the same graph independently.
+          save-if: >-
+            ${{
+              (github.event_name == 'push'
+                && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')))
+              || (github.event_name == 'pull_request'
+                && github.event.pull_request.head.repo.full_name == github.repository)
+            }}
+          cache-on-failure: true
+      - uses: ./.github/actions/setup-rust-sccache
+      - uses: taiki-e/install-action@nextest
+      - name: Compile test suite
+        run: cargo nextest run --all --profile ci --no-run
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
+
   test-linux-shards:
     name: Test Suite Shard (ubuntu-latest, stable, slice ${{ matrix.partition }}/${{ matrix.total }})
     runs-on: ubuntu-latest
+    needs: test-linux-prewarm
     strategy:
       fail-fast: false
       matrix:
@@ -88,20 +120,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: incan-stable
-          # Only one matrix leg writes the shared cache; every leg can restore it. Release branches and trusted
-          # same-repository PRs must also write, otherwise release validation stays cold after a Rust or lockfile key
-          # change until main happens to refresh the cache.
-          save-if: >-
-            ${{
-              matrix.partition == 1
-              && (
-                (github.event_name == 'push'
-                  && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')))
-                || (github.event_name == 'pull_request'
-                  && github.event.pull_request.head.repo.full_name == github.repository)
-              )
-            }}
-          cache-on-failure: true
+          # Test shards restore the cache produced by the warmup job; the warmup job owns writes.
+          save-if: false
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Run test shard
@@ -124,9 +144,41 @@ jobs:
           fi
           echo "ubuntu test shards passed"
 
+  test-macos-prewarm:
+    name: Test Suite Cache Warmup (macos-latest, stable)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: incan-stable
+          # The warmup job owns writes for this platform/toolchain. Shards depend on it so a cold run compiles once
+          # here, then every shard restores the warmed cache instead of compiling the same graph independently.
+          save-if: >-
+            ${{
+              (github.event_name == 'push'
+                && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')))
+              || (github.event_name == 'pull_request'
+                && github.event.pull_request.head.repo.full_name == github.repository)
+            }}
+          cache-on-failure: true
+      - uses: ./.github/actions/setup-rust-sccache
+      - uses: taiki-e/install-action@nextest
+      - name: Compile test suite
+        run: cargo nextest run --all --profile ci --no-run
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
+
   test-macos-shards:
     name: Test Suite Shard (macos-latest, stable, slice ${{ matrix.partition }}/${{ matrix.total }})
     runs-on: macos-latest
+    needs: test-macos-prewarm
     strategy:
       fail-fast: false
       matrix:
@@ -142,20 +194,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: incan-stable
-          # Only one matrix leg writes the shared cache; every leg can restore it. Release branches and trusted
-          # same-repository PRs must also write, otherwise release validation stays cold after a Rust or lockfile key
-          # change until main happens to refresh the cache.
-          save-if: >-
-            ${{
-              matrix.partition == 1
-              && (
-                (github.event_name == 'push'
-                  && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')))
-                || (github.event_name == 'pull_request'
-                  && github.event.pull_request.head.repo.full_name == github.repository)
-              )
-            }}
-          cache-on-failure: true
+          # Test shards restore the cache produced by the warmup job; the warmup job owns writes.
+          save-if: false
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Run test shard
@@ -200,9 +240,43 @@ jobs:
         if: always()
         run: ${SCCACHE_PATH:-sccache} --show-stats || true
 
+  msrv-test-prewarm:
+    name: MSRV Test Cache Warmup (1.92.0)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust 1.92.0
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.92.0
+          components: clippy
+      - name: Install WASI target for vocab desugarers
+        run: rustup target add wasm32-wasip1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: incan-msrv-test
+          # The warmup job owns writes for this toolchain. Shards depend on it so a cold run compiles once here,
+          # then every shard restores the warmed cache instead of compiling the same graph independently.
+          save-if: >-
+            ${{
+              (github.event_name == 'push'
+                && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')))
+              || (github.event_name == 'pull_request'
+                && github.event.pull_request.head.repo.full_name == github.repository)
+            }}
+          cache-on-failure: true
+      - uses: ./.github/actions/setup-rust-sccache
+      - uses: taiki-e/install-action@nextest
+      - name: Compile test suite (locked)
+        run: cargo nextest run --locked --profile ci --no-run
+      - name: Show sccache stats
+        if: always()
+        run: ${SCCACHE_PATH:-sccache} --show-stats || true
+
   msrv-test-shards:
     name: MSRV Test Shard (1.92.0, slice ${{ matrix.partition }}/${{ matrix.total }})
     runs-on: ubuntu-latest
+    needs: msrv-test-prewarm
     strategy:
       fail-fast: false
       matrix:
@@ -219,18 +293,9 @@ jobs:
         run: rustup target add wasm32-wasip1
       - uses: Swatinem/rust-cache@v2
         with:
-          # Only one matrix leg writes the shared cache; every leg can restore it.
-          save-if: >-
-            ${{
-              matrix.partition == 1
-              && (
-                (github.event_name == 'push'
-                  && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/release/')))
-                || (github.event_name == 'pull_request'
-                  && github.event.pull_request.head.repo.full_name == github.repository)
-              )
-            }}
-          cache-on-failure: true
+          shared-key: incan-msrv-test
+          # Test shards restore the cache produced by the warmup job; the warmup job owns writes.
+          save-if: false
       - uses: ./.github/actions/setup-rust-sccache
       - uses: taiki-e/install-action@nextest
       - name: Cargo test shard (locked)
