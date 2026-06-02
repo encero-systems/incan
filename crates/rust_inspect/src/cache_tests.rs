@@ -104,6 +104,7 @@ fn disk_cache_round_trips_inserted_items() -> Result<(), Box<dyn std::error::Err
     Ok(())
 }
 
+/// Disk-cache entries are ignored when the generated workspace inputs change.
 #[test]
 fn disk_cache_invalidates_when_workspace_fingerprint_changes() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -153,6 +154,7 @@ fn malformed_disk_cache_is_treated_as_miss() -> Result<(), Box<dyn std::error::E
     Ok(())
 }
 
+/// Package version labels do not invalidate a cache when the format and workspace inputs still match.
 #[test]
 fn disk_cache_does_not_invalidate_on_package_version_label() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -183,6 +185,7 @@ fn disk_cache_does_not_invalidate_on_package_version_label() -> Result<(), Box<d
     Ok(())
 }
 
+/// Legacy rc-versioned fingerprints remain readable so rc bumps do not force needless re-extraction.
 #[test]
 fn disk_cache_accepts_legacy_versioned_workspace_fingerprint() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -345,6 +348,7 @@ fn repeated_missing_lookup_hits_negative_cache_without_new_workspace_load()
     Ok(())
 }
 
+/// Dependency manifest root lookup misses are cached per generated workspace.
 #[test]
 fn dependency_manifest_resolution_is_cached_per_manifest_root() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -372,6 +376,7 @@ fn dependency_manifest_resolution_is_cached_per_manifest_root() -> Result<(), Bo
     Ok(())
 }
 
+/// Dependency manifest lookup cache keys normalize hyphenated package names and underscored crate names.
 #[test]
 fn dependency_manifest_resolution_cache_normalizes_crate_spelling() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -397,6 +402,7 @@ fn dependency_manifest_resolution_cache_normalizes_crate_spelling() -> Result<()
     Ok(())
 }
 
+/// Non-root crate misses do not force the generated root workspace to reload with build-script out-dirs.
 #[test]
 fn root_out_dir_workspace_is_skipped_for_non_root_crate_misses() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -430,6 +436,7 @@ fn root_out_dir_workspace_is_skipped_for_non_root_crate_misses() -> Result<(), B
     Ok(())
 }
 
+/// Public crate re-exports are recognized as identity routes while private imports are ignored.
 #[test]
 fn dependency_reexport_alias_candidate_uses_public_crate_reexports() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
@@ -463,6 +470,7 @@ fn dependency_reexport_alias_candidate_uses_public_crate_reexports() -> Result<(
     Ok(())
 }
 
+/// Missing items reached through a public crate re-export do not repeat the same lookup in the wrapper workspace.
 #[test]
 fn dependency_reexport_alias_miss_skips_wrapper_workspace() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;

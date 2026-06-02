@@ -349,6 +349,7 @@ impl<'a> IrCodegen<'a> {
         self.needs_serde
     }
 
+    /// Apply codegen's shared project context to an internal typechecker pass.
     fn configure_typechecker(&self, tc: &mut crate::frontend::typechecker::TypeChecker) {
         tc.stdlib_cache = self.stdlib_cache.clone();
         if let Some(names) = self.declared_crate_names.clone() {
@@ -363,10 +364,12 @@ impl<'a> IrCodegen<'a> {
         }
     }
 
+    /// Preserve stdlib metadata warmed by an internal typechecker pass for later codegen passes.
     fn capture_typechecker_stdlib_cache(&mut self, tc: &crate::frontend::typechecker::TypeChecker) {
         self.stdlib_cache = tc.stdlib_cache.clone();
     }
 
+    /// Apply codegen's shared metadata context to one AST lowering pass.
     fn configure_lowering(&self, lowering: &mut AstLowering) {
         lowering.set_stdlib_cache(self.stdlib_cache.clone());
         lowering.set_library_manifest_index(self.library_manifest_index.clone());

@@ -129,6 +129,7 @@ fn legacy_versioned_workspace_fingerprint(root: &Path, inspector_version: &str) 
     Ok(hex::encode(hasher.finalize()))
 }
 
+/// Hash the workspace files that affect rust-inspect extraction results for this generated Cargo workspace.
 fn hash_workspace_fingerprint_inputs(hasher: &mut Sha256, root: &Path) -> Result<(), RustMetadataError> {
     hasher.update(fs::read(root.join("Cargo.toml"))?);
     match fs::read(root.join("Cargo.lock")) {
@@ -139,6 +140,7 @@ fn hash_workspace_fingerprint_inputs(hasher: &mut Sha256, root: &Path) -> Result
     Ok(())
 }
 
+/// Accept either the current cache-format fingerprint or the legacy version-labeled fingerprint for one cache file.
 fn disk_cache_fingerprint_matches(
     root: &Path,
     envelope: &DiskCacheEnvelope,
@@ -418,6 +420,7 @@ fn cached_definition_alias(inner: &CacheInner, root: &Path, canonical_path: &str
     None
 }
 
+/// Normalize Cargo package and Rust crate spellings to the cache key used for dependency-route lookups.
 fn normalized_crate_cache_key(crate_name: &str) -> String {
     crate_name.replace('-', "_")
 }
@@ -438,6 +441,7 @@ fn resolve_dependency_manifest_dir(
     resolved
 }
 
+/// Read and normalize a string field from a Cargo manifest table.
 fn manifest_string_field(value: &toml::Value, table: &str, key: &str) -> Option<String> {
     value
         .get(table)
@@ -446,6 +450,7 @@ fn manifest_string_field(value: &toml::Value, table: &str, key: &str) -> Option<
         .map(normalized_crate_cache_key)
 }
 
+/// Load the crate names declared by the generated root workspace so root out-dir extraction only runs for root items.
 fn load_root_crate_names(root: &Path) -> Vec<String> {
     let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
         return Vec::new();
@@ -472,6 +477,7 @@ fn load_root_crate_names(root: &Path) -> Vec<String> {
     names
 }
 
+/// Resolve the root crate's library source path from `Cargo.toml`, defaulting to `src/lib.rs`.
 fn manifest_lib_source_path(root: &Path, manifest: &toml::Value) -> PathBuf {
     manifest
         .get("lib")
@@ -480,6 +486,7 @@ fn manifest_lib_source_path(root: &Path, manifest: &toml::Value) -> PathBuf {
         .map_or_else(|| root.join("src").join("lib.rs"), |path| root.join(path))
 }
 
+/// Convert a rust-analyzer syntax path into ordered textual path segments.
 fn rust_path_segments(path: &ast::Path) -> Vec<String> {
     let mut segments = Vec::new();
     let mut current = Some(path.clone());
@@ -493,6 +500,7 @@ fn rust_path_segments(path: &ast::Path) -> Vec<String> {
     segments
 }
 
+/// Extract a plain `pub use crate_name` or `pub use crate_name as alias` mapping from one use tree.
 fn crate_reexport_alias_from_use_tree(tree: &ast::UseTree) -> Option<(String, String)> {
     if tree.star_token().is_some() || tree.use_tree_list().is_some() {
         return None;
@@ -510,6 +518,7 @@ fn crate_reexport_alias_from_use_tree(tree: &ast::UseTree) -> Option<(String, St
     Some((alias, target))
 }
 
+/// Return whether a use item is exactly public at crate level, excluding restricted visibility such as `pub(crate)`.
 fn use_item_is_plain_public(use_item: &ast::Use) -> bool {
     let mut significant = use_item
         .syntax()
@@ -520,6 +529,7 @@ fn use_item_is_plain_public(use_item: &ast::Use) -> bool {
         && matches!(significant.next().map(|token| token.kind()), Some(T![use]))
 }
 
+/// Load root-level public crate re-export aliases from a dependency crate's library source.
 fn load_crate_reexport_aliases(root: &Path) -> HashMap<String, String> {
     let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
         return HashMap::new();
@@ -550,6 +560,7 @@ fn load_crate_reexport_aliases(root: &Path) -> HashMap<String, String> {
     aliases
 }
 
+/// Return the canonical target path for a dependency-owned item addressed through a public crate re-export.
 fn dependency_reexport_alias_candidate(
     inner: &mut CacheInner,
     dep_root: &Path,
@@ -574,6 +585,7 @@ fn dependency_reexport_alias_candidate(
     }
 }
 
+/// Return whether the generated root workspace itself declares the crate segment used by a query path.
 fn root_workspace_declares_crate(inner: &mut CacheInner, root: &Path, crate_name: &str) -> bool {
     let names = inner
         .root_crate_names
