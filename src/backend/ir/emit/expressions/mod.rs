@@ -870,7 +870,12 @@ impl<'a> IrEmitter<'a> {
                 type_name,
                 function_name,
             } => {
-                let type_ident = Self::rust_ident(type_name);
+                let type_ident = self
+                    .associated_function_receiver_type_path(type_name, &expr.ty)
+                    .unwrap_or_else(|| {
+                        let ident = Self::rust_ident(type_name);
+                        quote! { #ident }
+                    });
                 let function_ident = Self::rust_ident(function_name);
                 Ok(quote! { #type_ident :: #function_ident })
             }
@@ -1238,6 +1243,18 @@ impl<'a> IrEmitter<'a> {
                 })
             }
         }
+    }
+
+    /// Emit the receiver type path for compiler-generated associated constructors when the IR already carries the
+    /// concrete receiver type in the function item signature.
+    fn associated_function_receiver_type_path(&self, type_name: &str, expr_ty: &IrType) -> Option<TokenStream> {
+        let IrType::Function { ret, .. } = expr_ty else {
+            return None;
+        };
+        if ret.union_type_name().as_deref() == Some(type_name) {
+            return Some(self.emit_type(ret));
+        }
+        None
     }
 }
 

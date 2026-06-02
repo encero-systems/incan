@@ -568,6 +568,73 @@ pub def main() -> None:
         "expected generated Rust to rebuild the wider union wrapper variant-by-variant, got:\n{generated_main}"
     );
 
+    let imported_root = tmp.path().join("union_imported_alias");
+    let imported_src = imported_root.join("src");
+    fs::create_dir_all(&imported_src)?;
+    fs::write(
+        imported_root.join("incan.toml"),
+        r#"[project]
+name = "union_imported_alias"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        imported_src.join("types.incn"),
+        r#"
+pub model A:
+    value: str
+
+
+pub model B:
+    value: str
+
+
+pub type Base = Union[A, B]
+"#,
+    )?;
+    fs::write(
+        imported_src.join("normalizer.incn"),
+        r#"
+from types import A, Base
+
+
+pub type Input = Union[Base, int]
+
+
+pub def normalize(value: Input) -> Base:
+    match value:
+        int(number) => return A(value=f"{number}")
+        expr => return expr
+"#,
+    )?;
+    fs::write(
+        imported_src.join("main.incn"),
+        r#"
+from normalizer import normalize
+from types import A
+
+
+pub def main() -> None:
+    normalize(A(value="x"))
+    normalize(1)
+    return
+"#,
+    )?;
+    let imported_main = imported_src.join("main.incn");
+    let imported_build = run_incan(
+        &imported_root,
+        &[
+            "build",
+            imported_main
+                .to_str()
+                .ok_or("imported alias main path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(
+        &imported_build,
+        "incan build for imported alias fallback union narrowing issue741",
+    );
+
     let producer_root = tmp.path().join("union_lib");
     let producer_src = producer_root.join("src");
     fs::create_dir_all(&producer_src)?;
