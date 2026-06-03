@@ -36,6 +36,7 @@ use super::types::{FixtureScope, TestInfo, TestResult};
 
 /// Generated `#[cfg(test)]` module that wraps Incan test functions as Rust `#[test]` cases.
 const INCAN_FILE_TEST_MOD: &str = "__incan_file_tests";
+const INCAN_SESSION_FIXTURE_MOD: &str = "__incan_session_fixtures";
 
 #[derive(Debug, Clone, Copy, Default)]
 pub(super) struct TestExecutionOptions {
@@ -540,7 +541,7 @@ fn parse_test_batch_sources(
     })
 }
 
-struct InlineSourceModuleBatch {
+struct IsolatedSourceModuleBatch {
     ast: Program,
     source_modules: Vec<ParsedModule>,
     harnesses: Vec<PreparedModuleHarness>,
@@ -554,14 +555,6 @@ fn empty_test_batch_root(first_path: &Path) -> Program {
         rust_module_path: None,
         warnings: Vec::new(),
     }
-}
-
-/// Return whether a program contains inline test modules.
-fn program_has_inline_test_module(program: &Program) -> bool {
-    program
-        .declarations
-        .iter()
-        .any(|decl| matches!(decl.node, Declaration::TestModule(_)))
 }
 
 /// Prepare the runner AST and fixture metadata for a test module.
@@ -616,6 +609,34 @@ fn module_name_for_segments(segments: &[String]) -> String {
     format!("{stem}_{}", &digest[..8])
 }
 
+/// Derive a stable generated module path for one test source file.
+///
+/// Normal package files use their project-relative path, such as `tests.foo`. If a caller supplies an unusual file
+/// path outside the known roots, keep the multi-file batch isolated by assigning a synthetic path instead of falling
+/// back to concatenating independent test files into one frontend scope.
+fn test_module_segments_for_file(project_root: &Path, source_root: &Path, path: &Path) -> Vec<String> {
+    let absolute_path = if path.is_absolute() {
+        path.to_path_buf()
+    } else {
+        project_root.join(path)
+    };
+    if let Some(module_path) = logical_module_segments_from_file(source_root, &absolute_path)
+        .or_else(|| logical_module_segments_from_file(project_root, &absolute_path))
+    {
+        return module_path;
+    }
+
+    let stem = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .filter(|stem| !stem.is_empty())
+        .unwrap_or("test");
+    let mut hasher = Sha256::new();
+    hasher.update(canonical_path_for_cache_key(path).to_string_lossy().as_bytes());
+    let digest = hex::encode(hasher.finalize());
+    vec!["tests".to_string(), format!("{stem}_{}", &digest[..8])]
+}
+
 /// Read conftest source files for a test batch.
 fn read_conftest_sources(paths: &[PathBuf]) -> Result<Vec<(PathBuf, String)>, String> {
     let mut sources = Vec::new();
@@ -627,15 +648,19 @@ fn read_conftest_sources(paths: &[PathBuf]) -> Result<Vec<(PathBuf, String)>, St
     Ok(sources)
 }
 
-/// Prepare a collision-aware batch of inline source modules.
-fn prepare_inline_source_module_batch(
+/// Prepare a multi-file test batch that keeps each test file in its own generated Rust module.
+///
+/// Concatenating independent test files into one frontend program leaks file-local imports and aliases across the
+/// whole batch. Module-isolated batching preserves source-file scope while still compiling one shared Cargo harness.
+fn prepare_isolated_source_module_batch(
     sources_by_file: &[(PathBuf, String)],
     conftest_files_by_file: &HashMap<PathBuf, Vec<PathBuf>>,
+    project_root: &Path,
     source_root: &Path,
     library_manifest_index: &LibraryManifestIndex,
     library_imported_vocab: &parser::ImportedLibraryVocab,
     library_imported_dsl_surfaces: &parser::ImportedLibraryDslSurfaces,
-) -> Result<Option<InlineSourceModuleBatch>, String> {
+) -> Result<Option<IsolatedSourceModuleBatch>, String> {
     if sources_by_file.len() <= 1 {
         return Ok(None);
     }
@@ -647,18 +672,13 @@ fn prepare_inline_source_module_batch(
     let mut parsed_sources = Vec::new();
 
     for (path, source) in sources_by_file {
-        let Some(module_path) = logical_module_segments_from_file(source_root, path) else {
-            return Ok(None);
-        };
+        let module_path = test_module_segments_for_file(project_root, source_root, path);
         let ast = parse_and_desugar_test_sources(
             &[(path.clone(), source.clone())],
             library_manifest_index,
             library_imported_vocab,
             library_imported_dsl_surfaces,
         )?;
-        if !program_has_inline_test_module(&ast) {
-            return Ok(None);
-        }
         batch_files.insert(canonical_path_for_cache_key(path));
         parsed_sources.push((path.clone(), source.clone(), module_path, ast));
     }
@@ -725,7 +745,7 @@ fn prepare_inline_source_module_batch(
         .first()
         .map(|(path, _)| path.as_path())
         .unwrap_or_else(|| Path::new("."));
-    Ok(Some(InlineSourceModuleBatch {
+    Ok(Some(IsolatedSourceModuleBatch {
         ast: empty_test_batch_root(first_path),
         source_modules,
         harnesses,
@@ -1685,6 +1705,35 @@ fn fixture_cache_static_name(name: &str) -> String {
     format!("__INCAN_FIXTURE_CACHE_{}", safe_name.to_ascii_uppercase())
 }
 
+/// Return the Rust path used to access one generated fixture cache static.
+fn fixture_cache_static_ref(name: &str, fixture: &FixtureExecutionInfo, session_cache_module: Option<&str>) -> String {
+    let static_name = fixture_cache_static_name(name);
+    if fixture.scope == FixtureScope::Session
+        && let Some(module) = session_cache_module
+    {
+        return format!("crate::{module}::{static_name}");
+    }
+    static_name
+}
+
+/// Render one generated cache static for a module- or session-scoped fixture.
+fn render_fixture_cache_static(name: &str, fixture: &FixtureExecutionInfo, visibility: &str) -> Option<String> {
+    if fixture.scope == FixtureScope::Function {
+        return None;
+    }
+    let static_name = fixture_cache_static_name(name);
+    if fixture.has_teardown {
+        let state_rust_type = fixture.state_rust_type.as_ref()?;
+        return Some(format!(
+            "{visibility}static {static_name}: std::sync::OnceLock<std::sync::Mutex<Option<{state_rust_type}>>> = std::sync::OnceLock::new();\n"
+        ));
+    }
+    fixture.return_rust_type.as_ref()?;
+    Some(format!(
+        "{visibility}static {static_name}: std::sync::OnceLock<std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>> = std::sync::OnceLock::new();\n"
+    ))
+}
+
 /// Return the local generated Rust binding that stores one fixture's setup/teardown state.
 fn fixture_state_ident(index: usize, name: &str) -> String {
     format!("__incan_fixture_state_{index}_{}", safe_fixture_ident(name))
@@ -1762,124 +1811,123 @@ fn test_runner_stdlib_features_for_batch(
     features.into_iter().collect()
 }
 
-/// Generate an expression that calls a fixture, recursively filling fixture dependencies.
-fn fixture_arg(
-    name: &str,
-    index: usize,
-    setup: &mut String,
-    fixtures: &HashMap<String, FixtureExecutionInfo>,
-    created_builtins: &mut HashSet<String>,
-    teardown_steps: &mut Vec<String>,
-    visiting: &mut Vec<String>,
-) -> String {
-    if let Some(expr) = builtin_fixture_arg(name, index, setup, created_builtins) {
-        return expr;
-    }
+struct FixtureArgRender<'a> {
+    setup: &'a mut String,
+    fixtures: &'a HashMap<String, FixtureExecutionInfo>,
+    created_builtins: &'a mut HashSet<String>,
+    teardown_steps: &'a mut Vec<String>,
+    session_cache_module: Option<&'a str>,
+}
 
-    if visiting.iter().any(|existing| existing == name) {
-        return format!("super::{name}()");
-    }
-    visiting.push(name.to_string());
-    let args = fixtures
-        .get(name)
-        .map(|fixture| {
-            fixture
-                .params
-                .iter()
-                .map(|param| {
-                    fixture_arg(
-                        param,
-                        index,
-                        setup,
-                        fixtures,
-                        created_builtins,
-                        teardown_steps,
-                        visiting,
-                    )
-                })
-                .collect::<Vec<_>>()
-                .join(", ")
-        })
-        .unwrap_or_default();
-    let _ = visiting.pop();
-    let Some(fixture) = fixtures.get(name) else {
-        return format!("super::{name}({args})");
-    };
-    let setup_call = fixture_setup_call(name, &args, fixture);
-    let Some(return_rust_type) = fixture.return_rust_type.as_ref() else {
-        return setup_call;
-    };
-    if fixture.has_teardown {
-        let Some(teardown) = &fixture.teardown else {
+impl FixtureArgRender<'_> {
+    /// Generate an expression that calls a fixture, recursively filling fixture dependencies.
+    fn arg(&mut self, name: &str, index: usize, visiting: &mut Vec<String>) -> String {
+        if let Some(expr) = builtin_fixture_arg(name, index, self.setup, self.created_builtins) {
+            return expr;
+        }
+
+        if visiting.iter().any(|existing| existing == name) {
+            return format!("super::{name}()");
+        }
+        visiting.push(name.to_string());
+        let params = self
+            .fixtures
+            .get(name)
+            .map(|fixture| fixture.params.clone())
+            .unwrap_or_default();
+        let args = params
+            .iter()
+            .map(|param| self.arg(param, index, visiting))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let _ = visiting.pop();
+        let Some(fixture) = self.fixtures.get(name).cloned() else {
+            return format!("super::{name}({args})");
+        };
+        let setup_call = fixture_setup_call(name, &args, &fixture);
+        let Some(return_rust_type) = fixture.return_rust_type.as_ref() else {
             return setup_call;
         };
-        if fixture.scope == FixtureScope::Function {
-            let state_ident = fixture_state_ident(index, name);
-            let value_ident = fixture_value_ident(index, name);
-            setup.push_str(&format!("        let {state_ident} = {setup_call};\n"));
-            if teardown.captures.is_empty() {
-                setup.push_str(&format!("        let {value_ident} = {state_ident};\n"));
-                teardown_steps.push(fixture_teardown_call(fixture, &teardown.teardown_function, ""));
-            } else {
-                let capture_names = teardown
-                    .captures
-                    .iter()
-                    .map(|capture| format!("__incan_fixture_capture_{}_{}", safe_fixture_ident(name), capture.name))
-                    .collect::<Vec<_>>();
-                setup.push_str(&format!(
-                    "        let ({value_ident}, {}) = {state_ident};\n",
-                    capture_names.join(", ")
-                ));
-                teardown_steps.push(fixture_teardown_call(
-                    fixture,
-                    &teardown.teardown_function,
-                    &capture_names.join(", "),
-                ));
+        if fixture.has_teardown {
+            let Some(teardown) = &fixture.teardown else {
+                return setup_call;
+            };
+            if fixture.scope == FixtureScope::Function {
+                let state_ident = fixture_state_ident(index, name);
+                let value_ident = fixture_value_ident(index, name);
+                self.setup
+                    .push_str(&format!("        let {state_ident} = {setup_call};\n"));
+                if teardown.captures.is_empty() {
+                    self.setup
+                        .push_str(&format!("        let {value_ident} = {state_ident};\n"));
+                    self.teardown_steps
+                        .push(fixture_teardown_call(&fixture, &teardown.teardown_function, ""));
+                } else {
+                    let capture_names = teardown
+                        .captures
+                        .iter()
+                        .map(|capture| format!("__incan_fixture_capture_{}_{}", safe_fixture_ident(name), capture.name))
+                        .collect::<Vec<_>>();
+                    self.setup.push_str(&format!(
+                        "        let ({value_ident}, {}) = {state_ident};\n",
+                        capture_names.join(", ")
+                    ));
+                    self.teardown_steps.push(fixture_teardown_call(
+                        &fixture,
+                        &teardown.teardown_function,
+                        &capture_names.join(", "),
+                    ));
+                }
+                return value_ident;
             }
-            return value_ident;
-        }
-        let static_name = fixture_cache_static_name(name);
-        if teardown.captures.is_empty() {
+            let static_name = fixture_cache_static_ref(name, &fixture, self.session_cache_module);
+            if teardown.captures.is_empty() {
+                return format!(
+                    "{{\n\
+                         let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
+                         let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
+                         if __incan_guard.is_none() {{ *__incan_guard = Some({setup_call}); }}\n\
+                         let Some(__incan_value) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
+                         __incan_value.clone()\n\
+                     }}"
+                );
+            }
             return format!(
                 "{{\n\
-                     let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
-                     let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
-                     if __incan_guard.is_none() {{ *__incan_guard = Some({setup_call}); }}\n\
-                     let Some(__incan_value) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
-                     __incan_value.clone()\n\
-                 }}"
+                         let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
+                         let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
+                         if __incan_guard.is_none() {{ *__incan_guard = Some({setup_call}); }}\n\
+                         let Some(__incan_state) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
+                         let __incan_value: &{return_rust_type} = &__incan_state.0;\n\
+                         __incan_value.clone()\n\
+                     }}"
             );
         }
-        return format!(
+        if fixture.scope == FixtureScope::Function {
+            return setup_call;
+        }
+
+        let static_name = fixture_cache_static_ref(name, &fixture, self.session_cache_module);
+        format!(
             "{{\n\
                      let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
                      let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
-                     if __incan_guard.is_none() {{ *__incan_guard = Some({setup_call}); }}\n\
-                     let Some(__incan_state) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
-                     let __incan_value: &{return_rust_type} = &__incan_state.0;\n\
+                     if __incan_guard.is_none() {{ *__incan_guard = Some(Box::new({setup_call})); }}\n\
+                     let Some(__incan_boxed) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
+                     let Some(__incan_value) = __incan_boxed.downcast_ref::<{return_rust_type}>() else {{ panic!(\"fixture cache `{name}` had an unexpected type\"); }};\n\
                      __incan_value.clone()\n\
                  }}"
-        );
+        )
     }
-    if fixture.scope == FixtureScope::Function {
-        return setup_call;
-    }
-
-    let static_name = fixture_cache_static_name(name);
-    format!(
-        "{{\n\
-                 let __incan_cache = {static_name}.get_or_init(|| std::sync::Mutex::new(None));\n\
-                 let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
-                 if __incan_guard.is_none() {{ *__incan_guard = Some(Box::new({setup_call})); }}\n\
-                 let Some(__incan_boxed) = __incan_guard.as_ref() else {{ panic!(\"fixture cache `{name}` was not initialized\"); }};\n\
-                 let Some(__incan_value) = __incan_boxed.downcast_ref::<{return_rust_type}>() else {{ panic!(\"fixture cache `{name}` had an unexpected type\"); }};\n\
-                 __incan_value.clone()\n\
-             }}"
-    )
 }
 
 /// Generate the body statement that invokes one collected test case.
-fn harness_call(test: &TestInfo, index: usize, fixtures: &HashMap<String, FixtureExecutionInfo>) -> String {
+fn harness_call(
+    test: &TestInfo,
+    index: usize,
+    fixtures: &HashMap<String, FixtureExecutionInfo>,
+    session_cache_module: Option<&str>,
+) -> String {
     let mut setup = String::new();
     let mut args = Vec::new();
     let mut teardown_steps = Vec::new();
@@ -1887,59 +1935,45 @@ fn harness_call(test: &TestInfo, index: usize, fixtures: &HashMap<String, Fixtur
     let mut created_builtins = HashSet::new();
     let parametrize = test.parametrize_call.as_ref();
 
-    for param_name in &test.parameter_names {
-        if let Some(call) = parametrize
-            && let Some(pos) = call.argument_names.iter().position(|name| name == param_name)
-            && let Some(value) = call.rust_arguments.get(pos)
-        {
-            args.push(value.clone());
-            continue;
+    {
+        let mut fixture_render = FixtureArgRender {
+            setup: &mut setup,
+            fixtures,
+            created_builtins: &mut created_builtins,
+            teardown_steps: &mut teardown_steps,
+            session_cache_module,
+        };
+
+        for param_name in &test.parameter_names {
+            if let Some(call) = parametrize
+                && let Some(pos) = call.argument_names.iter().position(|name| name == param_name)
+                && let Some(value) = call.rust_arguments.get(pos)
+            {
+                args.push(value.clone());
+                continue;
+            }
+
+            if test.required_fixtures.iter().any(|fixture| fixture == param_name) {
+                used_fixtures.insert(param_name.clone());
+                args.push(fixture_render.arg(param_name, index, &mut Vec::new()));
+            }
         }
 
-        if test.required_fixtures.iter().any(|fixture| fixture == param_name) {
-            used_fixtures.insert(param_name.clone());
-            args.push(fixture_arg(
-                param_name,
-                index,
-                &mut setup,
-                fixtures,
-                &mut created_builtins,
-                &mut teardown_steps,
-                &mut Vec::new(),
-            ));
+        if test.parameter_names.is_empty() {
+            if let Some(call) = parametrize {
+                args.extend(call.rust_arguments.clone());
+            }
+            for fixture in &test.required_fixtures {
+                used_fixtures.insert(fixture.clone());
+                args.push(fixture_render.arg(fixture, index, &mut Vec::new()));
+            }
         }
-    }
 
-    if test.parameter_names.is_empty() {
-        if let Some(call) = parametrize {
-            args.extend(call.rust_arguments.clone());
-        }
         for fixture in &test.required_fixtures {
-            used_fixtures.insert(fixture.clone());
-            args.push(fixture_arg(
-                fixture,
-                index,
-                &mut setup,
-                fixtures,
-                &mut created_builtins,
-                &mut teardown_steps,
-                &mut Vec::new(),
-            ));
-        }
-    }
-
-    for fixture in &test.required_fixtures {
-        if !used_fixtures.contains(fixture) {
-            let expr = fixture_arg(
-                fixture,
-                index,
-                &mut setup,
-                fixtures,
-                &mut created_builtins,
-                &mut teardown_steps,
-                &mut Vec::new(),
-            );
-            setup.push_str(&format!("        let _ = {expr};\n"));
+            if !used_fixtures.contains(fixture) {
+                let expr = fixture_render.arg(fixture, index, &mut Vec::new());
+                fixture_render.setup.push_str(&format!("        let _ = {expr};\n"));
+            }
         }
     }
 
@@ -2093,7 +2127,26 @@ fn inject_file_test_harness(
     fixtures: &HashMap<String, FixtureExecutionInfo>,
 ) -> String {
     let test_indices = (0..tests.len()).collect::<Vec<_>>();
-    inject_file_test_harness_with_indices(rust_code, tests, &test_indices, project_root, fixtures)
+    inject_file_test_harness_with_indices(rust_code, tests, &test_indices, project_root, fixtures, None)
+}
+
+/// Render the shared session-fixture cache module used by isolated multi-file test batches.
+fn render_shared_session_fixture_cache_module(module_harnesses: &[PreparedModuleHarness]) -> Option<String> {
+    let mut statics = BTreeSet::new();
+    for harness in module_harnesses {
+        for (name, fixture) in &harness.fixtures {
+            if fixture.scope != FixtureScope::Session {
+                continue;
+            }
+            if let Some(static_decl) = render_fixture_cache_static(name, fixture, "pub(crate) ") {
+                statics.insert(static_decl);
+            }
+        }
+    }
+    if statics.is_empty() {
+        return None;
+    }
+    Some(statics.into_iter().collect::<Vec<_>>().join(""))
 }
 
 /// Inject generated Rust test harness entries using stable test indices.
@@ -2103,6 +2156,7 @@ fn inject_file_test_harness_with_indices(
     test_indices: &[usize],
     project_root: &Path,
     fixtures: &HashMap<String, FixtureExecutionInfo>,
+    session_cache_module: Option<&str>,
 ) -> String {
     let mut out = rust_code.to_string();
     let project_root_literal = project_root.to_string_lossy().to_string();
@@ -2110,23 +2164,13 @@ fn inject_file_test_harness_with_indices(
     out.push_str(INCAN_FILE_TEST_MOD);
     out.push_str(" {\n");
     for (name, fixture) in fixtures {
-        if fixture.scope == FixtureScope::Function {
+        if fixture.scope == FixtureScope::Function
+            || (fixture.scope == FixtureScope::Session && session_cache_module.is_some())
+        {
             continue;
         }
-        if fixture.has_teardown {
-            if let Some(state_rust_type) = &fixture.state_rust_type {
-                out.push_str("static ");
-                out.push_str(&fixture_cache_static_name(name));
-                out.push_str(": std::sync::OnceLock<std::sync::Mutex<Option<");
-                out.push_str(state_rust_type);
-                out.push_str(">>> = std::sync::OnceLock::new();\n");
-            }
-        } else if fixture.return_rust_type.is_some() {
-            out.push_str("static ");
-            out.push_str(&fixture_cache_static_name(name));
-            out.push_str(
-                ": std::sync::OnceLock<std::sync::Mutex<Option<Box<dyn std::any::Any + Send>>>> = std::sync::OnceLock::new();\n",
-            );
+        if let Some(static_decl) = render_fixture_cache_static(name, fixture, "") {
+            out.push_str(&static_decl);
         }
     }
     out.push_str(
@@ -2180,7 +2224,7 @@ fn inject_file_test_harness_with_indices(
     let teardown_fixtures = ordered_teardown_fixtures(tests, fixtures);
     for (index, t) in test_indices.iter().copied().zip(tests.iter()) {
         let fname = harness_fn_name(t, index);
-        let call = harness_call(t, index, fixtures);
+        let call = harness_call(t, index, fixtures, session_cache_module);
         out.push_str("    #[test]\n    fn ");
         out.push_str(&fname);
         out.push_str("() {\n");
@@ -2211,7 +2255,7 @@ fn inject_file_test_harness_with_indices(
             let Some(teardown) = &fixture.teardown else {
                 continue;
             };
-            let static_name = fixture_cache_static_name(name);
+            let static_name = fixture_cache_static_ref(name, fixture, session_cache_module);
             out.push_str(&format!(
                 "        if let Some(__incan_cache) = {static_name}.get() {{\n\
                          let Ok(mut __incan_guard) = __incan_cache.lock() else {{ panic!(\"fixture cache `{name}` is poisoned\"); }};\n\
@@ -2854,9 +2898,10 @@ pub(super) fn run_file_tests_batch(
     let project_root = absolute_project_root(&project_root);
     let source_root = common::resolve_source_root(&project_root, manifest.as_ref());
 
-    let inline_module_batch = match prepare_inline_source_module_batch(
+    let isolated_module_batch = match prepare_isolated_source_module_batch(
         &sources_by_file,
         conftest_files_by_file,
+        &project_root,
         &source_root,
         &library_manifest_index,
         &library_imported_vocab,
@@ -2871,7 +2916,7 @@ pub(super) fn run_file_tests_batch(
         }
     };
 
-    let (runner_ast, fixtures, source_modules, module_harnesses) = if let Some(batch) = inline_module_batch {
+    let (runner_ast, fixtures, source_modules, module_harnesses) = if let Some(batch) = isolated_module_batch {
         (batch.ast, HashMap::new(), batch.source_modules, batch.harnesses)
     } else {
         if batch_has_cross_file_top_level_collision(
@@ -3204,6 +3249,13 @@ pub(super) fn run_file_tests_batch(
     if prepared.module_harnesses.is_empty() {
         codegen.set_externally_reachable_items(collect_harness_entrypoints(tests, &fixtures));
     } else {
+        codegen.set_public_typecheck_module_paths(
+            prepared
+                .module_harnesses
+                .iter()
+                .map(|harness| harness.module_path.clone())
+                .collect(),
+        );
         let reachable_by_module = prepared
             .module_harnesses
             .iter()
@@ -3284,6 +3336,14 @@ pub(super) fn run_file_tests_batch(
                 Ok(result) => result,
                 Err(e) => return gen_err(format!("Code generation error: {}", e)),
             };
+        let session_cache_module = if prepared.module_harnesses.is_empty() {
+            None
+        } else {
+            render_shared_session_fixture_cache_module(&prepared.module_harnesses).map(|module_code| {
+                rust_modules.insert(vec![INCAN_SESSION_FIXTURE_MOD.to_string()], module_code);
+                INCAN_SESSION_FIXTURE_MOD
+            })
+        };
         if prepared.module_harnesses.is_empty() {
             main_code = inject_file_test_harness(&main_code, tests, &prepared.project_root, &fixtures);
         } else {
@@ -3310,6 +3370,7 @@ pub(super) fn run_file_tests_batch(
                     &test_indices,
                     &prepared.project_root,
                     &harness.fixtures,
+                    session_cache_module,
                 );
             }
         }

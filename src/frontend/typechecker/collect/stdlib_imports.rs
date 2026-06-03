@@ -230,6 +230,10 @@ impl TypeChecker {
                 ));
                 continue;
             }
+            if let Some(kind) = self.imported_source_dependency_symbol_kind(module, item) {
+                self.define_resolved_source_import_symbol(item, kind, span);
+                continue;
+            }
             if self.preserve_existing_from_import_symbol(item, span) {
                 continue;
             }
@@ -566,6 +570,24 @@ impl TypeChecker {
     /// Define one imported item under its local alias after root namespace validation.
     fn define_from_import_symbol(&mut self, item: &ImportItem, kind: SymbolKind, span: Span) {
         let local_name = Self::import_item_local_name(item);
+        self.define_named_import_symbol(local_name, kind, span);
+    }
+
+    /// Return the exact source dependency member targeted by a `from module import item` declaration.
+    fn imported_source_dependency_symbol_kind(&self, module: &ImportPath, item: &ImportItem) -> Option<SymbolKind> {
+        self.dependency_member_symbol_for_path(module, &item.name)
+    }
+
+    /// Define a source-imported dependency symbol under its local import name.
+    fn define_resolved_source_import_symbol(&mut self, item: &ImportItem, mut kind: SymbolKind, span: Span) {
+        let local_name = Self::import_item_local_name(item);
+        if let SymbolKind::Static(info) = &mut kind {
+            info.is_imported = true;
+            self.type_info.declarations.static_bindings.insert(
+                local_name.clone(),
+                crate::frontend::typechecker::StaticBindingInfo { is_imported: true },
+            );
+        }
         self.define_named_import_symbol(local_name, kind, span);
     }
 

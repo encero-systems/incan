@@ -367,6 +367,121 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return the semantic list type and owner qualifier that should drive element-level union widening.
+    ///
+    /// Imported public calls can carry dependency-owned generated union wrappers inside a list. This mirrors scalar
+    /// union widening source discovery so non-literal list arguments do not fall back to a caller-owned wrapper shape.
+    pub(in super::super) fn list_element_widening_source_for_expr(
+        &self,
+        expr: &TypedExpr,
+    ) -> (IrType, Option<Vec<String>>) {
+        match &expr.kind {
+            IrExprKind::Call {
+                callable_signature: Some(signature),
+                canonical_path,
+                ..
+            } if self
+                .list_element_union_type(&signature.return_type)
+                .is_some_and(|elem| elem.union_members().is_some()) =>
+            {
+                (
+                    signature.return_type.clone(),
+                    Self::pub_library_union_qualifier(canonical_path.as_deref()),
+                )
+            }
+            IrExprKind::MethodCall {
+                callable_signature: Some(signature),
+                ..
+            } if self
+                .list_element_union_type(&signature.return_type)
+                .is_some_and(|elem| elem.union_members().is_some()) =>
+            {
+                (signature.return_type.clone(), None)
+            }
+            _ => (expr.ty.clone(), None),
+        }
+    }
+
+    /// Return the resolved element type for a list shape.
+    fn list_element_union_type(&self, ty: &IrType) -> Option<IrType> {
+        match self.resolve_type_aliases_for_emit(ty) {
+            IrType::List(elem) => Some(*elem),
+            _ => None,
+        }
+    }
+
+    /// Return whether `List[S]` needs an element-wise union conversion to satisfy `List[T]`.
+    pub(in super::super) fn list_element_widening_needed(&self, source_ty: &IrType, target_ty: &IrType) -> bool {
+        let source_ty = self.resolve_type_aliases_for_emit(source_ty);
+        let target_ty = self.resolve_type_aliases_for_emit(target_ty);
+        let (IrType::List(source_elem), IrType::List(target_elem)) = (&source_ty, &target_ty) else {
+            return false;
+        };
+        if source_elem == target_elem {
+            return false;
+        }
+        target_elem.union_variant_index_for_member(source_elem).is_some()
+            || self.union_widening_needed(source_elem, target_elem)
+    }
+
+    /// Emit an element-wise conversion from `List[S]` to `List[Union[...S...]]` or a wider union list.
+    fn emit_list_element_widening_value(
+        &self,
+        source_ty: &IrType,
+        target_ty: &IrType,
+        source_tokens: TokenStream,
+        source_qualifier: Option<&[String]>,
+        target_qualifier: Option<&[String]>,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let source_ty = self.resolve_type_aliases_for_emit(source_ty);
+        let target_ty = self.resolve_type_aliases_for_emit(target_ty);
+        let (IrType::List(source_elem), IrType::List(target_elem)) = (&source_ty, &target_ty) else {
+            return Ok(None);
+        };
+        if source_elem == target_elem {
+            return Ok(None);
+        }
+
+        if let Some(converted_item) = self.emit_union_widening_value(
+            source_elem,
+            target_elem,
+            quote! { __incan_item },
+            source_qualifier,
+            target_qualifier,
+        )? {
+            return Ok(Some(quote! {
+                (#source_tokens).into_iter().map(|__incan_item| #converted_item).collect::<Vec<_>>()
+            }));
+        }
+
+        let Some(variant_index) = target_elem.union_variant_index_for_member(source_elem) else {
+            return Ok(None);
+        };
+        let Some(members) = target_elem.union_members() else {
+            return Ok(None);
+        };
+        let Some(member_ty) = members.get(variant_index) else {
+            return Ok(None);
+        };
+        let item_tokens = if matches!(member_ty, IrType::String)
+            && matches!(
+                source_elem.as_ref(),
+                IrType::StaticStr | IrType::StrRef | IrType::FrozenStr
+            ) {
+            quote! { __incan_item.to_string() }
+        } else {
+            quote! { __incan_item }
+        };
+        let variant_ident = quote::format_ident!("{}", IrType::union_variant_name(variant_index));
+        let union_path = self.emit_union_type_path_with_qualifier(target_elem, target_qualifier);
+        Ok(Some(quote! {
+            (#source_tokens)
+                .into_iter()
+                .map(|__incan_item| #union_path :: #variant_ident(#item_tokens))
+                .collect::<Vec<_>>()
+        }))
+    }
+
     /// Return the `Result[output, error]` target type for the inner expression of `output?`.
     fn try_inner_target_type(&self, output_ty: &IrType, inner: &TypedExpr) -> Option<IrType> {
         if matches!(output_ty, IrType::Unknown) {
@@ -549,6 +664,16 @@ impl<'a> IrEmitter<'a> {
                     site,
                 )?;
                 if let Some(target_ty) = resolved_target_ty.as_ref() {
+                    let (source_ty, source_qualifier) = self.list_element_widening_source_for_expr(expr);
+                    if let Some(converted) = self.emit_list_element_widening_value(
+                        &source_ty,
+                        target_ty,
+                        emitted.clone(),
+                        source_qualifier.as_deref(),
+                        target_union_qualifier,
+                    )? {
+                        return Ok(converted);
+                    }
                     let (source_ty, source_qualifier) = self.union_widening_source_for_expr(expr);
                     if let Some(converted) = self.emit_union_widening_value(
                         &source_ty,
@@ -583,6 +708,16 @@ impl<'a> IrEmitter<'a> {
                     target_site,
                 )?;
                 if let Some(target_ty) = resolved_target_ty.as_ref() {
+                    let (source_ty, source_qualifier) = self.list_element_widening_source_for_expr(expr);
+                    if let Some(converted) = self.emit_list_element_widening_value(
+                        &source_ty,
+                        target_ty,
+                        emitted.clone(),
+                        source_qualifier.as_deref(),
+                        target_union_qualifier,
+                    )? {
+                        return Ok(converted);
+                    }
                     let (source_ty, source_qualifier) = self.union_widening_source_for_expr(expr);
                     if let Some(converted) = self.emit_union_widening_value(
                         &source_ty,
@@ -603,6 +738,16 @@ impl<'a> IrEmitter<'a> {
         let plan = plan_value_use(expr, site);
         let emitted = plan.apply(emitted);
         if let Some(target_ty) = resolved_target_ty.as_ref() {
+            let (source_ty, source_qualifier) = self.list_element_widening_source_for_expr(expr);
+            if let Some(converted) = self.emit_list_element_widening_value(
+                &source_ty,
+                target_ty,
+                emitted.clone(),
+                source_qualifier.as_deref(),
+                target_union_qualifier,
+            )? {
+                return Ok(converted);
+            }
             let (source_ty, source_qualifier) = self.union_widening_source_for_expr(expr);
             if let Some(converted) = self.emit_union_widening_value(
                 &source_ty,

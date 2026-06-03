@@ -3682,6 +3682,409 @@ def test_decorated_default_probe() -> None:
 }
 
 #[test]
+fn test_facade_reexport_preserves_declared_source_import_alias_target_issue57() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "facade_reexport_import_alias_target", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    let references_dir = src_dir.join("functions").join("references");
+    let aggregates_dir = src_dir.join("functions").join("aggregates");
+    fs::create_dir_all(&references_dir)?;
+    fs::create_dir_all(&aggregates_dir)?;
+    fs::write(
+        src_dir.join("projection_builders.incn"),
+        r#"pub model ColumnRefExpr:
+    pub name: str
+
+
+pub model ScalarFunctionExpr:
+    pub name: str
+
+
+pub type ColumnExpr = Union[ColumnRefExpr, ScalarFunctionExpr]
+
+
+pub def col(name: str) -> ColumnRefExpr:
+    return ColumnRefExpr(name=name)
+"#,
+    )?;
+    fs::write(
+        src_dir.join("aggregate_builders.incn"),
+        r#"from projection_builders import ColumnExpr, ScalarFunctionExpr
+
+
+pub model AggregateMeasure:
+    pub has_expr: bool
+
+
+pub def col(name: str) -> ColumnExpr:
+    return ScalarFunctionExpr(name=name)
+
+
+pub def count(expr: Option[ColumnExpr] = None) -> AggregateMeasure:
+    if let Some(_) = expr:
+        return AggregateMeasure(has_expr=true)
+    return AggregateMeasure(has_expr=false)
+"#,
+    )?;
+    fs::write(
+        references_dir.join("col.incn"),
+        r#"from projection_builders import ColumnRefExpr, col as col_builder
+
+
+pub def col(name: str) -> ColumnRefExpr:
+    return col_builder(name)
+"#,
+    )?;
+    fs::write(
+        aggregates_dir.join("count.incn"),
+        r#"from aggregate_builders import AggregateMeasure, count as count_builder
+from projection_builders import ColumnExpr
+
+
+pub def count(expr: Option[ColumnExpr] = None) -> AggregateMeasure:
+    return count_builder(expr)
+
+
+pub def count_expr(expr: ColumnExpr) -> AggregateMeasure:
+    return count(expr)
+"#,
+    )?;
+    fs::write(
+        src_dir.join("functions.incn"),
+        r#"pub from functions.references.col import col
+pub from functions.aggregates.count import count, count_expr
+"#,
+    )?;
+
+    let facade_path = src_dir.join("functions.incn");
+    let emit_output = run_incan(
+        tmp.path(),
+        &[
+            "--emit-rust",
+            facade_path.to_str().ok_or("facade path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(
+        &emit_output,
+        "emit-rust for facade re-export with colliding source import alias target",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_facade_reexport_preserves_decorated_helper_signature_issue57() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "facade_decorated_helper_signature", "")?;
+    let src_dir = main_path.parent().ok_or("main path did not have a parent")?;
+    let functions_dir = src_dir.join("functions");
+    let operators_dir = functions_dir.join("operators");
+    let references_dir = functions_dir.join("references");
+    fs::create_dir_all(&operators_dir)?;
+    fs::create_dir_all(&references_dir)?;
+    fs::write(
+        src_dir.join("projection_builders.incn"),
+        r#"pub model ColumnRefExpr:
+    pub name: str
+
+
+pub model StringLiteralExpr:
+    pub value: str
+
+
+pub type ColumnExpr = Union[ColumnRefExpr, StringLiteralExpr]
+
+
+pub def col(name: str) -> ColumnRefExpr:
+    return ColumnRefExpr(name=name)
+"#,
+    )?;
+    fs::write(
+        src_dir.join("registry.incn"),
+        r#"pub def register[F]() -> (F) -> F:
+    return (func) => func
+"#,
+    )?;
+    fs::write(
+        src_dir.join("filter_builders.incn"),
+        r#"from projection_builders import ColumnExpr
+
+
+pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
+    return left
+"#,
+    )?;
+    fs::write(
+        src_dir.join("functions").join("inputs.incn"),
+        r#"from projection_builders import ColumnExpr
+
+
+pub type ScalarValueOrColumn = Union[ColumnExpr, str]
+"#,
+    )?;
+    fs::write(
+        references_dir.join("col.incn"),
+        r#"from projection_builders import ColumnRefExpr, col as col_builder
+from registry import register
+
+
+@register()
+pub def col(name: str) -> ColumnRefExpr:
+    return col_builder(name)
+"#,
+    )?;
+    fs::write(
+        operators_dir.join("eq.incn"),
+        r#"from functions.inputs import ScalarValueOrColumn
+from registry import register
+
+
+@register()
+pub def eq(left: ScalarValueOrColumn, right: ScalarValueOrColumn) -> None:
+    return
+"#,
+    )?;
+    fs::write(
+        src_dir.join("functions").join("mod.incn"),
+        r#"pub from functions.inputs import ScalarValueOrColumn
+pub from functions.references.col import col
+pub from functions.operators.eq import eq
+pub from filter_builders import eq as filter_eq
+"#,
+    )?;
+    let scratch_dir = tmp.path().join(".agents").join("tmp");
+    fs::create_dir_all(&scratch_dir)?;
+    let scratch_path = scratch_dir.join("repro_facade_eq.incn");
+    fs::write(
+        &scratch_path,
+        r#"from functions import col, eq
+
+
+pub def repro() -> None:
+    eq(col("status"), "paid")
+"#,
+    )?;
+
+    let check_output = run_incan(
+        tmp.path(),
+        &[
+            "--check",
+            scratch_path.to_str().ok_or("scratch path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(
+        &check_output,
+        "incan check for facade re-export preserving decorated helper signature",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_incan_call_widens_list_elements_to_union_argument_issue57() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "incan_list_element_union_arg", "")?;
+    fs::write(
+        &main_path,
+        r#"pub model ColumnRefExpr:
+    pub name: str
+
+
+pub model StringColumnExpr:
+    pub name: str
+
+
+pub type ColumnExpr = Union[ColumnRefExpr, StringColumnExpr]
+
+
+pub def registered_application(arguments: list[ColumnExpr]) -> ColumnExpr:
+    return arguments[0]
+
+
+pub def str_col(name: str) -> StringColumnExpr:
+    return StringColumnExpr(name=name)
+
+
+pub def concat(first: str) -> ColumnExpr:
+    mut arguments = [str_col(first)]
+    arguments.append(str_col("tail"))
+    return registered_application(arguments)
+
+
+pub def concat_direct(first: str) -> ColumnExpr:
+    return registered_application([str_col(first)])
+
+
+def main() -> None:
+    concat("name")
+    concat_direct("name")
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &build_output,
+        "incan build for list element union widening at an Incan call boundary",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_incan_call_widens_imported_list_elements_to_union_argument_issue57() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "incan_imported_list_element_union_arg", "")?;
+    let src_dir = main_path.parent().ok_or("main path did not have a parent")?;
+    fs::write(
+        src_dir.join("types.incn"),
+        r#"pub model A:
+    pub value: str
+
+
+pub model B:
+    pub value: str
+
+
+pub type U = Union[A, B]
+
+
+pub type Outer = Union[U, int]
+"#,
+    )?;
+    fs::write(
+        src_dir.join("helpers.incn"),
+        r#"from types import A
+
+
+pub def a(value: str) -> A:
+    return A(value=value)
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from helpers import a
+from types import Outer, U
+
+
+pub def repro(name: str) -> int:
+    return takes([a(name)])
+
+
+pub def repro_nested(name: str) -> int:
+    return takes_nested([a(name)])
+
+
+pub def takes(values: list[U]) -> int:
+    return len(values)
+
+
+pub def takes_nested(values: list[Outer]) -> int:
+    return len(values)
+
+
+def main() -> None:
+    repro("name")
+    repro_nested("name")
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &build_output,
+        "incan build for imported list element union widening at an Incan call boundary",
+    );
+    Ok(())
+}
+
+#[test]
+fn test_multi_file_test_batch_keeps_file_local_import_scopes_issue57() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "test_batch_file_local_import_scopes", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    let tests_dir = tmp.path().join("tests");
+    fs::create_dir_all(&tests_dir)?;
+    fs::write(
+        src_dir.join("projection_builders.incn"),
+        r#"pub model ColumnRefExpr:
+    pub name: str
+
+
+pub model ScalarFunctionExpr:
+    pub name: str
+
+
+pub type ColumnExpr = Union[ColumnRefExpr, ScalarFunctionExpr]
+
+
+pub def col(name: str) -> ColumnRefExpr:
+    return ColumnRefExpr(name=name)
+"#,
+    )?;
+    fs::write(
+        src_dir.join("aggregate_builders.incn"),
+        r#"from projection_builders import ColumnExpr, ScalarFunctionExpr
+
+
+pub def col(name: str) -> ColumnExpr:
+    return ScalarFunctionExpr(name=name)
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_projection_col.incn"),
+        r#"from projection_builders import ColumnRefExpr, col
+
+
+def test_projection_col_keeps_concrete_return_type() -> None:
+    ref: ColumnRefExpr = col("customer_id")
+    assert ref.name == "customer_id"
+"#,
+    )?;
+    fs::write(
+        tests_dir.join("test_aggregate_col.incn"),
+        r#"from aggregate_builders import col
+from projection_builders import ColumnExpr
+
+
+def test_aggregate_col_keeps_union_return_type() -> None:
+    expr: ColumnExpr = col("customer_id")
+    assert true
+"#,
+    )?;
+
+    let test_output = run_incan(tmp.path(), &["test", "tests"])?;
+    assert_success(
+        &test_output,
+        "incan test multi-file batch with same local import name from different modules",
+    );
+    let test_batches_dir = tmp.path().join("target").join("incan_tests");
+    let isolated_projection_module = fs::read_dir(&test_batches_dir)?.filter_map(Result::ok).any(|entry| {
+        entry
+            .path()
+            .join("src")
+            .join("tests")
+            .join("test_projection_col.rs")
+            .exists()
+    });
+    let isolated_aggregate_module = fs::read_dir(&test_batches_dir)?.filter_map(Result::ok).any(|entry| {
+        entry
+            .path()
+            .join("src")
+            .join("tests")
+            .join("test_aggregate_col.rs")
+            .exists()
+    });
+    assert!(
+        isolated_projection_module && isolated_aggregate_module,
+        "multi-file test batch should emit each test file as its own Rust module"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_decorator_callable_exposes_source_name_issue694() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "decorator_callable_name", "")?;

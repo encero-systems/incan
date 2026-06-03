@@ -27,15 +27,16 @@
 //! The `generate*` methods are convenience wrappers that return error comments
 //! on failure (useful for debugging but not recommended for production).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
 #[cfg(feature = "rust_inspect")]
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::frontend::ast::Program;
+use crate::frontend::ast::{Declaration, ImportKind, Program};
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
+use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
 
 use super::emit::CallableNameResolution;
@@ -173,6 +174,8 @@ pub struct IrCodegen<'a> {
     public_ordinal_type_identities: HashMap<String, String>,
     /// Whether non-stdlib dependency modules keep public items that are not otherwise reachable.
     preserve_dependency_public_items: bool,
+    /// Dependency module paths that should typecheck with source-visible public import rules.
+    public_typecheck_module_paths: HashSet<Vec<String>>,
     /// Shared stdlib source metadata cache reused across the repeated internal typecheck/lowering passes that codegen
     /// performs for multi-module builds.
     stdlib_cache: StdlibAstCache,
@@ -199,10 +202,109 @@ impl<'a> IrCodegen<'a> {
             externally_reachable_items_by_module: HashMap::new(),
             public_ordinal_type_identities: HashMap::new(),
             preserve_dependency_public_items: true,
+            public_typecheck_module_paths: HashSet::new(),
             stdlib_cache: StdlibAstCache::new(),
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
+    }
+
+    /// Return the stable module key used by source imports and CLI collection for one dependency module.
+    fn dependency_module_key(name: &str, path_segments: &Option<Vec<String>>) -> String {
+        path_segments
+            .as_deref()
+            .map(canonicalize_source_module_segments)
+            .map(|segments| segments.join("_"))
+            .unwrap_or_else(|| name.to_string())
+    }
+
+    /// Return the transitive local source dependency subset needed to typecheck one program.
+    ///
+    /// Codegen typechecking must mirror the CLI checker: a module should see its declared local imports and their
+    /// transitive signature dependencies, not every module collected for the output project. Importing the whole
+    /// dependency universe lets same-name public helpers from unrelated modules collide before `from ... import ... as
+    /// ...` collection, which changes behavior between `--check` and `--emit-rust`.
+    fn imported_dependency_modules_for_program(
+        program: &Program,
+        dependencies: &[(&'a str, &'a Program, Option<Vec<String>>)],
+        self_key: Option<&str>,
+    ) -> Vec<(&'a str, &'a Program)> {
+        let mut module_idx_by_key = HashMap::new();
+        for (idx, (name, _, path_segments)) in dependencies.iter().enumerate() {
+            module_idx_by_key.insert(Self::dependency_module_key(name, path_segments), idx);
+        }
+
+        let mut selected = BTreeSet::new();
+        let mut pending = Self::direct_imported_dependency_indexes(program, &module_idx_by_key, self_key);
+        while let Some(idx) = pending.pop() {
+            let (name, ast, path_segments) = &dependencies[idx];
+            let dep_key = Self::dependency_module_key(name, path_segments);
+            if self_key == Some(dep_key.as_str()) || !selected.insert(idx) {
+                continue;
+            }
+            pending.extend(Self::direct_imported_dependency_indexes(
+                ast,
+                &module_idx_by_key,
+                Some(dep_key.as_str()),
+            ));
+        }
+
+        selected
+            .into_iter()
+            .map(|idx| {
+                let (name, ast, _) = dependencies[idx];
+                (name, ast)
+            })
+            .collect()
+    }
+
+    /// Return direct dependency-module indexes named by source imports in one program.
+    fn direct_imported_dependency_indexes(
+        program: &Program,
+        module_idx_by_key: &HashMap<String, usize>,
+        self_key: Option<&str>,
+    ) -> Vec<usize> {
+        let mut dep_indexes = BTreeSet::new();
+        for decl in &program.declarations {
+            let Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            match &import.kind {
+                ImportKind::From { module, .. } => {
+                    if module.parent_levels > 0 || module.segments.is_empty() {
+                        continue;
+                    }
+                    let key = canonicalize_source_module_segments(&module.segments).join("_");
+                    if self_key != Some(key.as_str())
+                        && let Some(dep_idx) = module_idx_by_key.get(&key).copied()
+                    {
+                        dep_indexes.insert(dep_idx);
+                    }
+                }
+                ImportKind::Module(path) => {
+                    if path.parent_levels > 0 || path.segments.is_empty() {
+                        continue;
+                    }
+                    let full_key = canonicalize_source_module_segments(&path.segments).join("_");
+                    if self_key != Some(full_key.as_str())
+                        && let Some(dep_idx) = module_idx_by_key.get(&full_key).copied()
+                    {
+                        dep_indexes.insert(dep_idx);
+                    }
+                    if path.segments.len() > 1 {
+                        let parent_key =
+                            canonicalize_source_module_segments(&path.segments[..path.segments.len() - 1]).join("_");
+                        if self_key != Some(parent_key.as_str())
+                            && let Some(dep_idx) = module_idx_by_key.get(&parent_key).copied()
+                        {
+                            dep_indexes.insert(dep_idx);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        dep_indexes.into_iter().collect()
     }
 
     /// Build a registry for explicit canonical cross-module calls.
@@ -310,6 +412,15 @@ impl<'a> IrCodegen<'a> {
         self.preserve_dependency_public_items = enabled;
     }
 
+    /// Set dependency module paths that should typecheck with public source import rules.
+    ///
+    /// CLI test batches can emit individual test files as generated dependency modules so each file keeps its own Rust
+    /// module scope. Those test files are still user source and must typecheck like focused `incan test file.incn`
+    /// runs, not like compiler-internal source dependencies that may inspect private module items.
+    pub fn set_public_typecheck_module_paths(&mut self, paths: HashSet<Vec<String>>) {
+        self.public_typecheck_module_paths = paths;
+    }
+
     /// Seed codegen with stdlib metadata already collected by an earlier typecheck phase.
     pub(crate) fn set_stdlib_cache(&mut self, cache: StdlibAstCache) {
         self.stdlib_cache = cache;
@@ -362,6 +473,14 @@ impl<'a> IrCodegen<'a> {
         if let Some(dir) = self.rust_inspect_manifest_dir.clone() {
             tc.set_rust_inspect_manifest_dir(dir);
         }
+    }
+
+    /// Prefix internal codegen typecheck diagnostics with the module being lowered.
+    fn typecheck_errors_for_module(module: &str, mut errors: Vec<CompileError>) -> GenerationError {
+        for error in &mut errors {
+            error.message = format!("in module `{module}`: {}", error.message);
+        }
+        GenerationError::TypeCheck(errors)
     }
 
     /// Preserve stdlib metadata warmed by an internal typechecker pass for later codegen passes.
@@ -578,7 +697,8 @@ impl<'a> IrCodegen<'a> {
             use crate::frontend::typechecker::TypeChecker;
             let mut tc = TypeChecker::new();
             self.configure_typechecker(&mut tc);
-            let result = match tc.check_with_imports(program, &deps) {
+            let typecheck_deps = Self::imported_dependency_modules_for_program(program, &dependency_modules, None);
+            let result = match tc.check_with_imports(program, &typecheck_deps) {
                 Ok(()) => tc.type_info().clone(),
                 Err(errs) => return Err(GenerationError::TypeCheck(errs)),
             };
@@ -637,9 +757,12 @@ impl<'a> IrCodegen<'a> {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
                 self.configure_typechecker(&mut tc);
-                let result = match tc.check_with_imports_allow_private(dep_ast, &deps) {
+                let dep_key = Self::dependency_module_key(dep_name, &dep_path_segments);
+                let typecheck_deps =
+                    Self::imported_dependency_modules_for_program(dep_ast, &dependency_modules, Some(&dep_key));
+                let result = match tc.check_with_imports_allow_private(dep_ast, &typecheck_deps) {
                     Ok(()) => tc.type_info().clone(),
-                    Err(errs) => return Err(GenerationError::TypeCheck(errs)),
+                    Err(errs) => return Err(Self::typecheck_errors_for_module(&dep_key, errs)),
                 };
                 self.capture_typechecker_stdlib_cache(&tc);
                 result
@@ -886,9 +1009,12 @@ impl<'a> IrCodegen<'a> {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
                 self.configure_typechecker(&mut tc);
-                let result = match tc.check_with_imports_allow_private(ast, &deps) {
+                let module_key = Self::dependency_module_key(name, &path_segments);
+                let typecheck_deps =
+                    Self::imported_dependency_modules_for_program(ast, &dependency_modules, Some(&module_key));
+                let result = match tc.check_with_imports_allow_private(ast, &typecheck_deps) {
                     Ok(()) => tc.type_info().clone(),
-                    Err(errs) => return Err(GenerationError::TypeCheck(errs)),
+                    Err(errs) => return Err(Self::typecheck_errors_for_module(&module_key, errs)),
                 };
                 self.capture_typechecker_stdlib_cache(&tc);
                 result
@@ -1120,9 +1246,19 @@ impl<'a> IrCodegen<'a> {
                     use crate::frontend::typechecker::TypeChecker;
                     let mut tc = TypeChecker::new();
                     self.configure_typechecker(&mut tc);
-                    let result = match tc.check_with_imports_allow_private(ast, &deps) {
+                    let self_key = canonicalize_source_module_segments(path).join("_");
+                    let typecheck_deps =
+                        Self::imported_dependency_modules_for_program(ast, &dependency_modules, Some(&self_key));
+                    let result = if self.public_typecheck_module_paths.contains(path) {
+                        tc.check_with_imports(ast, &typecheck_deps)
+                    } else {
+                        tc.check_with_imports_allow_private(ast, &typecheck_deps)
+                    };
+                    let result = match result {
                         Ok(()) => tc.type_info().clone(),
-                        Err(errs) => return Err(GenerationError::TypeCheck(errs)),
+                        Err(errs) => {
+                            return Err(Self::typecheck_errors_for_module(&path.join("."), errs));
+                        }
                     };
                     self.capture_typechecker_stdlib_cache(&tc);
                     result

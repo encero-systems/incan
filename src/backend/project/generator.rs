@@ -262,6 +262,28 @@ impl ProjectGenerator {
         }
     }
 
+    /// Return the generated filename for a top-level Rust module leaf.
+    ///
+    /// Cargo treats `src/main.rs` and `src/lib.rs` as crate roots. Generated library projects can still have source
+    /// modules named `main` or `lib`, so those module leaves use explicit `#[path]` declarations and non-root
+    /// filenames.
+    fn top_level_leaf_module_file_name(module_name: &str) -> String {
+        match module_name {
+            "main" | "lib" => format!("__incan_mod_{module_name}.rs"),
+            _ => format!("{module_name}.rs"),
+        }
+    }
+
+    /// Return whether a top-level generated module name would otherwise create a Cargo crate-root file.
+    fn is_special_top_level_leaf_module(module_name: &str) -> bool {
+        matches!(module_name, "main" | "lib")
+    }
+
+    /// Return the path used in a top-level module declaration for a generated leaf module.
+    fn top_level_leaf_module_relative_path(module_name: &str) -> String {
+        Self::top_level_leaf_module_file_name(module_name)
+    }
+
     /// Render a Rust module declaration for a generated module file or directory.
     ///
     /// Keyword-named modules use raw identifiers in Rust (`r#type`) while keeping the on-disk layout clean
@@ -269,7 +291,10 @@ impl ProjectGenerator {
     /// matches the RFC 023 closeout contract for keyword-named module paths.
     fn render_module_decl(name: &str, relative_path: &str, visibility: &str) -> String {
         let escaped_name = rust_keywords::escape_keyword(name);
-        if rust_keywords::is_keyword(name) {
+        let default_leaf_path = format!("{name}.rs");
+        let default_dir_path = format!("{name}/mod.rs");
+        if rust_keywords::is_keyword(name) || (relative_path != default_leaf_path && relative_path != default_dir_path)
+        {
             return format!("#[path = \"{relative_path}\"]\n{visibility}mod {escaped_name};");
         }
         format!("{visibility}mod {escaped_name};")
@@ -307,6 +332,9 @@ impl ProjectGenerator {
 
         for module_name in modules.keys() {
             changed |= Self::remove_conflicting_module_artifact(&src_dir.join(module_name))?;
+            if Self::is_special_top_level_leaf_module(module_name) {
+                changed |= Self::remove_conflicting_module_artifact(&src_dir.join(format!("{module_name}.rs")))?;
+            }
         }
 
         // Write Cargo.toml
@@ -316,7 +344,7 @@ impl ProjectGenerator {
 
         // Write each module file
         for (module_name, module_code) in modules {
-            let module_file = src_dir.join(format!("{}.rs", module_name));
+            let module_file = src_dir.join(Self::top_level_leaf_module_file_name(module_name));
             changed |= Self::write_file_if_changed(&module_file, module_code)?;
         }
 
@@ -333,7 +361,7 @@ impl ProjectGenerator {
             let visibility = if self.is_binary { "" } else { "pub " };
             let mods: String = module_names
                 .iter()
-                .map(|m| Self::render_module_decl(m, &format!("{m}.rs"), visibility))
+                .map(|m| Self::render_module_decl(m, &Self::top_level_leaf_module_relative_path(m), visibility))
                 .collect::<Vec<_>>()
                 .join("\n")
                 + "\n";
@@ -440,6 +468,12 @@ impl ProjectGenerator {
                 changed |= Self::remove_conflicting_module_artifact(&module_path.with_extension("rs"))?;
             } else {
                 changed |= Self::remove_conflicting_module_artifact(&module_path)?;
+                if path_segments.len() == 1
+                    && let Some(module_name) = path_segments.first()
+                    && Self::is_special_top_level_leaf_module(module_name)
+                {
+                    changed |= Self::remove_conflicting_module_artifact(&module_path.with_extension("rs"))?;
+                }
             }
         }
 
@@ -509,7 +543,11 @@ impl ProjectGenerator {
             let file_stem = path_segments
                 .last()
                 .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "empty module path"))?;
-            let file_name = format!("{file_stem}.rs");
+            let file_name = if path_segments.len() == 1 {
+                Self::top_level_leaf_module_file_name(file_stem)
+            } else {
+                format!("{file_stem}.rs")
+            };
             file_path = file_path.join(file_name);
 
             changed |= Self::write_file_if_changed(&file_path, module_code)?;
@@ -532,7 +570,7 @@ impl ProjectGenerator {
                     let relative_path = if modules_with_submodules.contains(&top_level_path) {
                         format!("{m}/mod.rs")
                     } else {
-                        format!("{m}.rs")
+                        Self::top_level_leaf_module_relative_path(m)
                     };
                     Self::render_module_decl(m, &relative_path, visibility)
                 })
@@ -787,6 +825,33 @@ mod tests {
 
         let type_mod_rs_content = fs::read_to_string(temp_dir.join("src/type/mod.rs"))?;
         assert!(type_mod_rs_content.contains("pub mod helpers;"));
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        Ok(())
+    }
+
+    #[test]
+    fn test_generate_nested_avoids_cargo_root_filenames_for_top_level_modules() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let temp_dir = std::env::temp_dir().join("incan_test_special_top_modules");
+        let _ = fs::remove_dir_all(&temp_dir);
+
+        let generator = ProjectGenerator::new(&temp_dir, "test_special_top_modules", false);
+
+        let mut modules = HashMap::new();
+        modules.insert(vec!["main".to_string()], "pub fn from_main() {}".to_string());
+        modules.insert(vec!["lib".to_string()], "pub fn from_lib() {}".to_string());
+        generator.generate_nested("pub fn root() {}", &modules)?;
+
+        let lib_rs = fs::read_to_string(temp_dir.join("src/lib.rs"))?;
+        assert!(lib_rs.contains("#[path = \"__incan_mod_main.rs\"]\npub mod main;"));
+        assert!(lib_rs.contains("#[path = \"__incan_mod_lib.rs\"]\npub mod lib;"));
+        assert!(temp_dir.join("src/__incan_mod_main.rs").exists());
+        assert!(temp_dir.join("src/__incan_mod_lib.rs").exists());
+        assert!(
+            !temp_dir.join("src/main.rs").exists(),
+            "top-level generated module must not create a Cargo binary root"
+        );
 
         let _ = fs::remove_dir_all(&temp_dir);
         Ok(())

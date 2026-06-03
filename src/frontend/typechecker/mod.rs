@@ -72,7 +72,7 @@ use std::sync::Arc;
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::{CompileError, ErrorKind, errors};
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
-use crate::frontend::module::{ExportedSymbol, exported_symbols};
+use crate::frontend::module::{ExportedSymbol, canonicalize_source_module_segments, exported_symbols};
 use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::surface_semantics::SurfaceContext;
 use crate::frontend::symbols::*;
@@ -197,6 +197,17 @@ pub struct TypeChecker {
     pub(crate) type_info: TypeCheckInfo,
     /// Public exports for imported dependency modules, keyed by module name.
     pub(crate) dependency_exports: HashMap<String, Vec<ExportedSymbol>>,
+    /// Exact source-module member symbols collected from dependencies, keyed by canonical module name.
+    ///
+    /// Direct source imports use this map before falling back to ambient symbol lookup so `from module import name as
+    /// alias` binds `module.name`, not an unrelated same-name symbol imported earlier from a sibling dependency.
+    pub(crate) dependency_member_symbols: HashMap<String, HashMap<String, SymbolKind>>,
+    /// Module-owned direct dependency members captured while that module is being imported.
+    ///
+    /// Dependency re-export refresh runs after all modules have been imported, when the ambient symbol table may
+    /// contain unrelated same-name declarations from sibling modules. Direct members must therefore come from this
+    /// per-module snapshot rather than a later global `lookup_symbol(...)`.
+    pub(crate) dependency_direct_member_symbols: HashMap<String, HashMap<String, SymbolKind>>,
     /// RFC 024 derivable-module metadata from imported source modules, keyed by module path.
     pub(crate) dependency_derivable_modules: HashMap<String, Vec<String>>,
     /// RFC 024/user-module trait metadata from imported source modules, keyed by module-qualified trait name.
@@ -318,6 +329,8 @@ impl TypeChecker {
             const_eval_cache: HashMap::new(),
             type_info: TypeCheckInfo::default(),
             dependency_exports: HashMap::new(),
+            dependency_member_symbols: HashMap::new(),
+            dependency_direct_member_symbols: HashMap::new(),
             dependency_derivable_modules: HashMap::new(),
             dependency_module_traits: HashMap::new(),
             dependency_trait_rust_derive_paths: HashMap::new(),
@@ -3583,6 +3596,8 @@ impl TypeChecker {
         }
         self.resolve_pending_trait_supertraits();
         self.register_dependency_derivable_metadata(_module_name, module_ast);
+        self.cache_dependency_direct_member_symbols(_module_name, module_ast, true);
+        self.cache_dependency_member_symbols(_module_name, module_ast, true);
         self.surface_context = previous_surface_context;
         self.import_aliases = previous_import_aliases;
     }
@@ -3614,8 +3629,130 @@ impl TypeChecker {
         }
         self.resolve_pending_trait_supertraits();
         self.register_dependency_derivable_metadata(_module_name, module_ast);
+        self.cache_dependency_direct_member_symbols(_module_name, module_ast, false);
+        self.cache_dependency_member_symbols(_module_name, module_ast, false);
         self.surface_context = previous_surface_context;
         self.import_aliases = previous_import_aliases;
+    }
+
+    /// Rebuild exact dependency-member caches after all dependency modules have been collected.
+    ///
+    /// Public facade modules may re-export items from sibling modules. Importing a facade before the underlying
+    /// sibling has been fully collected can leave the facade cache with a placeholder type shell. A final cache pass
+    /// after dependency collection lets re-exports resolve through the now-complete target module metadata.
+    fn refresh_dependency_member_symbols(&mut self, dependencies: &[(&str, &Program)], public_only: bool) {
+        for (name, dep_ast) in dependencies {
+            if Self::is_generated_stdlib_dependency_module(name) {
+                continue;
+            }
+            self.cache_dependency_member_symbols(name, dep_ast, public_only);
+        }
+    }
+
+    /// Cache exact member symbols exported by one dependency module for source `from ... import ...` resolution.
+    fn cache_dependency_member_symbols(&mut self, module_name: &str, module_ast: &Program, public_only: bool) {
+        let mut member_symbols = HashMap::new();
+        if let Some(direct_symbols) = self.dependency_direct_member_symbols.get(module_name) {
+            member_symbols.extend(direct_symbols.clone());
+        } else {
+            self.cache_dependency_direct_member_symbols(module_name, module_ast, public_only);
+            if let Some(direct_symbols) = self.dependency_direct_member_symbols.get(module_name) {
+                member_symbols.extend(direct_symbols.clone());
+            }
+        }
+        for (exported_name, module, item_name) in Self::dependency_source_reexport_targets(module_ast) {
+            if let Some(kind) = self.dependency_member_symbol_for_path(&module, &item_name) {
+                member_symbols.insert(exported_name, kind);
+            }
+        }
+        self.dependency_member_symbols
+            .insert(module_name.to_string(), member_symbols);
+    }
+
+    /// Cache direct declarations owned by one dependency module.
+    fn cache_dependency_direct_member_symbols(&mut self, module_name: &str, module_ast: &Program, public_only: bool) {
+        let mut direct_symbols = HashMap::new();
+        for name in Self::dependency_direct_member_names(module_ast, public_only) {
+            if let Some(symbol) = self.lookup_symbol(name.as_str()) {
+                direct_symbols.insert(name, symbol.kind.clone());
+            }
+        }
+        self.dependency_direct_member_symbols
+            .insert(module_name.to_string(), direct_symbols);
+    }
+
+    /// Return direct declaration names owned by a dependency module, excluding import re-exports.
+    fn dependency_direct_member_names(module_ast: &Program, public_only: bool) -> HashSet<String> {
+        if public_only {
+            return exported_symbols(module_ast)
+                .into_iter()
+                .filter_map(|symbol| match symbol {
+                    ExportedSymbol::Const(name)
+                    | ExportedSymbol::Static(name)
+                    | ExportedSymbol::Type(name)
+                    | ExportedSymbol::Trait(name)
+                    | ExportedSymbol::Function(name) => Some(name),
+                    ExportedSymbol::Variant { variant_name, .. } => Some(variant_name),
+                    ExportedSymbol::Reexported(_) => None,
+                })
+                .collect();
+        }
+
+        module_ast
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                Declaration::Const(decl) => Some(decl.name.clone()),
+                Declaration::Static(decl) => Some(decl.name.clone()),
+                Declaration::Model(decl) => Some(decl.name.clone()),
+                Declaration::Class(decl) => Some(decl.name.clone()),
+                Declaration::Trait(decl) => Some(decl.name.clone()),
+                Declaration::Alias(decl) => Some(decl.name.clone()),
+                Declaration::Partial(decl) => Some(decl.name.clone()),
+                Declaration::TypeAlias(decl) => Some(decl.name.clone()),
+                Declaration::Newtype(decl) => Some(decl.name.clone()),
+                Declaration::Enum(decl) => Some(decl.name.clone()),
+                Declaration::Function(decl) => Some(decl.name.clone()),
+                Declaration::Import(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => None,
+            })
+            .collect()
+    }
+
+    /// Return source-module import targets that a dependency module makes visible as member bindings.
+    fn dependency_source_reexport_targets(module_ast: &Program) -> Vec<(String, ImportPath, String)> {
+        module_ast
+            .declarations
+            .iter()
+            .filter_map(|decl| match &decl.node {
+                Declaration::Import(import) => Some(import),
+                _ => None,
+            })
+            .filter_map(|import| match &import.kind {
+                ImportKind::From { module, items } => Some((module, items.as_slice())),
+                _ => None,
+            })
+            .flat_map(|(module, items)| {
+                items.iter().map(move |item| {
+                    (
+                        item.alias.as_ref().unwrap_or(&item.name).clone(),
+                        module.clone(),
+                        item.name.clone(),
+                    )
+                })
+            })
+            .collect()
+    }
+
+    /// Return the exact symbol kind for one dependency module member path.
+    pub(crate) fn dependency_member_symbol_for_path(&self, module: &ImportPath, item_name: &str) -> Option<SymbolKind> {
+        if module.parent_levels > 0 || module.segments.is_empty() {
+            return None;
+        }
+        let module_name = canonicalize_source_module_segments(&module.segments).join("_");
+        self.dependency_member_symbols
+            .get(&module_name)?
+            .get(item_name)
+            .cloned()
     }
 
     /// Register RFC 024 metadata exported by a dependency source module.
@@ -3869,6 +4006,8 @@ impl TypeChecker {
         dependencies: &[(&str, &Program)],
     ) -> Result<(), Vec<CompileError>> {
         self.dependency_exports.clear();
+        self.dependency_member_symbols.clear();
+        self.dependency_direct_member_symbols.clear();
         self.dependency_derivable_modules.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
@@ -3887,6 +4026,7 @@ impl TypeChecker {
             }
             self.import_module(dep_ast, name);
         }
+        self.refresh_dependency_member_symbols(dependencies, true);
 
         // Then check the main program
         self.check_program(program)
@@ -3903,6 +4043,8 @@ impl TypeChecker {
     ) -> Result<(), Vec<CompileError>> {
         // Skip populating dependency exports so visibility checks are bypassed.
         self.dependency_exports.clear();
+        self.dependency_member_symbols.clear();
+        self.dependency_direct_member_symbols.clear();
         self.dependency_derivable_modules.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
@@ -3913,6 +4055,7 @@ impl TypeChecker {
             }
             self.import_module_all(dep_ast, name);
         }
+        self.refresh_dependency_member_symbols(dependencies, false);
         self.check_program(program)
     }
 

@@ -338,7 +338,7 @@ impl<'a> IrEmitter<'a> {
     }
 
     /// Return the dependency qualifier for generated anonymous union wrappers referenced through a public library call.
-    fn pub_library_union_qualifier(canonical_path: Option<&[String]>) -> Option<Vec<String>> {
+    pub(in super::super) fn pub_library_union_qualifier(canonical_path: Option<&[String]>) -> Option<Vec<String>> {
         canonical_path.and_then(|path| {
             if path.first().map(String::as_str) == Some("pub") {
                 path.get(1).map(|library| vec![library.clone()])
@@ -852,7 +852,13 @@ impl<'a> IrEmitter<'a> {
                 let target_aware_union_widening_arg = target_ty
                     .is_some_and(|target_ty| self.union_widening_needed(&widening_source_ty, target_ty))
                     && !matches!(use_site, ValueUseSite::ExternalCallArg { .. });
-                let target_aware_value_arg = target_aware_aggregate_literal_arg || target_aware_union_widening_arg;
+                let (list_widening_source_ty, _) = self.list_element_widening_source_for_expr(a);
+                let target_aware_list_element_widening_arg = target_ty
+                    .is_some_and(|target_ty| self.list_element_widening_needed(&list_widening_source_ty, target_ty))
+                    && !matches!(use_site, ValueUseSite::ExternalCallArg { .. });
+                let target_aware_value_arg = target_aware_aggregate_literal_arg
+                    || target_aware_union_widening_arg
+                    || target_aware_list_element_widening_arg;
                 let arg_plan = ArgumentPassingPlan::for_use_site(a, use_site);
                 let previous_qualify = if *from_default {
                     Some(self.qualify_internal_canonical_paths.replace(true))
