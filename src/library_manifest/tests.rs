@@ -5,6 +5,7 @@ fn manifest_io_round_trip_preserves_recursive_types_and_bounds() -> Result<(), B
     let mut manifest = LibraryManifest::new("mylib", "0.1.0");
     manifest.exports.functions.push(FunctionExport {
         name: "map_result".to_string(),
+        emitted_name: None,
         type_params: vec![TypeParamExport {
             name: "T".to_string(),
             bounds: vec![TypeBoundExport {
@@ -112,6 +113,7 @@ fn manifest_io_round_trip_preserves_parameter_defaults() -> Result<(), Box<dyn s
     let mut manifest = LibraryManifest::new("mylib", "0.1.0");
     manifest.exports.functions.push(FunctionExport {
         name: "with_default".to_string(),
+        emitted_name: None,
         type_params: Vec::new(),
         params: vec![ParamExport {
             name: "value".to_string(),
@@ -148,6 +150,7 @@ fn manifest_io_round_trip_preserves_parameter_defaults() -> Result<(), Box<dyn s
 fn function_export_from_checked_marks_only_materializable_defaults_as_omittable() {
     let export = super::model::function_export_from_checked(&crate::frontend::library_exports::CheckedFunctionExport {
         name: "with_default".to_string(),
+        emitted_name: None,
         type_params: Vec::new(),
         params: vec![
             crate::frontend::symbols::CallableParam::named_with_default(
@@ -407,6 +410,7 @@ fn manifest_io_round_trip_preserves_rest_parameter_metadata() -> Result<(), Box<
     let mut manifest = LibraryManifest::new("mylib", "0.1.0");
     manifest.exports.functions.push(FunctionExport {
         name: "collect".to_string(),
+        emitted_name: None,
         type_params: Vec::new(),
         params: vec![
             ParamExport {
@@ -477,6 +481,7 @@ fn manifest_validation_rejects_invalid_rest_parameter_metadata() -> Result<(), B
     let mut manifest = LibraryManifest::new("mylib", "0.1.0");
     manifest.exports.functions.push(FunctionExport {
         name: "bad_collect".to_string(),
+        emitted_name: None,
         type_params: Vec::new(),
         params: vec![
             ParamExport {
@@ -1457,6 +1462,7 @@ fn manifest_writer_rejects_duplicate_helper_binding_keys() -> Result<(), Box<dyn
     let mut manifest = LibraryManifest::new("mylib", "0.1.0");
     manifest.exports.functions.push(FunctionExport {
         name: "filter".to_string(),
+        emitted_name: None,
         type_params: Vec::new(),
         params: Vec::new(),
         return_type: TypeRef::Unknown,
@@ -1464,6 +1470,7 @@ fn manifest_writer_rejects_duplicate_helper_binding_keys() -> Result<(), Box<dyn
     });
     manifest.exports.functions.push(FunctionExport {
         name: "where_impl".to_string(),
+        emitted_name: None,
         type_params: Vec::new(),
         params: Vec::new(),
         return_type: TypeRef::Unknown,

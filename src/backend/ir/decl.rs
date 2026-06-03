@@ -179,6 +179,11 @@ pub struct IrImportItem {
     /// static identifier and, when aliased, the local static identifier instead of treating the source spelling as an
     /// ordinary Rust value binding.
     pub is_static: bool,
+    /// Whether this imported item must be publicly reexported even when the source import itself is private.
+    ///
+    /// Public aliases of imported overload sets project concrete emitted Rust functions. The aliasing module needs to
+    /// reexport those concrete functions so downstream facades do not reach through its private imports.
+    pub force_reexport: bool,
     /// Metadata provided when this item is a Rust trait import.
     ///
     /// Extension-trait imports can be used by Rust method lookup without appearing as identifiers in emitted tokens.

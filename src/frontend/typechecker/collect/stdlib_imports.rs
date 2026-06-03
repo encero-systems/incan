@@ -581,6 +581,9 @@ impl TypeChecker {
     /// Define a source-imported dependency symbol under its local import name.
     fn define_resolved_source_import_symbol(&mut self, item: &ImportItem, mut kind: SymbolKind, span: Span) {
         let local_name = Self::import_item_local_name(item);
+        if let SymbolKind::FunctionOverloads(overloads) = &kind {
+            self.record_function_overload_binding(&local_name, overloads, true);
+        }
         if let SymbolKind::Static(info) = &mut kind {
             info.is_imported = true;
             self.type_info.declarations.static_bindings.insert(
@@ -645,6 +648,30 @@ impl TypeChecker {
         }
 
         for item in items {
+            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+            if let Some(mut kind) = self.pub_library_function_symbol(&manifest, &item.name) {
+                self.validate_root_namespace(&local_name, span);
+                if let Some(existing_kind) = self.existing_local_symbol_kind(&local_name) {
+                    self.errors.push(errors::pub_library_import_name_collision(
+                        &local_name,
+                        existing_kind,
+                        span,
+                    ));
+                    continue;
+                }
+                self.remap_symbol_kind_with_import_aliases(&mut kind, &imported_type_aliases);
+                if let SymbolKind::FunctionOverloads(overloads) = &kind {
+                    self.record_function_overload_binding(&local_name, overloads, true);
+                }
+                self.symbols.define(Symbol {
+                    name: local_name,
+                    kind,
+                    span,
+                    scope: 0,
+                });
+                continue;
+            }
+
             let Some(export) = Self::find_manifest_export(&manifest, &item.name) else {
                 self.errors.push(errors::pub_library_symbol_not_exported(
                     &item.name,
@@ -685,6 +712,29 @@ impl TypeChecker {
         }
         let export = manifest.exports.partials.iter().find(|item| item.name == member)?;
         Some(self.partial_info_from_manifest(export))
+    }
+
+    /// Resolve one exported function name from a public manifest into a local symbol kind.
+    fn pub_library_function_symbol(&self, manifest: &LibraryManifest, member: &str) -> Option<SymbolKind> {
+        let functions = manifest
+            .exports
+            .functions
+            .iter()
+            .filter(|item| item.name == member)
+            .collect::<Vec<_>>();
+        match functions.as_slice() {
+            [] => None,
+            [function] => Some(SymbolKind::Function(self.function_info_from_manifest(function))),
+            _ => Some(SymbolKind::FunctionOverloads(
+                functions
+                    .into_iter()
+                    .map(|function| FunctionOverloadInfo {
+                        info: self.function_info_from_manifest(function),
+                        span: Span::default(),
+                    })
+                    .collect(),
+            )),
+        }
     }
 
     /// Resolve one exported const/static value type from a loaded `pub::` library manifest.
@@ -728,6 +778,9 @@ impl TypeChecker {
         let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
             return None;
         };
+        if let Some(kind) = self.pub_library_function_symbol(manifest, member) {
+            return Some(kind);
+        }
         let export = Self::find_manifest_export(manifest, member)?;
         Some(match export {
             ManifestExportRef::Model(export) => {
@@ -764,6 +817,9 @@ impl TypeChecker {
                     return Some(SymbolKind::Function(self.function_info_from_manifest(function)));
                 }
                 let target_name = export.target_path.last()?;
+                if let Some(kind) = self.pub_library_function_symbol(manifest, target_name) {
+                    return Some(kind);
+                }
                 return self.lookup_pub_library_symbol_member(library, target_name);
             }
         })
@@ -969,7 +1025,7 @@ impl TypeChecker {
         let kind = match &symbol.kind {
             SymbolKind::Variable(_) => "const/variable",
             SymbolKind::Static(_) => "static",
-            SymbolKind::Function(_) => "function",
+            SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_) => "function",
             SymbolKind::Type(_) => "type",
             SymbolKind::Trait(_) => "trait",
             SymbolKind::Module(_) => "imported module",
@@ -1038,20 +1094,28 @@ impl TypeChecker {
                     let Some(target_name) = export.target_path.last() else {
                         return;
                     };
-                    let Some(target_export) = Self::find_manifest_export(manifest, target_name) else {
-                        return;
-                    };
-                    return self.define_pub_import_symbol(
-                        manifest,
-                        local_name,
-                        target_export,
-                        imported_type_aliases,
-                        span,
-                    );
+                    if let Some(kind) = self.pub_library_function_symbol(manifest, target_name) {
+                        kind
+                    } else {
+                        let Some(target_export) = Self::find_manifest_export(manifest, target_name) else {
+                            return;
+                        };
+                        return self.define_pub_import_symbol(
+                            manifest,
+                            local_name,
+                            target_export,
+                            imported_type_aliases,
+                            span,
+                        );
+                    }
                 }
             }
         };
         self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
+
+        if let SymbolKind::FunctionOverloads(overloads) = &kind {
+            self.record_function_overload_binding(&local_name, overloads, true);
+        }
 
         if matches!(kind, SymbolKind::Static(_)) {
             self.type_info.declarations.static_bindings.insert(
@@ -1090,6 +1154,17 @@ impl TypeChecker {
                     Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
                 }
                 Self::remap_resolved_type_with_import_aliases(&mut info.return_type, imported_type_aliases);
+            }
+            SymbolKind::FunctionOverloads(overloads) => {
+                for overload in overloads {
+                    for param in &mut overload.info.params {
+                        Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
+                    }
+                    Self::remap_resolved_type_with_import_aliases(
+                        &mut overload.info.return_type,
+                        imported_type_aliases,
+                    );
+                }
             }
             SymbolKind::Type(ty_info) => match ty_info {
                 TypeInfo::Class(info) => {
@@ -1188,7 +1263,8 @@ impl TypeChecker {
             ResolvedType::FrozenList(inner)
             | ResolvedType::FrozenSet(inner)
             | ResolvedType::Ref(inner)
-            | ResolvedType::RefMut(inner) => {
+            | ResolvedType::RefMut(inner)
+            | ResolvedType::TypeToken(inner) => {
                 Self::remap_resolved_type_with_import_aliases(inner, imported_type_aliases);
             }
             ResolvedType::FrozenDict(key, value) => {
@@ -1221,6 +1297,7 @@ impl TypeChecker {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             type_param_bounds: self.type_param_bounds_from_manifest(&export.type_params),
             type_param_bound_details: self.type_param_bound_details_from_manifest(&export.type_params),
+            emitted_name: export.emitted_name.clone(),
         }
     }
 
@@ -1233,6 +1310,7 @@ impl TypeChecker {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             type_param_bounds: self.type_param_bounds_from_manifest(&export.type_params),
             type_param_bound_details: self.type_param_bound_details_from_manifest(&export.type_params),
+            emitted_name: None,
         }
     }
 
@@ -1597,7 +1675,9 @@ impl TypeChecker {
         let exported_list: Vec<String> = exported_names.iter().cloned().collect();
 
         for item in items {
-            if !exported_names.contains(&item.name) {
+            if !exported_names.contains(&item.name)
+                && self.dependency_member_symbol_for_path(module, &item.name).is_none()
+            {
                 self.errors.push(errors::import_not_exported(
                     &item.name,
                     &module.to_rust_path(),

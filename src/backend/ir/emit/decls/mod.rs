@@ -23,6 +23,7 @@ mod structures;
 use proc_macro2::{Literal, TokenStream};
 use quote::quote;
 
+use crate::frontend::symbols::is_overload_emitted_name;
 use incan_core::lang::stdlib;
 
 use super::super::decl::{IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier};
@@ -470,7 +471,7 @@ impl<'a> IrEmitter<'a> {
                 if is_incan_source_stdlib && binding.starts_with('_') {
                     return false;
                 }
-                export_item_import
+                export_item_import || item.force_reexport
             };
             let item_stmts: Vec<TokenStream> = items
                 .iter()
@@ -512,6 +513,16 @@ impl<'a> IrEmitter<'a> {
                     } else {
                         quote! {}
                     };
+                    if item.alias.is_none()
+                        && is_overload_emitted_name(&item.name)
+                        && !self
+                            .emitted_overload_import_bindings
+                            .borrow_mut()
+                            .insert(item.name.clone())
+                    {
+                        return quote! {};
+                    }
+
                     let item_import = if let Some(alias) = &item.alias {
                         let alias_ident = if item.is_static {
                             Self::rust_static_ident(alias)

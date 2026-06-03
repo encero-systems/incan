@@ -423,48 +423,6 @@ impl AstLowering {
         canonical
     }
 
-    /// Rewrite dependency-owned anonymous union types to exact Rust display paths so consumers do not re-own them.
-    fn pub_external_type(&self, library: &str, ty: IrType) -> IrType {
-        if let Some(union_name) = ty.union_type_name() {
-            return IrType::RustDisplay(format!("{library}::{union_name}"));
-        }
-        match ty {
-            IrType::List(inner) => IrType::List(Box::new(self.pub_external_type(library, *inner))),
-            IrType::Dict(key, value) => IrType::Dict(
-                Box::new(self.pub_external_type(library, *key)),
-                Box::new(self.pub_external_type(library, *value)),
-            ),
-            IrType::Set(inner) => IrType::Set(Box::new(self.pub_external_type(library, *inner))),
-            IrType::Tuple(items) => IrType::Tuple(
-                items
-                    .into_iter()
-                    .map(|item| self.pub_external_type(library, item))
-                    .collect(),
-            ),
-            IrType::Option(inner) => IrType::Option(Box::new(self.pub_external_type(library, *inner))),
-            IrType::Result(ok, err) => IrType::Result(
-                Box::new(self.pub_external_type(library, *ok)),
-                Box::new(self.pub_external_type(library, *err)),
-            ),
-            IrType::Function { params, ret } => IrType::Function {
-                params: params
-                    .into_iter()
-                    .map(|param| self.pub_external_type(library, param))
-                    .collect(),
-                ret: Box::new(self.pub_external_type(library, *ret)),
-            },
-            IrType::Ref(inner) => IrType::Ref(Box::new(self.pub_external_type(library, *inner))),
-            IrType::RefMut(inner) => IrType::RefMut(Box::new(self.pub_external_type(library, *inner))),
-            IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
-                name,
-                args.into_iter()
-                    .map(|arg| self.pub_external_type(library, arg))
-                    .collect(),
-            ),
-            other => other,
-        }
-    }
-
     /// Build the emitted function type for a public dependency callable without losing semantic call-planning metadata.
     fn pub_external_function_type(&self, library: &str, signature: &FunctionSignature) -> IrType {
         IrType::Function {
@@ -1953,8 +1911,24 @@ impl AstLowering {
             }
         }
 
-        let imported_callee_path = self.imported_callee_path_for_expr(&f.node);
+        let selected_emitted_name = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.selected_function_emitted_name(call_span))
+            .map(str::to_string);
+        let mut imported_callee_path = self.imported_callee_path_for_expr(&f.node);
+        if let (Some(path), Some(emitted_name)) = (&mut imported_callee_path, &selected_emitted_name)
+            && let Some(last) = path.last_mut()
+        {
+            *last = emitted_name.clone();
+        }
         let mut func = self.lower_expr_spanned(f)?;
+        if let (ast::Expr::Ident(_), Some(emitted_name), IrExprKind::Var { name, .. }) =
+            (&f.node, selected_emitted_name.as_deref(), &mut func.kind)
+        {
+            *name = emitted_name.to_string();
+            func.ty = self.lookup_var(emitted_name);
+        }
         if let Some(resolved_operator) = self
             .type_info
             .as_ref()
@@ -2084,7 +2058,10 @@ impl AstLowering {
                     .or_else(|| self.callable_signature_for_imported_pub_path(path))
             })
             .or_else(|| match &f.node {
-                ast::Expr::Ident(name) => self.lookup_local_callable_signature(name),
+                ast::Expr::Ident(name) => selected_emitted_name
+                    .as_deref()
+                    .and_then(|emitted_name| self.lookup_local_callable_signature(emitted_name))
+                    .or_else(|| self.lookup_local_callable_signature(name)),
                 ast::Expr::Partial(_) => self.partial_expr_signature_for_span(f.span),
                 _ => None,
             })

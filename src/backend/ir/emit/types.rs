@@ -23,10 +23,15 @@ impl<'a> IrEmitter<'a> {
     /// Emit the generated Rust type path for an anonymous ordinary union with an optional explicit module qualifier.
     pub(super) fn emit_union_type_path_with_qualifier(&self, ty: &IrType, qualifier: Option<&[String]>) -> TokenStream {
         let ty = self.resolve_type_aliases_for_emit(ty);
-        let union_name = ty
+        let (semantic_ty, external_qualifier) = match &ty {
+            IrType::ExternalUnion { library, union } => (union.as_ref(), Some(vec![library.clone()])),
+            _ => (&ty, None),
+        };
+        let union_name = semantic_ty
             .union_type_name()
             .unwrap_or_else(|| super::super::types::IR_UNION_TYPE_NAME.to_string());
         let n = Self::rust_ident(&union_name);
+        let qualifier = qualifier.or(external_qualifier.as_deref());
         if let Some(qualifier) = qualifier
             && let Some((first, rest)) = qualifier.split_first()
         {
@@ -131,6 +136,7 @@ impl<'a> IrEmitter<'a> {
                 Self::emit_path_ident(name)
             }
             IrType::RustDisplay(display) => display.parse().unwrap_or_else(|_| quote! { _ }),
+            IrType::ExternalUnion { .. } => self.emit_union_type_path(ty),
             IrType::NamedGeneric(name, _) if name == super::super::types::IR_UNION_TYPE_NAME => {
                 self.emit_union_type_path(ty)
             }
@@ -153,6 +159,10 @@ impl<'a> IrEmitter<'a> {
                     let n = Self::emit_path_ident(name);
                     quote! { #n < #(#ts),* > }
                 }
+            }
+            IrType::TypeToken(inner) => {
+                let inner_ty = self.emit_type(inner);
+                quote! { incan_stdlib::reflection::TypeToken<#inner_ty> }
             }
             IrType::ImplTrait(bound) => {
                 let bound_tokens = self.emit_trait_bound(bound);

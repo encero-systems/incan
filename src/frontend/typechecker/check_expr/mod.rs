@@ -263,6 +263,14 @@ impl TypeChecker {
             .any(|&(start, end)| start == span.start && end == span.end)
     }
 
+    /// Return whether a span identifies a type name being checked against an explicit `Type[T]` destination.
+    pub(crate) fn is_type_token_value_span(&self, span: Span) -> bool {
+        self.type_token_value_spans
+            .iter()
+            .rev()
+            .any(|&(start, end)| start == span.start && end == span.end)
+    }
+
     /// Type-check an expression with an expected destination type when one is already known.
     ///
     /// This is intentionally narrow: only expression forms that benefit from contextual typing without broad inference
@@ -274,6 +282,12 @@ impl TypeChecker {
     ) -> ResolvedType {
         let ty = match (&expr.node, expected) {
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
+            (Expr::Ident(_), Some(ResolvedType::TypeToken(_))) => {
+                self.type_token_value_spans.push((expr.span.start, expr.span.end));
+                let ty = self.check_expr(expr);
+                self.type_token_value_spans.pop();
+                ty
+            }
             (Expr::Literal(Literal::Int(_)), Some(expected_ty))
                 if super::numeric_type_id_for_compat(expected_ty).is_some() =>
             {

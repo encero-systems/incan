@@ -1553,6 +1553,7 @@ fn collect_backend_clone_bounds_in_expr(
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
         | IrExprKind::AssociatedFunction { .. }
+        | IrExprKind::TypeToken { .. }
         | IrExprKind::FunctionItem { .. }
         | IrExprKind::Unit
         | IrExprKind::None
@@ -1679,7 +1680,8 @@ fn collect_generic_type_param_names(ty: &IrType, type_param_names: &HashSet<&str
         | IrType::Set(inner)
         | IrType::Option(inner)
         | IrType::Ref(inner)
-        | IrType::RefMut(inner) => {
+        | IrType::RefMut(inner)
+        | IrType::TypeToken(inner) => {
             collect_generic_type_param_names(inner, type_param_names, out);
         }
         IrType::Dict(key, value) | IrType::Result(key, value) => {
@@ -1691,6 +1693,7 @@ fn collect_generic_type_param_names(ty: &IrType, type_param_names: &HashSet<&str
                 collect_generic_type_param_names(item, type_param_names, out);
             }
         }
+        IrType::ExternalUnion { union, .. } => collect_generic_type_param_names(union, type_param_names, out),
         IrType::Function { params, ret } => {
             for param in params {
                 collect_generic_type_param_names(param, type_param_names, out);
@@ -2239,6 +2242,7 @@ fn scan_expr_for_bounds(
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
         | IrExprKind::AssociatedFunction { .. }
+        | IrExprKind::TypeToken { .. }
         | IrExprKind::FunctionItem { .. }
         | IrExprKind::Unit
         | IrExprKind::None
@@ -2474,10 +2478,18 @@ fn add_bounds_from_type(
                 add_bounds_from_type(arg, type_params, trait_decls, bounds_map, visited_traits);
             }
         }
+        IrType::ExternalUnion { union, .. } => {
+            add_bounds_from_type(union, type_params, trait_decls, bounds_map, visited_traits);
+        }
         IrType::ImplTrait(bound) => {
             add_bounds_from_trait_bound(bound, type_params, trait_decls, bounds_map, visited_traits);
         }
-        IrType::List(elem) | IrType::Option(elem) | IrType::Ref(elem) | IrType::RefMut(elem) | IrType::Set(elem) => {
+        IrType::List(elem)
+        | IrType::Option(elem)
+        | IrType::Ref(elem)
+        | IrType::RefMut(elem)
+        | IrType::Set(elem)
+        | IrType::TypeToken(elem) => {
             add_bounds_from_type(elem, type_params, trait_decls, bounds_map, visited_traits);
         }
         IrType::Dict(key, value) | IrType::Result(key, value) => {

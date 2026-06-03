@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use crate::frontend::ast::{
     AliasDecl, ClassDecl, Declaration, DictEntry, EnumDecl, Expr, FunctionDecl, ImportDecl, ImportItem, ImportKind,
-    ListEntry, Literal, ModelDecl, NewtypeDecl, PartialDecl, Program, Spanned, TraitBound, TraitDecl, TypeAliasDecl,
-    TypeParam, Visibility,
+    ListEntry, Literal, ModelDecl, NewtypeDecl, PartialDecl, Program, Span, Spanned, TraitBound, TraitDecl,
+    TypeAliasDecl, TypeParam, Visibility,
 };
 use crate::frontend::decorator_resolution;
 use crate::frontend::module::canonicalize_source_module_segments;
@@ -112,6 +112,7 @@ pub struct CheckedMethod {
 #[derive(Debug, Clone)]
 pub struct CheckedFunctionExport {
     pub name: String,
+    pub emitted_name: Option<String>,
     pub type_params: Vec<CheckedTypeParam>,
     pub params: Vec<CallableParam>,
     pub param_defaults: Vec<Option<CheckedParamDefault>>,
@@ -324,7 +325,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
     for decl in &program.declarations {
         match &decl.node {
             Declaration::Function(function) if matches!(function.visibility, Visibility::Public) => {
-                if let Some(export) = checked_function_export(function, checker) {
+                if let Some(export) = checked_function_export(function, checker, decl.span) {
                     exports.push(CheckedNamedExport {
                         name: export.name.clone(),
                         kind: CheckedExportKind::Function(export),
@@ -394,9 +395,7 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
                 }
             }
             Declaration::Alias(alias) if matches!(alias.visibility, Visibility::Public) => {
-                if let Some(export) = checked_alias_export(alias, checker) {
-                    exports.push(export);
-                }
+                exports.extend(checked_alias_exports(alias, checker));
             }
             Declaration::Import(import) if matches!(import.visibility, Visibility::Public) => {
                 exports.extend(checked_import_exports(import, checker));
@@ -417,18 +416,23 @@ pub fn collect_checked_public_exports(program: &Program, checker: &TypeChecker) 
     exports
 }
 
-/// Build a checked public export entry for a module-level alias.
-fn checked_alias_export(alias: &AliasDecl, checker: &TypeChecker) -> Option<CheckedNamedExport> {
-    let symbol = checker.lookup_symbol(alias.name.as_str())?;
+/// Build checked public export entries for a module-level alias.
+fn checked_alias_exports(alias: &AliasDecl, checker: &TypeChecker) -> Vec<CheckedNamedExport> {
+    let Some(symbol) = checker.lookup_symbol(alias.name.as_str()) else {
+        return Vec::new();
+    };
+    if let SymbolKind::FunctionOverloads(overloads) = &symbol.kind {
+        return checked_overload_function_exports(alias.name.clone(), overloads);
+    }
     let projected_function = checked_projected_function_export(&alias.name, &symbol.kind);
-    Some(CheckedNamedExport {
+    vec![CheckedNamedExport {
         name: alias.name.clone(),
         kind: CheckedExportKind::Alias(CheckedAliasExport {
             name: alias.name.clone(),
             target_path: alias.target.segments.clone(),
             projected_function,
         }),
-    })
+    }]
 }
 
 /// Return checked exports introduced by an import declaration.
@@ -437,7 +441,7 @@ fn checked_import_exports(import: &ImportDecl, checker: &TypeChecker) -> Vec<Che
         ImportKind::From { module, items } => {
             let base_path =
                 canonicalize_source_module_segments(&decorator_resolution::path_segments_with_prefix(module));
-            checked_import_item_exports(items, base_path, checker)
+            checked_source_import_item_exports(items, module, base_path, checker)
         }
         ImportKind::RustFrom {
             crate_name,
@@ -457,6 +461,34 @@ fn checked_import_exports(import: &ImportDecl, checker: &TypeChecker) -> Vec<Che
     }
 }
 
+/// Return checked exports introduced by source-module import items.
+fn checked_source_import_item_exports(
+    items: &[ImportItem],
+    module: &crate::frontend::ast::ImportPath,
+    base_path: Vec<String>,
+    checker: &TypeChecker,
+) -> Vec<CheckedNamedExport> {
+    items
+        .iter()
+        .flat_map(|item| {
+            let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
+            let mut target_path = base_path.clone();
+            target_path.push(item.name.clone());
+            if let Some(overloads) = checker.type_info().function_overloads(&exported_name) {
+                return checked_overload_function_exports(exported_name, overloads);
+            }
+            let symbol_kind = checker
+                .dependency_member_symbol_for_path(module, &item.name)
+                .or_else(|| {
+                    checker
+                        .lookup_symbol(exported_name.as_str())
+                        .map(|symbol| symbol.kind.clone())
+                });
+            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind.as_ref())
+        })
+        .collect()
+}
+
 /// Return checked exports introduced by one imported item.
 fn checked_import_item_exports(
     items: &[ImportItem],
@@ -465,20 +497,48 @@ fn checked_import_item_exports(
 ) -> Vec<CheckedNamedExport> {
     items
         .iter()
-        .map(|item| {
+        .flat_map(|item| {
             let exported_name = item.alias.as_ref().unwrap_or(&item.name).clone();
             let mut target_path = base_path.clone();
             target_path.push(item.name.clone());
-            let projected_function = checker
-                .lookup_symbol(exported_name.as_str())
-                .and_then(|symbol| checked_projected_function_export(&exported_name, &symbol.kind));
+            let symbol_kind = checker.lookup_symbol(exported_name.as_str()).map(|symbol| &symbol.kind);
+            checked_import_export_from_symbol_kind(exported_name, target_path, symbol_kind)
+        })
+        .collect()
+}
+
+/// Convert one imported symbol kind into checked public export entries.
+fn checked_import_export_from_symbol_kind(
+    exported_name: String,
+    target_path: Vec<String>,
+    symbol_kind: Option<&SymbolKind>,
+) -> Vec<CheckedNamedExport> {
+    if let Some(SymbolKind::FunctionOverloads(overloads)) = symbol_kind {
+        return checked_overload_function_exports(exported_name, overloads);
+    }
+    let projected_function = symbol_kind.and_then(|kind| checked_projected_function_export(&exported_name, kind));
+    vec![CheckedNamedExport {
+        name: exported_name.clone(),
+        kind: CheckedExportKind::Alias(CheckedAliasExport {
+            name: exported_name,
+            target_path,
+            projected_function,
+        }),
+    }]
+}
+
+/// Convert a same-name overload group into separate function exports under one source name.
+fn checked_overload_function_exports(
+    exported_name: String,
+    overloads: &[crate::frontend::symbols::FunctionOverloadInfo],
+) -> Vec<CheckedNamedExport> {
+    overloads
+        .iter()
+        .map(|overload| {
+            let export = checked_alias_function_export(&exported_name, &overload.info);
             CheckedNamedExport {
-                name: exported_name.clone(),
-                kind: CheckedExportKind::Alias(CheckedAliasExport {
-                    name: exported_name,
-                    target_path,
-                    projected_function,
-                }),
+                name: export.name.clone(),
+                kind: CheckedExportKind::Function(export),
             }
         })
         .collect()
@@ -488,6 +548,7 @@ fn checked_import_item_exports(
 fn checked_alias_function_export(name: &str, info: &FunctionInfo) -> CheckedFunctionExport {
     CheckedFunctionExport {
         name: name.to_string(),
+        emitted_name: info.emitted_name.clone(),
         type_params: checked_function_type_params(info),
         params: info.params.clone(),
         param_defaults: vec![None; info.params.len()],
@@ -505,6 +566,7 @@ fn checked_projected_function_export(name: &str, kind: &SymbolKind) -> Option<Ch
             ..
         }) => Some(CheckedFunctionExport {
             name: name.to_string(),
+            emitted_name: None,
             type_params: Vec::new(),
             params: params.clone(),
             param_defaults: vec![None; params.len()],
@@ -564,7 +626,7 @@ fn checked_partial_target_kind(partial: &PartialDecl, checker: &TypeChecker) -> 
         return CheckedPartialTargetKind::Unknown;
     };
     match checker.lookup_symbol(target).map(|symbol| &symbol.kind) {
-        Some(SymbolKind::Function(_)) => CheckedPartialTargetKind::Function,
+        Some(SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_)) => CheckedPartialTargetKind::Function,
         Some(SymbolKind::Type(TypeInfo::Model(_))) => CheckedPartialTargetKind::ModelConstructor,
         Some(SymbolKind::Type(TypeInfo::Class(_))) => CheckedPartialTargetKind::ClassConstructor,
         Some(SymbolKind::Type(TypeInfo::Newtype(_))) => CheckedPartialTargetKind::NewtypeConstructor,
@@ -806,22 +868,36 @@ fn checked_preset_path(expr: &Expr) -> Vec<String> {
 }
 
 /// Build checked export metadata for a function or callable-valued decorated function binding.
-fn checked_function_export(function: &FunctionDecl, checker: &TypeChecker) -> Option<CheckedFunctionExport> {
+fn checked_function_export(
+    function: &FunctionDecl,
+    checker: &TypeChecker,
+    span: Span,
+) -> Option<CheckedFunctionExport> {
     let symbol = checker.lookup_symbol(function.name.as_str())?;
-    let (params, return_type, is_async) = match &symbol.kind {
+    let (params, return_type, is_async, emitted_name) = match &symbol.kind {
         SymbolKind::Function(FunctionInfo {
             params,
             return_type,
             is_async,
+            emitted_name,
             ..
-        }) => (params.clone(), return_type.clone(), *is_async),
+        }) => (params.clone(), return_type.clone(), *is_async, emitted_name.clone()),
+        SymbolKind::FunctionOverloads(overloads) => {
+            let overload = overloads.iter().find(|overload| overload.span == span)?;
+            (
+                overload.info.params.clone(),
+                overload.info.return_type.clone(),
+                overload.info.is_async,
+                overload.info.emitted_name.clone(),
+            )
+        }
         SymbolKind::Variable(VariableInfo {
             ty: ResolvedType::Function(params, return_type),
             ..
         }) => {
             // Callable values do not yet carry asyncness, so preserve the source declaration marker until decorator
             // typing records async callable metadata explicitly.
-            (params.clone(), return_type.as_ref().clone(), function.is_async())
+            (params.clone(), return_type.as_ref().clone(), function.is_async(), None)
         }
         _ => return None,
     };
@@ -829,6 +905,7 @@ fn checked_function_export(function: &FunctionDecl, checker: &TypeChecker) -> Op
     let default_context = DefaultPathContext::for_checker(checker);
     Some(CheckedFunctionExport {
         name: function.name.clone(),
+        emitted_name,
         type_params: checked_type_params(&function.type_params, checker),
         param_defaults: function
             .params

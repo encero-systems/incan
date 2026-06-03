@@ -13,7 +13,9 @@ use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast;
+use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
 use crate::frontend::symbols::ResolvedType;
+use crate::library_manifest::resolved_type_from_manifest_type_ref;
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ast};
 use incan_core::lang::conventions;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
@@ -109,6 +111,84 @@ pub(super) fn union_ir_type(members: Vec<IrType>) -> IrType {
 }
 
 impl AstLowering {
+    /// Preserve dependency ownership for public anonymous union aliases while retaining their semantic member list.
+    pub(super) fn pub_external_type(&self, library: &str, ty: IrType) -> IrType {
+        if matches!(ty, IrType::ExternalUnion { .. }) {
+            return ty;
+        }
+        if ty.union_type_name().is_some() {
+            return IrType::ExternalUnion {
+                library: library.to_string(),
+                union: Box::new(ty),
+            };
+        }
+        match ty {
+            IrType::List(inner) => IrType::List(Box::new(self.pub_external_type(library, *inner))),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(self.pub_external_type(library, *key)),
+                Box::new(self.pub_external_type(library, *value)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(self.pub_external_type(library, *inner))),
+            IrType::Tuple(items) => IrType::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| self.pub_external_type(library, item))
+                    .collect(),
+            ),
+            IrType::Option(inner) => IrType::Option(Box::new(self.pub_external_type(library, *inner))),
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(self.pub_external_type(library, *ok)),
+                Box::new(self.pub_external_type(library, *err)),
+            ),
+            IrType::Function { params, ret } => IrType::Function {
+                params: params
+                    .into_iter()
+                    .map(|param| self.pub_external_type(library, param))
+                    .collect(),
+                ret: Box::new(self.pub_external_type(library, *ret)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(self.pub_external_type(library, *inner))),
+            IrType::RefMut(inner) => IrType::RefMut(Box::new(self.pub_external_type(library, *inner))),
+            IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
+                name,
+                args.into_iter()
+                    .map(|arg| self.pub_external_type(library, arg))
+                    .collect(),
+            ),
+            IrType::TypeToken(inner) => IrType::TypeToken(Box::new(self.pub_external_type(library, *inner))),
+            other => other,
+        }
+    }
+
+    /// Lower a simple imported public type alias from manifest metadata instead of trusting the raw source name.
+    ///
+    /// Consumer modules only import the generated Rust alias item. The manifest target is the semantic source of truth
+    /// for conversion planning, especially when the alias is an anonymous union wrapper owned by the dependency crate.
+    fn lower_pub_imported_type_alias(&self, name: &str) -> Option<IrType> {
+        let path = self.import_aliases.get(name)?;
+        let [root, library, member] = path.as_slice() else {
+            return None;
+        };
+        if root != "pub" {
+            return None;
+        }
+        let manifest_index = self.library_manifest_index.as_ref()?;
+        let entry = manifest_index.get(library)?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
+            return None;
+        };
+        let alias = manifest
+            .exports
+            .type_aliases
+            .iter()
+            .find(|alias| alias.name == *member)?;
+        if !alias.type_params.is_empty() {
+            return None;
+        }
+        let target = resolved_type_from_manifest_type_ref(&alias.target);
+        Some(self.pub_external_type(library, self.lower_resolved_type(&target)))
+    }
+
     /// Merge a typechecker-derived IR type with an already-lowered IR type without erasing in-scope generic
     /// placeholders that the typechecker may have normalized to nominal names.
     pub(super) fn merge_inferred_ir_type(existing: &IrType, inferred: IrType) -> IrType {
@@ -117,6 +197,7 @@ impl AstLowering {
                 existing.clone()
             }
             (IrType::RustDisplay(_), _) => existing.clone(),
+            (IrType::ExternalUnion { .. }, _) => existing.clone(),
             (IrType::Ref(existing_inner), IrType::Ref(inferred_inner)) => {
                 IrType::Ref(Box::new(Self::merge_inferred_ir_type(existing_inner, *inferred_inner)))
             }
@@ -253,6 +334,9 @@ impl AstLowering {
                     .iter()
                     .map(|p| self.lower_const_annotation_type(&p.node))
                     .collect();
+                if base == "Type" {
+                    return IrType::TypeToken(Box::new(lowered_generic_arg_or_unknown(&params_lowered, 0)));
+                }
                 match classify_generic_base(base.as_str()) {
                     GenericBaseKind::Collection(CollectionTypeId::List) => IrType::NamedGeneric(
                         collections::as_str(CollectionTypeId::FrozenList).to_string(),
@@ -396,6 +480,7 @@ impl AstLowering {
                 params: params.iter().map(|p| self.lower_resolved_type(&p.ty)).collect(),
                 ret: Box::new(self.lower_resolved_type(ret)),
             },
+            ResolvedType::TypeToken(inner) => IrType::TypeToken(Box::new(self.lower_resolved_type(inner))),
             ResolvedType::Tuple(items) => IrType::Tuple(items.iter().map(|t| self.lower_resolved_type(t)).collect()),
             ResolvedType::TypeVar(name) => IrType::Generic(name.clone()),
             ResolvedType::SelfType => IrType::SelfType,
@@ -418,6 +503,10 @@ impl AstLowering {
 
                 if type_param_names.is_some_and(|params| params.contains(n)) {
                     return IrType::Generic(name.clone());
+                }
+
+                if let Some(imported_alias) = self.lower_pub_imported_type_alias(n) {
+                    return imported_alias;
                 }
 
                 if n == conventions::NONE_TYPE_NAME || n == conventions::UNIT_TYPE_NAME {
@@ -463,6 +552,9 @@ impl AstLowering {
                     .iter()
                     .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
                     .collect();
+                if base == "Type" {
+                    return IrType::TypeToken(Box::new(lowered_generic_arg_or_unknown(&lowered_params, 0)));
+                }
                 match classify_generic_base(base.as_str()) {
                     GenericBaseKind::Collection(CollectionTypeId::List) => {
                         IrType::List(Box::new(lowered_generic_arg_or_unknown(&lowered_params, 0)))

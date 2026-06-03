@@ -22,6 +22,7 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
+use crate::frontend::symbols::{overload_emitted_name_prefix, overload_source_name_from_emitted};
 use incan_core::lang::surface::result_methods::ResultMethodId;
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::{conventions, magic_methods, stdlib as core_stdlib, trait_capabilities};
@@ -217,6 +218,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
 
         for name in externally_reachable_items {
             analyzer.mark_reachable_item(name);
+            analyzer.mark_reachable_overload_items(name);
         }
 
         while let Some(name) = analyzer.pending.pop() {
@@ -238,6 +240,20 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         self.analysis.used_imports.insert(name.to_string());
         if self.declarations_by_name.contains_key(name) && self.analysis.reachable_items.insert(name.to_string()) {
             self.pending.push(name.to_string());
+        }
+    }
+
+    /// Mark concrete Rust implementation items for one source overload binding as reachable.
+    fn mark_reachable_overload_items(&mut self, source_name: &str) {
+        let prefix = overload_emitted_name_prefix(source_name);
+        let overload_names = self
+            .declarations_by_name
+            .keys()
+            .filter(|name| name.starts_with(&prefix))
+            .cloned()
+            .collect::<Vec<_>>();
+        for overload_name in overload_names {
+            self.mark_reachable_item(&overload_name);
         }
     }
 
@@ -810,6 +826,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 }
             }
             IrExprKind::SerdeFromJson(type_name) => self.mark_reachable_item(type_name),
+            IrExprKind::TypeToken { ty } => self.scan_type(ty),
             IrExprKind::Unit
             | IrExprKind::None
             | IrExprKind::Bool(_)
@@ -1078,7 +1095,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrType::Set(inner)
             | IrType::Option(inner)
             | IrType::Ref(inner)
-            | IrType::RefMut(inner) => self.scan_type(inner),
+            | IrType::RefMut(inner)
+            | IrType::TypeToken(inner) => self.scan_type(inner),
+            IrType::ExternalUnion { union, .. } => self.scan_type(union),
             IrType::Dict(key, value) | IrType::Result(key, value) => {
                 self.scan_type(key);
                 self.scan_type(value);
@@ -1731,7 +1750,9 @@ impl<'a> IrEmitter<'a> {
 
     /// Collect anonymous union shapes that appear inside a type.
     fn collect_union_types_from_type(ty: &IrType, out: &mut HashMap<String, IrType>) {
-        if let Some(name) = ty.union_type_name() {
+        if !matches!(ty, IrType::ExternalUnion { .. })
+            && let Some(name) = ty.union_type_name()
+        {
             out.insert(name, ty.clone());
         }
 
@@ -1750,6 +1771,8 @@ impl<'a> IrEmitter<'a> {
                     Self::collect_union_types_from_type(item, out);
                 }
             }
+            IrType::ExternalUnion { .. } => {}
+            IrType::TypeToken(inner) => Self::collect_union_types_from_type(inner, out),
             IrType::ImplTrait(bound) => {
                 for item in &bound.type_args {
                     Self::collect_union_types_from_type(item, out);
@@ -1981,6 +2004,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::Bytes(_)
             | IrExprKind::AssociatedFunction { .. }
             | IrExprKind::FunctionItem { .. }
+            | IrExprKind::TypeToken { .. }
             | IrExprKind::Var { .. }
             | IrExprKind::StaticRead { .. }
             | IrExprKind::StaticBinding { .. }
@@ -2256,6 +2280,11 @@ impl<'a> IrEmitter<'a> {
                 let inner = self.emit_generated_union_member_type(inner);
                 quote! { &mut #inner }
             }
+            IrType::TypeToken(inner) => {
+                let inner = self.emit_generated_union_member_type(inner);
+                quote! { incan_stdlib::reflection::TypeToken<#inner> }
+            }
+            IrType::ExternalUnion { .. } => self.emit_type(ty),
             IrType::Unit
             | IrType::Bool
             | IrType::Int
@@ -2571,6 +2600,7 @@ impl<'a> IrEmitter<'a> {
                     })
                     .map(|(name, _)| {
                         let source_name = name.strip_prefix("__incan_original_").unwrap_or(name);
+                        let source_name = overload_source_name_from_emitted(source_name);
                         (name.clone(), source_name.to_string())
                     })
                     .collect::<Vec<_>>();

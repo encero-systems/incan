@@ -206,9 +206,9 @@
     },
     {
       "path": "src/backend/ir/lower/types.rs",
-      "category": "lowered primitive type spelling compatibility",
-      "expected_count": 6,
-      "expected_fingerprint": "0xa6967a320ba65785"
+      "category": "lowered primitive and type-token spelling compatibility",
+      "expected_count": 9,
+      "expected_fingerprint": "0xeeb0ca6fafb43da6"
     },
     {
       "path": "src/backend/ir/reference_shape.rs",

@@ -725,6 +725,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::StaticRead { .. }
             | IrExprKind::StaticBinding { .. }
             | IrExprKind::AssociatedFunction { .. }
+            | IrExprKind::TypeToken { .. }
             | IrExprKind::FunctionItem { .. }
             | IrExprKind::Literal(_)
             | IrExprKind::FieldsList(_)

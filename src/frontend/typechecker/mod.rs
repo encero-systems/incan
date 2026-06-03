@@ -163,6 +163,8 @@ pub struct TypeChecker {
     pub(crate) call_argument_depth: usize,
     /// Expression spans where type-like identifiers are valid namespace/type owners.
     pub(crate) type_receiver_spans: Vec<(usize, usize)>,
+    /// Expression spans where type-like identifiers are valid value-level `Type[T]` tokens.
+    pub(crate) type_token_value_spans: Vec<(usize, usize)>,
     /// Stack of active loop contexts, innermost last.
     pub(crate) loop_stack: Vec<LoopContext>,
     /// Active trait @requires context for default method bodies.
@@ -185,6 +187,11 @@ pub struct TypeChecker {
     pub(crate) static_decls: Vec<(StaticDecl, Span)>,
     /// Collected module-level function declarations for static dependency analysis.
     pub(crate) local_function_decls: HashMap<String, FunctionDecl>,
+    /// Function symbols collected in the current module pass, keyed by source name.
+    ///
+    /// The checker imports dependency modules into one ambient symbol table.
+    /// Same-name overload grouping is module-local; this map avoids global current-scope identity checks.
+    pub(crate) current_module_function_symbols: HashMap<String, SymbolId>,
     /// Transparent source type aliases, keyed by their local type name.
     pub(crate) type_aliases: HashMap<String, TypeAliasTarget>,
     /// Declaration-order index for each local static binding.
@@ -312,6 +319,7 @@ impl TypeChecker {
             await_operand_span: None,
             call_argument_depth: 0,
             type_receiver_spans: Vec::new(),
+            type_token_value_spans: Vec::new(),
             loop_stack: Vec::new(),
             current_trait_requires: None,
             current_trait_properties: None,
@@ -323,6 +331,7 @@ impl TypeChecker {
             const_decls: HashMap::new(),
             static_decls: Vec::new(),
             local_function_decls: HashMap::new(),
+            current_module_function_symbols: HashMap::new(),
             type_aliases: HashMap::new(),
             static_decl_positions: HashMap::new(),
             const_eval_state: HashMap::new(),
@@ -3488,6 +3497,7 @@ impl TypeChecker {
         self.const_decls.clear();
         self.static_decls.clear();
         self.local_function_decls.clear();
+        self.current_module_function_symbols.clear();
         self.static_decl_positions.clear();
         self.const_eval_state.clear();
         self.const_eval_cache.clear();
@@ -3575,6 +3585,7 @@ impl TypeChecker {
     pub fn import_module(&mut self, module_ast: &Program, _module_name: &str) {
         let previous_surface_context = self.surface_context.clone();
         let previous_import_aliases = self.import_aliases.clone();
+        let previous_module_function_symbols = std::mem::take(&mut self.current_module_function_symbols);
         self.surface_context = SurfaceContext::from_program(module_ast);
         self.import_aliases = self.surface_context.import_aliases().clone();
 
@@ -3600,6 +3611,7 @@ impl TypeChecker {
         self.cache_dependency_member_symbols(_module_name, module_ast, true);
         self.surface_context = previous_surface_context;
         self.import_aliases = previous_import_aliases;
+        self.current_module_function_symbols = previous_module_function_symbols;
     }
 
     /// Import all symbols from another module's AST into the symbol table.
@@ -3609,6 +3621,7 @@ impl TypeChecker {
     pub fn import_module_all(&mut self, module_ast: &Program, _module_name: &str) {
         let previous_surface_context = self.surface_context.clone();
         let previous_import_aliases = self.import_aliases.clone();
+        let previous_module_function_symbols = std::mem::take(&mut self.current_module_function_symbols);
         self.surface_context = SurfaceContext::from_program(module_ast);
         self.import_aliases = self.surface_context.import_aliases().clone();
 
@@ -3633,6 +3646,7 @@ impl TypeChecker {
         self.cache_dependency_member_symbols(_module_name, module_ast, false);
         self.surface_context = previous_surface_context;
         self.import_aliases = previous_import_aliases;
+        self.current_module_function_symbols = previous_module_function_symbols;
     }
 
     /// Rebuild exact dependency-member caches after all dependency modules have been collected.
@@ -3684,7 +3698,7 @@ impl TypeChecker {
     /// Return direct declaration names owned by a dependency module, excluding import re-exports.
     fn dependency_direct_member_names(module_ast: &Program, public_only: bool) -> HashSet<String> {
         if public_only {
-            return exported_symbols(module_ast)
+            let mut names = exported_symbols(module_ast)
                 .into_iter()
                 .filter_map(|symbol| match symbol {
                     ExportedSymbol::Const(name)
@@ -3695,7 +3709,14 @@ impl TypeChecker {
                     ExportedSymbol::Variant { variant_name, .. } => Some(variant_name),
                     ExportedSymbol::Reexported(_) => None,
                 })
-                .collect();
+                .collect::<HashSet<_>>();
+            names.extend(module_ast.declarations.iter().filter_map(|decl| {
+                let Declaration::Alias(alias) = &decl.node else {
+                    return None;
+                };
+                matches!(alias.visibility, Visibility::Public).then(|| alias.name.clone())
+            }));
+            return names;
         }
 
         module_ast
@@ -4236,6 +4257,9 @@ impl TypeChecker {
             (ResolvedType::Unknown, _) | (_, ResolvedType::Unknown) => true,
             (ResolvedType::TypeVar(_), _) | (_, ResolvedType::TypeVar(_)) => true,
             (ResolvedType::CallSiteInfer, _) | (_, ResolvedType::CallSiteInfer) => true,
+            (ResolvedType::TypeToken(actual_inner), ResolvedType::TypeToken(expected_inner)) => {
+                self.types_compatible(actual_inner, expected_inner)
+            }
             (ResolvedType::SelfType, ResolvedType::Generic(trait_name, _))
                 if self.current_trait_name.as_deref() == Some(trait_name.as_str()) =>
             {

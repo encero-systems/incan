@@ -6,7 +6,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::frontend::ast::{ParamKind, Span};
-use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType, TypeBoundInfo};
+use crate::frontend::symbols::{
+    CallableParam, FunctionOverloadInfo, NewtypePrimitiveConstraint, ResolvedType, TypeBoundInfo,
+};
 use crate::frontend::testing_markers::TestingFixtureScope;
 use incan_core::interop::{CoercionPolicy, RustFunctionSig};
 
@@ -194,6 +196,22 @@ pub struct DeclarationArtifacts {
     /// Lowering consumes this instead of re-lowering raw AST annotations so aliases such as
     /// `type Expr = Union[...]` do not produce a different callable surface from typechecked call sites.
     pub function_bindings: HashMap<String, FunctionBindingInfo>,
+    /// Module-local function declarations keyed by declaration span, preserving same-name overloads.
+    pub function_bindings_by_span: HashMap<(usize, usize), FunctionBindingInfo>,
+    /// Function declaration emitted names keyed by source declaration span.
+    ///
+    /// Present when top-level overloads need Rust-level name disambiguation while preserving one source name.
+    pub function_emitted_names: HashMap<(usize, usize), String>,
+    /// Overload candidates keyed by the source binding name visible in the current module.
+    ///
+    /// This includes declarations, imports, and aliases so call resolution, export metadata, and lowering all see one
+    /// overload surface instead of rebuilding overload sets from syntax-specific paths.
+    pub function_overloads: HashMap<String, Vec<FunctionOverloadInfo>>,
+    /// Imported overload bindings keyed by local import name.
+    ///
+    /// Each value is the concrete Rust function name exported by the provider module for one overload candidate. IR
+    /// import lowering consumes this so source-level overload names do not get re-exported as nonexistent Rust items.
+    pub imported_function_emitted_names: HashMap<String, Vec<String>>,
     /// Module-visible static bindings keyed by local name for lowering/runtime emission.
     pub static_bindings: HashMap<String, StaticBindingInfo>,
     /// Same-type method aliases keyed by nominal type name (`alias -> target_method`).
@@ -204,6 +222,8 @@ pub struct DeclarationArtifacts {
     pub type_method_rebindings: HashMap<String, HashMap<String, String>>,
     /// RFC 036: Module-visible function names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_function_bindings: HashMap<String, DecoratedFunctionBindingInfo>,
+    /// RFC 036: Decorated function bindings keyed by declaration span, preserving same-name overloads.
+    pub decorated_function_bindings_by_span: HashMap<(usize, usize), DecoratedFunctionBindingInfo>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
 }
@@ -243,6 +263,8 @@ pub struct CallArtifacts {
     /// Lowering consumes this for calls whose selected method lives in a trait impl rather than an inherent Rust impl.
     /// This keeps codegen from re-deriving dispatch from method names or argument shapes.
     pub resolved_method_calls: HashMap<(usize, usize), ResolvedMethodCall>,
+    /// Top-level overload callee emitted names selected by the typechecker, keyed by full call expression span.
+    pub selected_function_emitted_names: HashMap<(usize, usize), String>,
 }
 
 /// Test-runner and fixture metadata extracted during typechecking.
@@ -554,6 +576,46 @@ impl TypeCheckInfo {
         self.declarations.static_bindings.get(name)
     }
 
+    /// Return the Rust emitted name selected for a function declaration span, if overloads renamed it.
+    pub fn function_emitted_name(&self, span: Span) -> Option<&str> {
+        self.declarations
+            .function_emitted_names
+            .get(&(span.start, span.end))
+            .map(String::as_str)
+    }
+
+    /// Record a Rust emitted name for an overloaded function declaration.
+    pub(crate) fn record_function_emitted_name(&mut self, span: Span, emitted_name: String) {
+        self.declarations
+            .function_emitted_names
+            .insert((span.start, span.end), emitted_name);
+    }
+
+    /// Return emitted provider function names for an imported overload binding, if any.
+    pub fn imported_function_emitted_names(&self, local_name: &str) -> Option<&[String]> {
+        self.declarations
+            .imported_function_emitted_names
+            .get(local_name)
+            .map(Vec::as_slice)
+    }
+
+    /// Record emitted provider function names for an imported overload binding.
+    pub(crate) fn record_imported_function_emitted_names(&mut self, local_name: String, emitted_names: Vec<String>) {
+        self.declarations
+            .imported_function_emitted_names
+            .insert(local_name, emitted_names);
+    }
+
+    /// Return overload candidates for one source binding, if any.
+    pub fn function_overloads(&self, local_name: &str) -> Option<&[FunctionOverloadInfo]> {
+        self.declarations.function_overloads.get(local_name).map(Vec::as_slice)
+    }
+
+    /// Record overload candidates for one source binding.
+    pub(crate) fn record_function_overloads(&mut self, local_name: String, overloads: Vec<FunctionOverloadInfo>) {
+        self.declarations.function_overloads.insert(local_name, overloads);
+    }
+
     /// Return frontend fixture metadata for `name`, if the declaration was marked with `@fixture`.
     pub fn testing_fixture(&self, name: &str) -> Option<&TestingFixtureInfo> {
         self.testing.fixtures.get(name)
@@ -640,6 +702,21 @@ impl TypeCheckInfo {
             .call_site_callable_params
             .get(&(span.start, span.end))
             .map(Vec::as_slice)
+    }
+
+    /// Return the overloaded Rust emitted callee selected for one source call expression.
+    pub fn selected_function_emitted_name(&self, span: Span) -> Option<&str> {
+        self.calls
+            .selected_function_emitted_names
+            .get(&(span.start, span.end))
+            .map(String::as_str)
+    }
+
+    /// Record the overloaded Rust emitted callee selected for one source call expression.
+    pub(crate) fn record_selected_function_emitted_name(&mut self, span: Span, emitted_name: String) {
+        self.calls
+            .selected_function_emitted_names
+            .insert((span.start, span.end), emitted_name);
     }
 
     /// Record callable metadata needed by lowering when the callee expression alone cannot carry it.

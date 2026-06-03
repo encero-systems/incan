@@ -397,6 +397,13 @@ impl AstLowering {
                 existing => Self::merge_inferred_ir_type(existing, inferred),
             };
         }
+        if matches!(expr.node, ast::Expr::Ident(_))
+            && let IrType::TypeToken(inner) = &lowered.ty
+        {
+            lowered.kind = IrExprKind::TypeToken {
+                ty: inner.as_ref().clone(),
+            };
+        }
         if let Some(kind) = self.ident_kind_for_lowering(expr) {
             match (&expr.node, &mut lowered.kind) {
                 (ast::Expr::Ident(name), _) if matches!(kind, IdentKind::Static) => {

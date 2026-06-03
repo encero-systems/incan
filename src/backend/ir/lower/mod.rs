@@ -155,6 +155,8 @@ pub struct AstLowering {
     pub(super) callable_param_scopes: Vec<HashSet<String>>,
     /// Module-level symbol aliases mapped from alias name to canonical target name.
     pub(super) symbol_aliases: HashMap<String, String>,
+    /// Imported overload bindings that must be reexported because a public alias projects them.
+    pub(super) overload_alias_reexport_targets: HashSet<String>,
     /// Local transparent type aliases keyed by alias name, retained so pattern lowering can use the same semantic
     /// target shape as the typechecker.
     pub(super) source_type_alias_targets: HashMap<String, ast::Type>,
@@ -252,6 +254,7 @@ impl AstLowering {
             rust_import_aliases: HashMap::new(),
             callable_param_scopes: Vec::new(),
             symbol_aliases: HashMap::new(),
+            overload_alias_reexport_targets: HashSet::new(),
             source_type_alias_targets: HashMap::new(),
             imported_alias_targets: HashMap::new(),
             stdlib_cache: StdlibAstCache::new(),
@@ -1134,6 +1137,22 @@ impl AstLowering {
                 Some((alias.name.clone(), target.clone()))
             })
             .collect();
+        self.overload_alias_reexport_targets = program
+            .declarations
+            .iter()
+            .filter_map(|decl| {
+                let ast::Declaration::Alias(alias) = &decl.node else {
+                    return None;
+                };
+                if !matches!(alias.visibility, ast::Visibility::Public) || !self.alias_projects_overload_set(alias) {
+                    return None;
+                }
+                let [target] = alias.target.segments.as_slice() else {
+                    return None;
+                };
+                Some(target.clone())
+            })
+            .collect();
         self.source_type_alias_targets = program
             .declarations
             .iter()
@@ -1271,10 +1290,19 @@ impl AstLowering {
             if let ast::Declaration::Function(ref f) = decl.node {
                 let type_param_names: std::collections::HashSet<&str> =
                     f.type_params.iter().map(|tp| tp.name.as_str()).collect();
-                let function_binding = self
+                let function_binding = self.type_info.as_ref().and_then(|info| {
+                    info.declarations
+                        .function_bindings_by_span
+                        .get(&(decl.span.start, decl.span.end))
+                        .cloned()
+                        .or_else(|| info.declarations.function_bindings.get(&f.name).cloned())
+                });
+                let emitted_function_name = self
                     .type_info
                     .as_ref()
-                    .and_then(|info| info.declarations.function_bindings.get(&f.name).cloned());
+                    .and_then(|info| info.function_emitted_name(decl.span))
+                    .unwrap_or(&f.name)
+                    .to_string();
                 let source_params: Vec<FunctionParam> = function_binding
                     .as_ref()
                     .map(|binding| self.function_params_from_source_callable_surface(&binding.params, &f.params))
@@ -1317,10 +1345,12 @@ impl AstLowering {
                         self.decorated_param_defaults_for_surface(&callable_params, original_params, &f.params);
                     let params = self.function_params_from_callable_surface(&callable_params, &defaults);
                     let return_type = self.lower_resolved_type(&callable_ret);
-                    ir_program
-                        .function_registry
-                        .register(f.name.clone(), params.clone(), return_type.clone());
-                    self.update_root_function_binding(&f.name, &params, &return_type);
+                    ir_program.function_registry.register(
+                        emitted_function_name.clone(),
+                        params.clone(),
+                        return_type.clone(),
+                    );
+                    self.update_root_function_binding(&emitted_function_name, &params, &return_type);
 
                     let original_name = Self::decorator_original_function_name(&f.name);
                     let original_return_type = function_binding
@@ -1338,11 +1368,17 @@ impl AstLowering {
                     .as_ref()
                     .map(|binding| self.lower_resolved_type(&binding.return_type))
                     .unwrap_or_else(|| self.lower_type_with_type_params(&f.return_type.node, Some(&type_param_names)));
-                ir_program
-                    .function_registry
-                    .register(f.name.clone(), source_params.clone(), return_type.clone());
-                if let Some(signature) = ir_program.function_registry.get(&f.name).cloned() {
-                    self.update_root_function_binding(&f.name, &signature.params, &signature.return_type);
+                ir_program.function_registry.register(
+                    emitted_function_name.clone(),
+                    source_params.clone(),
+                    return_type.clone(),
+                );
+                if let Some(signature) = ir_program.function_registry.get(&emitted_function_name).cloned() {
+                    self.update_root_function_binding(
+                        &emitted_function_name,
+                        &signature.params,
+                        &signature.return_type,
+                    );
                 }
             } else if let ast::Declaration::Alias(ref alias) = decl.node
                 && let [target] = alias.target.segments.as_slice()
@@ -1705,7 +1741,7 @@ impl AstLowering {
                     }
                     Err(e) => errors.push(e),
                 },
-                ast::Declaration::Function(f) => match self.lower_decorated_function_declarations(f) {
+                ast::Declaration::Function(f) => match self.lower_decorated_function_declarations(f, decl.span) {
                     Ok(decls) => {
                         if f.name == conventions::ENTRYPOINT_NAME {
                             ir_program.entry_point = Some(conventions::ENTRYPOINT_NAME.to_string());
@@ -1743,6 +1779,7 @@ impl AstLowering {
                         Err(e) => errors.push(e),
                     }
                 }
+                ast::Declaration::Alias(alias) if self.alias_projects_overload_set(alias) => {}
                 _ => {
                     // Regular declaration lowering
                     match self.lower_declaration(&decl.node) {
@@ -1813,14 +1850,46 @@ impl AstLowering {
         targets
     }
 
+    /// Return whether a source alias projects an overload set instead of one concrete Rust item.
+    fn alias_projects_overload_set(&self, alias: &ast::AliasDecl) -> bool {
+        self.type_info
+            .as_ref()
+            .and_then(|info| info.function_overloads(&alias.name))
+            .is_some()
+    }
+
+    /// Return decorator lowering metadata for one function declaration, preserving same-name overload identity.
+    fn decorated_function_binding_for_decl(
+        &self,
+        name: &str,
+        span: ast::Span,
+    ) -> Option<crate::frontend::typechecker::DecoratedFunctionBindingInfo> {
+        let info = self.type_info.as_ref()?;
+        info.declarations
+            .decorated_function_bindings_by_span
+            .get(&(span.start, span.end))
+            .cloned()
+            .or_else(|| info.declarations.decorated_function_bindings.get(name).cloned())
+    }
+
     /// Lower a function declaration, expanding RFC 036 decorated functions into original/static/wrapper items.
-    fn lower_decorated_function_declarations(&mut self, f: &ast::FunctionDecl) -> Result<Vec<IrDecl>, LoweringError> {
-        let Some(binding) = self
+    fn lower_decorated_function_declarations(
+        &mut self,
+        f: &ast::FunctionDecl,
+        span: ast::Span,
+    ) -> Result<Vec<IrDecl>, LoweringError> {
+        let emitted_name = self
             .type_info
             .as_ref()
-            .and_then(|info| info.declarations.decorated_function_bindings.get(&f.name).cloned())
-        else {
-            return Ok(vec![self.lower_declaration(&ast::Declaration::Function(f.clone()))?]);
+            .and_then(|info| info.function_emitted_name(span))
+            .unwrap_or(&f.name)
+            .to_string();
+        let Some(binding) = self.decorated_function_binding_for_decl(&f.name, span) else {
+            if emitted_name == f.name {
+                return Ok(vec![self.lower_declaration(&ast::Declaration::Function(f.clone()))?]);
+            }
+            let lowered = self.lower_function_named(f, emitted_name, self.map_callable_visibility(f.visibility))?;
+            return Ok(vec![IrDecl::new(IrDeclKind::Function(lowered))]);
         };
         let crate::frontend::symbols::ResolvedType::Function(callable_params, callable_ret) = binding.ty else {
             return Err(LoweringError {
@@ -1836,13 +1905,14 @@ impl AstLowering {
             _ => Vec::new(),
         };
 
-        let original_name = Self::decorator_original_function_name(&f.name);
+        let original_name = Self::decorator_original_function_name(&emitted_name);
         let original = self.lower_function_named(f, original_name.clone(), super::decl::Visibility::Private)?;
         let decorated_ty = self.function_type_from_callable_surface(&callable_params, &callable_ret);
 
         if !original.type_params.is_empty() {
             let wrapper = self.generic_decorated_function_wrapper(
                 f,
+                &emitted_name,
                 &original_name,
                 &callable_params,
                 &original_params,
@@ -1858,12 +1928,13 @@ impl AstLowering {
             ]);
         }
 
-        let decorator_expr = self.decorator_application_expr(&f.name, &f.decorators)?;
+        let decorator_expr = self.decorator_application_expr(&emitted_name, &f.decorators)?;
         let mut value = self.lower_expr_spanned(&decorator_expr)?;
         value.ty = decorated_ty.clone();
-        let static_name = Self::decorator_static_binding_name(&f.name);
+        let static_name = Self::decorator_static_binding_name(&emitted_name);
         let wrapper = self.decorated_function_wrapper(
             f,
+            &emitted_name,
             &static_name,
             &callable_params,
             &original_params,
@@ -1892,6 +1963,7 @@ impl AstLowering {
     fn generic_decorated_function_wrapper(
         &mut self,
         f: &ast::FunctionDecl,
+        wrapper_name: &str,
         original_name: &str,
         callable_params: &[CallableParam],
         original_params: &[CallableParam],
@@ -1938,7 +2010,7 @@ impl AstLowering {
         if !decorated_ty.contains_generic_parameter() {
             decorated_func = TypedExpr::new(
                 IrExprKind::CacheGenericDecoratedFunction {
-                    cache_name: f.name.clone(),
+                    cache_name: wrapper_name.to_string(),
                     type_param_names: type_params.iter().map(|param| param.name.clone()).collect(),
                     value: Box::new(decorated_func),
                 },
@@ -1961,7 +2033,7 @@ impl AstLowering {
         );
 
         Ok(super::decl::IrFunction {
-            name: f.name.clone(),
+            name: wrapper_name.to_string(),
             params,
             return_type,
             body: vec![
@@ -2021,6 +2093,7 @@ impl AstLowering {
     fn decorated_function_wrapper(
         &mut self,
         f: &ast::FunctionDecl,
+        wrapper_name: &str,
         static_name: &str,
         callable_params: &[CallableParam],
         original_params: &[CallableParam],
@@ -2054,7 +2127,7 @@ impl AstLowering {
         );
 
         super::decl::IrFunction {
-            name: f.name.clone(),
+            name: wrapper_name.to_string(),
             params,
             return_type,
             body: vec![IrStmt::new(IrStmtKind::Return(Some(call)))],

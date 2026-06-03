@@ -11443,6 +11443,7 @@ pub def display[T](data: DataSet[T]) -> None:
         let mut manifest = LibraryManifest::new(manifest_name, "0.1.0");
         manifest.exports.functions.push(FunctionExport {
             name: "filter".to_string(),
+            emitted_name: None,
             type_params: Vec::new(),
             params: vec![ParamExport {
                 name: "value".to_string(),
@@ -11520,6 +11521,7 @@ pub def display[T](data: DataSet[T]) -> None:
         let mut manifest = LibraryManifest::new(manifest_name, "0.1.0");
         manifest.exports.functions.push(FunctionExport {
             name: "lit".to_string(),
+            emitted_name: None,
             type_params: Vec::new(),
             params: vec![ParamExport {
                 name: "value".to_string(),
@@ -11537,6 +11539,7 @@ pub def display[T](data: DataSet[T]) -> None:
         });
         manifest.exports.functions.push(FunctionExport {
             name: "aggregate_as".to_string(),
+            emitted_name: None,
             type_params: Vec::new(),
             params: vec![
                 ParamExport {

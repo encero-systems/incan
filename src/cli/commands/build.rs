@@ -325,6 +325,15 @@ fn rename_checked_export(export: &CheckedNamedExport, exported_name: &str) -> Ch
     renamed
 }
 
+/// Group checked exports by public source name while preserving same-name function overload entries.
+fn checked_exports_by_name(exports: Vec<CheckedNamedExport>) -> HashMap<String, Vec<CheckedNamedExport>> {
+    let mut grouped: HashMap<String, Vec<CheckedNamedExport>> = HashMap::new();
+    for export in exports {
+        grouped.entry(export.name.clone()).or_default().push(export);
+    }
+    grouped
+}
+
 /// Map exported scalar value enums to the serialized identities used by library consumers.
 fn public_ordinal_type_identities(
     lib_module: &ParsedModule,
@@ -382,14 +391,19 @@ fn public_ordinal_type_identities(
 }
 
 struct LibraryReexportResolver<'a> {
-    module_exports: &'a HashMap<String, HashMap<String, CheckedNamedExport>>,
+    module_exports: &'a HashMap<String, HashMap<String, Vec<CheckedNamedExport>>>,
 }
 
 impl<'a> LibraryReexportResolver<'a> {
-    fn new(module_exports: &'a HashMap<String, HashMap<String, CheckedNamedExport>>) -> Self {
+    /// Create a resolver over checked exports grouped by canonical source-module name and source export name.
+    fn new(module_exports: &'a HashMap<String, HashMap<String, Vec<CheckedNamedExport>>>) -> Self {
         Self { module_exports }
     }
 
+    /// Resolve `pub from ... import ...` declarations in a library entrypoint into checked public exports.
+    ///
+    /// A single source name can map to several checked exports when the provider exposes same-name overloads. The
+    /// resolver therefore preserves all matching exports and only applies the consumer-facing alias to each one.
     fn resolve(
         &self,
         lib_module: &ParsedModule,
@@ -429,7 +443,7 @@ impl<'a> LibraryReexportResolver<'a> {
                     continue;
                 }
 
-                let Some(export) = exports_by_name.get(&item.name) else {
+                let Some(exports) = exports_by_name.get(&item.name) else {
                     let available: Vec<String> = exports_by_name.keys().cloned().collect();
                     errors.push(diagnostics::errors::import_not_exported(
                         &item.name,
@@ -440,7 +454,11 @@ impl<'a> LibraryReexportResolver<'a> {
                     continue;
                 };
 
-                resolved.push(rename_checked_export(export, &exported_name));
+                resolved.extend(
+                    exports
+                        .iter()
+                        .map(|export| rename_checked_export(export, &exported_name)),
+                );
             }
         }
 
@@ -786,7 +804,7 @@ pub fn build_library(
     };
 
     let mut all_errors = String::new();
-    let mut checked_exports_by_module: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+    let mut checked_exports_by_module: HashMap<String, HashMap<String, Vec<CheckedNamedExport>>> = HashMap::new();
     let mut api_metadata_modules = Vec::new();
     let module_idx_by_key = module_key_index(&modules);
     let mut stdlib_cache = StdlibAstCache::new();
@@ -817,10 +835,7 @@ pub fn build_library(
                 ));
                 checked_exports_by_module.insert(
                     module_key(&module.path_segments),
-                    module_exports
-                        .into_iter()
-                        .map(|export| (export.name.clone(), export))
-                        .collect(),
+                    checked_exports_by_name(module_exports),
                 );
                 stdlib_cache = checker.stdlib_cache.clone();
             }
@@ -1235,10 +1250,10 @@ mod tests {
                 target: ResolvedType::Named("Widget".to_string()),
             }),
         };
-        let mut module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+        let mut module_exports: HashMap<String, HashMap<String, Vec<CheckedNamedExport>>> = HashMap::new();
         module_exports.insert(
             "widgets".to_string(),
-            HashMap::from([(widget_export.name.clone(), widget_export)]),
+            HashMap::from([(widget_export.name.clone(), vec![widget_export])]),
         );
 
         let resolved = LibraryReexportResolver::new(&module_exports)
@@ -1267,7 +1282,7 @@ mod tests {
             ast,
         };
 
-        let module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+        let module_exports: HashMap<String, HashMap<String, Vec<CheckedNamedExport>>> = HashMap::new();
         let result = LibraryReexportResolver::new(&module_exports).resolve(&lib_module);
         assert!(result.is_err(), "expected missing module to fail");
         Ok(())
@@ -1295,10 +1310,10 @@ mod tests {
                 target: ResolvedType::Named("Widget".to_string()),
             }),
         };
-        let mut module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+        let mut module_exports: HashMap<String, HashMap<String, Vec<CheckedNamedExport>>> = HashMap::new();
         module_exports.insert(
             "widgets".to_string(),
-            HashMap::from([(widget_export.name.clone(), widget_export)]),
+            HashMap::from([(widget_export.name.clone(), vec![widget_export])]),
         );
 
         let result = LibraryReexportResolver::new(&module_exports).resolve(&lib_module);
@@ -1332,6 +1347,7 @@ mod tests {
             name: "filter_ds".to_string(),
             kind: CheckedExportKind::Function(crate::frontend::library_exports::CheckedFunctionExport {
                 name: "filter_ds".to_string(),
+                emitted_name: None,
                 type_params: Vec::new(),
                 params: Vec::new(),
                 param_defaults: Vec::new(),
@@ -1339,14 +1355,14 @@ mod tests {
                 is_async: false,
             }),
         };
-        let mut module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+        let mut module_exports: HashMap<String, HashMap<String, Vec<CheckedNamedExport>>> = HashMap::new();
         module_exports.insert(
             "dataset".to_string(),
-            HashMap::from([(dataset_export.name.clone(), dataset_export)]),
+            HashMap::from([(dataset_export.name.clone(), vec![dataset_export])]),
         );
         module_exports.insert(
             "dataset_ops".to_string(),
-            HashMap::from([(filter_export.name.clone(), filter_export)]),
+            HashMap::from([(filter_export.name.clone(), vec![filter_export])]),
         );
 
         let resolved = LibraryReexportResolver::new(&module_exports)
@@ -1385,6 +1401,7 @@ mod tests {
             name: "filter_ds".to_string(),
             kind: CheckedExportKind::Function(crate::frontend::library_exports::CheckedFunctionExport {
                 name: "filter_ds".to_string(),
+                emitted_name: None,
                 type_params: Vec::new(),
                 params: Vec::new(),
                 param_defaults: Vec::new(),
@@ -1392,14 +1409,14 @@ mod tests {
                 is_async: false,
             }),
         };
-        let mut module_exports: HashMap<String, HashMap<String, CheckedNamedExport>> = HashMap::new();
+        let mut module_exports: HashMap<String, HashMap<String, Vec<CheckedNamedExport>>> = HashMap::new();
         module_exports.insert(
             "dataset".to_string(),
-            HashMap::from([(dataset_export.name.clone(), dataset_export)]),
+            HashMap::from([(dataset_export.name.clone(), vec![dataset_export])]),
         );
         module_exports.insert(
             "dataset_ops".to_string(),
-            HashMap::from([(filter_export.name.clone(), filter_export)]),
+            HashMap::from([(filter_export.name.clone(), vec![filter_export])]),
         );
 
         let resolved = LibraryReexportResolver::new(&module_exports)

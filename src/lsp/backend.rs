@@ -2692,6 +2692,7 @@ fn format_type_ref(ty: &TypeRef) -> String {
                 format_type_ref(return_type)
             )
         }
+        TypeRef::TypeToken { inner } => format!("Type[{}]", format_type_ref(inner)),
         TypeRef::Tuple { elements } => {
             format!(
                 "({})",

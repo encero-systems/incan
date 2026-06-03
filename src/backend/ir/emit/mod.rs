@@ -253,6 +253,12 @@ pub struct IrEmitter<'a> {
     externally_reachable_items: HashSet<String>,
     /// Pre-emission usage facts used to avoid generated `dead_code` and `unused_imports` suppressions.
     generated_use_analysis: RefCell<GeneratedUseAnalysis>,
+    /// Rust overload implementation imports already emitted in the current module.
+    ///
+    /// Source aliases can project the same overloaded callable under another source name. The public metadata keeps
+    /// both source names, but Rust still has one concrete implementation symbol, so a facade importing the canonical
+    /// name and the alias must not emit the same `use`/`pub use` binding twice.
+    emitted_overload_import_bindings: RefCell<HashSet<String>>,
     /// Whether to emit the Zen of Incan in main
     emit_zen_in_main: bool,
     /// Whether serde is needed for emitted Rust derives or helpers.
@@ -396,6 +402,7 @@ impl<'a> IrEmitter<'a> {
             public_ordinal_type_identities: HashMap::new(),
             externally_reachable_items: HashSet::new(),
             generated_use_analysis: RefCell::new(GeneratedUseAnalysis::default()),
+            emitted_overload_import_bindings: RefCell::new(HashSet::new()),
             emit_zen_in_main: false,
             needs_serde: RefCell::new(false),
             function_registry,
@@ -571,6 +578,8 @@ impl<'a> IrEmitter<'a> {
                 Self::callable_name_type_supported(key) && Self::callable_name_type_supported(value)
             }
             IrType::Tuple(items) => items.iter().all(Self::callable_name_type_supported),
+            IrType::TypeToken(inner) => Self::callable_name_type_supported(inner),
+            IrType::ExternalUnion { union, .. } => Self::callable_name_type_supported(union),
             IrType::NamedGeneric(_, args) => args.iter().all(Self::callable_name_type_supported),
             IrType::Function { params, ret } => Self::callable_name_signature_key(params, ret).is_some(),
             IrType::Unit
@@ -692,6 +701,13 @@ impl<'a> IrEmitter<'a> {
                     .map(|param| self.resolve_type_aliases_for_emit_inner(param, visiting))
                     .collect(),
                 ret: Box::new(self.resolve_type_aliases_for_emit_inner(ret, visiting)),
+            },
+            IrType::TypeToken(inner) => {
+                IrType::TypeToken(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting)))
+            }
+            IrType::ExternalUnion { library, union } => IrType::ExternalUnion {
+                library: library.clone(),
+                union: Box::new(self.resolve_type_aliases_for_emit_inner(union, visiting)),
             },
             IrType::Ref(inner) => IrType::Ref(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting))),
             IrType::RefMut(inner) => {
@@ -1329,6 +1345,11 @@ impl<'a> IrEmitter<'a> {
                     .collect(),
                 ret: Box::new(Self::substitute_signature_type(ret, subst)),
             },
+            IrType::TypeToken(inner) => IrType::TypeToken(Box::new(Self::substitute_signature_type(inner, subst))),
+            IrType::ExternalUnion { library, union } => IrType::ExternalUnion {
+                library: library.clone(),
+                union: Box::new(Self::substitute_signature_type(union, subst)),
+            },
             IrType::Ref(inner) => IrType::Ref(Box::new(Self::substitute_signature_type(inner, subst))),
             IrType::RefMut(inner) => IrType::RefMut(Box::new(Self::substitute_signature_type(inner, subst))),
             _ => ty.clone(),
@@ -1462,7 +1483,8 @@ impl<'a> IrEmitter<'a> {
             | IrType::Set(inner)
             | IrType::Option(inner)
             | IrType::Ref(inner)
-            | IrType::RefMut(inner) => {
+            | IrType::RefMut(inner)
+            | IrType::TypeToken(inner) => {
                 Self::collect_signature_generics(inner, out);
             }
             IrType::Dict(key, value) | IrType::Result(key, value) => {
@@ -1474,6 +1496,7 @@ impl<'a> IrEmitter<'a> {
                     Self::collect_signature_generics(item, out);
                 }
             }
+            IrType::ExternalUnion { union, .. } => Self::collect_signature_generics(union, out),
             IrType::Function { params, ret } => {
                 for param in params {
                     Self::collect_signature_generics(param, out);

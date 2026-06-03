@@ -64,6 +64,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
     });
     manifest.exports.functions.push(FunctionExport {
         name: "make_widget".to_string(),
+        emitted_name: None,
         type_params: Vec::new(),
         params: vec![ParamExport {
             name: "name".to_string(),
@@ -491,6 +492,7 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str) -> Strin
     let mut manifest = LibraryManifest::new("query_core", "0.1.0");
     manifest.exports.functions.push(FunctionExport {
         name: "filter".to_string(),
+        emitted_name: None,
         type_params: Vec::new(),
         params: vec![ParamExport {
             name: "value".to_string(),

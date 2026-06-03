@@ -310,6 +310,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::StaticRead { .. }
             | IrExprKind::StaticBinding { .. }
             | IrExprKind::AssociatedFunction { .. }
+            | IrExprKind::TypeToken { .. }
             | IrExprKind::FunctionItem { .. }
             | IrExprKind::Literal(_)
             | IrExprKind::FieldsList(_)
@@ -1529,6 +1530,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::Decimal(_)
             | IrExprKind::String(_)
             | IrExprKind::Bytes(_)
+            | IrExprKind::TypeToken { .. }
             | IrExprKind::Literal(_)
             | IrExprKind::FieldsList(_)
             | IrExprKind::SerdeToJson

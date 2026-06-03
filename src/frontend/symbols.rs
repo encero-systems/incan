@@ -25,6 +25,36 @@ pub type SymbolId = usize;
 /// Canonical semantic name for anonymous union types (RFC 029).
 pub const UNION_TYPE_NAME: &str = "Union";
 
+/// Separator used in generated Rust symbols for source overload implementations.
+const OVERLOAD_EMITTED_NAME_SEPARATOR: &str = "__overload_";
+
+/// Build the generated Rust symbol name for one overload implementation.
+pub(crate) fn overload_emitted_name(source_name: &str, hash: u64) -> String {
+    format!("{source_name}{OVERLOAD_EMITTED_NAME_SEPARATOR}{hash:016x}")
+}
+
+/// Return the generated Rust symbol prefix shared by all overload implementations for one source binding.
+pub(crate) fn overload_emitted_name_prefix(source_name: &str) -> String {
+    format!("{source_name}{OVERLOAD_EMITTED_NAME_SEPARATOR}")
+}
+
+/// Return whether a generated Rust symbol names one overload implementation.
+pub(crate) fn is_overload_emitted_name(name: &str) -> bool {
+    overload_source_name_from_emitted(name) != name
+}
+
+/// Recover the source binding name from one generated overload implementation name.
+pub(crate) fn overload_source_name_from_emitted(name: &str) -> &str {
+    let Some((source_name, hash)) = name.rsplit_once(OVERLOAD_EMITTED_NAME_SEPARATOR) else {
+        return name;
+    };
+    if hash.len() == 16 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        source_name
+    } else {
+        name
+    }
+}
+
 /// Symbol table managing all named entities
 #[derive(Debug, Default)]
 pub struct SymbolTable {
@@ -163,6 +193,7 @@ impl SymbolTable {
                     type_params: vec![],
                     type_param_bounds: HashMap::new(),
                     type_param_bound_details: HashMap::new(),
+                    emitted_name: None,
                 }),
                 span: Span::default(),
                 scope: 0,
@@ -181,6 +212,7 @@ impl SymbolTable {
                 type_params: vec![],
                 type_param_bounds: HashMap::new(),
                 type_param_bound_details: HashMap::new(),
+                emitted_name: None,
             }),
             span: Span::default(),
             scope: 0,
@@ -195,6 +227,7 @@ impl SymbolTable {
                 type_params: vec![],
                 type_param_bounds: HashMap::new(),
                 type_param_bound_details: HashMap::new(),
+                emitted_name: None,
             }),
             span: Span::default(),
             scope: 0,
@@ -400,6 +433,8 @@ pub enum SymbolKind {
     Static(StaticInfo),
     /// Function
     Function(FunctionInfo),
+    /// Top-level same-name function overloads.
+    FunctionOverloads(Vec<FunctionOverloadInfo>),
     /// Type (class, model, newtype, enum, builtin)
     Type(TypeInfo),
     /// Trait
@@ -444,6 +479,15 @@ pub struct FunctionInfo {
     pub type_param_bounds: HashMap<String, Vec<String>>,
     /// Resolved source-declared bounds, preserving generic type arguments such as `T with Serialize[F]`.
     pub type_param_bound_details: HashMap<String, Vec<TypeBoundInfo>>,
+    /// Rust function name emitted for this source callable when overloads require name disambiguation.
+    pub emitted_name: Option<String>,
+}
+
+/// One top-level overload candidate.
+#[derive(Debug, Clone)]
+pub struct FunctionOverloadInfo {
+    pub info: FunctionInfo,
+    pub span: Span,
 }
 
 /// Callable parameter metadata preserved after type resolution.
@@ -738,6 +782,8 @@ pub enum ResolvedType {
     Generic(String, Vec<ResolvedType>),
     /// Function type, including rest-parameter shape when known.
     Function(Vec<CallableParam>, Box<ResolvedType>),
+    /// Value-level token for a source type, e.g. `Type[int]`.
+    TypeToken(Box<ResolvedType>),
     /// Tuple type
     Tuple(Vec<ResolvedType>),
     /// Type variable (for generics)
@@ -887,6 +933,7 @@ impl std::fmt::Display for ResolvedType {
                 }
                 write!(f, ") -> {}", ret)
             }
+            ResolvedType::TypeToken(inner) => write!(f, "Type[{}]", inner),
             ResolvedType::Tuple(elems) => {
                 write!(f, "(")?;
                 for (i, e) in elems.iter().enumerate() {
@@ -1038,6 +1085,11 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
         }
         Type::Generic(name, args) => {
             let resolved_args: Vec<_> = args.iter().map(|a| resolve_type(&a.node, symbols)).collect();
+            if name == "Type" {
+                return ResolvedType::TypeToken(Box::new(
+                    resolved_args.first().cloned().unwrap_or(ResolvedType::Unknown),
+                ));
+            }
             // Normalize type name for built-in generics (aliases → canonical spellings).
             let id = collections::from_str(name.as_str());
             let normalized_name = id
@@ -1090,6 +1142,19 @@ pub fn resolve_type(ty: &Type, symbols: &SymbolTable) -> ResolvedType {
 mod tests {
     use super::*;
     use crate::ast::{Span, Spanned, Type};
+
+    #[test]
+    fn test_overload_source_name_from_emitted_requires_generated_hash_suffix() {
+        let emitted = overload_emitted_name("cast", 0xd28281f54a5b9ea6);
+
+        assert_eq!(overload_source_name_from_emitted(&emitted), "cast");
+        assert!(is_overload_emitted_name(&emitted));
+        assert_eq!(
+            overload_source_name_from_emitted("cast__overload_suffix"),
+            "cast__overload_suffix"
+        );
+        assert!(!is_overload_emitted_name("cast__overload_suffix"));
+    }
 
     #[test]
     fn test_scope_lookup() {
