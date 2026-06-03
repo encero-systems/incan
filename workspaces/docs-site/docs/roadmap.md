@@ -107,11 +107,11 @@ Core tracking issues:
 - [#655](https://github.com/dannys-code-corner/incan/issues/655): backend compatibility report and migration notes.
 - [#225](https://github.com/dannys-code-corner/incan/issues/225): semantic facts adoption on backend cutover paths.
 - [#656](https://github.com/dannys-code-corner/incan/issues/656): Rust-facing ABI and Cargo-native Incan package direction.
-- [#752](https://github.com/dannys-code-corner/incan/issues/752): RFC 106 type-directed library APIs and compile-time type tokens.
+- [#752](https://github.com/dannys-code-corner/incan/issues/752): RFC 107 type-directed library APIs and compile-time type tokens.
 - [RFC 092](RFCs/092_interactive_runtime_stdlib_contracts.md): interactive runtime stdlib contracts.
 - [RFC 093](RFCs/093_std_telemetry_opentelemetry_observability.md): `std.telemetry`.
 - [RFC 094](RFCs/094_context_managers.md): context managers.
-- [RFC 106](RFCs/106_type_directed_library_apis.md): type-directed library APIs and compile-time type tokens.
+- [RFC 107](RFCs/107_type_directed_library_apis.md): type-directed library APIs and compile-time type tokens.
 - [RFC 095](RFCs/095_span_vocabulary_blocks.md): span vocabulary blocks.
 
 ### 0.7 Release: feature reopening

@@ -1,4 +1,4 @@
-# RFC 106: Type-directed library APIs and compile-time type tokens
+# RFC 107: Type-directed library APIs and compile-time type tokens
 
 - **Status:** Draft
 - **Created:** 2026-06-03
