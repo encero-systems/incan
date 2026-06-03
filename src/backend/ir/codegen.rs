@@ -1847,6 +1847,7 @@ def main() -> None:
                     name: String::from("Rng"),
                     alias: None,
                     is_static: false,
+                    force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
                         trait_path: String::from("rand::Rng"),
                         definition_path: None,
@@ -1857,6 +1858,7 @@ def main() -> None:
                     name: String::from("thread_rng"),
                     alias: None,
                     is_static: false,
+                    force_reexport: false,
                     rust_trait_import: None,
                 },
             ],
@@ -1962,6 +1964,7 @@ def main() -> None:
                     name: String::from("AlphaRender"),
                     alias: None,
                     is_static: false,
+                    force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
                         trait_path: String::from("demo::AlphaRender"),
                         definition_path: None,
@@ -1972,6 +1975,7 @@ def main() -> None:
                     name: String::from("BetaRender"),
                     alias: None,
                     is_static: false,
+                    force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
                         trait_path: String::from("demo::BetaRender"),
                         definition_path: None,
@@ -2069,12 +2073,14 @@ def main() -> None:
                     name: String::from("Rng"),
                     alias: None,
                     is_static: false,
+                    force_reexport: false,
                     rust_trait_import: None,
                 },
                 IrImportItem {
                     name: String::from("thread_rng"),
                     alias: None,
                     is_static: false,
+                    force_reexport: false,
                     rust_trait_import: None,
                 },
             ],
@@ -2181,6 +2187,7 @@ def main() -> None:
                     name: String::from("Digest"),
                     alias: None,
                     is_static: false,
+                    force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
                         trait_path: String::from("sha2::Digest"),
                         definition_path: Some(String::from("digest::digest::Digest")),
@@ -2191,6 +2198,7 @@ def main() -> None:
                     name: String::from("Sha256"),
                     alias: None,
                     is_static: false,
+                    force_reexport: false,
                     rust_trait_import: None,
                 },
             ],
@@ -2521,6 +2529,7 @@ def main() -> None:
         });
         manifest.exports.functions.push(FunctionExport {
             name: "make_widget".to_string(),
+            emitted_name: None,
             type_params: Vec::new(),
             params: vec![ParamExport {
                 name: "name".to_string(),

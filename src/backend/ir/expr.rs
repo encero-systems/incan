@@ -143,6 +143,10 @@ pub enum IrExprKind {
         type_name: String,
         function_name: String,
     },
+    /// Zero-sized value-level marker for a source type.
+    TypeToken {
+        ty: IrType,
+    },
 
     /// Reference a free function item with optional explicit type arguments.
     ///

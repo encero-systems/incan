@@ -4,9 +4,9 @@
 //! handling, generic inference, builtin dispatch, and Rust boundary validation to focused child modules.
 
 use crate::frontend::ast::{CallArg, Expr, Span, Spanned, Type};
-use crate::frontend::diagnostics::errors;
+use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::resolved_type_subst::substitute_resolved_type;
-use crate::frontend::symbols::{FieldInfo, FunctionInfo, ResolvedType, SymbolKind, TypeInfo};
+use crate::frontend::symbols::{FieldInfo, FunctionInfo, FunctionOverloadInfo, ResolvedType, SymbolKind, TypeInfo};
 use crate::frontend::typechecker::IdentKind;
 use incan_core::interop::{RustFieldInfo, RustItemKind, RustTypeInfo};
 use incan_core::lang::derives::{self, DeriveId};
@@ -270,6 +270,16 @@ impl TypeChecker {
                             expected_return_ty,
                         );
                     }
+                    SymbolKind::FunctionOverloads(overloads) => {
+                        return self.validate_function_overload_call(
+                            name,
+                            &overloads,
+                            type_args,
+                            args,
+                            span,
+                            expected_return_ty,
+                        );
+                    }
                     SymbolKind::RustItem(info) => {
                         if !type_args.is_empty() {
                             self.errors
@@ -424,6 +434,7 @@ impl TypeChecker {
                 type_params: binding.type_params,
                 type_param_bounds: binding.type_param_bounds,
                 type_param_bound_details: binding.type_param_bound_details,
+                emitted_name: None,
             };
             return self.validate_function_call(name, &info, type_args, args, span, expected_return_ty);
         }
@@ -474,6 +485,82 @@ impl TypeChecker {
             }
             _ => {
                 self.check_call_args(args);
+                ResolvedType::Unknown
+            }
+        }
+    }
+
+    /// Resolve a direct call to a top-level same-name overload set.
+    ///
+    /// Candidate checking runs through the ordinary function-call validator and rolls back failed candidates.
+    /// That keeps overload dispatch on the ordinary checker while preserving argument-shape metadata for lowering.
+    fn validate_function_overload_call(
+        &mut self,
+        func_name: &str,
+        overloads: &[FunctionOverloadInfo],
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let baseline_errors = self.errors.clone();
+        let baseline_warnings = self.warnings.clone();
+        let baseline_type_info = self.type_info.clone();
+        let baseline_consumed_iterator_bindings = self.consumed_iterator_bindings.clone();
+
+        let mut matches = Vec::new();
+        for overload in overloads {
+            self.errors = baseline_errors.clone();
+            self.warnings = baseline_warnings.clone();
+            self.type_info = baseline_type_info.clone();
+            self.consumed_iterator_bindings = baseline_consumed_iterator_bindings.clone();
+
+            let result =
+                self.validate_function_call(func_name, &overload.info, type_args, args, span, expected_return_ty);
+            if self.errors.len() == baseline_errors.len() {
+                matches.push((
+                    overload.info.emitted_name.clone(),
+                    result,
+                    self.errors.clone(),
+                    self.warnings.clone(),
+                    self.type_info.clone(),
+                    self.consumed_iterator_bindings.clone(),
+                ));
+            }
+        }
+
+        match matches.len() {
+            1 => {
+                let (emitted_name, result, errors, warnings, type_info, consumed_iterator_bindings) = matches.remove(0);
+                self.errors = errors;
+                self.warnings = warnings;
+                self.type_info = type_info;
+                self.consumed_iterator_bindings = consumed_iterator_bindings;
+                if let Some(emitted_name) = emitted_name {
+                    self.type_info.record_selected_function_emitted_name(span, emitted_name);
+                }
+                result
+            }
+            0 => {
+                self.errors = baseline_errors;
+                self.warnings = baseline_warnings;
+                self.type_info = baseline_type_info;
+                self.consumed_iterator_bindings = baseline_consumed_iterator_bindings;
+                if let Some(first) = overloads.first() {
+                    self.validate_function_call(func_name, &first.info, type_args, args, span, expected_return_ty)
+                } else {
+                    ResolvedType::Unknown
+                }
+            }
+            _ => {
+                self.errors = baseline_errors;
+                self.warnings = baseline_warnings;
+                self.type_info = baseline_type_info;
+                self.consumed_iterator_bindings = baseline_consumed_iterator_bindings;
+                self.errors.push(CompileError::type_error(
+                    format!("Call to overloaded function '{func_name}' is ambiguous"),
+                    span,
+                ));
                 ResolvedType::Unknown
             }
         }

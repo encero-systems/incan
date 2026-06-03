@@ -302,6 +302,11 @@ impl TypeChecker {
                     self.infer_type_param_bindings(expected_ret, actual_ret, bindings);
                 }
             }
+            ResolvedType::TypeToken(expected_inner) => {
+                if let ResolvedType::TypeToken(actual_inner) = actual {
+                    self.infer_type_param_bindings(expected_inner, actual_inner, bindings);
+                }
+            }
             ResolvedType::Tuple(expected_items) => {
                 if let ResolvedType::Tuple(actual_items) = actual {
                     for (e, a) in expected_items.iter().zip(actual_items.iter()) {

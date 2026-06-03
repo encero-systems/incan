@@ -561,6 +561,239 @@ def use() -> str:
 }
 
 #[test]
+fn test_type_name_value_requires_type_token_expected_context() {
+    let source = r#"
+def accepts_any[T](value: T) -> None:
+  return
+
+def use() -> None:
+  accepts_any(int)
+"#;
+    let errs = check_str_err(
+        source,
+        "bare primitive type value should require Type[T] expected context",
+    );
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Cannot use type 'int' as a value")),
+        "expected type-name-as-value diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_generic_type_token_parameter_accepts_type_name_value() {
+    let source = r#"
+def accepts_type[T](value: Type[T]) -> str:
+  return "ok"
+
+def use() -> str:
+  return accepts_type(int)
+"#;
+    let result = check_str(source);
+    assert!(
+        result.is_ok(),
+        "expected generic Type[T] parameter to accept primitive type token, got {result:?}"
+    );
+}
+
+#[test]
+fn test_top_level_alias_preserves_overloaded_type_token_function_set() -> Result<(), String> {
+    let source = r#"
+model ColumnExpr:
+  name: str
+
+model IntColumnExpr:
+  source: str
+
+model FloatColumnExpr:
+  source: str
+
+def col(name: str) -> ColumnExpr:
+  return ColumnExpr(name=name)
+
+def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:
+  return IntColumnExpr(source=expr.name)
+
+def cast(expr: ColumnExpr, target: Type[float]) -> FloatColumnExpr:
+  return FloatColumnExpr(source=expr.name)
+
+def cast(expr: ColumnExpr, target: str) -> ColumnExpr:
+  return ColumnExpr(name=target)
+
+safe_cast = alias cast
+
+def use() -> None:
+  typed: FloatColumnExpr = safe_cast(col("amount"), float)
+  fallback: ColumnExpr = safe_cast(col("amount"), "float64")
+  return
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| format!("overloaded alias should typecheck: {errs:?}"))?;
+
+    let alias = checker
+        .lookup_symbol("safe_cast")
+        .ok_or_else(|| "expected overloaded alias symbol".to_string())?;
+    let SymbolKind::FunctionOverloads(overloads) = &alias.kind else {
+        return Err(format!("expected safe_cast overload set, got {:?}", alias.kind));
+    };
+    assert_eq!(overloads.len(), 3);
+    assert_eq!(
+        checker
+            .type_info()
+            .function_overloads("safe_cast")
+            .map(|overloads| overloads.len()),
+        Some(3)
+    );
+    Ok(())
+}
+
+#[test]
+fn test_from_import_accepts_public_source_enum_variant_export() -> Result<(), Box<dyn std::error::Error>> {
+    let library = parse_program(
+        r#"
+pub enum Status(str):
+  Active = "active"
+  Disabled = "disabled"
+"#,
+        "enum variant import library",
+    );
+    let consumer = parse_program(
+        r#"
+from statuses import Active, Status
+
+def current() -> Status:
+  return Active
+"#,
+        "enum variant import consumer",
+    );
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&consumer, &[("statuses", &library)])
+        .map_err(|errs| format!("consumer should import public source enum variants by name: {errs:?}"))?;
+    Ok(())
+}
+
+#[test]
+fn test_dependency_overload_cache_keeps_module_local_symbols_when_spans_collide()
+-> Result<(), Box<dyn std::error::Error>> {
+    let left = parse_program(
+        r#"
+pub model Alpha:
+  value: str
+
+pub model Bravo:
+  value: str
+
+pub def choose(value: Type[Alpha]) -> Alpha:
+  return Alpha(value="a")
+
+pub def choose(value: Type[Bravo]) -> Bravo:
+  return Bravo(value="b")
+"#,
+        "left overload dependency",
+    );
+    let right = parse_program(
+        r#"
+pub model Gamma:
+  value: str
+
+pub model Delta:
+  value: str
+
+pub def choose(value: Type[Gamma]) -> Gamma:
+  return Gamma(value="g")
+
+pub def choose(value: Type[Delta]) -> Delta:
+  return Delta(value="d")
+"#,
+        "right overload dependency",
+    );
+    let consumer = parse_program(
+        r#"
+from left import Alpha, choose as choose_left
+from right import Gamma, choose as choose_right
+
+def use() -> None:
+  choose_left(Alpha)
+  choose_right(Gamma)
+"#,
+        "overload span collision consumer",
+    );
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&consumer, &[("left", &left), ("right", &right)])
+        .map_err(|errs| format!("consumer should import both overload groups independently: {errs:?}"))?;
+
+    let left_path = ImportPath {
+        is_absolute: false,
+        parent_levels: 0,
+        segments: vec!["left".to_string()],
+    };
+    let right_path = ImportPath {
+        is_absolute: false,
+        parent_levels: 0,
+        segments: vec!["right".to_string()],
+    };
+    let left_symbol = checker
+        .dependency_member_symbol_for_path(&left_path, "choose")
+        .ok_or_else(|| "expected left.choose to be present in dependency member cache".to_string())?;
+    let SymbolKind::FunctionOverloads(left_overloads) = left_symbol else {
+        return Err(format!("expected left.choose to be cached as function overloads, got {left_symbol:?}").into());
+    };
+    let right_symbol = checker
+        .dependency_member_symbol_for_path(&right_path, "choose")
+        .ok_or_else(|| "expected right.choose to be present in dependency member cache".to_string())?;
+    let SymbolKind::FunctionOverloads(right_overloads) = right_symbol else {
+        return Err(format!("expected right.choose to be cached as function overloads, got {right_symbol:?}").into());
+    };
+
+    let left_return_types = left_overloads
+        .iter()
+        .map(|overload| overload.info.return_type.to_string())
+        .collect::<Vec<_>>();
+    let right_return_types = right_overloads
+        .iter()
+        .map(|overload| overload.info.return_type.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(left_return_types, vec!["Alpha", "Bravo"]);
+    assert_eq!(right_return_types, vec!["Gamma", "Delta"]);
+
+    let left_emitted_names = left_overloads
+        .iter()
+        .filter_map(|overload| overload.info.emitted_name.as_deref())
+        .collect::<Vec<_>>();
+    let right_emitted_names = right_overloads
+        .iter()
+        .filter_map(|overload| overload.info.emitted_name.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(left_emitted_names.len(), 2);
+    assert_eq!(right_emitted_names.len(), 2);
+    assert!(
+        left_emitted_names
+            .iter()
+            .all(|name| name.starts_with("choose__overload_")),
+        "left overloads should keep deterministic emitted names, got {left_emitted_names:?}"
+    );
+    assert!(
+        right_emitted_names
+            .iter()
+            .all(|name| name.starts_with("choose__overload_")),
+        "right overloads should keep deterministic emitted names, got {right_emitted_names:?}"
+    );
+    assert_ne!(
+        left_emitted_names, right_emitted_names,
+        "same-span overload declarations from different modules must not collapse to one emitted-name set"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_method_partial_presets_project_as_defaults_for_trait_and_model() {
     let source = r#"
 trait Named:
@@ -1430,6 +1663,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
             classes: Vec::new(),
             functions: vec![FunctionExport {
                 name: "make_widget".to_string(),
+                emitted_name: None,
                 type_params: Vec::new(),
                 params: vec![ParamExport {
                     name: "name".to_string(),
@@ -1549,6 +1783,7 @@ fn library_index_with_callable_alias_export() -> LibraryManifestIndex {
                 target_path: vec!["target_impl".to_string()],
                 projected_function: Some(FunctionExport {
                     name: "public_target".to_string(),
+                    emitted_name: None,
                     type_params: Vec::new(),
                     params: vec![ParamExport {
                         name: "value".to_string(),
@@ -1954,6 +2189,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
             ],
             functions: vec![FunctionExport {
                 name: "display".to_string(),
+                emitted_name: None,
                 type_params: vec![type_param_t.clone()],
                 params: vec![ParamExport {
                     name: "data".to_string(),
@@ -5082,53 +5318,59 @@ def reflected_class_name[T]() -> str:
 }
 
 #[test]
-fn test_bare_model_type_name_is_not_a_value() -> Result<(), Box<dyn std::error::Error>> {
+fn test_model_type_name_is_type_token_value() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 model User:
   name: str
 
-def accepts_any[T](value: T) -> str:
-  return value.__class_name__()
+def accepts_user_type(value: Type[User]) -> str:
+  return "ok"
 
 def main() -> None:
-  accepts_any(User)
+  accepts_user_type(User)
 "#;
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
     let mut checker = TypeChecker::new();
-    let Err(errs) = checker.check_program(&ast) else {
-        return Err(std::io::Error::other("expected bare model type name to be rejected").into());
-    };
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
     assert!(
-        errs.iter()
-            .any(|err| err.message.contains("Cannot use type 'User' as a value")),
-        "expected bare model value diagnostic, got {errs:?}"
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::TypeToken(inner) if matches!(inner.as_ref(), ResolvedType::Named(name) if name == "User")
+            )
+        }),
+        "expected model type name to resolve as Type[User], got {:?}",
+        info.expressions.expr_types
     );
     Ok(())
 }
 
 #[test]
-fn test_type_receiver_context_does_not_leak_into_nested_values() -> Result<(), Box<dyn std::error::Error>> {
+fn test_type_token_does_not_satisfy_model_value_context() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 model User:
   name: str
 
-def accepts_any[T](value: T) -> str:
-  return value.__class_name__()
+def accepts_user(value: User) -> str:
+  return value.name
 
 def main() -> None:
-  accepts_any(User).upper()
+  accepts_user(User)
 "#;
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
     let mut checker = TypeChecker::new();
     let Err(errs) = checker.check_program(&ast) else {
-        return Err(std::io::Error::other("expected nested bare model type name to be rejected").into());
+        return Err(std::io::Error::other("expected bare User type name to be rejected as a value").into());
     };
     assert!(
         errs.iter()
             .any(|err| err.message.contains("Cannot use type 'User' as a value")),
-        "expected nested bare model value diagnostic, got {errs:?}"
+        "expected type-name-as-value diagnostic, got {errs:?}"
     );
     Ok(())
 }

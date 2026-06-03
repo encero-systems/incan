@@ -130,7 +130,9 @@ impl TypeChecker {
                 }
             }
             ResolvedType::Named(type_name) => self.named_type_satisfies_bound(type_name, bound),
-            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.type_satisfies_explicit_bound(inner, bound),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
+                self.type_satisfies_explicit_bound(inner, bound)
+            }
             ResolvedType::Function(_, _) | ResolvedType::SelfType => false,
         }
     }
@@ -230,7 +232,7 @@ impl TypeChecker {
                     false
                 }
             }
-            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
                 self.type_satisfies_nominal_trait_bound(inner, bound_trait)
             }
             ResolvedType::Int
@@ -269,7 +271,7 @@ impl TypeChecker {
             ResolvedType::Generic(type_name, type_args) => {
                 self.type_implements_trait_with_args(type_name, type_args, bound_trait, expected_args)
             }
-            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
                 self.type_satisfies_nominal_trait_bound_with_args(inner, bound_trait, expected_args)
             }
             ResolvedType::Int
@@ -530,7 +532,7 @@ impl TypeChecker {
                 capability,
                 TraitCapabilityType::Numeric(*id),
             )),
-            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => {
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) | ResolvedType::TypeToken(inner) => {
                 self.temporary_trait_capability_supports_type(capability, inner)
             }
             ResolvedType::Generic(name, args)

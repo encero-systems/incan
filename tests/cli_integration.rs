@@ -2675,6 +2675,417 @@ def main() -> None:
 }
 
 #[test]
+fn run_primitive_type_parameter_class_names_issue750() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "primitive_type_parameter_names_issue750", "")?;
+    fs::write(
+        &main_path,
+        r#"pub def primitive_name[T]() -> str:
+    return str(T.__class_name__())
+
+
+pub def primitive_marker[T]() -> str:
+    name = str(T.__class_name__())
+    if name == "int":
+        return "integer"
+    if name == "float":
+        return "floating"
+    if name == "str":
+        return "string"
+    if name == "bool":
+        return "boolean"
+    return "other"
+
+
+def main() -> None:
+    println(primitive_name[int]())
+    println(primitive_name[float]())
+    println(primitive_name[str]())
+    println(primitive_name[bool]())
+    println(primitive_marker[int]())
+    println(primitive_marker[float]())
+    println(primitive_marker[str]())
+    println(primitive_marker[bool]())
+"#,
+    )?;
+
+    let run_output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &run_output,
+        "incan run for primitive type-parameter class names issue750",
+    );
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        vec![
+            "int", "float", "str", "bool", "integer", "floating", "string", "boolean",
+        ],
+        "unexpected primitive type-parameter metadata output:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn run_pub_decorated_primitive_type_parameter_class_names_issue750() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let producer_root = tmp.path().join("primitive_tokens");
+    let producer_src = producer_root.join("src");
+    fs::create_dir_all(&producer_src)?;
+    fs::write(
+        producer_root.join("incan.toml"),
+        r#"[project]
+name = "primitive_tokens"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        producer_src.join("type_names.incn"),
+        r#"def register[F]() -> (F) -> F:
+    return (func) => func
+
+
+pub def primitive_name[T]() -> str:
+    return str(T.__class_name__())
+
+
+pub def primitive_marker[T]() -> str:
+    name = str(T.__class_name__())
+    if name == "int":
+        return "integer"
+    if name == "float":
+        return "floating"
+    if name == "str":
+        return "string"
+    if name == "bool":
+        return "boolean"
+    return "other"
+
+
+@register()
+pub def decorated_primitive_marker[T]() -> str:
+    return primitive_marker[T]()
+"#,
+    )?;
+    fs::write(
+        producer_src.join("lib.incn"),
+        r#"pub from type_names import decorated_primitive_marker, primitive_marker, primitive_name
+"#,
+    )?;
+
+    let producer_build = run_incan(&producer_root, &["build", "--lib"])?;
+    assert_success(
+        &producer_build,
+        "producer build --lib for primitive type-parameter metadata issue750",
+    );
+
+    let consumer_root = tmp.path().join("primitive_consumer");
+    let consumer_main = write_minimal_project(
+        &consumer_root,
+        "primitive_consumer",
+        r#"
+[dependencies]
+primitive_tokens = { path = "../primitive_tokens" }
+"#,
+    )?;
+    fs::write(
+        &consumer_main,
+        r#"from pub::primitive_tokens import decorated_primitive_marker, primitive_marker, primitive_name
+
+
+def main() -> None:
+    println(primitive_name[str]())
+    println(primitive_marker[int]())
+    println(decorated_primitive_marker[bool]())
+"#,
+    )?;
+
+    let consumer_run = run_incan(
+        &consumer_root,
+        &[
+            "run",
+            consumer_main.to_str().ok_or("consumer main path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(
+        &consumer_run,
+        "pub consumer run for primitive type-parameter metadata issue750",
+    );
+    let stdout = String::from_utf8_lossy(&consumer_run.stdout);
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        vec!["str", "integer", "boolean"],
+        "unexpected public primitive type-parameter metadata output:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn run_primitive_type_token_overload_cast_issue750() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "primitive_type_token_cast_issue750", "")?;
+    fs::write(
+        &main_path,
+        r#"pub model ColumnExpr:
+    name: str
+
+
+pub model IntColumnExpr:
+    source: str
+
+
+pub model FloatColumnExpr:
+    source: str
+
+
+pub model StringColumnExpr:
+    source: str
+
+
+pub type NumberColumnExpr = Union[IntColumnExpr, FloatColumnExpr]
+
+
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+
+
+pub def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:
+    return IntColumnExpr(source=expr.name)
+
+
+pub def cast(expr: ColumnExpr, target: Type[float]) -> FloatColumnExpr:
+    return FloatColumnExpr(source=expr.name)
+
+
+pub def cast(expr: ColumnExpr, target: Type[str]) -> StringColumnExpr:
+    return StringColumnExpr(source=expr.name)
+
+
+pub def cast(expr: ColumnExpr, target: str) -> ColumnExpr:
+    return ColumnExpr(name=f"{expr.name}:{target}")
+
+
+pub safe_cast = alias cast
+
+
+pub def mul(left: NumberColumnExpr, right: NumberColumnExpr) -> FloatColumnExpr:
+    return FloatColumnExpr(source="mul")
+
+
+def main() -> None:
+    amount: IntColumnExpr = cast(col("amount"), int)
+    unit_price: NumberColumnExpr = cast(col("unit_price"), float)
+    total: FloatColumnExpr = mul(cast(col("unit_price"), float), cast(col("qty"), float))
+    fallback: ColumnExpr = cast(col("amount"), "decimal(10,2)")
+    safe: FloatColumnExpr = safe_cast(col("safe"), float)
+    println(amount.source)
+    println(safe.source)
+    println(total.source)
+    println(fallback.name)
+"#,
+    )?;
+
+    let run_output = run_incan(
+        tmp.path(),
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(&run_output, "incan run for primitive type-token overload cast issue750");
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        vec!["amount", "safe", "mul", "amount:decimal(10,2)"],
+        "unexpected primitive type-token cast output:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn run_pub_primitive_type_token_overload_cast_issue750() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let producer_root = tmp.path().join("typed_casts");
+    let producer_src = producer_root.join("src");
+    fs::create_dir_all(&producer_src)?;
+    fs::write(
+        producer_root.join("incan.toml"),
+        r#"[project]
+name = "typed_casts"
+version = "0.1.0"
+"#,
+    )?;
+    fs::write(
+        producer_src.join("casts.incn"),
+        r#"pub model ColumnExpr:
+    name: str
+
+
+pub model IntColumnExpr:
+    source: str
+
+
+pub model FloatColumnExpr:
+    source: str
+
+
+pub model StringColumnExpr:
+    source: str
+
+
+pub type NumberColumnExpr = Union[IntColumnExpr, FloatColumnExpr]
+
+
+pub static registered_casts: list[str] = []
+
+
+def register_cast_float[F]() -> ((F) -> F):
+    return (func) => remember_cast_float[F](func)
+
+
+def register_cast_string[F]() -> ((F) -> F):
+    return (func) => remember_cast_string[F](func)
+
+
+def remember_cast_float[F](func: F) -> F:
+    registered_casts.append(func.__name__)
+    return func
+
+
+def remember_cast_string[F](func: F) -> F:
+    registered_casts.append(func.__name__)
+    return func
+
+
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+
+
+pub def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:
+    return IntColumnExpr(source=expr.name)
+
+
+@register_cast_float()
+pub def cast(expr: ColumnExpr, target: Type[float]) -> FloatColumnExpr:
+    return FloatColumnExpr(source=expr.name)
+
+
+pub def cast(expr: ColumnExpr, target: Type[str]) -> StringColumnExpr:
+    return StringColumnExpr(source=expr.name)
+
+
+@register_cast_string()
+pub def cast(expr: ColumnExpr, target: str) -> ColumnExpr:
+    return ColumnExpr(name=f"{expr.name}:{target}")
+
+
+pub def mul(left: NumberColumnExpr, right: NumberColumnExpr) -> FloatColumnExpr:
+    return FloatColumnExpr(source="mul")
+
+
+pub def registered_cast_count() -> int:
+    return len(registered_casts)
+
+
+pub def registered_cast_at(index: int) -> str:
+    return registered_casts[index]
+"#,
+    )?;
+    fs::write(
+        producer_src.join("safe_alias.incn"),
+        r#"from casts import cast
+
+
+pub safe_cast = alias cast
+"#,
+    )?;
+    fs::write(
+        producer_src.join("lib.incn"),
+        r#"pub from casts import ColumnExpr, FloatColumnExpr, IntColumnExpr, NumberColumnExpr, cast, col, mul, registered_cast_at, registered_cast_count
+pub from safe_alias import safe_cast
+"#,
+    )?;
+
+    let producer_build = run_incan(&producer_root, &["build", "--lib"])?;
+    assert_success(
+        &producer_build,
+        "producer build --lib for primitive type-token cast issue750",
+    );
+
+    let producer_tests = producer_root.join("tests");
+    fs::create_dir_all(&producer_tests)?;
+    fs::write(
+        producer_tests.join("test_safe_cast.incn"),
+        r#"from lib import ColumnExpr, FloatColumnExpr, col, registered_cast_at, registered_cast_count, safe_cast
+
+
+def test_cross_module_alias_preserves_overload_set() -> None:
+    typed: FloatColumnExpr = safe_cast(col("safe"), float)
+    fallback: ColumnExpr = safe_cast(col("safe"), "float64")
+    assert typed.source == "safe"
+    assert fallback.name == "safe:float64"
+    assert registered_cast_count() == 2
+    assert registered_cast_at(0) == "cast"
+    assert registered_cast_at(1) == "cast"
+"#,
+    )?;
+    let producer_test = run_incan(&producer_root, &["test", "tests"])?;
+    assert_success(
+        &producer_test,
+        "producer incan test for cross-module overloaded alias issue750",
+    );
+
+    let consumer_root = tmp.path().join("typed_cast_consumer");
+    let consumer_main = write_minimal_project(
+        &consumer_root,
+        "typed_cast_consumer",
+        r#"
+[dependencies]
+typed_casts = { path = "../typed_casts" }
+"#,
+    )?;
+    fs::write(
+        &consumer_main,
+        r#"from pub::typed_casts import ColumnExpr, FloatColumnExpr, IntColumnExpr, NumberColumnExpr, cast, col, mul, registered_cast_at, registered_cast_count, safe_cast
+
+
+def main() -> None:
+    amount: IntColumnExpr = cast(col("amount"), int)
+    unit_price: NumberColumnExpr = cast(col("unit_price"), float)
+    total: FloatColumnExpr = mul(cast(col("unit_price"), float), cast(col("qty"), float))
+    fallback: ColumnExpr = cast(col("amount"), "decimal(10,2)")
+    safe: FloatColumnExpr = safe_cast(col("safe"), float)
+    println(amount.source)
+    println(safe.source)
+    println(total.source)
+    println(fallback.name)
+    println(str(registered_cast_count()))
+    println(registered_cast_at(0))
+    println(registered_cast_at(1))
+"#,
+    )?;
+
+    let consumer_run = run_incan(
+        &consumer_root,
+        &[
+            "run",
+            consumer_main.to_str().ok_or("consumer main path was not valid UTF-8")?,
+        ],
+    )?;
+    assert_success(&consumer_run, "pub consumer run for primitive type-token cast issue750");
+    let stdout = String::from_utf8_lossy(&consumer_run.stdout);
+    let lines = stdout.lines().collect::<Vec<_>>();
+    assert_eq!(
+        lines,
+        vec!["amount", "safe", "mul", "amount:decimal(10,2)", "2", "cast", "cast",],
+        "unexpected public primitive type-token cast output:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
 fn run_decorated_type_parameter_reflection_calls_issue715() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "decorated_type_parameter_reflection_issue715", "")?;
@@ -2779,9 +3190,9 @@ def main() -> None:
 }
 
 #[test]
-fn check_bare_model_type_value_rejected_issue714() -> Result<(), Box<dyn std::error::Error>> {
+fn run_model_type_token_value_issue750() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
-    let main_path = write_minimal_project(tmp.path(), "model_type_value_issue714", "")?;
+    let main_path = write_minimal_project(tmp.path(), "model_type_token_value_issue750", "")?;
     fs::write(
         &main_path,
         r#"model MySchema:
@@ -2789,25 +3200,22 @@ fn check_bare_model_type_value_rejected_issue714() -> Result<(), Box<dyn std::er
     status: str
 
 
-def accepts_any[T](value: T) -> str:
-    return str(value.__class_name__())
+def accepts_schema_type(value: Type[MySchema]) -> str:
+    return "schema-token"
 
 
 def main() -> None:
-    println(accepts_any(MySchema))
+    println(accepts_schema_type(MySchema))
 "#,
     )?;
 
-    let check_output = run_incan(
+    let run_output = run_incan(
         tmp.path(),
-        &["--check", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
     )?;
-    assert_failure(&check_output, "incan --check for bare model type value issue714");
-    let stderr = String::from_utf8_lossy(&check_output.stderr);
-    assert!(
-        stderr.contains("Cannot use type 'MySchema' as a value"),
-        "expected bare model type value diagnostic, got:\n{stderr}"
-    );
+    assert_success(&run_output, "incan run for model type-token value issue750");
+    let stdout = String::from_utf8_lossy(&run_output.stdout);
+    assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["schema-token"]);
     Ok(())
 }
 

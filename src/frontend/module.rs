@@ -1097,6 +1097,45 @@ source-root = "library"
     }
 
     #[test]
+    fn test_exported_symbols_same_name_overload_functions() -> Result<(), Vec<String>> {
+        let source = r#"
+pub model ColumnExpr:
+    name: str
+
+pub model IntColumnExpr:
+    source: str
+
+pub model FloatColumnExpr:
+    source: str
+
+pub model StringColumnExpr:
+    source: str
+
+pub def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:
+    return IntColumnExpr(source=expr.name)
+
+pub def cast(expr: ColumnExpr, target: Type[float]) -> FloatColumnExpr:
+    return FloatColumnExpr(source=expr.name)
+
+pub def cast(expr: ColumnExpr, target: Type[str]) -> StringColumnExpr:
+    return StringColumnExpr(source=expr.name)
+
+pub def cast(expr: ColumnExpr, target: str) -> ColumnExpr:
+    return ColumnExpr(name=f"{expr.name}:{target}")
+"#;
+        let tokens = lexer::lex(source).map_err(|e| e.iter().map(|x| x.message.clone()).collect::<Vec<_>>())?;
+        let ast = parser::parse(&tokens).map_err(|e| e.iter().map(|x| x.message.clone()).collect::<Vec<_>>())?;
+        let exports = exported_symbols(&ast);
+        assert!(
+            exports
+                .iter()
+                .any(|export| matches!(export, ExportedSymbol::Function(name) if name == "cast")),
+            "expected overloaded public function export, got {exports:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_exported_symbols_partial() -> Result<(), Vec<String>> {
         let source = r#"
 pub def route(method: str, path: str) -> str:

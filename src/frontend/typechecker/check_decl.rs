@@ -2092,7 +2092,7 @@ impl TypeChecker {
             Declaration::TypeAlias(_) => {} // Type aliases are transparent; no body to check
             Declaration::Newtype(nt) => self.check_newtype(nt),
             Declaration::Enum(en) => self.check_enum(en),
-            Declaration::Function(func) => self.check_function(func),
+            Declaration::Function(func) => self.check_function(func, decl.span),
             Declaration::TestModule(test_module) => self.check_test_module(test_module),
             Declaration::Docstring(_) => {} // Docstrings don't need checking
         }
@@ -2546,6 +2546,7 @@ impl TypeChecker {
                 .any(|item| self.type_contains_direct_recursive_model(item, model_name, visiting)),
             ResolvedType::Ref(_)
             | ResolvedType::RefMut(_)
+            | ResolvedType::TypeToken(_)
             | ResolvedType::FrozenList(_)
             | ResolvedType::FrozenDict(_, _)
             | ResolvedType::FrozenSet(_)
@@ -3779,15 +3780,10 @@ impl TypeChecker {
             return;
         }
 
-        let Some((original_ty, original_function_info)) =
-            self.lookup_symbol(&func.name).and_then(|symbol| match &symbol.kind {
-                SymbolKind::Function(info) => Some((function_info_callable_type(info), Some(info.clone()))),
-                SymbolKind::Variable(info) => Some((info.ty.clone(), None)),
-                _ => None,
-            })
-        else {
+        let Some(original_function_info) = self.function_info_for_declaration_span(&func.name, span) else {
             return;
         };
+        let original_ty = function_info_callable_type(&original_function_info);
 
         let mut binding_ty = original_ty.clone();
         for decorator in func.decorators.iter().rev() {
@@ -3796,32 +3792,62 @@ impl TypeChecker {
             }
         }
 
+        let binding = DecoratedFunctionBindingInfo {
+            ty: binding_ty.clone(),
+            original_ty,
+            type_params: original_function_info.type_params.clone(),
+            type_param_bounds: original_function_info.type_param_bounds.clone(),
+            type_param_bound_details: original_function_info.type_param_bound_details.clone(),
+            is_async: original_function_info.is_async,
+        };
+        self.type_info
+            .declarations
+            .decorated_function_bindings_by_span
+            .insert((span.start, span.end), binding.clone());
+
         if let Some(symbol_id) = self.symbols.lookup(&func.name)
             && let Some(symbol) = self.symbols.get_mut(symbol_id)
         {
-            self.type_info.declarations.decorated_function_bindings.insert(
-                func.name.clone(),
-                DecoratedFunctionBindingInfo {
-                    ty: binding_ty.clone(),
-                    original_ty,
-                    type_params: original_function_info
-                        .as_ref()
-                        .map_or_else(Vec::new, |info| info.type_params.clone()),
-                    type_param_bounds: original_function_info
-                        .as_ref()
-                        .map_or_else(HashMap::new, |info| info.type_param_bounds.clone()),
-                    type_param_bound_details: original_function_info
-                        .as_ref()
-                        .map_or_else(HashMap::new, |info| info.type_param_bound_details.clone()),
-                    is_async: original_function_info.as_ref().is_some_and(|info| info.is_async),
-                },
-            );
-            symbol.kind = SymbolKind::Variable(VariableInfo {
-                ty: binding_ty,
-                is_mutable: false,
-                is_used: false,
-            });
-            symbol.span = span;
+            match &mut symbol.kind {
+                SymbolKind::Function(_) => {
+                    self.type_info
+                        .declarations
+                        .decorated_function_bindings
+                        .insert(func.name.clone(), binding);
+                    symbol.kind = SymbolKind::Variable(VariableInfo {
+                        ty: binding_ty,
+                        is_mutable: false,
+                        is_used: false,
+                    });
+                    symbol.span = span;
+                }
+                SymbolKind::FunctionOverloads(overloads) => {
+                    if let Some(overload) = overloads.iter_mut().find(|overload| overload.span == span)
+                        && let ResolvedType::Function(params, ret) = binding_ty
+                    {
+                        overload.info.params = params;
+                        overload.info.return_type = *ret;
+                    }
+                    self.type_info
+                        .declarations
+                        .function_overloads
+                        .insert(func.name.clone(), overloads.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Return the function candidate declared at `span`, preserving same-name overload identity.
+    fn function_info_for_declaration_span(&self, name: &str, span: Span) -> Option<FunctionInfo> {
+        let symbol = self.lookup_symbol(name)?;
+        match &symbol.kind {
+            SymbolKind::Function(info) => Some(info.clone()),
+            SymbolKind::FunctionOverloads(overloads) => overloads
+                .iter()
+                .find(|overload| overload.span == span)
+                .map(|overload| overload.info.clone()),
+            _ => None,
         }
     }
 
@@ -4062,7 +4088,7 @@ impl TypeChecker {
     }
 
     /// Typecheck one function body with its parameters, return type, decorators, and generic bounds in scope.
-    fn check_function(&mut self, func: &FunctionDecl) {
+    fn check_function(&mut self, func: &FunctionDecl, decl_span: Span) {
         self.symbols.enter_scope(ScopeKind::Function);
 
         self.validate_decorators_allowing_user_defined(&func.decorators);
@@ -4183,7 +4209,7 @@ impl TypeChecker {
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
         self.symbols.exit_scope();
-        self.apply_user_defined_function_decorators(func, fixture_span);
+        self.apply_user_defined_function_decorators(func, decl_span);
     }
 
     /// Resolve generic type-parameter bounds while preserving trait type arguments for call-site checks.

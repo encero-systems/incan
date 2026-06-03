@@ -297,6 +297,8 @@ pub enum TypeRef {
         params: Vec<TypeRef>,
         return_type: Box<TypeRef>,
     },
+    /// A value-level type token such as `Type[int]`.
+    TypeToken { inner: Box<TypeRef> },
     /// A tuple type.
     Tuple { elements: Vec<TypeRef> },
     /// A generic type parameter reference.
@@ -436,6 +438,8 @@ pub enum ParamKindExport {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FunctionExport {
     pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub emitted_name: Option<String>,
     pub type_params: Vec<TypeParamExport>,
     pub params: Vec<ParamExport>,
     pub return_type: TypeRef,
@@ -961,6 +965,7 @@ fn field_from_checked(field: &crate::frontend::library_exports::CheckedField) ->
 pub(super) fn function_export_from_checked(export: &CheckedFunctionExport) -> FunctionExport {
     FunctionExport {
         name: export.name.clone(),
+        emitted_name: export.emitted_name.clone(),
         type_params: export.type_params.iter().map(type_param_from_checked).collect(),
         params: params_from_checked(&export.params, &export.param_defaults),
         return_type: type_ref_from_resolved(&export.return_type),

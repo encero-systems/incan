@@ -2079,6 +2079,7 @@ fn type_ref_doc_name(ty: &TypeRef) -> String {
             let params = params.iter().map(type_ref_doc_name).collect::<Vec<_>>().join(", ");
             format!("({params}) -> {}", type_ref_doc_name(return_type))
         }
+        TypeRef::TypeToken { inner } => format!("Type[{}]", type_ref_doc_name(inner)),
         TypeRef::Tuple { elements } => {
             let elements = elements.iter().map(type_ref_doc_name).collect::<Vec<_>>().join(", ");
             format!("({elements})")

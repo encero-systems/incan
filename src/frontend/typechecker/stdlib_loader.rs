@@ -1372,6 +1372,7 @@ fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
         type_params: tp_names,
         type_param_bounds: tp_bounds,
         type_param_bound_details: tp_bound_details,
+        emitted_name: None,
     }
 }
 
@@ -1434,6 +1435,7 @@ fn imported_runtime_function_info(name: &str) -> Option<FunctionInfo> {
         type_params: Vec::new(),
         type_param_bounds: HashMap::new(),
         type_param_bound_details: HashMap::new(),
+        emitted_name: None,
     })
 }
 

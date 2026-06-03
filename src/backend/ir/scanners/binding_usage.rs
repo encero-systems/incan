@@ -216,6 +216,7 @@ pub(crate) fn expr_uses_binding_name(expr: &IrExpr, binding_name: &str) -> bool 
         | IrExprKind::String(_)
         | IrExprKind::Bytes(_)
         | IrExprKind::AssociatedFunction { .. }
+        | IrExprKind::TypeToken { .. }
         | IrExprKind::FunctionItem { .. }
         | IrExprKind::Literal(_)
         | IrExprKind::FieldsList(_)

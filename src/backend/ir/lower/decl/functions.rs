@@ -229,6 +229,7 @@ fn collect_generic_callable_name_type_params_from_expr(expr: &super::super::supe
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
         | IrExprKind::AssociatedFunction { .. }
+        | IrExprKind::TypeToken { .. }
         | IrExprKind::FunctionItem { .. }
         | IrExprKind::Unit
         | IrExprKind::None

@@ -242,6 +242,7 @@ fn format_api_type_ref(ty: &TypeRef) -> String {
             params.iter().map(format_api_type_ref).collect::<Vec<_>>().join(", "),
             format_api_type_ref(return_type)
         ),
+        TypeRef::TypeToken { inner } => format!("Type[{}]", format_api_type_ref(inner)),
         TypeRef::Tuple { elements } => {
             format!(
                 "({})",

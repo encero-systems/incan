@@ -128,6 +128,12 @@ pub fn render_resolved_type_as_rust_arg(ty: &ResolvedType) -> String {
                 render_resolved_type_as_rust_arg(elem)
             )
         }
+        ResolvedType::TypeToken(inner) => {
+            format!(
+                "incan_stdlib::reflection::TypeToken<{}>",
+                render_resolved_type_as_rust_arg(inner)
+            )
+        }
         ResolvedType::Named(name) => name.clone(),
         ResolvedType::Function(_, _)
         | ResolvedType::Ref(_)

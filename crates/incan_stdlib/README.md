@@ -29,7 +29,7 @@ pub trait HasFieldInfo {
 
 #### `HasFieldMetadata` / `HasClassName` - Generic Reflection Support
 
-Generated Incan models and classes also implement value-level reflection traits used by compiler-inferred generic bounds. These traits back generic Incan calls such as `value.__fields__()` and `value.__class_name__()` without changing the concrete reflection helpers emitted on each model or class.
+Generated Incan models and classes also implement value-level reflection traits used by compiler-inferred generic bounds. These traits back generic Incan calls such as `value.__fields__()` and `value.__class_name__()` without changing the concrete reflection helpers emitted on each model or class. Primitive type arguments implement the type-level class-name reflection trait, so generic helpers can read stable source names such as `int`, `float`, `str`, and `bool` through `T.__class_name__()`.
 
 #### `ToJson` / `FromJson` - Serialization Helpers
 

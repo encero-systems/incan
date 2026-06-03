@@ -1915,9 +1915,11 @@ impl TypeChecker {
                         | Some(TypeInfo::Enum(_))
                 )
             }
-            ResolvedType::Ref(_) | ResolvedType::RefMut(_) | ResolvedType::Function(_, _) | ResolvedType::SelfType => {
-                true
-            }
+            ResolvedType::Ref(_)
+            | ResolvedType::RefMut(_)
+            | ResolvedType::TypeToken(_)
+            | ResolvedType::Function(_, _)
+            | ResolvedType::SelfType => true,
             ResolvedType::TypeVar(name) => self.active_type_param_has_builtin_bound(name, TraitId::Clone),
             ResolvedType::CallSiteInfer => false,
             // RFC 041: provenance is known, but Incan does not yet query Rust for `Copy`/`Clone`; do not assume.

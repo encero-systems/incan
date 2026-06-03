@@ -62,14 +62,35 @@ impl TypeChecker {
                     ResolvedType::Function(info.params.clone(), Box::new(info.return_type.clone())),
                 )
             }
+            SymbolKind::FunctionOverloads(_) => {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Cannot use overloaded function '{name}' as a value; call it directly so an overload can be selected"
+                    ),
+                    span,
+                ));
+                return ResolvedType::Unknown;
+            }
             SymbolKind::Type(info) => {
                 if !self.is_type_receiver_span(span) {
-                    self.errors.push(errors::type_name_used_as_value(name, span));
+                    if !self.is_type_token_value_span(span) {
+                        self.errors.push(errors::type_name_used_as_value(name, span));
+                        self.type_info
+                            .expressions
+                            .ident_kinds
+                            .insert((span.start, span.end), IdentKind::TypeName);
+                        return ResolvedType::Unknown;
+                    }
+                    let ty = if matches!(info, TypeInfo::Builtin) && sym.scope > 0 {
+                        ResolvedType::TypeVar(name.to_string())
+                    } else {
+                        resolve_type(&Type::Simple(name.to_string()), &self.symbols)
+                    };
                     self.type_info
                         .expressions
                         .ident_kinds
-                        .insert((span.start, span.end), IdentKind::TypeName);
-                    return ResolvedType::Unknown;
+                        .insert((span.start, span.end), IdentKind::Value);
+                    return ResolvedType::TypeToken(Box::new(ty));
                 }
                 let ty = if matches!(info, TypeInfo::Builtin) && sym.scope > 0 {
                     ResolvedType::TypeVar(name.to_string())

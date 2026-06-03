@@ -45,6 +45,9 @@ pub(crate) fn type_ref_from_resolved(ty: &ResolvedType) -> TypeRef {
             params: params.iter().map(|param| type_ref_from_resolved(&param.ty)).collect(),
             return_type: Box::new(type_ref_from_resolved(return_type)),
         },
+        ResolvedType::TypeToken(inner) => TypeRef::TypeToken {
+            inner: Box::new(type_ref_from_resolved(inner)),
+        },
         ResolvedType::Tuple(elements) => TypeRef::Tuple {
             elements: elements.iter().map(type_ref_from_resolved).collect(),
         },
@@ -96,6 +99,7 @@ pub fn resolved_type_from_manifest_type_ref(ty: &TypeRef) -> ResolvedType {
                 .collect(),
             Box::new(resolved_type_from_manifest_type_ref(return_type)),
         ),
+        TypeRef::TypeToken { inner } => ResolvedType::TypeToken(Box::new(resolved_type_from_manifest_type_ref(inner))),
         TypeRef::Tuple { elements } => {
             ResolvedType::Tuple(elements.iter().map(resolved_type_from_manifest_type_ref).collect())
         }

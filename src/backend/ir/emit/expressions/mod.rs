@@ -984,6 +984,10 @@ impl<'a> IrEmitter<'a> {
                 let n = Self::rust_ident(name);
                 Ok(quote! { #n })
             }
+            IrExprKind::TypeToken { ty } => {
+                let token_ty = self.emit_type(ty);
+                Ok(quote! { incan_stdlib::reflection::TypeToken::<#token_ty>::new() })
+            }
 
             IrExprKind::StaticRead { name } => {
                 let n = Self::rust_static_ident(name);
