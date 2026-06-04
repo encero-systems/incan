@@ -3348,6 +3348,48 @@ def main() -> int:
     }
 
     #[test]
+    fn test_parse_indented_leading_dot_fluent_method_chain() -> Result<(), Vec<CompileError>> {
+        let source = r#"def run(orders: DataFrame) -> DataFrame:
+  enriched = orders
+    .with_column("region_norm", col("region"))
+    .with_column("status_norm", col("status"))
+
+  paid = enriched.filter(eq(col("status_norm"), "paid"))
+  return paid
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let assignment = match &function.body[0].node {
+            Statement::Assignment(assign) => assign,
+            other => panic!("Expected assignment, got {other:?}"),
+        };
+
+        let Expr::MethodCall(first_call, second_method, _, second_args) = &assignment.value.node else {
+            panic!("Expected outer fluent method call, got {:?}", assignment.value.node);
+        };
+        assert_eq!(second_method, "with_column");
+        assert_eq!(second_args.len(), 2);
+
+        let Expr::MethodCall(root, first_method, _, first_args) = &first_call.node else {
+            panic!("Expected nested fluent method call, got {:?}", first_call.node);
+        };
+        assert_eq!(first_method, "with_column");
+        assert_eq!(first_args.len(), 2);
+        assert!(matches!(&root.node, Expr::Ident(name) if name == "orders"));
+
+        match &function.body[1].node {
+            Statement::Assignment(assign) => assert_eq!(assign.name, "paid"),
+            other => panic!("Expected assignment after fluent chain, got {other:?}"),
+        }
+
+        match &function.body[2].node {
+            Statement::Return(Some(expr)) => assert!(matches!(&expr.node, Expr::Ident(name) if name == "paid")),
+            other => panic!("Expected return after fluent chain, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_function_call_with_infer_type_arg_placeholder() -> Result<(), Vec<CompileError>> {
         let source = "def run() -> int:\n  return pair_map[int, _](1, 2)\n";
         let program = parse_str(source)?;

@@ -371,6 +371,44 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_accepts_leading_dot_fluent_chain() -> Result<(), FormatError> {
+        let source = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
+    enriched = orders
+        .with_column("region_norm", upper(trim(col("region"))))
+        .with_column("status_looks_clean",regexp_like(col("status_norm"), "^[a-z]+$"))
+    return enriched
+"#;
+        let expected = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
+    enriched = orders
+        .with_column("region_norm", upper(trim(col("region"))))
+        .with_column("status_looks_clean", regexp_like(col("status_norm"), "^[a-z]+$"))
+    return enriched
+"#;
+        assert_eq!(format_source(source)?, expected);
+        assert_eq!(format_source(expected)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_wraps_long_method_chain_as_leading_dot_fluent_chain() -> Result<(), FormatError> {
+        let source = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
+    enriched = orders.with_column("region_norm", upper(trim(col("region")))).with_column("status_norm", lower(trim(col("status")))).with_column("gross_amount", round(mul(col("quantity"), col("unit_price")), 2))
+    return enriched
+"#;
+        let expected = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
+    enriched = orders
+        .with_column("region_norm", upper(trim(col("region"))))
+        .with_column("status_norm", lower(trim(col("status"))))
+        .with_column("gross_amount", round(mul(col("quantity"), col("unit_price")), 2))
+    return enriched
+"#;
+        let config = FormatConfig::new().with_line_length(120);
+        assert_eq!(format_source_with_config(source, config.clone())?, expected);
+        assert_eq!(format_source_with_config(expected, config)?, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_generator_expression_full_clause_shape() -> Result<(), FormatError> {
         let source = r#"def run(xs: list[int], ys: list[int]) -> Generator[int]:
   return (x*y for x in xs if x>0 for y in ys if y>x)

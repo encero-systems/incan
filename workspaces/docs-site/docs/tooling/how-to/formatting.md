@@ -41,6 +41,7 @@ The style guide is the canonical source for what Incan code should look like:
 - a `120`-character line-length target
 - wrapping for long class trait adoption headers into parenthesized one-trait-per-line `with (...)` lists
 - best-effort wrapping for long parenthesized logical expression chains at `and` / `or` breakpoints
+- leading-dot wrapping for overflowing fluent method-call chains
 - top-level double-blank-line spacing only where the style guide permits it
 - preservation of one authored readability gap inside ordinary code blocks
 - comment placement that remains same-scope and structure-aware
@@ -100,6 +101,18 @@ return (
 
 Short parenthesized logical expressions remain inline.
 
+## Fluent Method Chains
+
+When a method-call chain exceeds the configured line-length target, `incan fmt` may split the chain after the receiver and keep each continuation line led by the next method call. The same leading-dot layout is valid source syntax, so users can author fluent interfaces in the shape the formatter emits.
+
+```incan
+enriched = orders
+    .with_column("region_norm", upper(trim(col("region"))))
+    .with_column("status_norm", lower(trim(col("status"))))
+```
+
+Short method-call chains remain inline when they fit.
+
 ## Limitations
 
 ### Parse-required
@@ -116,7 +129,7 @@ Fix syntax errors before formatting.
 
 ### Line length is best-effort
 
-The `120`-character line length is a target, not a strict hard limit. The formatter does not yet rewrite every possible overflowing construct. Very long strings, fluent call chains, and some nested expressions may still require manual judgment.
+The `120`-character line length is a target, not a strict hard limit. The formatter does not yet rewrite every possible overflowing construct. Very long strings and some nested expressions may still require manual judgment.
 
 ## Next Steps
 

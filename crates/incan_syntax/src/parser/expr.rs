@@ -384,8 +384,14 @@ impl<'a> Parser<'a> {
     /// Parse postfix forms such as calls, method calls, field access, indexing, and `?`.
     fn postfix(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let mut expr = self.primary()?;
+        let mut fluent_layout_depth = 0usize;
 
         loop {
+            if self.consume_fluent_chain_terminator(&mut fluent_layout_depth) {
+                break;
+            }
+            self.consume_fluent_chain_continuation(&mut fluent_layout_depth);
+
             if self.match_token(&TokenKind::Punctuation(PunctuationId::Question)) {
                 let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
                 expr = Spanned::new(Expr::Try(Box::new(expr)), span);
@@ -495,6 +501,71 @@ impl<'a> Parser<'a> {
         }
 
         Ok(expr)
+    }
+
+    /// Consume the layout prefix for an indented fluent method/field continuation.
+    ///
+    /// This accepts source shaped as:
+    ///
+    /// ```text
+    /// value = receiver
+    ///     .method()
+    ///     .field
+    /// ```
+    ///
+    /// The lexer emits ordinary `Newline`/`Indent`/`Dedent` tokens for that layout. Treating the indented leading
+    /// `.` as expression continuation keeps fluent APIs writable without requiring wrapping parentheses.
+    fn consume_fluent_chain_continuation(&mut self, fluent_layout_depth: &mut usize) -> bool {
+        if !self.check(&TokenKind::Newline) {
+            return false;
+        }
+
+        let next = self.tokens.get(self.pos + 1).map(|token| &token.kind);
+        let after_next = self.tokens.get(self.pos + 2).map(|token| &token.kind);
+        if matches!(next, Some(TokenKind::Indent))
+            && matches!(after_next, Some(TokenKind::Punctuation(PunctuationId::Dot)))
+        {
+            self.advance(); // newline
+            self.advance(); // continuation indent
+            *fluent_layout_depth += 1;
+            return true;
+        }
+
+        if *fluent_layout_depth > 0 && matches!(next, Some(TokenKind::Punctuation(PunctuationId::Dot))) {
+            self.advance(); // newline between continuation lines
+            return true;
+        }
+
+        false
+    }
+
+    /// Consume the layout suffix that closes an indented fluent continuation.
+    fn consume_fluent_chain_terminator(&mut self, fluent_layout_depth: &mut usize) -> bool {
+        if *fluent_layout_depth == 0 || !self.check(&TokenKind::Newline) {
+            return false;
+        }
+
+        let mut next_non_newline = self.pos;
+        while matches!(
+            self.tokens.get(next_non_newline).map(|token| &token.kind),
+            Some(TokenKind::Newline)
+        ) {
+            next_non_newline += 1;
+        }
+
+        if !matches!(
+            self.tokens.get(next_non_newline).map(|token| &token.kind),
+            Some(TokenKind::Dedent)
+        ) {
+            return false;
+        }
+
+        while self.pos < next_non_newline {
+            self.advance(); // final continuation newline or blank continuation line
+        }
+        self.advance(); // continuation dedent
+        *fluent_layout_depth = fluent_layout_depth.saturating_sub(1);
+        true
     }
 
     /// Parse one call-site type argument: either a full [`Type`] or the inference placeholder `_`.

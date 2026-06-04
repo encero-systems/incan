@@ -253,6 +253,19 @@ payload = {
 }
 ```
 
+## Fluent Method Chains
+
+Use leading-dot continuation for long fluent method-call chains. The receiver stays on the assignment or return line, and each wrapped method call starts on its own indented continuation line:
+
+```incan
+enriched = orders
+    .with_column("region_norm", upper(trim(col("region"))))
+    .with_column("status_norm", lower(trim(col("status"))))
+    .with_column("gross_amount", round(mul(col("quantity"), col("unit_price")), 2))
+```
+
+Short method-call chains can stay inline when they fit the line-length target. Do not add backslashes or dummy parentheses only to make a fluent chain parse; the leading-dot continuation layout is valid Incan syntax and `incan fmt` uses it when a method chain overflows.
+
 ## Match Arms And Short Forms
 
 Short single-statement `match` arms are allowed on one line when they stay readable.
@@ -283,6 +296,7 @@ Do not insert extra blank lines immediately after `=>` or a suite header unless 
 - one blank line between logic groups inside indented code
 - one blank line between sibling statements after nested suites
 - short inline `match` arms when they are still readable
+- leading-dot method-chain continuation for fluent interfaces
 - actual string contents, including literal `\n` text
 
 ## What The Formatter Should Normalize
@@ -292,7 +306,7 @@ Do not insert extra blank lines immediately after `=>` or a suite header unless 
 - tabs or inconsistent indentation
 - repeated blank-line runs beyond the allowed buckets
 - trailing blank lines at end-of-file
-- inconsistent wrapping of overflowing calls and constructors
+- inconsistent wrapping of overflowing calls, constructors, and fluent method chains
 - comment placement that would otherwise detach comments from the same-scope construct they describe
 
 Formatted files must end with exactly one trailing newline.
