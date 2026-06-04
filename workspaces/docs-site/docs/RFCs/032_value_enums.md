@@ -5,11 +5,11 @@
 - **Author(s):** Danny Meijer (@dannymeijer)
 - **Related:** RFC 050 (Enum Methods & Trait Adoption), RFC 033 (`ctx` Keyword)
 - **Issue:** [#166](https://github.com/dannys-code-corner/incan/issues/166)
-- **RFC PR:**  
+- **RFC PR:**
     - [#411](https://github.com/dannys-code-corner/incan/pull/411)
     - <!-- follow-up PR: LSP metadata and blocked-by-RFC-033 status -->
 - **Written against:** v0.2
-- **Shipped in:**  
+- **Shipped in:**
     - v0.3 (core value-enum compiler, backend, serialization, manifest, docs, and LSP metadata surface; environment/config resolution remains blocked by RFC 033)
 
 ## Summary

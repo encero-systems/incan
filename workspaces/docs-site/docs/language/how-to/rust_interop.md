@@ -595,8 +595,8 @@ If the scrutinee is typed as a bare imported Rust path (not a `rusttype` alias),
 
 - [Managing dependencies](../../tooling/how-to/dependencies.md) - Adding crates, locking, CI
 - [Project configuration reference](../../tooling/reference/project_configuration.md) - Full `incan.toml` format
-- [RFC 057] - `@rust.allow(...)` targeted generated-Rust lint suppression
-- [RFC 041] - `rusttype`, `interop`, capability bounds
+- [Targeted generated-Rust lint suppression](#targeted-generated-rust-lint-suppression) - `@rust.allow(...)` for narrow generated-code lint allowances
+- [Rust types for Python developers](rust_types_for_python_devs.md) - `rusttype`, interop declarations, and type mapping concepts
 - [Error Handling](../explanation/error_handling.md) - Working with `Result` types
 - [Derives & Traits](../reference/derives_and_traits.md) - Drop trait for custom cleanup
 - [File I/O](file_io.md) - Reading, writing, and path handling

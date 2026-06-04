@@ -53,4 +53,3 @@ Use Incan when:
 - Nuitka describes itself as a Python compiler that is "fully compatible" with Python 2 and Python 3: [Nuitka overview](https://nuitka.net/pages/overview.html).
 - Cython describes itself as an "optimising static compiler" for Python and the extended Cython language: [Cython](https://cython.org/).
 - Nim is not a Python compatibility tool, but it is mature prior art for Python-influenced compiled language design: [Nim](https://nim-lang.org/).
-

@@ -124,4 +124,3 @@ The `120`-character line length is a target, not a strict hard limit. The format
 - [Language Guide](../../language/index.md)
 - [Examples](https://github.com/dannys-code-corner/incan/tree/main/examples)
 - [Testing](testing.md)
-- [RFC 053](../../RFCs/closed/implemented/053_formatter_vertical_spacing_buckets.md)

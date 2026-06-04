@@ -27,6 +27,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Abstract traits and supertraits | TypeSystem | 0.2 | None. | `trait OrderedCollection[T] with Collection[T]:`<br>`def first(values: Collection[int]) -> int:` | Trait names are abstract annotation types, and traits can adopt supertraits with `with`. | Hidden generic bounds or duplicated method requirements when a trait annotation names the concept. | [Derives and traits](derives_and_traits.md#traits-authoring), [Derives and traits explained](../explanation/derives_and_traits.md) |
 | Source-defined derives and trait contracts | TypeSystem | 0.2 | Import the relevant `std.derives.*`, `std.traits.*`, or derivable module. | `@derive(json)`<br>`model Row with Serialize:`<br>`T with Clone` | Derive and trait surfaces are authored as named stdlib capability contracts rather than compiler folklore. | Backend-only helper shims or comments that claim derive behavior without source-visible contracts. | [Derives and traits](derives_and_traits.md), [std.derives](stdlib/derives.md), [std.traits](stdlib/traits.md) |
 | Model field metadata and reflection | TypeSystem | 0.2 | None for field metadata; import `std.reflection` helpers when needed. | `name as "wire_name": str`<br>`user.__fields__()` | Model fields can carry aliases/descriptions and reflection exposes typed `FieldInfo` metadata. | Stringly schema maps that duplicate model field names and wire aliases. | [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [Release 0.2](../../release_notes/0_2.md) |
+| Type tokens and type-argument reflection | TypeSystem | 0.3 | Use explicit type arguments for compile-time reflection, or call an overload that expects `Type[T]`. | `T.__class_name__()`<br>`def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:`<br>`def accepts_schema(value: Type[MySchema]) -> str:`<br>`cast(col("amount"), int)` | Primitive type arguments expose stable source names, model type tokens carry checked source type evidence, and expected `Type[T]` parameters let visible type names select precise overloads without making types general runtime values. | String target names, dummy schema values, or helper families used only to recover type-specific return types. | [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [RFC 107 north star](../../RFCs/107_type_directed_library_apis.md), [Release 0.3](../../release_notes/0_3.md) |
 | Value enums | TypeSystem | 0.3 | None. | `enum Level(str):`<br>`WARN = "WARN"`<br>`Level.from_value(raw)` | Enums can use `str` or `int` backing values while preserving enum type safety. | Loose string/int constants or duplicate parsing helpers around enum-like values. | [Enums explained](../explanation/enums.md), [Modeling with enums](../how-to/modeling_with_enums.md), [Release 0.3](../../release_notes/0_3.md) |
 | Union types and narrowing | TypeSystem | 0.3 | None. | `value: int \| str`<br>`if isinstance(value, int):`<br>`match value:` | Closed anonymous unions support `Union[A, B]`, `A \| B`, narrowing, and exhaustive match type patterns. | Untyped `Any`-like values, parallel option fields, or manual tag/payload models for closed alternatives. | [Union types](union_types.md), [Release 0.3](../../release_notes/0_3.md) |
 | Validated newtypes and checked coercion | TypeSystem | 0.3 | None. | `type UserId = newtype int[ge=0]:`<br>`Email.new(value)`<br>`@no_implicit_coercion` | Newtypes can validate primitive constraints and participate in checked construction/coercion. | Raw primitives passed across APIs with comments describing expected invariants. | [Newtypes](newtypes.md), [Book: newtypes](../tutorials/book/12_newtypes.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -230,6 +231,26 @@ Canonical forms:
 
 - `name as "wire_name": str`
 - `user.__fields__()`
+
+### Type tokens and type-argument reflection
+
+- **Id:** `TypeTokensReflection`
+- **Category:** `TypeSystem`
+- **Since:** `0.3`
+- **RFC:** `RFC 107`
+- **Stability:** `Stable`
+- **Activation:** Use explicit type arguments for compile-time reflection, or call an overload that expects `Type[T]`.
+- **Use instead of:** String target names, dummy schema values, or helper families used only to recover type-specific return types.
+- **References:** [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [RFC 107 north star](../../RFCs/107_type_directed_library_apis.md), [Release 0.3](../../release_notes/0_3.md)
+
+Primitive type arguments expose stable source names, model type tokens carry checked source type evidence, and expected `Type[T]` parameters let visible type names select precise overloads without making types general runtime values.
+
+Canonical forms:
+
+- `T.__class_name__()`
+- `def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:`
+- `def accepts_schema(value: Type[MySchema]) -> str:`
+- `cast(col("amount"), int)`
 
 ### Value enums
 

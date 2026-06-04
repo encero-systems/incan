@@ -6202,10 +6202,10 @@ def access_all(a: Account) -> str:
     let n = a.name       # canonical, no alias
     let t = a.type_      # canonical (has alias "type")
     let b = a.balance    # canonical, no alias
-    
+
     # Access field by alias
     let t2 = a.type      # alias for type_
-    
+
     # Both t and t2 should have type str
     return f"{n} {t} {t2} {b}"
 "#;

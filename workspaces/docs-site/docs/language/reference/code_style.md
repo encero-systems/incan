@@ -4,9 +4,6 @@ This page is the canonical style guide for human-written `.incn` source files. I
 
 Use `incan fmt` to apply these formatting rules to source files. For formatter command usage and limits, see [Formatting with `incan fmt`](../../tooling/how-to/formatting.md).
 
-!!! note "Historical note"
-    RFC 053 is the design record behind the current vertical-spacing model.
-
 ## Scope
 
 This guide is about source layout and readability:
@@ -308,4 +305,3 @@ Use [Formatting with `incan fmt`](../../tooling/how-to/formatting.md) for comman
 
 - [CLI reference](../../tooling/reference/cli_reference.md)
 - [Formatting with `incan fmt`](../../tooling/how-to/formatting.md)
-- [RFC 053](../../RFCs/closed/implemented/053_formatter_vertical_spacing_buckets.md)
