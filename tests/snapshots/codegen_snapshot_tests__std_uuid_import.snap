@@ -7,6 +7,11 @@ expression: rust_code
 // __INCAN_INSERT_MODS__
 
 incan_stdlib::__incan_stdlib_version_check!("<INCAN_STDLIB_VERSION>");
+#[derive(Debug, Clone)]
+pub enum __IncanUniond83007a429c21b6f {
+    V0(String),
+    V1(Vec<u8>),
+}
 pub use crate::__incan_std::uuid::MAX;
 pub use crate::__incan_std::uuid::NAMESPACE_DNS;
 pub use crate::__incan_std::uuid::NAMESPACE_URL;

@@ -629,7 +629,42 @@ impl<'a> IrEmitter<'a> {
 
     /// Return whether two call-signature types describe the same emitted surface after transparent aliases expand.
     pub(in crate::backend::ir::emit) fn call_signature_type_matches(&self, left: &IrType, right: &IrType) -> bool {
-        left == right || self.resolve_type_aliases_for_emit(left) == self.resolve_type_aliases_for_emit(right)
+        if left == right {
+            return true;
+        }
+        let left = self.resolve_type_aliases_for_emit(left);
+        let right = self.resolve_type_aliases_for_emit(right);
+        left == right || Self::semantic_signature_type(&left) == Self::semantic_signature_type(&right)
+    }
+
+    /// Return the semantic type shape used for callable-surface comparisons.
+    fn semantic_signature_type(ty: &IrType) -> IrType {
+        match ty {
+            IrType::ExternalUnion { union, .. } => Self::semantic_signature_type(union),
+            IrType::List(inner) => IrType::List(Box::new(Self::semantic_signature_type(inner))),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(Self::semantic_signature_type(key)),
+                Box::new(Self::semantic_signature_type(value)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(Self::semantic_signature_type(inner))),
+            IrType::Tuple(items) => IrType::Tuple(items.iter().map(Self::semantic_signature_type).collect()),
+            IrType::Option(inner) => IrType::Option(Box::new(Self::semantic_signature_type(inner))),
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(Self::semantic_signature_type(ok)),
+                Box::new(Self::semantic_signature_type(err)),
+            ),
+            IrType::Function { params, ret } => IrType::Function {
+                params: params.iter().map(Self::semantic_signature_type).collect(),
+                ret: Box::new(Self::semantic_signature_type(ret)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(Self::semantic_signature_type(inner))),
+            IrType::RefMut(inner) => IrType::RefMut(Box::new(Self::semantic_signature_type(inner))),
+            IrType::NamedGeneric(name, args) => {
+                IrType::NamedGeneric(name.clone(), args.iter().map(Self::semantic_signature_type).collect())
+            }
+            IrType::TypeToken(inner) => IrType::TypeToken(Box::new(Self::semantic_signature_type(inner))),
+            other => other.clone(),
+        }
     }
 
     /// Resolve transparent type aliases before emission decisions that need structural type information.

@@ -10468,6 +10468,18 @@ mod rfc031_pub_import_integration_tests {
             .output()?)
     }
 
+    fn run_fmt(target: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(super::incan_command()
+            .args(["fmt", target.to_string_lossy().as_ref()])
+            .output()?)
+    }
+
+    fn run_fmt_check(target: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(super::incan_command()
+            .args(["fmt", "--check", target.to_string_lossy().as_ref()])
+            .output()?)
+    }
+
     fn shared_test_runner_target_dir() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("target")
@@ -13425,7 +13437,7 @@ def query_block_call(orders: LazyFrame[Order]) -> LazyFrame[Selected]:
     }
 
     #[test]
-    fn consumer_test_activates_dependency_vocab_surfaces_issue730() -> Result<(), Box<dyn std::error::Error>> {
+    fn consumer_test_activates_dependency_vocab_surfaces_issue730_issue756() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
         let output_payload = serde_json::to_string(&response)?;
@@ -13449,10 +13461,26 @@ def query_block_call(orders: LazyFrame[Order]) -> LazyFrame[Selected]:
             r#"import pub::querykit
 
 def test_dependency_vocab_query_block() -> None:
-  selected: int = query { FROM orders SELECT amount as total }
-  assert selected == 7
+    selected: int = query { FROM orders SELECT amount as total }
+    assert selected == 7
 "#,
         )?;
+
+        let fmt_output = run_fmt(&test_path)?;
+        assert!(
+            fmt_output.status.success(),
+            "expected incan fmt to parse dependency-activated vocab in a nested package test file.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&fmt_output.stdout),
+            String::from_utf8_lossy(&fmt_output.stderr)
+        );
+
+        let fmt_output = run_fmt_check(&test_path)?;
+        assert!(
+            fmt_output.status.success(),
+            "expected formatted dependency-activated vocab file to pass incan fmt --check.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&fmt_output.stdout),
+            String::from_utf8_lossy(&fmt_output.stderr)
+        );
 
         let check_output = run_check(&test_path)?;
         assert!(

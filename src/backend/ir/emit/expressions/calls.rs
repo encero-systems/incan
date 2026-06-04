@@ -405,7 +405,7 @@ impl<'a> IrEmitter<'a> {
     /// Source modules normally reference generated ordinary union wrappers through the current module or crate root.
     /// Imported `pub::library` calls may need to wrap member literals with a library-qualified union wrapper instead,
     /// so this helper keeps the target type logic shared while letting callers control only the wrapper path.
-    fn emit_inference_seeded_literal_arg_with_union_qualifier(
+    pub(super) fn emit_inference_seeded_literal_arg_with_union_qualifier(
         &self,
         arg: &TypedExpr,
         target_ty: &IrType,

@@ -525,12 +525,22 @@ impl<'a> IrEmitter<'a> {
         target_union_qualifier: Option<&[String]>,
     ) -> Result<TokenStream, EmitError> {
         let resolved_target_ty = Self::use_site_target_ty(site).map(|ty| self.resolve_type_aliases_for_emit(ty));
+        let target_type_union_qualifier = resolved_target_ty
+            .as_ref()
+            .and_then(Self::external_union_qualifier_for_type);
+        let target_union_qualifier = target_type_union_qualifier.as_deref().or(target_union_qualifier);
         if let Some(target_ty) = resolved_target_ty.as_ref() {
-            if let Some(wrapped) = self.emit_union_payload_arg_for_site(expr, target_ty, None, site)? {
+            if let Some(wrapped) =
+                self.emit_union_payload_arg_for_site(expr, target_ty, target_union_qualifier, site)?
+            {
                 return Ok(wrapped);
             }
             if matches!(site, ValueUseSite::CollectionElement { .. })
-                && let Some(wrapped) = self.emit_inference_seeded_literal_arg(expr, target_ty)?
+                && let Some(wrapped) = self.emit_inference_seeded_literal_arg_with_union_qualifier(
+                    expr,
+                    target_ty,
+                    target_union_qualifier,
+                )?
             {
                 return Ok(wrapped);
             }
@@ -760,6 +770,30 @@ impl<'a> IrEmitter<'a> {
             }
         }
         Ok(emitted)
+    }
+
+    /// Return the dependency qualifier carried by an external anonymous union target type.
+    fn external_union_qualifier_for_type(ty: &IrType) -> Option<Vec<String>> {
+        match ty {
+            IrType::ExternalUnion { library, .. } => Some(vec![library.clone()]),
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner)
+            | IrType::TypeToken(inner) => Self::external_union_qualifier_for_type(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                Self::external_union_qualifier_for_type(key).or_else(|| Self::external_union_qualifier_for_type(value))
+            }
+            IrType::Tuple(items) | IrType::NamedGeneric(_, items) => {
+                items.iter().find_map(Self::external_union_qualifier_for_type)
+            }
+            IrType::Function { params, ret } => params
+                .iter()
+                .find_map(Self::external_union_qualifier_for_type)
+                .or_else(|| Self::external_union_qualifier_for_type(ret)),
+            _ => None,
+        }
     }
 
     /// Return whether match scrutinee emission should preserve a `Result` value without extra ownership shaping.
@@ -2178,6 +2212,45 @@ mod tests {
         assert!(
             rendered.contains(some_constructor) && rendered.contains("__IncanUnion"),
             "expected target union wrapping to survive interop aggregate wrapper, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nested_external_union_target_overrides_parent_qualifier() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let provider_union = IrType::NamedGeneric(
+            crate::backend::ir::types::IR_UNION_TYPE_NAME.to_string(),
+            vec![IrType::Struct("ProviderColumn".to_string()), IrType::Int],
+        );
+        let target_ty = IrType::List(Box::new(IrType::ExternalUnion {
+            library: "right_provider".to_string(),
+            union: Box::new(provider_union.clone()),
+        }));
+        let expr = TypedExpr::new(
+            IrExprKind::List(vec![IrListEntry::Element(TypedExpr::new(
+                IrExprKind::Int(7),
+                IrType::Int,
+            ))]),
+            IrType::List(Box::new(provider_union)),
+        );
+
+        let emitted = emitter
+            .emit_expr_for_use_with_union_qualifier(
+                &expr,
+                ValueUseSite::IncanCallArg {
+                    target_ty: Some(&target_ty),
+                    callee_param: None,
+                    in_return: false,
+                },
+                Some(&["wrong_provider".to_string()]),
+            )
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("right_provider :: __IncanUnion") && !rendered.contains("wrong_provider"),
+            "expected nested target type to own union qualifier, got `{rendered}`"
         );
         Ok(())
     }

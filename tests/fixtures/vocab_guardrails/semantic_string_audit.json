@@ -188,9 +188,9 @@
     },
     {
       "path": "src/backend/ir/lower/expr/mod.rs",
-      "category": "method and stdlib lowering compatibility",
-      "expected_count": 10,
-      "expected_fingerprint": "0xf0d6e2f722d351e8"
+      "category": "method, public dependency, and stdlib lowering compatibility",
+      "expected_count": 12,
+      "expected_fingerprint": "0x96f377a44b0b8aa2"
     },
     {
       "path": "src/backend/ir/lower/mod.rs",

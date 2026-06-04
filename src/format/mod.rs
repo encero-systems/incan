@@ -23,6 +23,7 @@ use comments::{count_line_comments, reattach_comments};
 pub use config::{FormatConfig, QuoteStyle};
 pub use formatter::Formatter;
 
+use crate::frontend::ast::Program;
 use crate::frontend::{diagnostics, lexer, parser};
 use thiserror::Error;
 
@@ -100,9 +101,21 @@ pub fn format_source_with_config(source: &str, config: FormatConfig) -> Result<S
         FormatError::SyntaxError(msg)
     })?;
 
-    // Format the AST
+    format_parsed_source_with_config(source, &ast, config)
+}
+
+/// Format a parsed program with custom configuration.
+///
+/// Project-aware callers such as `incan fmt` may need dependency-provided vocabulary active during parsing. They can
+/// parse through `CompilationSession` and still use the same formatting and comment-preservation contract as
+/// context-free formatting.
+pub(crate) fn format_parsed_source_with_config(
+    source: &str,
+    ast: &Program,
+    config: FormatConfig,
+) -> Result<String, FormatError> {
     let formatter = Formatter::new(config);
-    let formatted = reattach_comments(source, &formatter.format(&ast));
+    let formatted = reattach_comments(source, &formatter.format(ast));
 
     // Safety guard: never allow the formatter to silently drop comments.
     let source_comments = count_line_comments(source);
@@ -154,9 +167,13 @@ pub fn check_formatted(source: &str) -> Result<bool, FormatError> {
 /// ```
 pub fn format_diff(source: &str) -> Result<Option<String>, FormatError> {
     let formatted = format_source(source)?;
+    Ok(format_diff_from_formatted(source, &formatted))
+}
 
+/// Build the formatter diff for an already-computed formatted source.
+pub(crate) fn format_diff_from_formatted(source: &str, formatted: &str) -> Option<String> {
     if source == formatted {
-        return Ok(None);
+        return None;
     }
 
     let mut diff = String::new();
@@ -204,7 +221,7 @@ pub fn format_diff(source: &str) -> Result<Option<String>, FormatError> {
         diff.push_str(&line_diffs);
     }
 
-    Ok(Some(diff))
+    Some(diff)
 }
 
 #[cfg(test)]

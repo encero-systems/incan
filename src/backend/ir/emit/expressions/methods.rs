@@ -297,6 +297,7 @@ impl<'a> IrEmitter<'a> {
         {
             return self.emit_rest_aware_call_args(receiver, args, sig);
         }
+        let receiver_union_qualifier = Self::pub_library_union_qualifier_for_method_receiver(receiver);
 
         let ordered_args: Vec<(TypedExpr, bool)> = if let Some(sig) = callable_signature.as_ref() {
             if args.iter().any(|arg| arg.name.is_some()) {
@@ -383,7 +384,11 @@ impl<'a> IrEmitter<'a> {
                 let emitted = if direct_mut_trait_receiver {
                     self.emit_expr(arg)
                 } else {
-                    self.emit_expr_for_use(arg, effective_arg_use_site)
+                    self.emit_expr_for_use_with_union_qualifier(
+                        arg,
+                        effective_arg_use_site,
+                        receiver_union_qualifier.as_deref(),
+                    )
                 };
                 if let Some(previous) = previous_qualify {
                     self.qualify_internal_canonical_paths.replace(previous);
@@ -428,12 +433,26 @@ impl<'a> IrEmitter<'a> {
                 let Some(param) = param else {
                     return Ok(emitted);
                 };
-                if let Some(wrapped) = self.emit_union_payload_arg(arg, &param.ty, None)? {
+                if let Some(wrapped) =
+                    self.emit_union_payload_arg(arg, &param.ty, receiver_union_qualifier.as_deref())?
+                {
                     return Ok(arg_plan.apply_after_value_plan(wrapped));
                 }
                 Ok(arg_plan.apply_after_value_plan(emitted))
             })
             .collect()
+    }
+
+    /// Return the dependency qualifier for method arguments when the receiver is produced by a public dependency call.
+    fn pub_library_union_qualifier_for_method_receiver(receiver: &TypedExpr) -> Option<Vec<String>> {
+        match &receiver.kind {
+            IrExprKind::Call {
+                canonical_path: Some(path),
+                ..
+            } => Self::pub_library_union_qualifier(Some(path)),
+            IrExprKind::InteropCoerce { expr, .. } => Self::pub_library_union_qualifier_for_method_receiver(expr),
+            _ => None,
+        }
     }
 
     /// Return the explicitly registered compatibility borrow policy for a metadata-free external method argument.
