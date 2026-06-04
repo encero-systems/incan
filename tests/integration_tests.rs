@@ -13534,6 +13534,85 @@ def test_dependency_vocab_query_block() -> None:
     }
 
     #[test]
+    fn fmt_prepares_clean_source_dependency_vocab_before_parsing_issue756() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("deps").join("querykit");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"querykit\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub def ready() -> int:\n  return 1\n",
+        )?;
+        write_vocab_companion_crate_with_source(
+            &producer_root,
+            "vocab_companion",
+            "querykit_vocab_companion",
+            r#"use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration};
+
+pub fn library_vocab() -> VocabRegistration {
+    VocabRegistration::new().with_surface(
+        DslSurface::on_import("querykit").with_declaration(
+            DeclarationSurface::named("query")
+                .with_clause_body()
+                .desugars_to_expression()
+                .with_clauses([
+                    ClauseSurface::expr("FROM").required(),
+                    ClauseSurface::expr_list("SELECT").required(),
+                ]),
+        ),
+    )
+}
+"#,
+        )?;
+
+        let consumer_root = tmp.path().join("consumer");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nquerykit = { path = \"../deps/querykit\" }\n",
+        )?;
+        let main_path = consumer_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            r#"import pub::querykit
+
+def main() -> None:
+    value = query {
+        FROM orders
+        SELECT
+            amount as total
+    }
+"#,
+        )?;
+
+        let artifact_root = producer_root.join("target").join("lib");
+        assert!(
+            !artifact_root.exists(),
+            "regression must start from a clean source dependency without prebuilt library artifacts"
+        );
+
+        let fmt_output = super::incan_command()
+            .args(["fmt", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            fmt_output.status.success(),
+            "expected fmt to prepare source dependency vocab before parsing clean query block.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&fmt_output.stdout),
+            String::from_utf8_lossy(&fmt_output.stderr)
+        );
+        assert!(
+            artifact_root.join("querykit.incnlib").is_file(),
+            "expected clean dependency artifact to be prepared for parser vocab activation"
+        );
+
+        Ok(())
+    }
+
+    #[test]
     fn equivalent_helper_backed_keywords_typecheck() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
