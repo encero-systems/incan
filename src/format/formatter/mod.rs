@@ -58,6 +58,136 @@ impl Formatter {
         }
     }
 
+    /// Write an expression-list item without deciding statement terminators.
+    fn format_vocab_expression_item_contents(&mut self, item: &VocabExpressionItemStmt) {
+        self.format_expr(&item.expr.node);
+        if let Some(alias) = &item.alias {
+            self.writer.write(" as ");
+            self.writer.write(alias);
+        }
+        for modifier in &item.modifiers {
+            self.writer.write(" ");
+            self.writer.write(&modifier.keyword);
+            self.writer.write(" ");
+            self.format_expr(&modifier.value.node);
+        }
+    }
+
+    /// Write an expression-position vocab block with the brace/no-colon surface used by vocab expressions.
+    fn format_expression_vocab_block_braced(&mut self, block: &VocabBlockStmt) {
+        self.format_vocab_block_header(block);
+        self.writer.write(" {");
+        if block.body.is_empty() {
+            self.writer.write("}");
+            return;
+        }
+
+        self.writer.newline();
+        self.writer.indent();
+        for stmt in &block.body {
+            self.format_braced_vocab_statement(stmt);
+        }
+        self.writer.dedent();
+        self.writer.write("}");
+    }
+
+    /// Format one statement nested inside an expression-position braced vocab block.
+    fn format_braced_vocab_statement(&mut self, stmt: &Spanned<Statement>) {
+        self.writer.blank_lines(stmt.leading_blank_lines as usize);
+        match &stmt.node {
+            Statement::VocabBlock(block) => self.format_braced_vocab_child(block),
+            Statement::VocabExpressionItem(item) => {
+                self.format_vocab_expression_item_contents(item);
+                self.writer.newline();
+            }
+            Statement::Expr(expr) => {
+                self.format_expr(&expr.node);
+                self.writer.newline();
+            }
+            _ => self.format_statement(stmt),
+        }
+    }
+
+    /// Format a child clause within an expression-position braced vocab block.
+    fn format_braced_vocab_child(&mut self, block: &VocabBlockStmt) {
+        self.format_vocab_block_header(block);
+        match block.keyword_binding.clause_body_kind {
+            Some(incan_vocab::ClauseBodyKind::Expression) => {
+                if let Some(stmt) = block.body.first()
+                    && block.body.len() == 1
+                    && self.format_braced_vocab_inline_expression(stmt)
+                {
+                    self.writer.newline();
+                    return;
+                }
+                self.writer.newline();
+                self.writer.indent();
+                for stmt in &block.body {
+                    self.format_braced_vocab_statement(stmt);
+                }
+                self.writer.dedent();
+            }
+            Some(incan_vocab::ClauseBodyKind::ExpressionList) => {
+                if block.body.len() == 1 && !block.body_item_trailing_commas.first().copied().unwrap_or(false) {
+                    let checkpoint = self.writer.checkpoint();
+                    if self.format_braced_vocab_inline_expression(&block.body[0])
+                        && !self.writer.output_since_contains_newline(checkpoint)
+                        && !self.writer.line_length_exceeded()
+                    {
+                        self.writer.newline();
+                        return;
+                    }
+                    self.writer.restore(checkpoint);
+                }
+
+                self.writer.newline();
+                self.writer.indent();
+                for (idx, stmt) in block.body.iter().enumerate() {
+                    self.format_braced_vocab_expression_list_item(stmt);
+                    if block.body_item_trailing_commas.get(idx).copied().unwrap_or(false) {
+                        self.writer.write(",");
+                    }
+                    self.writer.newline();
+                }
+                self.writer.dedent();
+            }
+            _ => {
+                self.writer.newline();
+                self.writer.indent();
+                for stmt in &block.body {
+                    self.format_braced_vocab_statement(stmt);
+                }
+                self.writer.dedent();
+            }
+        }
+    }
+
+    /// Try to write a single expression-clause body inline after its keyword.
+    fn format_braced_vocab_inline_expression(&mut self, stmt: &Spanned<Statement>) -> bool {
+        match &stmt.node {
+            Statement::Expr(expr) => {
+                self.writer.write(" ");
+                self.format_expr(&expr.node);
+                true
+            }
+            Statement::VocabExpressionItem(item) => {
+                self.writer.write(" ");
+                self.format_vocab_expression_item_contents(item);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Write one braced expression-list item without a trailing newline.
+    fn format_braced_vocab_expression_list_item(&mut self, stmt: &Spanned<Statement>) {
+        match &stmt.node {
+            Statement::Expr(expr) => self.format_expr(&expr.node),
+            Statement::VocabExpressionItem(item) => self.format_vocab_expression_item_contents(item),
+            _ => self.format_statement(stmt),
+        }
+    }
+
     /// Format a program.
     fn format_program(&mut self, program: &Program) {
         let mut first = true;

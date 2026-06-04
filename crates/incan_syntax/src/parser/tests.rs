@@ -3390,6 +3390,35 @@ def main() -> int:
     }
 
     #[test]
+    fn test_parse_indented_leading_dot_fluent_method_chain_allows_comment_lines() -> Result<(), Vec<CompileError>> {
+        let source = r#"def run(orders: DataFrame) -> DataFrame:
+  enriched = orders
+    # a valid placement for a comment
+    .with_column("region_norm", col("region"))
+    .with_column("status_norm", col("status"))
+  return enriched
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let assignment = match &function.body[0].node {
+            Statement::Assignment(assign) => assign,
+            other => panic!("Expected assignment, got {other:?}"),
+        };
+
+        let Expr::MethodCall(first_call, second_method, _, _) = &assignment.value.node else {
+            panic!("Expected outer fluent method call, got {:?}", assignment.value.node);
+        };
+        assert_eq!(second_method, "with_column");
+
+        let Expr::MethodCall(root, first_method, _, _) = &first_call.node else {
+            panic!("Expected nested fluent method call, got {:?}", first_call.node);
+        };
+        assert_eq!(first_method, "with_column");
+        assert!(matches!(&root.node, Expr::Ident(name) if name == "orders"));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_function_call_with_infer_type_arg_placeholder() -> Result<(), Vec<CompileError>> {
         let source = "def run() -> int:\n  return pair_map[int, _](1, 2)\n";
         let program = parse_str(source)?;

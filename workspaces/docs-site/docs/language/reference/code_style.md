@@ -264,10 +264,38 @@ enriched = orders
     .with_column("gross_amount", round(mul(col("quantity"), col("unit_price")), 2))
 ```
 
+Stand-alone comments may sit inside the fluent continuation block when they describe the next method segment:
+
+```incan
+enriched = orders
+    # Normalize user-facing text before deriving labels.
+    .with_column("region_norm", upper(trim(col("region"))))
+    .with_column("status_norm", lower(trim(col("status"))))
+```
+
 !!! tip "Coming from Python?"
     Python usually needs parentheses, a backslash, or an open bracketed expression before a newline can continue a method chain. Incan accepts the indented leading `.` as the continuation marker, so fluent APIs can stay visually vertical without adding grouping syntax just to satisfy the parser.
 
 Short method-call chains can stay inline when they fit the line-length target. Do not add backslashes or dummy parentheses only to make a fluent chain parse; `incan fmt` uses leading-dot continuation when a method chain overflows.
+
+## Expression Vocab Blocks
+
+Expression-position vocab blocks keep their brace form and no-colon clause spelling. Clause names and body shapes come from the active vocab metadata, so the formatter preserves compound clause spelling such as `GROUP BY` instead of rewriting through the declaration-style colon form:
+
+```incan
+return query {
+    FROM paid
+    SELECT
+        .order_id as order_id
+        .customer_id as customer_id
+    GROUP BY
+        .region_norm,
+        .channel
+    ORDER BY desc(.net_amount)
+}
+```
+
+Comments inside a vocab block should stay near the clause or item they describe.
 
 ## Match Arms And Short Forms
 
@@ -300,6 +328,7 @@ Do not insert extra blank lines immediately after `=>` or a suite header unless 
 - one blank line between sibling statements after nested suites
 - short inline `match` arms when they are still readable
 - leading-dot method-chain continuation for fluent interfaces
+- brace/no-colon expression vocab blocks whose syntax is provided by active vocab metadata
 - actual string contents, including literal `\n` text
 
 ## What The Formatter Should Normalize

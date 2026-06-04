@@ -239,6 +239,69 @@ mod tests {
         })
     }
 
+    fn format_source_with_query_vocab(source: &str) -> Result<String, FormatError> {
+        let tokens = lexer::lex(source).map_err(|errs| {
+            FormatError::SyntaxError(errs.iter().map(|e| e.message.clone()).collect::<Vec<_>>().join("\n"))
+        })?;
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_surface(
+                incan_vocab::DslSurface::on_import("analytics.query")
+                    .with_declaration(
+                        incan_vocab::DeclarationSurface::named("query")
+                            .with_clause_body()
+                            .desugars_to_expression()
+                            .with_clauses([
+                                incan_vocab::ClauseSurface::expr("FROM").required(),
+                                incan_vocab::ClauseSurface::expr_list("SELECT").required(),
+                                incan_vocab::ClauseSurface::expr("WHERE").optional(),
+                                incan_vocab::ClauseSurface::expr_list("GROUP BY").optional(),
+                                incan_vocab::ClauseSurface::expr("ORDER BY").optional(),
+                                incan_vocab::ClauseSurface::expr("LIMIT").optional(),
+                            ]),
+                    )
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.field")
+                            .in_declaration_body("query")
+                            .with_receiver(incan_vocab::ScopedSurfaceReceiver::OwningDeclaration),
+                    )
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.select.field")
+                            .in_clause_body("query", "SELECT")
+                            .with_receiver(incan_vocab::ScopedSurfaceReceiver::clause("FROM")),
+                    )
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.group.field")
+                            .in_clause_body("query", "GROUP")
+                            .with_receiver(incan_vocab::ScopedSurfaceReceiver::clause("FROM")),
+                    )
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.where.field")
+                            .in_clause_body("query", "WHERE")
+                            .with_receiver(incan_vocab::ScopedSurfaceReceiver::clause("FROM")),
+                    )
+                    .with_scoped_surface(
+                        incan_vocab::ScopedSurfaceDescriptor::leading_dot_path("query.order.field")
+                            .in_clause_body("query", "ORDER")
+                            .with_receiver(incan_vocab::ScopedSurfaceReceiver::clause("FROM")),
+                    ),
+            )
+            .metadata();
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert("analytics".to_string(), metadata.keyword_registrations);
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert("analytics".to_string(), metadata.dsl_surfaces);
+        let ast = parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+            .map_err(|errs| {
+                let mut msg = String::new();
+                for err in &errs {
+                    msg.push_str(&diagnostics::format_error("<input>", source, err));
+                }
+                FormatError::SyntaxError(msg)
+            })?;
+
+        format_parsed_source_with_config(source, &ast, FormatConfig::default())
+    }
+
     fn assert_comment_line_immediately_before(
         lines: &[&str],
         stmt_label: &str,
@@ -390,6 +453,27 @@ mod tests {
     }
 
     #[test]
+    fn test_format_source_keeps_comments_inside_leading_dot_fluent_chain() -> Result<(), FormatError> {
+        let source = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
+    enriched = orders
+        # a valid placement for a comment
+        .with_column("region_norm", upper(trim(col("region"))))
+        .with_column("status_looks_clean",regexp_like(col("status_norm"), "^[a-z]+$"))
+    return enriched
+"#;
+        let expected = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
+    enriched = orders
+        # a valid placement for a comment
+        .with_column("region_norm", upper(trim(col("region"))))
+        .with_column("status_looks_clean", regexp_like(col("status_norm"), "^[a-z]+$"))
+    return enriched
+"#;
+        assert_eq!(format_source(source)?, expected);
+        assert_eq!(format_source(expected)?, expected);
+        Ok(())
+    }
+
+    #[test]
     fn test_format_source_wraps_long_method_chain_as_leading_dot_fluent_chain() -> Result<(), FormatError> {
         let source = r#"def high_value_orders(orders: DataFrame) -> DataFrame:
     enriched = orders.with_column("region_norm", upper(trim(col("region")))).with_column("status_norm", lower(trim(col("status")))).with_column("gross_amount", round(mul(col("quantity"), col("unit_price")), 2))
@@ -405,6 +489,100 @@ mod tests {
         let config = FormatConfig::new().with_line_length(120);
         assert_eq!(format_source_with_config(source, config.clone())?, expected);
         assert_eq!(format_source_with_config(expected, config)?, expected);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_keeps_phase_comments_before_wrapped_fluent_chain() -> Result<(), FormatError> {
+        let source = r#"def test_case() -> None:
+    # -- Arrange --
+    base = Frame.new()
+
+    # -- Act --
+    projected: Frame = base.with_column("double_id", mul(col("id"), 2)).with_column(
+        "triple_id",
+        mul(col("id"), 3),
+    )
+    output_cols = projected.columns()
+
+    # -- Assert --
+    assert output_cols == ["id", "double_id", "triple_id"], "derived columns should preserve append order"
+"#;
+        let config = FormatConfig::new().with_line_length(88);
+        let formatted = format_source_with_config(source, config.clone())?;
+        assert!(
+            formatted.contains("    # -- Arrange --\n    base = Frame.new()"),
+            "expected arrange comment to stay attached to setup; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains(
+                "    # -- Act --\n    projected: Frame = base\n        .with_column(\"double_id\", mul(col(\"id\"), 2))\n        .with_column(\"triple_id\", mul(col(\"id\"), 3))"
+            ),
+            "expected act comment to stay attached to wrapped fluent chain; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains("    # -- Assert --\n    assert output_cols =="),
+            "expected assert comment to stay attached to assertion; got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("    # -- Act --\n\n    # -- Assert --"),
+            "formatter floated phase comments away from their anchors; got:\n{formatted}"
+        );
+
+        assert_eq!(format_source_with_config(&formatted, config)?, formatted);
+        Ok(())
+    }
+
+    #[test]
+    fn test_format_source_preserves_expression_vocab_brace_shape_and_comments() -> Result<(), FormatError> {
+        let source = r#"import pub::analytics
+
+def high_value_orders(orders: DataFrame) -> DataFrame:
+    paid = orders
+    # The query block can reference ordinary local Incan values, so `paid` stays a normal lazy frame binding.
+    return query {
+        # source table
+        FROM paid
+        SELECT
+            .order_id as order_id
+            # customer projection
+            .customer_id as customer_id
+        GROUP BY
+            .region_norm,
+            .channel
+        WHERE .net_amount > 100
+        ORDER BY desc(.net_amount)
+        LIMIT 8
+    }
+"#;
+        let formatted = format_source_with_query_vocab(source)?;
+
+        assert!(
+            formatted.contains("    return query {\n"),
+            "expected expression vocab block to keep brace form; got:\n{formatted}"
+        );
+        assert!(
+            !formatted.contains("return query:") && !formatted.contains("FROM:") && !formatted.contains("ORDER BY:"),
+            "formatter must not rewrite expression vocab blocks through colon form; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains("        FROM paid\n"),
+            "expected single-expression clauses to stay no-colon and inline; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains("        SELECT\n            .order_id as order_id\n            # customer projection\n            .customer_id as customer_id\n"),
+            "expected SELECT body and nested comment to stay attached; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains("        GROUP BY\n            .region_norm,\n            .channel\n"),
+            "expected expression-list comma shape to be preserved from source; got:\n{formatted}"
+        );
+        assert!(
+            formatted.contains("    # The query block can reference ordinary local Incan values"),
+            "expected leading query comment to stay attached before the block; got:\n{formatted}"
+        );
+
+        assert_eq!(format_source_with_query_vocab(&formatted)?, formatted);
         Ok(())
     }
 

@@ -330,18 +330,7 @@ impl Formatter {
                 }
                 _ => self.writer.write("<surface_expr>"),
             },
-            Expr::VocabBlock(block) => {
-                self.format_vocab_block_header(block);
-                self.writer.writeln(":");
-                self.writer.indent();
-                for stmt in &block.body {
-                    self.format_statement(stmt);
-                }
-                if block.body.is_empty() {
-                    self.writer.writeln("pass");
-                }
-                self.writer.dedent();
-            }
+            Expr::VocabBlock(block) => self.format_expression_vocab_block_braced(block),
             Expr::Try(inner) => {
                 self.format_expr(&inner.node);
                 self.writer.write("?");

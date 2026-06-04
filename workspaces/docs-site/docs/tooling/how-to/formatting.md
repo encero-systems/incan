@@ -42,6 +42,7 @@ The style guide is the canonical source for what Incan code should look like:
 - wrapping for long class trait adoption headers into parenthesized one-trait-per-line `with (...)` lists
 - best-effort wrapping for long parenthesized logical expression chains at `and` / `or` breakpoints
 - leading-dot wrapping for overflowing fluent method-call chains
+- brace/no-colon preservation for expression-position vocab blocks such as `query { ... }`
 - top-level double-blank-line spacing only where the style guide permits it
 - preservation of one authored readability gap inside ordinary code blocks
 - comment placement that remains same-scope and structure-aware
@@ -111,10 +112,35 @@ enriched = orders
     .with_column("status_norm", lower(trim(col("status"))))
 ```
 
+Comments can live inside the continuation block when they describe the next fluent call:
+
+```incan
+enriched = orders
+    # Normalize before deriving labels.
+    .with_column("region_norm", upper(trim(col("region"))))
+    .with_column("status_norm", lower(trim(col("status"))))
+```
+
 !!! tip "Coming from Python?"
     This is deliberately a little different from Python. In Python, a newline before `.with_column(...)` normally has to live inside parentheses or use another continuation mechanism. Incan treats an indented leading `.` as fluent-chain continuation, which keeps DataFrame-style APIs readable without adding punctuation that is only there for line continuation.
 
 Short method-call chains remain inline when they fit.
+
+## Expression Vocab Blocks
+
+For expression-position vocab blocks, `incan fmt` preserves the brace/no-colon surface exposed by the active vocab metadata:
+
+```incan
+return query {
+    FROM paid
+    SELECT
+        .order_id as order_id
+        .customer_id as customer_id
+    ORDER BY desc(.net_amount)
+}
+```
+
+The formatter should not rewrite that shape to declaration-style `query:` / `FROM:` / `SELECT:` output.
 
 ## Limitations
 

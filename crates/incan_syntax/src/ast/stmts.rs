@@ -256,6 +256,7 @@ pub struct VocabBlockStmt {
     pub decorators: Vec<Spanned<Decorator>>,
     pub header_args: Vec<Spanned<Expr>>,
     pub body: Vec<Spanned<Statement>>,
+    pub body_item_trailing_commas: Vec<bool>,
 }
 
 /// Surface statement payload variants.

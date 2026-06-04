@@ -13463,16 +13463,17 @@ def query_block_call(orders: LazyFrame[Order]) -> LazyFrame[Selected]:
             r#"import pub::querykit
 
 def test_dependency_vocab_query_block() -> None:
-    selected: int = query:
+    selected: int = query {
         FROM orders
-        GROUP BY:
-            amount as grouped
-        SELECT:
+        GROUP BY
+            amount as grouped,
+            region as region_group
+        SELECT
             amount as total
-        ORDER BY:
-            amount
-        WINDOW BY:
-            pass
+        ORDER BY amount
+        WINDOW BY
+            rank = amount
+    }
     assert selected == 7
 "#,
         )?;
@@ -13486,10 +13487,22 @@ def test_dependency_vocab_query_block() -> None:
         );
 
         let formatted_source = std::fs::read_to_string(&test_path)?;
-        for clause in ["GROUP BY:", "ORDER BY:", "WINDOW BY:"] {
+        for clause in [
+            "selected: int = query {",
+            "        GROUP BY\n            amount as grouped,\n            region as region_group",
+            "        ORDER BY amount",
+            "        WINDOW BY\n            rank = amount",
+        ] {
             assert!(
                 formatted_source.contains(clause),
-                "expected incan fmt to preserve compound dependency-vocab clause `{clause}`.\nformatted source:\n{}",
+                "expected incan fmt to preserve dependency-vocab expression block shape `{clause}`.\nformatted source:\n{}",
+                formatted_source
+            );
+        }
+        for rejected_clause in ["query:", "GROUP BY:", "ORDER BY:", "WINDOW BY:"] {
+            assert!(
+                !formatted_source.contains(rejected_clause),
+                "expected incan fmt not to rewrite expression vocab block through colon clause `{rejected_clause}`.\nformatted source:\n{}",
                 formatted_source
             );
         }
