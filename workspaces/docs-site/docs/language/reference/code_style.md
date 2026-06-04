@@ -255,7 +255,7 @@ payload = {
 
 ## Fluent Method Chains
 
-Use leading-dot continuation for long fluent method-call chains. The receiver stays on the assignment or return line, and each wrapped method call starts on its own indented continuation line:
+Use leading-dot continuation for long fluent method-call chains. The receiver stays on the assignment or return line, and each wrapped method call starts on its own indented continuation line. This is valid Incan syntax, not only formatter output:
 
 ```incan
 enriched = orders
@@ -264,7 +264,10 @@ enriched = orders
     .with_column("gross_amount", round(mul(col("quantity"), col("unit_price")), 2))
 ```
 
-Short method-call chains can stay inline when they fit the line-length target. Do not add backslashes or dummy parentheses only to make a fluent chain parse; the leading-dot continuation layout is valid Incan syntax and `incan fmt` uses it when a method chain overflows.
+!!! tip "Coming from Python?"
+    Python usually needs parentheses, a backslash, or an open bracketed expression before a newline can continue a method chain. Incan accepts the indented leading `.` as the continuation marker, so fluent APIs can stay visually vertical without adding grouping syntax just to satisfy the parser.
+
+Short method-call chains can stay inline when they fit the line-length target. Do not add backslashes or dummy parentheses only to make a fluent chain parse; `incan fmt` uses leading-dot continuation when a method chain overflows.
 
 ## Match Arms And Short Forms
 

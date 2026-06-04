@@ -111,6 +111,9 @@ enriched = orders
     .with_column("status_norm", lower(trim(col("status"))))
 ```
 
+!!! tip "Coming from Python?"
+    This is deliberately a little different from Python. In Python, a newline before `.with_column(...)` normally has to live inside parentheses or use another continuation mechanism. Incan treats an indented leading `.` as fluent-chain continuation, which keeps DataFrame-style APIs readable without adding punctuation that is only there for line continuation.
+
 Short method-call chains remain inline when they fit.
 
 ## Limitations
