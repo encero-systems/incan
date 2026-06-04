@@ -254,15 +254,7 @@ impl Formatter {
                 _ => self.writer.write("<surface_expr>"),
             },
             Expr::VocabBlock(block) => {
-                self.writer.write(&block.keyword);
-                for token in &block.keyword_binding.compound_tokens {
-                    self.writer.write(" ");
-                    self.writer.write(token);
-                }
-                for arg in &block.header_args {
-                    self.writer.write(" ");
-                    self.format_expr(&arg.node);
-                }
+                self.format_vocab_block_header(block);
                 self.writer.writeln(":");
                 self.writer.indent();
                 for stmt in &block.body {

@@ -11394,6 +11394,8 @@ pub def display[T](data: DataSet[T]) -> None:
                             incan_vocab::ClauseSurface::expr("FROM").required(),
                             incan_vocab::ClauseSurface::expr_list("GROUP BY").optional(),
                             incan_vocab::ClauseSurface::expr_list("SELECT").required(),
+                            incan_vocab::ClauseSurface::expr_list("ORDER BY").optional(),
+                            incan_vocab::ClauseSurface::nested_items("WINDOW BY").optional(),
                         ]),
                 ),
             )
@@ -13461,7 +13463,16 @@ def query_block_call(orders: LazyFrame[Order]) -> LazyFrame[Selected]:
             r#"import pub::querykit
 
 def test_dependency_vocab_query_block() -> None:
-    selected: int = query { FROM orders SELECT amount as total }
+    selected: int = query:
+        FROM orders
+        GROUP BY:
+            amount as grouped
+        SELECT:
+            amount as total
+        ORDER BY:
+            amount
+        WINDOW BY:
+            pass
     assert selected == 7
 "#,
         )?;
@@ -13473,6 +13484,15 @@ def test_dependency_vocab_query_block() -> None:
             String::from_utf8_lossy(&fmt_output.stdout),
             String::from_utf8_lossy(&fmt_output.stderr)
         );
+
+        let formatted_source = std::fs::read_to_string(&test_path)?;
+        for clause in ["GROUP BY:", "ORDER BY:", "WINDOW BY:"] {
+            assert!(
+                formatted_source.contains(clause),
+                "expected incan fmt to preserve compound dependency-vocab clause `{clause}`.\nformatted source:\n{}",
+                formatted_source
+            );
+        }
 
         let fmt_output = run_fmt_check(&test_path)?;
         assert!(

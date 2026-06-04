@@ -44,6 +44,20 @@ impl Formatter {
         }
     }
 
+    /// Write a vocab block keyword exactly as the parser resolved it, including compound keyword tokens such as
+    /// `GROUP BY` or `WINDOW BY`, followed by any header expressions.
+    fn format_vocab_block_header(&mut self, block: &VocabBlockStmt) {
+        self.writer.write(&block.keyword);
+        for token in &block.keyword_binding.compound_tokens {
+            self.writer.write(" ");
+            self.writer.write(token);
+        }
+        for arg in &block.header_args {
+            self.writer.write(" ");
+            self.format_expr(&arg.node);
+        }
+    }
+
     /// Format a program.
     fn format_program(&mut self, program: &Program) {
         let mut first = true;

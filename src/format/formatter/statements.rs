@@ -103,16 +103,7 @@ impl Formatter {
                     self.writer.write("@");
                     self.writer.writeln(&decorator.node.path.segments.join("."));
                 }
-                self.writer.write(&vocab_block.keyword);
-                if !vocab_block.header_args.is_empty() {
-                    self.writer.write(" ");
-                    for (idx, arg) in vocab_block.header_args.iter().enumerate() {
-                        if idx > 0 {
-                            self.writer.write(", ");
-                        }
-                        self.format_expr(&arg.node);
-                    }
-                }
+                self.format_vocab_block_header(vocab_block);
                 self.writer.writeln(":");
                 self.writer.indent();
                 for stmt in &vocab_block.body {
