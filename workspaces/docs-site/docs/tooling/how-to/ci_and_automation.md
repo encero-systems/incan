@@ -79,11 +79,20 @@ Use the repository composite action to install an `incan` binary in downstream p
 
 The action builds the compiler from the same Incan repository ref used by the action, caches Cargo build artifacts by default, and adds the built binary directory to `PATH`. The default build profile is `release`; use `profile: debug` when faster compiler builds matter more than runtime performance during CI setup.
 
+The action also installs the `wasm32-wasip1` Rust target by default. Downstream projects that depend on packages with vocab companions need that target during checks such as `incan fmt --check`, because the formatter can need to build or load dependency-provided vocab desugarers in a clean CI checkout. Projects that need a different target set can set the action's `targets` input to the complete list that should be installed with the toolchain.
+
 ```yaml
 - name: Install Incan
   uses: dannys-code-corner/incan/.github/actions/install-incan@main
   with:
     profile: debug
+```
+
+```yaml
+- name: Install Incan
+  uses: dannys-code-corner/incan/.github/actions/install-incan@main
+  with:
+    targets: wasm32-wasip1,x86_64-unknown-linux-musl
 ```
 
 For a complete project workflow, keep project-specific checks in the downstream repository and use the action only for installation:

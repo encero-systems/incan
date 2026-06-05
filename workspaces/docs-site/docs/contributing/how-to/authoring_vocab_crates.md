@@ -351,11 +351,13 @@ Use `DesugarOutput::Statements(...)` when the DSL lowers into host statements an
 
 If you need non-default packaging metadata, register the desugarer with `with_desugarer_registration(...)` and override fields on `DesugarerRegistration` or `DesugarerMetadata`. The default packaging profile targets `wasm32-wasip1` in `release` mode.
 
-When you package a desugarer, make sure your Rust toolchain has that target installed:
+When you package a desugarer locally, make sure your Rust toolchain has that target installed:
 
 ```bash
 rustup target add wasm32-wasip1
 ```
+
+CI jobs that install Incan through the repository's `install-incan` GitHub Action get `wasm32-wasip1` by default, so downstream vocab consumers do not need a separate `rustup target add wasm32-wasip1` step just to run `incan fmt --check`, `incan test`, or `incan build --lib`.
 
 Also export the standard WASM bridge symbols from your companion crate root:
 
@@ -414,7 +416,7 @@ from pub::routekit import routekit_name
 - The activation namespace must match the consumer import spelling after `pub::`.
 - Do not split the public contract across `build.rs`, convention functions, or hand-maintained `vocab_metadata.json` files.
 - Companion crates that package a desugarer must include `cdylib` in `[lib].crate-type`.
-- If desugarer packaging fails with a missing target error, install the required Rust target (`rustup target add wasm32-wasip1`) and rerun `incan build --lib`.
+- If local desugarer packaging fails with a missing target error, install the required Rust target (`rustup target add wasm32-wasip1`) and rerun `incan build --lib`.
 - If desugared code needs Rust crates or stdlib features, declare them in `LibraryManifest` so consumer builds get the same requirements.
 - Block or clause-oriented DSL registrations need a desugarer when they cannot continue through the compiler as ordinary Incan syntax on their own.
 
