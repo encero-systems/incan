@@ -5546,6 +5546,8 @@
       
         
       
+        
+      
     
     
       
@@ -5587,6 +5589,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../release_notes/0_4/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.4
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -5830,6 +5853,7 @@
 <li>precise rules (semantics/type rules/edge cases)</li>
 <li>alternatives considered</li>
 <li>migration/compatibility</li>
+<li>inspectability: metadata, diagnostics, provenance, generated output, or command surface</li>
 <li>acceptance criteria (“done when…”)</li>
 <li>implementation plan + touchpoints (frontend/backend/stdlib/tooling/tests)</li>
 </ul>
@@ -5863,6 +5887,7 @@
 <ul>
 <li>Prefer concrete examples over abstract prose.</li>
 <li>Write the <em>reference-level rules</em> as if someone will implement them.</li>
+<li>Name the inspection surface. A feature should not require reading compiler internals or guessing from generated Rust to understand what happened.</li>
 <li>Call out non-goals explicitly.</li>
 <li>If it’s too big: split it into a sequence of smaller RFCs.</li>
 </ul>

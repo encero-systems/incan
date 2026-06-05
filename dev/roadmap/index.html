@@ -5457,6 +5457,8 @@
       
         
       
+        
+      
     
     
       
@@ -5498,6 +5500,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../release_notes/0_4/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.4
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -5651,11 +5674,44 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#04-release-tooling-and-inspection" class="md-nav__link">
+  <a href="#04-release-tooling-inspection-and-first-contact" class="md-nav__link">
     <span class="md-ellipsis">
-      0.4 Release: tooling and inspection
+      0.4 Release: tooling, inspection, and first contact
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="0.4 Release: tooling, inspection, and first contact">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#release-gating-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      Release-gating work
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#useful-but-evidence-dependent-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      Useful but evidence-dependent work
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explicit-04-exclusions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Explicit 0.4 exclusions
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -5843,11 +5899,44 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#04-release-tooling-and-inspection" class="md-nav__link">
+  <a href="#04-release-tooling-inspection-and-first-contact" class="md-nav__link">
     <span class="md-ellipsis">
-      0.4 Release: tooling and inspection
+      0.4 Release: tooling, inspection, and first contact
     </span>
   </a>
+  
+    <nav class="md-nav" aria-label="0.4 Release: tooling, inspection, and first contact">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#release-gating-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      Release-gating work
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#useful-but-evidence-dependent-work" class="md-nav__link">
+    <span class="md-ellipsis">
+      Useful but evidence-dependent work
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#explicit-04-exclusions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Explicit 0.4 exclusions
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
   
 </li>
         
@@ -6679,32 +6768,54 @@
 <li>Kernel capability proof before 1.0 stabilization.</li>
 </ul>
 <h2 id="release-milestones">Release Milestones<a class="headerlink" href="#release-milestones" title="Permanent link">&para;</a></h2>
-<h3 id="04-release-tooling-and-inspection">0.4 Release: tooling and inspection<a class="headerlink" href="#04-release-tooling-and-inspection" title="Permanent link">&para;</a></h3>
-<p>The 0.4 milestone is the tooling and inspection release. It focuses on:</p>
+<h3 id="04-release-tooling-inspection-and-first-contact">0.4 Release: tooling, inspection, and first contact<a class="headerlink" href="#04-release-tooling-inspection-and-first-contact" title="Permanent link">&para;</a></h3>
+<p>The 0.4 release direction is:</p>
+<blockquote>
+<p>0.3 made real programs credible. 0.4 makes the stack tryable.</p>
+</blockquote>
+<p>The release is deliberately not a broad language/runtime reopening. It should make Incan easier to install, start, inspect, diagnose, and debug without requiring users or agents to clone the repository or reverse-engineer compiler internals. The release succeeds when a new evaluator can install Incan, create a starter project, understand failures through stable diagnostics, inspect generated artifacts and semantic graph facts, and see where Incan fits in the Encero stack.</p>
+<p>0.4 should land in seven stages:</p>
+<ol>
+<li>Scope guard, direction notes, and RFC inspectability prompts.</li>
+<li>Boundary identity and compact release-parity fixtures.</li>
+<li>Test runner and Rust preheat observability.</li>
+<li>Stable machine-readable diagnostics and <code>incan explain</code>.</li>
+<li>Build reports and generated Rust inspection.</li>
+<li>Semantic inspection and codegraph export.</li>
+<li>Installer, starter flow, first-contact docs, and release hardening.</li>
+</ol>
+<h4 id="release-gating-work">Release-gating work<a class="headerlink" href="#release-gating-work" title="Permanent link">&para;</a></h4>
+<p>These issues define the minimum coherent 0.4 release surface:</p>
 <ul>
-<li>canonical SDK install path;</li>
-<li>zero-clone starter flow;</li>
-<li>first-contact docs and positioning;</li>
-<li>stable machine-readable diagnostics;</li>
-<li>diagnostic explain catalog;</li>
-<li>codegraph export for agent/maintainer code intelligence;</li>
-<li>generated Rust and emitted artifact inspection;</li>
-<li>build reports.</li>
-</ul>
-<p>New language/runtime feature work is out of scope unless it directly supports that tooling path.</p>
-<p>Core tracking issues:</p>
-<ul>
-<li><a href="https://github.com/dannys-code-corner/incan/issues/223">#223</a>: 0.4 tooling, inspection, and first-contact umbrella.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/223">#223</a>: umbrella delivery issue for the tooling, inspection, and first-contact release.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/554">#554</a>: release direction notes and scope guard.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/592">#592</a>: RFC inspectability prompts, so new designs name their metadata, diagnostic, provenance, artifact, or command surface.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/760">#760</a>: compact boundary parity fixture suite, focused on the import/package/vocab/test-batch failures that made 0.3 expensive to stabilize.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/699">#699</a>: unified symbol identity across import and package boundaries.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/753">#753</a>: partial presets constructing const metadata values, handled as part of callable identity and metadata parity.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/707">#707</a> and <a href="https://github.com/dannys-code-corner/incan/issues/723">#723</a>: visible test/preheat progress and performance evidence, so long-running phases are explainable instead of silent.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/589">#589</a>: stable machine-readable diagnostics output.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/590">#590</a>: diagnostic explain command and help catalog.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/591">#591</a>: build artifact reports.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/567">#567</a>: generated Rust inspection tooling and quality gates.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/666">#666</a>: RFC 102 semantic inspection umbrella, used to keep the inspection surfaces coherent.</li>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/573">#573</a>: compiler-backed codegraph export for agent and maintainer workflows.</li>
 <li><a href="https://github.com/dannys-code-corner/incan/issues/428">#428</a>: canonical SDK installer and release manifest.</li>
 <li><a href="https://github.com/dannys-code-corner/incan/issues/553">#553</a>: zero-clone starter project flow.</li>
 <li><a href="https://github.com/dannys-code-corner/incan/issues/551">#551</a>: first-contact quickstart and positioning docs.</li>
-<li><a href="https://github.com/dannys-code-corner/incan/issues/554">#554</a>: release direction notes and scope guard.</li>
-<li><a href="https://github.com/dannys-code-corner/incan/issues/573">#573</a>: codegraph export.</li>
-<li><a href="https://github.com/dannys-code-corner/incan/issues/589">#589</a>: stable JSON diagnostics.</li>
-<li><a href="https://github.com/dannys-code-corner/incan/issues/590">#590</a>: diagnostic explain catalog.</li>
-<li><a href="https://github.com/dannys-code-corner/incan/issues/591">#591</a>: build artifact report.</li>
-<li><a href="https://github.com/dannys-code-corner/incan/issues/567">#567</a>: generated Rust inspection tooling and quality gates.</li>
-<li><a href="https://github.com/dannys-code-corner/incan/issues/592">#592</a>: RFC template inspectability prompts, if tiny and opportunistic.</li>
+</ul>
+<h4 id="useful-but-evidence-dependent-work">Useful but evidence-dependent work<a class="headerlink" href="#useful-but-evidence-dependent-work" title="Permanent link">&para;</a></h4>
+<ul>
+<li><a href="https://github.com/dannys-code-corner/incan/issues/697">#697</a>: preheating generated library dependencies into the build cache. This belongs in 0.4 if timing evidence shows it is necessary for the starter/downstream experience; otherwise it should remain a measured optimization rather than a mandatory rewrite.</li>
+</ul>
+<h4 id="explicit-04-exclusions">Explicit 0.4 exclusions<a class="headerlink" href="#explicit-04-exclusions" title="Permanent link">&para;</a></h4>
+<p>The following are design constraints and future lanes, not 0.4 implementation slices unless the milestone is deliberately changed:</p>
+<ul>
+<li>RFC 037 <code>std.web</code> and RFC 066 <code>std.http</code> implementation work.</li>
+<li>Source-local feature metadata beyond maintaining the generated feature inventory for public 0.4 capabilities.</li>
+<li>Rust caller, Rust-hosted consumption, ABI, and backend-replacement architecture.</li>
+<li>Hees.ai, InQL, and Pallay product work beyond proof lanes that validate frozen 0.4 commands.</li>
+<li>Broad language/runtime features that are not required by the installer, starter, diagnostics, inspection, build-report, or codegraph path.</li>
 </ul>
 <h3 id="05-release-backend-foundation-and-heesai-proof-lane">0.5 Release: backend foundation and Hees.ai proof lane<a class="headerlink" href="#05-release-backend-foundation-and-heesai-proof-lane" title="Permanent link">&para;</a></h3>
 <p>The 0.5 milestone begins deprecating the Rust-source backend as the semantic path. It introduces the compiler foundations needed for a backend-neutral middle end:</p>

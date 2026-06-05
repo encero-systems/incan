@@ -5453,6 +5453,8 @@
       
         
       
+        
+      
     
     
       
@@ -5494,6 +5496,27 @@
           </label>
           <ul class="md-nav__list" data-md-scrollfix>
             
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../release_notes/0_4/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    Release 0.4
+  </span>
+  
+
+      </a>
+    </li>
+  
+
               
             
               
@@ -5756,6 +5779,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#inspectability-and-tooling-surface" class="md-nav__link">
+    <span class="md-ellipsis">
+      Inspectability and tooling surface
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#unresolved-questions" class="md-nav__link">
     <span class="md-ellipsis">
       Unresolved questions
@@ -5863,6 +5895,16 @@
 <li><strong>CLI / tooling</strong> — …</li>
 <li><strong>LSP / formatter</strong> — …</li>
 </ul>
+<h2 id="inspectability-and-tooling-surface">Inspectability and tooling surface<a class="headerlink" href="#inspectability-and-tooling-surface" title="Permanent link">&para;</a></h2>
+<p>Name how users, tools, CI, editors, and agents can see what this feature did. Keep this section short, but be concrete.</p>
+<ul>
+<li><strong>Artifact or metadata:</strong> What manifest, checked metadata, report, generated output, runtime registry, or other artifact exposes this behavior?</li>
+<li><strong>Inspection command:</strong> What command or tooling path inspects it? If an existing command already covers it, name that command instead of inventing a new one.</li>
+<li><strong>Diagnostics:</strong> What diagnostic is emitted when the feature is invalid, ambiguous, unsupported, or unsafe?</li>
+<li><strong>Provenance:</strong> Which source span, declaration, package, dependency, or generated-output breadcrumb anchors the behavior?</li>
+<li><strong>Not implicit:</strong> Which behavior is intentionally not hidden magic, inferred side effect, or undocumented generated-Rust detail?</li>
+</ul>
+<p>Tiny clarifications may answer “covered by existing surface X.” Larger language, stdlib, metadata, or tooling features should name a real surface that can be tested without reading compiler internals.</p>
 <h2 id="unresolved-questions">Unresolved questions<a class="headerlink" href="#unresolved-questions" title="Permanent link">&para;</a></h2>
 <p>Open questions to decide before implementation lands.</p>
 <!-- Rename this section to "Design Decisions" once all questions have been resolved. An RFC cannot move from Draft to Planned until no unresolved questions remain. -->
