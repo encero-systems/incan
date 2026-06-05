@@ -99,6 +99,18 @@ Describe which compiler and tooling layers this RFC impacts, and what each layer
 - **CLI / tooling** — …
 - **LSP / formatter** — …
 
+## Inspectability and tooling surface
+
+Name how users, tools, CI, editors, and agents can see what this feature did. Keep this section short, but be concrete.
+
+- **Artifact or metadata:** What manifest, checked metadata, report, generated output, runtime registry, or other artifact exposes this behavior?
+- **Inspection command:** What command or tooling path inspects it? If an existing command already covers it, name that command instead of inventing a new one.
+- **Diagnostics:** What diagnostic is emitted when the feature is invalid, ambiguous, unsupported, or unsafe?
+- **Provenance:** Which source span, declaration, package, dependency, or generated-output breadcrumb anchors the behavior?
+- **Not implicit:** Which behavior is intentionally not hidden magic, inferred side effect, or undocumented generated-Rust detail?
+
+Tiny clarifications may answer “covered by existing surface X.” Larger language, stdlib, metadata, or tooling features should name a real surface that can be tested without reading compiler internals.
+
 ## Unresolved questions
 
 Open questions to decide before implementation lands.

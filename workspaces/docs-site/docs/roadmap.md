@@ -35,34 +35,58 @@ The near-term roadmap is therefore split into six release lanes:
 
 ## Release Milestones
 
-### 0.4 Release: tooling and inspection
+### 0.4 Release: tooling, inspection, and first contact
 
-The 0.4 milestone is the tooling and inspection release. It focuses on:
+The 0.4 release direction is:
 
-- canonical SDK install path;
-- zero-clone starter flow;
-- first-contact docs and positioning;
-- stable machine-readable diagnostics;
-- diagnostic explain catalog;
-- codegraph export for agent/maintainer code intelligence;
-- generated Rust and emitted artifact inspection;
-- build reports.
+> 0.3 made real programs credible. 0.4 makes the stack tryable.
 
-New language/runtime feature work is out of scope unless it directly supports that tooling path.
+The release is deliberately not a broad language/runtime reopening. It should make Incan easier to install, start, inspect, diagnose, and debug without requiring users or agents to clone the repository or reverse-engineer compiler internals. The release succeeds when a new evaluator can install Incan, create a starter project, understand failures through stable diagnostics, inspect generated artifacts and semantic graph facts, and see where Incan fits in the Encero stack.
 
-Core tracking issues:
+0.4 should land in seven stages:
 
-- [#223](https://github.com/dannys-code-corner/incan/issues/223): 0.4 tooling, inspection, and first-contact umbrella.
+1. Scope guard, direction notes, and RFC inspectability prompts.
+2. Boundary identity and compact release-parity fixtures.
+3. Test runner and Rust preheat observability.
+4. Stable machine-readable diagnostics and `incan explain`.
+5. Build reports and generated Rust inspection.
+6. Semantic inspection and codegraph export.
+7. Installer, starter flow, first-contact docs, and release hardening.
+
+#### Release-gating work
+
+These issues define the minimum coherent 0.4 release surface:
+
+- [#223](https://github.com/dannys-code-corner/incan/issues/223): umbrella delivery issue for the tooling, inspection, and first-contact release.
+- [#554](https://github.com/dannys-code-corner/incan/issues/554): release direction notes and scope guard.
+- [#592](https://github.com/dannys-code-corner/incan/issues/592): RFC inspectability prompts, so new designs name their metadata, diagnostic, provenance, artifact, or command surface.
+- [#760](https://github.com/dannys-code-corner/incan/issues/760): compact boundary parity fixture suite, focused on the import/package/vocab/test-batch failures that made 0.3 expensive to stabilize.
+- [#699](https://github.com/dannys-code-corner/incan/issues/699): unified symbol identity across import and package boundaries.
+- [#753](https://github.com/dannys-code-corner/incan/issues/753): partial presets constructing const metadata values, handled as part of callable identity and metadata parity.
+- [#707](https://github.com/dannys-code-corner/incan/issues/707) and [#723](https://github.com/dannys-code-corner/incan/issues/723): visible test/preheat progress and performance evidence, so long-running phases are explainable instead of silent.
+- [#589](https://github.com/dannys-code-corner/incan/issues/589): stable machine-readable diagnostics output.
+- [#590](https://github.com/dannys-code-corner/incan/issues/590): diagnostic explain command and help catalog.
+- [#591](https://github.com/dannys-code-corner/incan/issues/591): build artifact reports.
+- [#567](https://github.com/dannys-code-corner/incan/issues/567): generated Rust inspection tooling and quality gates.
+- [#666](https://github.com/dannys-code-corner/incan/issues/666): RFC 102 semantic inspection umbrella, used to keep the inspection surfaces coherent.
+- [#573](https://github.com/dannys-code-corner/incan/issues/573): compiler-backed codegraph export for agent and maintainer workflows.
 - [#428](https://github.com/dannys-code-corner/incan/issues/428): canonical SDK installer and release manifest.
 - [#553](https://github.com/dannys-code-corner/incan/issues/553): zero-clone starter project flow.
 - [#551](https://github.com/dannys-code-corner/incan/issues/551): first-contact quickstart and positioning docs.
-- [#554](https://github.com/dannys-code-corner/incan/issues/554): release direction notes and scope guard.
-- [#573](https://github.com/dannys-code-corner/incan/issues/573): codegraph export.
-- [#589](https://github.com/dannys-code-corner/incan/issues/589): stable JSON diagnostics.
-- [#590](https://github.com/dannys-code-corner/incan/issues/590): diagnostic explain catalog.
-- [#591](https://github.com/dannys-code-corner/incan/issues/591): build artifact report.
-- [#567](https://github.com/dannys-code-corner/incan/issues/567): generated Rust inspection tooling and quality gates.
-- [#592](https://github.com/dannys-code-corner/incan/issues/592): RFC template inspectability prompts, if tiny and opportunistic.
+
+#### Useful but evidence-dependent work
+
+- [#697](https://github.com/dannys-code-corner/incan/issues/697): preheating generated library dependencies into the build cache. This belongs in 0.4 if timing evidence shows it is necessary for the starter/downstream experience; otherwise it should remain a measured optimization rather than a mandatory rewrite.
+
+#### Explicit 0.4 exclusions
+
+The following are design constraints and future lanes, not 0.4 implementation slices unless the milestone is deliberately changed:
+
+- RFC 037 `std.web` and RFC 066 `std.http` implementation work.
+- Source-local feature metadata beyond maintaining the generated feature inventory for public 0.4 capabilities.
+- Rust caller, Rust-hosted consumption, ABI, and backend-replacement architecture.
+- Hees.ai, InQL, and Pallay product work beyond proof lanes that validate frozen 0.4 commands.
+- Broad language/runtime features that are not required by the installer, starter, diagnostics, inspection, build-report, or codegraph path.
 
 ### 0.5 Release: backend foundation and Hees.ai proof lane
 

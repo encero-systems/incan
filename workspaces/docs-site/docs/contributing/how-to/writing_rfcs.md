@@ -38,6 +38,7 @@ Write an RFC when the *user-facing meaning* of the language changes, for example
     - precise rules (semantics/type rules/edge cases)
     - alternatives considered
     - migration/compatibility
+    - inspectability: metadata, diagnostics, provenance, generated output, or command surface
     - acceptance criteria (“done when…”)
     - implementation plan + touchpoints (frontend/backend/stdlib/tooling/tests)
 
@@ -67,5 +68,6 @@ When an RFC is superseded or rejected, move it into the appropriate `closed/` fo
 
 - Prefer concrete examples over abstract prose.
 - Write the *reference-level rules* as if someone will implement them.
+- Name the inspection surface. A feature should not require reading compiler internals or guessing from generated Rust to understand what happened.
 - Call out non-goals explicitly.
 - If it’s too big: split it into a sequence of smaller RFCs.
