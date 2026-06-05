@@ -159,8 +159,8 @@ impl<'a> Parser<'a> {
             if self.match_keyword(KeywordId::With) {
                 features = self.string_list()?;
             }
-        } else if self.check_keyword(KeywordId::With) {
-            return Err(errors::rust_import_features_require_version(self.current_span()));
+        } else if self.match_keyword(KeywordId::With) {
+            features = self.string_list()?;
         }
 
         Ok((version, features))

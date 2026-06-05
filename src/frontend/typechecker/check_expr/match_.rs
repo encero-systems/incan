@@ -49,21 +49,39 @@ impl TypeChecker {
         }
     }
 
-    /// Resolve the member type targeted by a union type pattern.
-    fn union_pattern_member_type(&self, expected_ty: &ResolvedType, name: &str) -> Option<ResolvedType> {
+    /// Resolve the semantic type captured by a union type pattern.
+    ///
+    /// A constructor pattern over a union may name either one concrete member (`A(value)`) or a transparent alias whose
+    /// expanded union members are a subset of the scrutinee union (`Base(value)` where `Input = Union[Base, int]`).
+    fn union_pattern_target_type(&self, expected_ty: &ResolvedType, name: &str) -> Option<ResolvedType> {
         let target_ty = self.expand_type_aliases(resolve_type(&Type::Simple(name.to_string()), &self.symbols));
-        let members = if let Some(members) = expected_ty.union_members() {
-            members
-        } else if let Some(inner) = expected_ty.option_inner_type() {
-            inner.union_members()?
-        } else {
-            return None;
-        };
+        let members = Self::expected_union_members(expected_ty)?;
+
+        if let Some(target_members) = target_ty.union_members()
+            && target_members.iter().all(|target| {
+                members
+                    .iter()
+                    .any(|member| self.match_union_member_matches(member, target))
+            })
+        {
+            return Some(union_ty(target_members.to_vec()));
+        }
 
         members
             .iter()
             .find(|member| self.types_compatible(member, &target_ty) && self.types_compatible(&target_ty, member))
             .cloned()
+    }
+
+    /// Return the active union member set for a match subject, including `Option[Union[...]]`.
+    fn expected_union_members(expected_ty: &ResolvedType) -> Option<&[ResolvedType]> {
+        if let Some(members) = expected_ty.union_members() {
+            Some(members)
+        } else if let Some(inner) = expected_ty.option_inner_type() {
+            inner.union_members()
+        } else {
+            None
+        }
     }
 
     /// Type-check a `match` expression and return its resolved type.
@@ -111,6 +129,11 @@ impl TypeChecker {
                 }
             }
 
+            if let Some(guard) = &arm.node.guard {
+                let guard_ty = self.check_expr(guard);
+                self.validate_truthiness_condition(&guard_ty, guard.span);
+            }
+
             let arm_ty = match &arm.node.body {
                 MatchBody::Expr(e) => self.check_expr(e),
                 MatchBody::Block(stmts) => {
@@ -124,7 +147,9 @@ impl TypeChecker {
 
             self.symbols.exit_scope();
 
-            if let Some(remaining) = remaining_union_members.as_mut() {
+            if arm.node.guard.is_none()
+                && let Some(remaining) = remaining_union_members.as_mut()
+            {
                 self.remove_covered_union_members(remaining, &arm.node.pattern, &subject_ty);
             }
         }
@@ -157,9 +182,17 @@ impl TypeChecker {
             Pattern::Constructor(name, _) => {
                 let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.as_str());
                 if enum_qualifier_opt.is_none()
-                    && let Some(member_ty) = self.union_pattern_member_type(subject_ty, ctor_name)
+                    && let Some(member_ty) = self.union_pattern_target_type(subject_ty, ctor_name)
                 {
-                    remaining.retain(|member| !self.match_union_member_matches(member, &member_ty));
+                    if let Some(target_members) = member_ty.union_members() {
+                        remaining.retain(|member| {
+                            !target_members
+                                .iter()
+                                .any(|target| self.match_union_member_matches(member, target))
+                        });
+                    } else {
+                        remaining.retain(|member| !self.match_union_member_matches(member, &member_ty));
+                    }
                 }
             }
             Pattern::Or(alternatives) => {
@@ -203,7 +236,7 @@ impl TypeChecker {
             Pattern::Constructor(name, sub_patterns) => {
                 let (enum_qualifier_opt, ctor_name) = Self::split_pattern_constructor_name(name.as_str());
                 if enum_qualifier_opt.is_none()
-                    && let Some(member_ty) = self.union_pattern_member_type(expected_ty, ctor_name)
+                    && let Some(member_ty) = self.union_pattern_target_type(expected_ty, ctor_name)
                 {
                     let mut positional = None;
                     for arg in sub_patterns {
@@ -367,30 +400,8 @@ impl TypeChecker {
                 );
                 let rust_resolution =
                     self.rust_enum_constructor_payload_types(expected_ty, name.as_str(), positional_count);
-                let field_types: Option<Vec<ResolvedType>> = incan_resolution
-                    .clone()
-                    .or_else(|| {
-                        self.symbols.all_symbols().iter().rev().find_map(|sym| {
-                            if sym.name != variant_name {
-                                return None;
-                            }
-                            if let SymbolKind::Variant(info) = &sym.kind {
-                                if self.match_variant_symbol_applies_to_scrutinee(
-                                    expected_ty,
-                                    info,
-                                    positional_count,
-                                    enum_qualifier_opt,
-                                ) {
-                                    Some(info.fields.clone())
-                                } else {
-                                    None
-                                }
-                            } else {
-                                None
-                            }
-                        })
-                    })
-                    .or_else(|| match rust_resolution.as_ref() {
+                let field_types: Option<Vec<ResolvedType>> =
+                    incan_resolution.clone().or_else(|| match rust_resolution.as_ref() {
                         Some(RustEnumPatternResolution::PayloadTypes(fields)) => Some(fields.clone()),
                         Some(RustEnumPatternResolution::QualifierMismatch) | None => None,
                     });
@@ -587,40 +598,11 @@ impl TypeChecker {
         }
     }
 
-    /// Whether a [`SymbolKind::Variant`] from the symbol table actually describes this match scrutinee.
-    ///
-    /// rust-inspect metadata and library manifests register variant names (e.g. `Root`) at module scope. A `rusttype`
-    /// alias such as `PlanRel` uses a **different** Incan name than the backing Rust enum (`Sender`), so we must not
-    /// let an unrelated `Root` stub with empty payload metadata shadow [`Self::rust_enum_constructor_payload_types`],
-    /// or payload bindings in the pattern are never registered and the arm body sees `Unknown symbol`. Source enums can
-    /// also reuse variant names across distinct enums, so qualified patterns must check the enum name in addition to
-    /// the short variant symbol.
-    fn match_variant_symbol_applies_to_scrutinee(
-        &self,
-        expected_ty: &ResolvedType,
-        info: &VariantInfo,
-        positional_count: usize,
-        enum_qualifier_opt: Option<&str>,
-    ) -> bool {
-        if positional_count > info.fields.len() {
-            return false;
-        }
-        if enum_qualifier_opt.is_some_and(|qualifier| qualifier != info.enum_name) {
-            return false;
-        }
-        match expected_ty {
-            ResolvedType::Named(type_name) | ResolvedType::Generic(type_name, _) => info.enum_name == *type_name,
-            // Scrutinee is a bare Rust path: module-level variant symbols are Incan-/manifest-scoped names.
-            ResolvedType::RustPath(_) => false,
-            _ => false,
-        }
-    }
-
     /// Payload types for a source-defined enum variant, using the enum type's own metadata.
     ///
     /// Qualified patterns such as `Color.Red` should not depend on a module-level `Red` symbol being importable or
     /// winning same-scope shadowing. The scrutinee already tells us which enum is being matched, so resolve the
-    /// variant from that enum's table first and reserve bare variant symbols as a compatibility fallback.
+    /// variant from that enum's table.
     fn incan_enum_constructor_payload_types(
         &self,
         expected_ty: &ResolvedType,
@@ -635,7 +617,7 @@ impl TypeChecker {
         if enum_qualifier_opt.is_some_and(|qualifier| qualifier != enum_name) {
             return None;
         }
-        let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name) else {
+        let Some(TypeInfo::Enum(enum_info)) = self.lookup_semantic_type_info(enum_name) else {
             return None;
         };
         let canonical_variant = enum_info
@@ -646,22 +628,15 @@ impl TypeChecker {
         if !enum_info.variants.iter().any(|variant| variant == canonical_variant) {
             return None;
         }
-        let Some(symbol) = self
-            .symbols
-            .all_symbols()
-            .iter()
-            .rev()
-            .find(|sym| sym.name == canonical_variant || sym.name == variant_name)
-        else {
-            return Some(Vec::new());
-        };
-        let SymbolKind::Variant(info) = &symbol.kind else {
-            return Some(Vec::new());
-        };
-        if info.enum_name != *enum_name || positional_count > info.fields.len() {
+        let fields = enum_info
+            .variant_fields
+            .get(canonical_variant)
+            .cloned()
+            .unwrap_or_default();
+        if positional_count > fields.len() {
             return None;
         }
-        Some(info.fields.clone())
+        Some(fields)
     }
 
     /// Tuple-variant payload types for `match` patterns on Rust-backed enum surfaces.
@@ -766,6 +741,9 @@ impl TypeChecker {
             let mut has_wildcard = false;
 
             for arm in arms {
+                if arm.node.guard.is_some() {
+                    continue;
+                }
                 self.collect_pattern_coverage(&arm.node.pattern.node, subject_ty, &mut covered, &mut has_wildcard);
             }
 
@@ -800,8 +778,14 @@ impl TypeChecker {
                         .option_inner_type()
                         .is_some_and(|inner| inner.union_members().is_some())
                 {
-                    self.expand_type_aliases(resolve_type(&Type::Simple(name.clone()), &self.symbols))
-                        .to_string()
+                    let target_ty = self.expand_type_aliases(resolve_type(&Type::Simple(name.clone()), &self.symbols));
+                    if let Some(target_members) = target_ty.union_members() {
+                        for member in target_members {
+                            covered.insert(member.to_string());
+                        }
+                        return;
+                    }
+                    target_ty.to_string()
                 } else if name.contains("::") {
                     name.split("::").last().unwrap_or(name).to_string()
                 } else {

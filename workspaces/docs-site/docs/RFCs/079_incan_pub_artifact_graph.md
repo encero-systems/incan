@@ -207,6 +207,8 @@ The graph should represent advisories and yanking as relationships rather than o
 
 RFC 034 owns core package registry semantics. This RFC extends the registry's conceptual model from package versions to related artifact nodes and relationships.
 
+This RFC inherits RFC 034's amended package artifact boundary: generated Rust source is not the public package compatibility path. Artifact graph nodes may describe generated implementation artifacts for inspection, provenance, compatibility reports, or migration, but package semantics must remain grounded in Incan manifests, semantic metadata, ABI/package metadata, and registry artifact relationships.
+
 ### Relationship to RFC 074 and RFC 075
 
 Template, starter, and capability descriptors are local tooling contracts. The graph can distribute and index them, but local lifecycle tooling owns rendering and mutation planning.

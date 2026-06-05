@@ -3,7 +3,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use crate::cli::commands::common::{
-    resolve_stdlib_module_source_path, uses_iterator_adapter_surface, uses_result_combinator_surface,
+    resolve_stdlib_module_source_path, topologically_sort_modules, uses_iterator_adapter_surface,
+    uses_result_combinator_surface,
 };
 use crate::cli::prelude::ParsedModule;
 use crate::frontend::ast::Program;
@@ -24,7 +25,7 @@ fn queue_incan_stdlib_source_module(
     incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
-) -> Result<(), String> {
+) -> Result<Option<PathBuf>, String> {
     let stdlib_key = module_path.join(".");
     let source_path = if let Some(cached_path) = incan_source_stdlib_module_paths.get(&stdlib_key) {
         cached_path.clone()
@@ -37,9 +38,9 @@ fn queue_incan_stdlib_source_module(
     module_segments.extend(module_path.iter().skip(1).cloned());
     let module_name = module_segments.join("_");
     if !processed.contains(&source_path) {
-        to_process.push((source_path, module_name, module_segments));
+        to_process.push((source_path.clone(), module_name, module_segments));
     }
-    Ok(())
+    Ok(Some(source_path))
 }
 
 /// Queue one canonical source-import resolution for test dependency collection.
@@ -48,26 +49,31 @@ fn queue_resolved_source_import(
     incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
-) -> Result<(), String> {
+) -> Result<Option<PathBuf>, String> {
     match resolution {
         SourceModuleImportResolution::Stdlib { module_path } => {
             if stdlib::stdlib_stub_path(&module_path).is_some() {
-                queue_incan_stdlib_source_module(
+                return queue_incan_stdlib_source_module(
                     &module_path,
                     incan_source_stdlib_module_paths,
                     processed,
                     to_process,
-                )?;
+                );
             }
         }
         SourceModuleImportResolution::Local(module_ref) => {
             if !processed.contains(&module_ref.file_path) {
-                to_process.push((module_ref.file_path, module_ref.module_name, module_ref.path_segments));
+                to_process.push((
+                    module_ref.file_path.clone(),
+                    module_ref.module_name,
+                    module_ref.path_segments,
+                ));
             }
+            return Ok(Some(module_ref.file_path));
         }
         SourceModuleImportResolution::External => {}
     }
-    Ok(())
+    Ok(None)
 }
 
 /// Queue implicit source stdlib helper modules that generated Rust may reference without a source import.
@@ -76,9 +82,10 @@ fn queue_implicit_stdlib_helpers(
     incan_source_stdlib_module_paths: &mut HashMap<String, PathBuf>,
     processed: &HashSet<PathBuf>,
     to_process: &mut Vec<(PathBuf, String, Vec<String>)>,
-) -> Result<(), String> {
-    if uses_iterator_adapter_surface(program) {
-        queue_incan_stdlib_source_module(
+) -> Result<Vec<PathBuf>, String> {
+    let mut queued = Vec::new();
+    if uses_iterator_adapter_surface(program)
+        && let Some(path) = queue_incan_stdlib_source_module(
             &[
                 stdlib::STDLIB_ROOT.to_string(),
                 "derives".to_string(),
@@ -87,17 +94,26 @@ fn queue_implicit_stdlib_helpers(
             incan_source_stdlib_module_paths,
             processed,
             to_process,
-        )?;
+        )?
+    {
+        queued.push(path);
     }
-    if uses_result_combinator_surface(program) {
-        queue_incan_stdlib_source_module(
+    if uses_result_combinator_surface(program)
+        && let Some(path) = queue_incan_stdlib_source_module(
             &[stdlib::STDLIB_ROOT.to_string(), "result".to_string()],
             incan_source_stdlib_module_paths,
             processed,
             to_process,
-        )?;
+        )?
+    {
+        queued.push(path);
     }
-    Ok(())
+    Ok(queued)
+}
+
+/// Return the stable key used for dependency graph edges.
+fn dependency_edge_key(path: &Path) -> String {
+    path.to_string_lossy().to_string()
 }
 
 /// Collect source modules referenced by a test file's imports.
@@ -118,6 +134,7 @@ pub(crate) fn collect_source_modules_for_test(
     let mut processed = HashSet::new();
     let mut to_process: Vec<(PathBuf, String, Vec<String>)> = Vec::new();
     let mut incan_source_stdlib_module_paths: HashMap<String, PathBuf> = HashMap::new();
+    let mut dependency_edges: HashMap<String, HashSet<String>> = HashMap::new();
 
     queue_implicit_stdlib_helpers(
         test_ast,
@@ -128,7 +145,7 @@ pub(crate) fn collect_source_modules_for_test(
 
     // ---- Walk test AST to find user module imports ----
     for resolved in resolve_program_source_imports(test_ast, source_root, Some(source_root)) {
-        queue_resolved_source_import(
+        let _ = queue_resolved_source_import(
             resolved.resolution,
             &mut incan_source_stdlib_module_paths,
             &processed,
@@ -142,6 +159,8 @@ pub(crate) fn collect_source_modules_for_test(
             continue;
         }
         processed.insert(file_path.clone());
+        let file_key = dependency_edge_key(&file_path);
+        dependency_edges.entry(file_key.clone()).or_default();
 
         let source = fs::read_to_string(&file_path)
             .map_err(|e| format!("Failed to read source module '{}': {}", file_path.display(), e))?;
@@ -184,17 +203,29 @@ pub(crate) fn collect_source_modules_for_test(
             eprint!("{}", diagnostics::format_error(&fp, &source, warn));
         }
 
-        queue_implicit_stdlib_helpers(&ast, &mut incan_source_stdlib_module_paths, &processed, &mut to_process)?;
+        for dependency_path in
+            queue_implicit_stdlib_helpers(&ast, &mut incan_source_stdlib_module_paths, &processed, &mut to_process)?
+        {
+            dependency_edges
+                .entry(file_key.clone())
+                .or_default()
+                .insert(dependency_edge_key(&dependency_path));
+        }
 
         // Walk this module's imports for transitive dependencies.
         let current_base = file_path.parent().unwrap_or(source_root);
         for resolved in resolve_program_source_imports(&ast, current_base, Some(source_root)) {
-            queue_resolved_source_import(
+            if let Some(dependency_path) = queue_resolved_source_import(
                 resolved.resolution,
                 &mut incan_source_stdlib_module_paths,
                 &processed,
                 &mut to_process,
-            )?;
+            )? {
+                dependency_edges
+                    .entry(file_key.clone())
+                    .or_default()
+                    .insert(dependency_edge_key(&dependency_path));
+            }
         }
 
         modules.push(ParsedModule {
@@ -206,7 +237,7 @@ pub(crate) fn collect_source_modules_for_test(
         });
     }
 
-    Ok(modules)
+    topologically_sort_modules(modules, &dependency_edges).map_err(|err| err.message)
 }
 
 #[cfg(test)]
@@ -254,6 +285,39 @@ mod tests {
             vec!["dataset".to_string(), "ops".to_string()]
         );
 
+        Ok(())
+    }
+
+    #[test]
+    fn test_runner_orders_source_dependencies_before_dependents() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(src_dir.join("helper.incn"), "pub def target() -> int:\n    return 1\n")?;
+        std::fs::write(
+            src_dir.join("functions.incn"),
+            "from helper import target as target_builder\n\npub public_target = alias target_builder\n",
+        )?;
+
+        let test_source = "from functions import public_target\n";
+        let tokens = lexer::lex(test_source).map_err(|errs| errs[0].message.clone())?;
+        let ast = parser::parse_with_context(&tokens, Some("tests/test_alias.incn"), None)
+            .map_err(|errs| errs[0].message.clone())?;
+
+        let modules = collect_source_modules_for_test(&ast, &src_dir, None, None, None)?;
+        let helper_idx = modules
+            .iter()
+            .position(|module| module.file_path.ends_with("helper.incn"))
+            .ok_or("expected helper.incn to be collected")?;
+        let functions_idx = modules
+            .iter()
+            .position(|module| module.file_path.ends_with("functions.incn"))
+            .ok_or("expected functions.incn to be collected")?;
+
+        assert!(
+            helper_idx < functions_idx,
+            "test runner should order dependency modules before dependent modules"
+        );
         Ok(())
     }
 

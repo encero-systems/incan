@@ -1,0 +1,340 @@
+{
+  "files": [
+    {
+      "path": "crates/incan_core/src/interop/coercions.rs",
+      "category": "registry-backed Rust-boundary coercion policy",
+      "expected_count": 39,
+      "expected_fingerprint": "0x631ac11a12a89439"
+    },
+    {
+      "path": "crates/incan_core/src/interop/extension_traits.rs",
+      "category": "metadata-free Rust extension-trait fallback inventory",
+      "expected_count": 8,
+      "expected_fingerprint": "0x86a8087fbbe1db3b"
+    },
+    {
+      "path": "crates/incan_core/src/interop/metadata.rs",
+      "category": "registry-backed Rust collection metadata policy",
+      "expected_count": 14,
+      "expected_fingerprint": "0x5da489b106a16ae2"
+    },
+    {
+      "path": "crates/rust_inspect/src/cache.rs",
+      "category": "rust-inspect cache migration compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x57ff753cfc22d019"
+    },
+    {
+      "path": "crates/rust_inspect/src/cache_timing.rs",
+      "category": "rust-inspect timing environment compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0xdc8309b97ee19675"
+    },
+    {
+      "path": "crates/rust_inspect/src/extractor.rs",
+      "category": "rust-inspect display-shape normalization",
+      "expected_count": 18,
+      "expected_fingerprint": "0xfdfffcbe8f5fc285"
+    },
+    {
+      "path": "crates/rust_inspect/src/lib.rs",
+      "category": "rust-inspect environment and unknown-display normalization",
+      "expected_count": 2,
+      "expected_fingerprint": "0xd1080e9767292290"
+    },
+    {
+      "path": "src/backend/ir/codegen.rs",
+      "category": "codegen facade compatibility and Rust serde fallback",
+      "expected_count": 4,
+      "expected_fingerprint": "0xcedb21689b86932d"
+    },
+    {
+      "path": "src/backend/ir/codegen/dependency_metadata.rs",
+      "category": "dependency metadata compatibility and web route preservation",
+      "expected_count": 2,
+      "expected_fingerprint": "0x9d1944407ac71f29"
+    },
+    {
+      "path": "src/backend/ir/codegen/serde_activation.rs",
+      "category": "serde activation compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0x2b22f0e7dbaebdbd"
+    },
+    {
+      "path": "src/backend/ir/conversions.rs",
+      "category": "central argument conversion shape checks",
+      "expected_count": 2,
+      "expected_fingerprint": "0xc102811ab1ea1d38"
+    },
+    {
+      "path": "src/backend/ir/emit/decls/functions.rs",
+      "category": "callable and Rust macro emission compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x99dc282326807784"
+    },
+    {
+      "path": "src/backend/ir/emit/decls/impls.rs",
+      "category": "generated stdlib JSON/newtype helper retention",
+      "expected_count": 4,
+      "expected_fingerprint": "0x3fc0034bdf2e07be"
+    },
+    {
+      "path": "src/backend/ir/emit/decls/mod.rs",
+      "category": "generated stdlib import path recognition",
+      "expected_count": 1,
+      "expected_fingerprint": "0x1c3e7de164e70908"
+    },
+    {
+      "path": "src/backend/ir/emit/decls/structures.rs",
+      "category": "derive macro emission compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0xd279ee037e30c621"
+    },
+    {
+      "path": "src/backend/ir/emit/expressions/calls.rs",
+      "category": "testing helper and public-module emission compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0x2505362ad25e41c1"
+    },
+    {
+      "path": "src/backend/ir/emit/expressions/comprehensions.rs",
+      "category": "dict view compatibility emission",
+      "expected_count": 1,
+      "expected_fingerprint": "0x79dfdfd491f691d1"
+    },
+    {
+      "path": "src/backend/ir/emit/expressions/indexing.rs",
+      "category": "callable source-name metadata emission",
+      "expected_count": 1,
+      "expected_fingerprint": "0x87dd19d1c7e84652"
+    },
+    {
+      "path": "src/backend/ir/emit/expressions/methods.rs",
+      "category": "quarantined metadata-free method compatibility",
+      "expected_count": 9,
+      "expected_fingerprint": "0x2bda7f88a3c65087"
+    },
+    {
+      "path": "src/backend/ir/emit/expressions/methods/fast_paths.rs",
+      "category": "registered method fast-path receiver typing",
+      "expected_count": 2,
+      "expected_fingerprint": "0xd121f2f287b25f51"
+    },
+    {
+      "path": "src/backend/ir/emit/expressions/mod.rs",
+      "category": "numeric emission compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x7ab516025dc0a176"
+    },
+    {
+      "path": "src/backend/ir/emit/mod.rs",
+      "category": "Rust path segment escaping compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x90822765d714d957"
+    },
+    {
+      "path": "src/backend/ir/emit/program.rs",
+      "category": "callable source-name metadata use analysis",
+      "expected_count": 2,
+      "expected_fingerprint": "0x497886b639dd72c9"
+    },
+    {
+      "path": "src/backend/ir/emit/types.rs",
+      "category": "Rust path and static trait emission compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x5656f96237432bea"
+    },
+    {
+      "path": "src/backend/ir/expr.rs",
+      "category": "known iterator method enum classification",
+      "expected_count": 23,
+      "expected_fingerprint": "0x5c7ee976092c9c9a"
+    },
+    {
+      "path": "src/backend/ir/lower/decl/functions.rs",
+      "category": "generic callable source-name lowering compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0xc94cea987d050f33"
+    },
+    {
+      "path": "src/backend/ir/lower/decl/helpers.rs",
+      "category": "primitive, derive, and Rust namespace lowering compatibility",
+      "expected_count": 10,
+      "expected_fingerprint": "0xb30118abb73ddcee"
+    },
+    {
+      "path": "src/backend/ir/lower/decl/methods.rs",
+      "category": "callable, JSON, and iterator method lowering compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0xbcf2d12b24fabc65"
+    },
+    {
+      "path": "src/backend/ir/lower/decl/mod.rs",
+      "category": "derive const lowering compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x41b88bc9914484bf"
+    },
+    {
+      "path": "src/backend/ir/lower/decl/traits.rs",
+      "category": "iterator trait method lowering compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x38db8c81d2ab19aa"
+    },
+    {
+      "path": "src/backend/ir/lower/expr/calls.rs",
+      "category": "public dependency call/default lowering and assert-raises policy",
+      "expected_count": 5,
+      "expected_fingerprint": "0x2a9295afdba175d8"
+    },
+    {
+      "path": "src/backend/ir/lower/expr/mod.rs",
+      "category": "method, public dependency, and stdlib lowering compatibility",
+      "expected_count": 12,
+      "expected_fingerprint": "0x96f377a44b0b8aa2"
+    },
+    {
+      "path": "src/backend/ir/lower/mod.rs",
+      "category": "newtype, derive, and validation lowering compatibility",
+      "expected_count": 5,
+      "expected_fingerprint": "0xefce60e6312a0c70"
+    },
+    {
+      "path": "src/backend/ir/lower/stmt.rs",
+      "category": "placeholder assignment lowering compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0xae028e0ef66ceaa2"
+    },
+    {
+      "path": "src/backend/ir/lower/types.rs",
+      "category": "lowered primitive and type-token spelling compatibility",
+      "expected_count": 9,
+      "expected_fingerprint": "0xeeb0ca6fafb43da6"
+    },
+    {
+      "path": "src/backend/ir/reference_shape.rs",
+      "category": "central Rust reference-shape compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x22d77392903f6589"
+    },
+    {
+      "path": "src/backend/ir/trait_bound_inference.rs",
+      "category": "clone/as_ref/self and reflection trait-bound inference compatibility",
+      "expected_count": 4,
+      "expected_fingerprint": "0x7b05117f4d9db0da"
+    },
+    {
+      "path": "src/cli/commands/common.rs",
+      "category": "project materialization and dependency compatibility",
+      "expected_count": 5,
+      "expected_fingerprint": "0x3990288339d2b3b3"
+    },
+    {
+      "path": "src/dependency_resolver.rs",
+      "category": "dependency resolver registry and package-alias policy",
+      "expected_count": 18,
+      "expected_fingerprint": "0x12d230c26526632c"
+    },
+    {
+      "path": "src/frontend/testing_markers.rs",
+      "category": "metadata-loaded testing marker inventory",
+      "expected_count": 13,
+      "expected_fingerprint": "0x4d4acefa2e275e14"
+    },
+    {
+      "path": "src/frontend/typechecker/check_decl.rs",
+      "category": "declaration-level stdlib and derive compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0xe83eca1f5db018d2"
+    },
+    {
+      "path": "src/frontend/typechecker/check_expr/access.rs",
+      "category": "method/type access surface classification",
+      "expected_count": 45,
+      "expected_fingerprint": "0x04cd6395cd9125c3"
+    },
+    {
+      "path": "src/frontend/typechecker/check_expr/basics.rs",
+      "category": "basic expression Rust/stdlib escape compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0xffdd8d7881dba8e2"
+    },
+    {
+      "path": "src/frontend/typechecker/check_expr/calls.rs",
+      "category": "enum constructor member compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x0582b4a26a7a5b97"
+    },
+    {
+      "path": "src/frontend/typechecker/check_expr/calls/constructors.rs",
+      "category": "constructor named-argument compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0xa6598f835bad7c2e"
+    },
+    {
+      "path": "src/frontend/typechecker/check_expr/calls/rust_boundary.rs",
+      "category": "Rust-boundary borrowed display recognition",
+      "expected_count": 2,
+      "expected_fingerprint": "0x2c33eb1e16ffe7d2"
+    },
+    {
+      "path": "src/frontend/typechecker/check_expr/control_flow.rs",
+      "category": "async guard method control-flow policy",
+      "expected_count": 3,
+      "expected_fingerprint": "0x2893f90138d3e39f"
+    },
+    {
+      "path": "src/frontend/typechecker/check_expr/mod.rs",
+      "category": "expression-level pub/rust namespace compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0x4241a4c501ebe60c"
+    },
+    {
+      "path": "src/frontend/typechecker/check_stmt.rs",
+      "category": "statement-level runtime exception compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0xe98b9ff171b2c549"
+    },
+    {
+      "path": "src/frontend/typechecker/collect.rs",
+      "category": "derive and public-module collection compatibility",
+      "expected_count": 2,
+      "expected_fingerprint": "0x50547807f8d5d3bb"
+    },
+    {
+      "path": "src/frontend/typechecker/collect/decorators.rs",
+      "category": "decorator and Rust module collection compatibility",
+      "expected_count": 3,
+      "expected_fingerprint": "0x380186b8c04e5753"
+    },
+    {
+      "path": "src/frontend/typechecker/collect/stdlib_imports.rs",
+      "category": "stdlib import and extension-trait compatibility",
+      "expected_count": 8,
+      "expected_fingerprint": "0x3dbd625f6b96862d"
+    },
+    {
+      "path": "src/frontend/typechecker/const_eval.rs",
+      "category": "Rust module const classification compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x654cd60a41fc2f2f"
+    },
+    {
+      "path": "src/frontend/typechecker/mod.rs",
+      "category": "Rust display type parsing and stdlib derive compatibility",
+      "expected_count": 34,
+      "expected_fingerprint": "0xa66345b30dd9c215"
+    },
+    {
+      "path": "src/frontend/typechecker/stdlib_loader.rs",
+      "category": "stdlib loader primitive compatibility",
+      "expected_count": 6,
+      "expected_fingerprint": "0x12908cd63ee9cda3"
+    },
+    {
+      "path": "src/frontend/typechecker/validate_rust_module.rs",
+      "category": "Rust module validation compatibility",
+      "expected_count": 1,
+      "expected_fingerprint": "0x3814274efdb9fae2"
+    }
+  ]
+}

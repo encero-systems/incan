@@ -70,6 +70,12 @@ impl<'a> IrEmitter<'a> {
             IrStmtKind::Match { scrutinee, arms } => {
                 Self::rewrite_borrowed_param_types_in_expr(scrutinee, borrowed);
                 for arm in arms {
+                    for binding in &mut arm.bindings {
+                        Self::rewrite_borrowed_param_types_in_expr(&mut binding.value, borrowed);
+                        if let Some(guard_value) = &mut binding.guard_value {
+                            Self::rewrite_borrowed_param_types_in_expr(guard_value, borrowed);
+                        }
+                    }
                     if let Some(guard) = &mut arm.guard {
                         Self::rewrite_borrowed_param_types_in_expr(guard, borrowed);
                     }
@@ -121,6 +127,12 @@ impl<'a> IrEmitter<'a> {
                 for arg in args {
                     Self::rewrite_borrowed_param_types_in_expr(&mut arg.expr, borrowed);
                 }
+            }
+            IrExprKind::RegisterCallableName { callable, .. } => {
+                Self::rewrite_borrowed_param_types_in_expr(callable, borrowed);
+            }
+            IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+                Self::rewrite_borrowed_param_types_in_expr(value, borrowed);
             }
             IrExprKind::BuiltinCall { args, .. } => {
                 for arg in args {
@@ -238,6 +250,12 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::Match { scrutinee, arms } => {
                 Self::rewrite_borrowed_param_types_in_expr(scrutinee, borrowed);
                 for arm in arms {
+                    for binding in &mut arm.bindings {
+                        Self::rewrite_borrowed_param_types_in_expr(&mut binding.value, borrowed);
+                        if let Some(guard_value) = &mut binding.guard_value {
+                            Self::rewrite_borrowed_param_types_in_expr(guard_value, borrowed);
+                        }
+                    }
                     if let Some(guard) = &mut arm.guard {
                         Self::rewrite_borrowed_param_types_in_expr(guard, borrowed);
                     }
@@ -274,7 +292,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Format { parts } => {
                 for part in parts {
-                    if let super::super::super::expr::FormatPart::Expr(expr) = part {
+                    if let super::super::super::expr::FormatPart::Expr { expr, .. } = part {
                         Self::rewrite_borrowed_param_types_in_expr(expr, borrowed);
                     }
                 }
@@ -292,6 +310,8 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::StaticRead { .. }
             | IrExprKind::StaticBinding { .. }
             | IrExprKind::AssociatedFunction { .. }
+            | IrExprKind::TypeToken { .. }
+            | IrExprKind::FunctionItem { .. }
             | IrExprKind::Literal(_)
             | IrExprKind::FieldsList(_)
             | IrExprKind::SerdeToJson
@@ -1257,6 +1277,13 @@ impl<'a> IrEmitter<'a> {
         let mut arm_shadowed = shadowed_names.clone();
         Self::collect_pattern_used_names(&arm.pattern, param_names, &arm_shadowed, used_names);
         Self::shadow_pattern_bindings(&arm.pattern, &mut arm_shadowed);
+        for binding in &arm.bindings {
+            Self::collect_expr_used_names(&binding.value, param_names, &arm_shadowed, used_names);
+            if let Some(guard_value) = &binding.guard_value {
+                Self::collect_expr_used_names(guard_value, param_names, &arm_shadowed, used_names);
+            }
+            arm_shadowed.insert(binding.name.clone());
+        }
         if let Some(guard) = &arm.guard {
             Self::collect_expr_used_names(guard, param_names, &arm_shadowed, used_names);
         }
@@ -1297,7 +1324,13 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::Var { name, .. } | IrExprKind::StaticRead { name } | IrExprKind::StaticBinding { name } => {
                 Self::note_param_use(name, param_names, shadowed_names, used_names);
             }
-            IrExprKind::AssociatedFunction { .. } => {}
+            IrExprKind::AssociatedFunction { .. } | IrExprKind::FunctionItem { .. } => {}
+            IrExprKind::RegisterCallableName { callable, .. } => {
+                Self::collect_expr_used_names(callable, param_names, shadowed_names, used_names);
+            }
+            IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+                Self::collect_expr_used_names(value, param_names, shadowed_names, used_names);
+            }
             IrExprKind::BinOp { left, right, .. } => {
                 Self::collect_expr_used_names(left, param_names, shadowed_names, used_names);
                 Self::collect_expr_used_names(right, param_names, shadowed_names, used_names);
@@ -1483,7 +1516,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Format { parts } => {
                 for part in parts {
-                    if let super::super::super::expr::FormatPart::Expr(expr) = part {
+                    if let super::super::super::expr::FormatPart::Expr { expr, .. } = part {
                         Self::collect_expr_used_names(expr, param_names, shadowed_names, used_names);
                     }
                 }
@@ -1497,6 +1530,7 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::Decimal(_)
             | IrExprKind::String(_)
             | IrExprKind::Bytes(_)
+            | IrExprKind::TypeToken { .. }
             | IrExprKind::Literal(_)
             | IrExprKind::FieldsList(_)
             | IrExprKind::SerdeToJson

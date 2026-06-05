@@ -2,15 +2,17 @@
 //!
 //! This module handles emission of regular function calls (user-defined functions) and binary operator expressions.
 
+mod testing_asserts;
+
 use proc_macro2::TokenStream;
 use quote::quote;
 
-use super::super::super::FunctionSignature;
 use super::super::super::conversions::{BinOpEmitKind, determine_binop_plan};
 use super::super::super::decl::FunctionParam;
-use super::super::super::expr::{BinOp, IrCallArg, IrCallArgKind, IrExprKind, TypedExpr, VarAccess, VarRefKind};
-use super::super::super::ownership::{ValueUseSite, incan_call_arg_needs_rust_mut_borrow, plan_value_use};
+use super::super::super::expr::{BinOp, IrCallArg, IrCallArgKind, IrExprKind, TypedExpr, VarRefKind};
+use super::super::super::ownership::{ArgumentPassingPlan, ValueUseSite};
 use super::super::super::types::IrType;
+use super::super::super::{FunctionRegistry, FunctionSignature};
 use super::super::{EmitError, IrEmitter};
 use crate::frontend::ast::ParamKind;
 use incan_core::lang::stdlib;
@@ -132,6 +134,25 @@ impl<'a> IrEmitter<'a> {
         inner_ty: &IrType,
         union_qualifier: Option<&[String]>,
     ) -> Result<Option<TokenStream>, EmitError> {
+        let (source_ty, _) = self.union_widening_source_for_expr(arg);
+        let source_ty_resolved = self.resolve_type_aliases_for_emit(&source_ty);
+        let inner_ty_resolved = self.resolve_type_aliases_for_emit(inner_ty);
+        if source_ty_resolved.union_members().is_some()
+            && inner_ty_resolved.union_members().is_some()
+            && (source_ty_resolved == inner_ty_resolved || self.union_widening_needed(&source_ty, inner_ty))
+        {
+            let emitted = self.emit_expr_for_use_with_union_qualifier(
+                arg,
+                ValueUseSite::IncanCallArg {
+                    target_ty: Some(inner_ty),
+                    callee_param: None,
+                    in_return: false,
+                },
+                union_qualifier,
+            )?;
+            return Ok(Some(quote! { Some(#emitted) }));
+        }
+
         if let Some(variant_index) = inner_ty.union_variant_index_for_member(&arg.ty) {
             let Some(members) = inner_ty.union_members() else {
                 return Ok(None);
@@ -174,10 +195,30 @@ impl<'a> IrEmitter<'a> {
         target_ty: &IrType,
         union_qualifier: Option<&[String]>,
     ) -> Result<Option<TokenStream>, EmitError> {
-        if arg.ty.is_union() {
+        self.emit_union_payload_arg_for_site(
+            arg,
+            target_ty,
+            union_qualifier,
+            ValueUseSite::IncanCallArg {
+                target_ty: None,
+                callee_param: None,
+                in_return: false,
+            },
+        )
+    }
+
+    /// Emit a concrete payload argument for a `Union[...]` target while preserving the caller's ownership site.
+    pub(super) fn emit_union_payload_arg_for_site(
+        &self,
+        arg: &TypedExpr,
+        target_ty: &IrType,
+        union_qualifier: Option<&[String]>,
+        site: ValueUseSite<'_>,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let Some(value_ty) = self.union_payload_candidate_type(arg, target_ty) else {
             return Ok(None);
-        }
-        let Some(variant_index) = target_ty.union_variant_index_for_member(&arg.ty) else {
+        };
+        let Some(variant_index) = target_ty.union_variant_index_for_member(&value_ty) else {
             return Ok(None);
         };
         let Some(members) = target_ty.union_members() else {
@@ -188,15 +229,149 @@ impl<'a> IrEmitter<'a> {
         };
         let variant_ident = quote::format_ident!("{}", IrType::union_variant_name(variant_index));
         let union_path = self.emit_union_type_path_with_qualifier(target_ty, union_qualifier);
-        let emitted = self.emit_expr_for_use(
-            arg,
-            ValueUseSite::IncanCallArg {
-                target_ty: Some(member_ty),
-                callee_param: None,
-                in_return: false,
-            },
-        )?;
+        let emitted = self.emit_expr_for_use(arg, Self::retarget_value_use_site(site, Some(member_ty)))?;
         Ok(Some(quote! { #union_path :: #variant_ident(#emitted) }))
+    }
+
+    /// Return the concrete union-member payload type for an argument that may already be typed as the target union.
+    fn union_payload_candidate_type(&self, arg: &TypedExpr, target_ty: &IrType) -> Option<IrType> {
+        if !arg.ty.is_union() {
+            return Some(arg.ty.clone());
+        }
+
+        let candidate_name = match &arg.kind {
+            IrExprKind::Struct { name, .. } => Some(name.as_str()),
+            IrExprKind::Call { func, .. } => match &func.kind {
+                IrExprKind::Var {
+                    name,
+                    ref_kind: VarRefKind::TypeName,
+                    ..
+                } => Some(name.as_str()),
+                _ => None,
+            },
+            _ => None,
+        }?;
+        target_ty
+            .union_members()?
+            .iter()
+            .find(|member| member.nominal_type_name() == Some(candidate_name))
+            .cloned()
+    }
+
+    /// Return whether a source anonymous union can be widened into the target anonymous union.
+    pub(in super::super) fn union_widening_needed(&self, source_ty: &IrType, target_ty: &IrType) -> bool {
+        let source_ty = self.resolve_type_aliases_for_emit(source_ty);
+        let target_ty = self.resolve_type_aliases_for_emit(target_ty);
+        source_ty != target_ty
+            && source_ty.union_members().is_some_and(|members| !members.is_empty())
+            && target_ty.union_members().is_some_and(|members| !members.is_empty())
+            && Self::union_widening_variant_map(&source_ty, &target_ty).is_some()
+    }
+
+    /// Return the semantic union type and owner qualifier that should drive wrapper widening for an expression.
+    ///
+    /// Imported public call results are carried as exact Rust display types so consumers do not define their own copy
+    /// of provider-owned wrappers. Their callable metadata still carries the semantic union shape needed for
+    /// widening.
+    pub(in super::super) fn union_widening_source_for_expr(&self, expr: &TypedExpr) -> (IrType, Option<Vec<String>>) {
+        match &expr.kind {
+            IrExprKind::Call {
+                callable_signature: Some(signature),
+                canonical_path,
+                ..
+            } if self
+                .resolve_type_aliases_for_emit(&signature.return_type)
+                .union_members()
+                .is_some() =>
+            {
+                (
+                    signature.return_type.clone(),
+                    Self::pub_library_union_qualifier(canonical_path.as_deref()),
+                )
+            }
+            IrExprKind::MethodCall {
+                callable_signature: Some(signature),
+                ..
+            } if self
+                .resolve_type_aliases_for_emit(&signature.return_type)
+                .union_members()
+                .is_some() =>
+            {
+                (signature.return_type.clone(), None)
+            }
+            _ => (expr.ty.clone(), None),
+        }
+    }
+
+    /// Emit a conversion from one generated anonymous union wrapper to a wider generated anonymous union wrapper.
+    pub(in super::super) fn emit_union_widening_value(
+        &self,
+        source_ty: &IrType,
+        target_ty: &IrType,
+        source_tokens: TokenStream,
+        source_qualifier: Option<&[String]>,
+        target_qualifier: Option<&[String]>,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let source_ty = self.resolve_type_aliases_for_emit(source_ty);
+        let target_ty = self.resolve_type_aliases_for_emit(target_ty);
+        let Some(variant_map) = Self::union_widening_variant_map(&source_ty, &target_ty) else {
+            return Ok(None);
+        };
+
+        let source_path = self.emit_union_type_path_with_qualifier(&source_ty, source_qualifier);
+        let target_path = self.emit_union_type_path_with_qualifier(&target_ty, target_qualifier);
+        let arms = variant_map.into_iter().map(|(source_idx, target_idx)| {
+            let source_variant = quote::format_ident!("{}", IrType::union_variant_name(source_idx));
+            let target_variant = quote::format_ident!("{}", IrType::union_variant_name(target_idx));
+            quote! {
+                #source_path :: #source_variant(__incan_union_value) => {
+                    #target_path :: #target_variant(__incan_union_value)
+                }
+            }
+        });
+
+        Ok(Some(quote! {
+            match #source_tokens {
+                #(#arms),*
+            }
+        }))
+    }
+
+    /// Return the dependency qualifier for generated anonymous union wrappers referenced through a public library call.
+    pub(in super::super) fn pub_library_union_qualifier(canonical_path: Option<&[String]>) -> Option<Vec<String>> {
+        canonical_path.and_then(|path| {
+            if path.first().map(String::as_str) == Some("pub") {
+                path.get(1).map(|library| vec![library.clone()])
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Map each source union variant onto the matching target variant for a widening conversion.
+    ///
+    /// This is stricter than ordinary value-to-union injection: the payload already lives inside the source wrapper,
+    /// so the generated conversion can only move it into a target variant with the same emitted payload type.
+    fn union_widening_variant_map(source_ty: &IrType, target_ty: &IrType) -> Option<Vec<(usize, usize)>> {
+        if source_ty == target_ty {
+            return None;
+        }
+        let source_members = source_ty.union_members()?;
+        let target_members = target_ty.union_members()?;
+        if source_members.is_empty() || target_members.is_empty() {
+            return None;
+        }
+
+        source_members
+            .iter()
+            .enumerate()
+            .map(|(source_idx, source_member)| {
+                target_members
+                    .iter()
+                    .position(|target_member| target_member == source_member)
+                    .map(|target_idx| (source_idx, target_idx))
+            })
+            .collect()
     }
 
     /// Emit a type-seeded literal argument for `None`/`Ok`/`Err` when possible.
@@ -230,7 +405,7 @@ impl<'a> IrEmitter<'a> {
     /// Source modules normally reference generated ordinary union wrappers through the current module or crate root.
     /// Imported `pub::library` calls may need to wrap member literals with a library-qualified union wrapper instead,
     /// so this helper keeps the target type logic shared while letting callers control only the wrapper path.
-    fn emit_inference_seeded_literal_arg_with_union_qualifier(
+    pub(super) fn emit_inference_seeded_literal_arg_with_union_qualifier(
         &self,
         arg: &TypedExpr,
         target_ty: &IrType,
@@ -459,27 +634,21 @@ impl<'a> IrEmitter<'a> {
             _ => None,
         };
         let callee_name = local_name.or(canonical_name);
-        let registry_signature = if canonical_path.is_some() {
-            canonical_name.and_then(|name| self.function_registry.get(name))
-        } else {
-            local_name
-                .and_then(|name| self.function_registry.get(name))
-                .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name)))
-        };
-        let result_specialized_signature = callable_signature.or(registry_signature).and_then(|signature| {
+        let merged_signature = FunctionRegistry::effective_call_signature_by(
+            self.function_registry,
+            self.canonical_function_registry(),
+            local_name,
+            canonical_path,
+            callable_signature,
+            Some(&func.ty),
+            |left, right| self.call_signature_type_matches(left, right),
+        );
+        let result_specialized_signature = merged_signature.as_ref().and_then(|signature| {
             result_target_ty.and_then(|target_ty| Self::specialize_signature_by_result_target(signature, target_ty))
         });
-        let function_sig = associated_signature.as_ref().or_else(|| {
-            if canonical_path.is_some() {
-                result_specialized_signature
-                    .as_ref()
-                    .or(callable_signature.or(registry_signature))
-            } else {
-                result_specialized_signature
-                    .as_ref()
-                    .or(registry_signature.or(callable_signature))
-            }
-        });
+        let function_sig = associated_signature
+            .as_ref()
+            .or_else(|| result_specialized_signature.as_ref().or(merged_signature.as_ref()));
         // The checked-newtype lowering path emits a compiler-internal panic marker call. This remains the narrow,
         // explicitly-tracked generated `panic!` exemption that issue #351 left to a separate follow-up. Render it as
         // the Rust `panic!` macro so generated code stays valid without colliding with user-defined functions that may
@@ -515,18 +684,16 @@ impl<'a> IrEmitter<'a> {
             }
         }
 
-        let f = if let Some(path) = canonical_path {
+        let f = if canonical_path.is_some_and(|path| path.first().map(String::as_str) == Some("pub"))
+            && Self::callee_is_imported_module_path(func)
+        {
+            self.emit_expr(func)?
+        } else if let Some(path) = canonical_path {
             self.emit_canonical_callee_path(path)?.unwrap_or(self.emit_expr(func)?)
         } else {
             self.emit_expr(func)?
         };
-        let pub_library_union_qualifier: Option<Vec<String>> = canonical_path.and_then(|path| {
-            if path.first().map(String::as_str) == Some("pub") {
-                path.get(1).map(|library| vec![library.clone()])
-            } else {
-                None
-            }
-        });
+        let pub_library_union_qualifier: Option<Vec<String>> = Self::pub_library_union_qualifier(canonical_path);
         let turbofish = if type_args.is_empty() {
             quote! {}
         } else {
@@ -588,6 +755,7 @@ impl<'a> IrEmitter<'a> {
         if let Some(sig) = function_sig
             && sig.params.iter().any(|param| param.kind != ParamKind::Normal)
         {
+            let f = Self::call_callee_tokens(func, f, type_args);
             let arg_tokens = self.emit_rest_aware_call_args(func, args, sig)?;
             return Ok(quote! { #f #turbofish (#(#arg_tokens),*) });
         }
@@ -680,18 +848,32 @@ impl<'a> IrEmitter<'a> {
                 };
                 let target_aware_aggregate_literal_arg =
                     aggregate_literal_arg && !matches!(use_site, ValueUseSite::ExternalCallArg { .. });
+                let (widening_source_ty, _) = self.union_widening_source_for_expr(a);
+                let target_aware_union_widening_arg = target_ty
+                    .is_some_and(|target_ty| self.union_widening_needed(&widening_source_ty, target_ty))
+                    && !matches!(use_site, ValueUseSite::ExternalCallArg { .. });
+                let (list_widening_source_ty, _) = self.list_element_widening_source_for_expr(a);
+                let target_aware_list_element_widening_arg = target_ty
+                    .is_some_and(|target_ty| self.list_element_widening_needed(&list_widening_source_ty, target_ty))
+                    && !matches!(use_site, ValueUseSite::ExternalCallArg { .. });
+                let target_aware_value_arg = target_aware_aggregate_literal_arg
+                    || target_aware_union_widening_arg
+                    || target_aware_list_element_widening_arg;
+                let arg_plan = ArgumentPassingPlan::for_use_site(a, use_site);
                 let previous_qualify = if *from_default {
                     Some(self.qualify_internal_canonical_paths.replace(true))
                 } else {
                     None
                 };
                 let emitted = (|| {
+                    let mut emitted_from_seed = false;
                     let emitted = if let Some(target_ty) = target_ty {
                         if let Some(seed) = self.emit_inference_seeded_literal_arg_with_union_qualifier(
                             a,
                             target_ty,
                             pub_library_union_qualifier.as_deref(),
                         )? {
+                            emitted_from_seed = true;
                             seed
                         } else if Self::is_unresolved_call_seed_type(target_ty) {
                             // Signature exists but leaves generics unresolved: fallback to the argument's own inferred
@@ -701,14 +883,23 @@ impl<'a> IrEmitter<'a> {
                                 &a.ty,
                                 pub_library_union_qualifier.as_deref(),
                             )? {
+                                emitted_from_seed = true;
                                 seed
-                            } else if target_aware_aggregate_literal_arg {
-                                self.emit_expr_for_use(a, use_site)?
+                            } else if target_aware_value_arg {
+                                self.emit_expr_for_use_with_union_qualifier(
+                                    a,
+                                    use_site,
+                                    pub_library_union_qualifier.as_deref(),
+                                )?
                             } else {
                                 self.emit_expr(a)?
                             }
-                        } else if target_aware_aggregate_literal_arg {
-                            self.emit_expr_for_use(a, use_site)?
+                        } else if target_aware_value_arg {
+                            self.emit_expr_for_use_with_union_qualifier(
+                                a,
+                                use_site,
+                                pub_library_union_qualifier.as_deref(),
+                            )?
                         } else {
                             self.emit_expr(a)?
                         }
@@ -720,392 +911,75 @@ impl<'a> IrEmitter<'a> {
                             &a.ty,
                             pub_library_union_qualifier.as_deref(),
                         )? {
+                            emitted_from_seed = true;
                             seed
-                        } else if target_aware_aggregate_literal_arg {
-                            self.emit_expr_for_use(a, use_site)?
+                        } else if target_aware_value_arg {
+                            self.emit_expr_for_use_with_union_qualifier(
+                                a,
+                                use_site,
+                                pub_library_union_qualifier.as_deref(),
+                            )?
                         } else {
                             self.emit_expr(a)?
                         }
                     };
-                    Ok::<TokenStream, EmitError>(emitted)
+                    Ok::<(TokenStream, bool), EmitError>((emitted, emitted_from_seed))
                 })();
                 if let Some(previous) = previous_qualify {
                     self.qualify_internal_canonical_paths.replace(previous);
                 }
-                let emitted = emitted?;
+                let (emitted, emitted_from_seed) = emitted?;
 
                 if let Some(adapter) = self.borrowed_function_adapter_arg(a, target_ty) {
                     return Ok(adapter);
                 }
 
-                // Check VarAccess for explicit borrow requirements
-                if let IrExprKind::Var { access, .. } = &a.kind {
-                    match access {
-                        VarAccess::BorrowMut => return Ok(quote! { &mut #emitted }),
-                        VarAccess::Borrow if matches!(target_ty, Some(IrType::Ref(_) | IrType::RefMut(_)) | None) => {
-                            return Ok(quote! { &#emitted });
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Prefer explicit lowering access decisions, then derive obvious borrow requirements from parameter
-                // typing information.
-                if let Some(param) = sig_param {
-                    match &param.ty {
-                        IrType::Ref(_) => match &a.ty {
-                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                            _ => return Ok(quote! { &#emitted }),
-                        },
-                        IrType::RefMut(_) => match &a.ty {
-                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                            _ => return Ok(quote! { &mut #emitted }),
-                        },
-                        _ => {}
-                    }
-                } else if let Some(target_ty) = target_ty {
-                    // Toward #121: when registry metadata is unavailable, use the call expression's function type as a
-                    // borrow hint.
-                    match target_ty {
-                        IrType::RefMut(_) => match &a.ty {
-                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                            _ => return Ok(quote! { &mut #emitted }),
-                        },
-                        IrType::Ref(_) => match &a.ty {
-                            IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                            _ => return Ok(quote! { &#emitted }),
-                        },
-                        _ => {}
-                    }
-                }
-
-                let mut tokens = if target_aware_aggregate_literal_arg {
-                    emitted
+                let tokens = if emitted_from_seed || target_aware_value_arg {
+                    arg_plan.apply_after_value_plan(emitted)
                 } else {
-                    match use_site {
-                        ValueUseSite::ExternalCallArg { target_ty } => self
-                            .external_list_arg_element_coercion(a, target_ty, emitted.clone())
-                            .unwrap_or_else(|| plan_value_use(a, use_site).apply(emitted)),
-                        _ => plan_value_use(a, use_site).apply(emitted),
-                    }
+                    arg_plan.apply_full(emitted)
                 };
-                if let Some(param) = sig_param
-                    && incan_call_arg_needs_rust_mut_borrow(param)
-                {
-                    match &a.ty {
-                        IrType::Ref(_) | IrType::RefMut(_) => {}
-                        _ => tokens = quote! { &mut #tokens },
-                    }
-                }
                 Ok(tokens)
             })
             .collect::<Result<_, _>>()?;
 
+        let f = Self::call_callee_tokens(func, f, type_args);
         Ok(quote! { #f #turbofish (#(#arg_tokens),*) })
     }
 
-    /// Emit canonical RFC 018 assertion helper calls without requiring a source-level `std.testing` import.
+    /// Parenthesize call targets whose emitted Rust is an expression block rather than a path/call expression.
     ///
-    /// Plain `assert` is a language primitive, so its lowered helper calls must remain available even when the
-    /// explicit stdlib testing module was not imported into the user's source file.
-    fn try_emit_testing_assert_call(
-        &self,
-        canonical_path: Option<&[String]>,
-        args: &[IrCallArg],
-    ) -> Result<Option<TokenStream>, EmitError> {
-        let Some(path) = canonical_path else {
-            return Ok(None);
-        };
-        if path.len() != 3
-            || path.first().map(String::as_str) != Some(stdlib::STDLIB_ROOT)
-            || path.get(1).map(String::as_str) != Some("testing")
-        {
-            return Ok(None);
+    /// Storage-rooted method calls materialize arguments and enter `StaticCell::with_ref` / `with_mut`, so their
+    /// emitted callee has block shape. Calling that result requires `({ ... })(arg)` in Rust.
+    fn call_callee_tokens(func: &TypedExpr, emitted: TokenStream, type_args: &[IrType]) -> TokenStream {
+        if !type_args.is_empty() {
+            return emitted;
         }
-        let Some(name) = path.last().map(String::as_str) else {
-            return Ok(None);
-        };
-
-        match name {
-            "assert" => {
-                let condition = Self::canonical_assert_arg(name, args, 0)?;
-                let condition_tokens = self.emit_expr(condition)?;
-                let failure = self.emit_assert_failure("AssertionError", args.get(1).map(|arg| &arg.expr))?;
-                Ok(Some(quote! {
-                    if !(#condition_tokens) {
-                        #failure
-                    }
-                }))
+        match &func.kind {
+            IrExprKind::MethodCall { receiver, .. } if Self::expr_is_storage_rooted(receiver) => {
+                quote! { ({ #emitted }) }
             }
-            "assert_false" => {
-                let condition = Self::canonical_assert_arg(name, args, 0)?;
-                let condition_tokens = self.emit_expr(condition)?;
-                let failure = self.emit_assert_failure("AssertionError", args.get(1).map(|arg| &arg.expr))?;
-                Ok(Some(quote! {
-                    if #condition_tokens {
-                        #failure
-                    }
-                }))
+            IrExprKind::If { .. }
+            | IrExprKind::Match { .. }
+            | IrExprKind::Closure { .. }
+            | IrExprKind::Block { .. }
+            | IrExprKind::Loop { .. } => quote! { ({ #emitted }) },
+            _ => emitted,
+        }
+    }
+
+    /// Return whether the callee is already spelled as a module-rooted path in source, such as `lib.function`.
+    fn callee_is_imported_module_path(func: &TypedExpr) -> bool {
+        match &func.kind {
+            IrExprKind::Field { object, .. } => Self::callee_is_imported_module_path(object),
+            IrExprKind::Var { ref_kind, .. } => {
+                matches!(ref_kind, VarRefKind::ExternalName | VarRefKind::ExternalRustName)
             }
-            "assert_eq" | "assert_ne" => self.emit_assert_comparison(name, args).map(Some),
-            "assert_is_some" => self.emit_assert_option_some(args).map(Some),
-            "assert_is_none" => self.emit_assert_option_none(args).map(Some),
-            "assert_is_ok" => self.emit_assert_result_ok(args).map(Some),
-            "assert_is_err" => self.emit_assert_result_err(args).map(Some),
-            "assert_raises" => self.emit_assert_raises(args).map(Some),
-            _ => Ok(None),
+            _ => false,
         }
     }
 
-    fn canonical_assert_arg<'b>(
-        helper_name: &str,
-        args: &'b [IrCallArg],
-        index: usize,
-    ) -> Result<&'b TypedExpr, EmitError> {
-        args.get(index).map(|arg| &arg.expr).ok_or_else(|| {
-            EmitError::Unsupported(format!(
-                "canonical std.testing.{helper_name} call missing argument {}",
-                index + 1
-            ))
-        })
-    }
-
-    fn result_constructor_payload(expr: &TypedExpr, constructor: ConstructorId) -> Option<&TypedExpr> {
-        let expr = match &expr.kind {
-            IrExprKind::InteropCoerce { expr, .. } => expr.as_ref(),
-            _ => expr,
-        };
-        if let IrExprKind::Struct { name, fields } = &expr.kind
-            && name == constructors::as_str(constructor)
-        {
-            return fields.first().map(|(_, payload)| payload);
-        }
-        let IrExprKind::Call { func, args, .. } = &expr.kind else {
-            return None;
-        };
-        let IrExprKind::Var { name, .. } = &func.kind else {
-            return None;
-        };
-        if name != constructors::as_str(constructor) {
-            return None;
-        }
-        args.first().map(|arg| &arg.expr)
-    }
-
-    fn emit_assert_failure(
-        &self,
-        default_message: &'static str,
-        message: Option<&TypedExpr>,
-    ) -> Result<TokenStream, EmitError> {
-        if let Some(message) = message {
-            let message_tokens = self.emit_expr(message)?;
-            return Ok(quote! {{
-                let __incan_assert_msg = #message_tokens;
-                if __incan_assert_msg.is_empty() {
-                    panic!(#default_message);
-                } else {
-                    panic!("AssertionError: {}", __incan_assert_msg);
-                }
-            }});
-        }
-        Ok(quote! { panic!(#default_message); })
-    }
-
-    fn emit_assert_raises_failure(
-        &self,
-        default_message: TokenStream,
-        message: Option<&TypedExpr>,
-    ) -> Result<TokenStream, EmitError> {
-        if let Some(message) = message {
-            let message_tokens = self.emit_expr(message)?;
-            return Ok(quote! {{
-                let __incan_assert_msg = #message_tokens;
-                if __incan_assert_msg.is_empty() {
-                    #default_message
-                } else {
-                    panic!("AssertionError: {}", __incan_assert_msg);
-                }
-            }});
-        }
-        Ok(default_message)
-    }
-
-    fn emit_assert_comparison_failure(
-        &self,
-        failure_kind: &'static str,
-        message: Option<&TypedExpr>,
-    ) -> Result<TokenStream, EmitError> {
-        let default_message = format!("AssertionError: {failure_kind}");
-        if let Some(message) = message {
-            let message_tokens = self.emit_expr(message)?;
-            return Ok(quote! {{
-                let __incan_assert_msg = #message_tokens;
-                if __incan_assert_msg.is_empty() {
-                    panic!(#default_message);
-                } else {
-                    panic!("AssertionError: {}; {}", __incan_assert_msg, #failure_kind);
-                }
-            }});
-        }
-        Ok(quote! { panic!(#default_message); })
-    }
-
-    /// Emit canonical `std.testing.assert_eq` / `assert_ne` calls with expression operands isolated.
-    fn emit_assert_comparison(&self, name: &str, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
-        let left = Self::canonical_assert_arg(name, args, 0)?;
-        let right = Self::canonical_assert_arg(name, args, 1)?;
-        let left_tokens = self.emit_expr(left)?;
-        let right_tokens = self.emit_expr(right)?;
-        let message = args.get(2).map(|arg| &arg.expr);
-        if name == "assert_eq" {
-            let failure = self.emit_assert_comparison_failure("left != right", message)?;
-            Ok(quote! {
-                if (#left_tokens) != (#right_tokens) {
-                    #failure
-                }
-            })
-        } else {
-            let failure = self.emit_assert_comparison_failure("left == right", message)?;
-            Ok(quote! {
-                if (#left_tokens) == (#right_tokens) {
-                    #failure
-                }
-            })
-        }
-    }
-
-    fn emit_assert_option_some(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
-        let option = Self::canonical_assert_arg("assert_is_some", args, 0)?;
-        let option_tokens = self.emit_expr(option)?;
-        let failure = self.emit_assert_failure(
-            "AssertionError: expected Some, got None",
-            args.get(1).map(|arg| &arg.expr),
-        )?;
-        Ok(quote! {{
-            let __incan_assert_value = #option_tokens;
-            match __incan_assert_value {
-                Some(__incan_assert_inner) => __incan_assert_inner,
-                None => {
-                    #failure
-                }
-            }
-        }})
-    }
-
-    fn emit_assert_option_none(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
-        let option = Self::canonical_assert_arg("assert_is_none", args, 0)?;
-        if matches!(option.kind, IrExprKind::None) {
-            return Ok(quote! { () });
-        }
-        let option_tokens = self.emit_expr(option)?;
-        let failure = self.emit_assert_failure(
-            "AssertionError: expected None, got Some",
-            args.get(1).map(|arg| &arg.expr),
-        )?;
-        Ok(quote! {{
-            let __incan_assert_value = #option_tokens;
-            if __incan_assert_value.is_some() {
-                #failure
-            }
-        }})
-    }
-
-    fn emit_assert_result_ok(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
-        let result = Self::canonical_assert_arg("assert_is_ok", args, 0)?;
-        if let Some(payload) = Self::result_constructor_payload(result, ConstructorId::Ok) {
-            let payload_tokens = Self::emit_result_payload_tokens(payload, self.emit_expr(payload)?);
-            return Ok(quote! { #payload_tokens });
-        }
-        let result_tokens = self.emit_expr(result)?;
-        let failure =
-            self.emit_assert_failure("AssertionError: expected Ok, got Err", args.get(1).map(|arg| &arg.expr))?;
-        Ok(quote! {{
-            let __incan_assert_value = #result_tokens;
-            match __incan_assert_value {
-                Ok(__incan_assert_inner) => __incan_assert_inner,
-                Err(_) => {
-                    #failure
-                }
-            }
-        }})
-    }
-
-    fn emit_assert_result_err(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
-        let result = Self::canonical_assert_arg("assert_is_err", args, 0)?;
-        if let Some(payload) = Self::result_constructor_payload(result, ConstructorId::Err) {
-            let payload_tokens = Self::emit_result_payload_tokens(payload, self.emit_expr(payload)?);
-            return Ok(quote! { #payload_tokens });
-        }
-        let result_tokens = self.emit_expr(result)?;
-        let failure =
-            self.emit_assert_failure("AssertionError: expected Err, got Ok", args.get(1).map(|arg| &arg.expr))?;
-        Ok(quote! {{
-            let __incan_assert_value = #result_tokens;
-            match __incan_assert_value {
-                Err(__incan_assert_inner) => __incan_assert_inner,
-                Ok(_) => {
-                    #failure
-                }
-            }
-        }})
-    }
-
-    fn emit_assert_raises(&self, args: &[IrCallArg]) -> Result<TokenStream, EmitError> {
-        let call = Self::canonical_assert_arg("assert_raises", args, 0)?;
-        let expected = Self::canonical_assert_arg("assert_raises", args, 1)?;
-        let call_tokens = self.emit_expr(call)?;
-        let invocation_tokens = if matches!(
-            &call.ty,
-            IrType::Function { params, ret } if params.is_empty() && matches!(ret.as_ref(), IrType::Unit)
-        ) {
-            quote! { #call_tokens() }
-        } else {
-            quote! { #call_tokens }
-        };
-        let expected_tokens = self.emit_expr(expected)?;
-        let no_raise = self.emit_assert_raises_failure(
-            quote! { panic!("AssertionError: expected {} to be raised", __incan_expected_error); },
-            args.get(2).map(|arg| &arg.expr),
-        )?;
-        let wrong_error = self.emit_assert_raises_failure(
-            quote! {
-                panic!(
-                    "AssertionError: expected {} to be raised, got {}",
-                    __incan_expected_error,
-                    __incan_panic_message
-                );
-            },
-            args.get(2).map(|arg| &arg.expr),
-        )?;
-
-        Ok(quote! {{
-            let __incan_expected_error = #expected_tokens;
-            let __incan_raises_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                #invocation_tokens;
-            }));
-            match __incan_raises_result {
-                Ok(_) => {
-                    #no_raise
-                }
-                Err(__incan_payload) => {
-                    let __incan_panic_message = if let Some(message) = __incan_payload.downcast_ref::<String>() {
-                        message.as_str()
-                    } else if let Some(message) = __incan_payload.downcast_ref::<&str>() {
-                        *message
-                    } else {
-                        ""
-                    };
-                    let __incan_expected_prefix = format!("{}:", __incan_expected_error);
-                    if __incan_panic_message != __incan_expected_error
-                        && !__incan_panic_message.starts_with(&__incan_expected_prefix)
-                    {
-                        #wrong_error
-                    }
-                }
-            }
-        }})
-    }
-
+    /// Emit call arguments while preserving rest-argument expansion semantics.
     pub(in super::super) fn emit_rest_aware_call_args(
         &self,
         func: &TypedExpr,
@@ -1185,6 +1059,7 @@ impl<'a> IrEmitter<'a> {
         Ok(out)
     }
 
+    /// Emit one positional argument that may include rest expansion.
     fn emit_rest_positional_arg(&self, args: &[&IrCallArg], element_ty: &IrType) -> Result<TokenStream, EmitError> {
         let mut statements = Vec::with_capacity(args.len());
         for arg in args {
@@ -1278,54 +1153,20 @@ impl<'a> IrEmitter<'a> {
                 in_return,
             }
         };
+        let arg_plan = ArgumentPassingPlan::for_use_site(arg, use_site);
         let emitted = if let Some(seed) = self.emit_inference_seeded_literal_arg(arg, &param.ty)? {
-            seed
+            arg_plan.apply_after_value_plan(seed)
         } else if Self::is_unresolved_call_seed_type(&param.ty) {
             if let Some(seed) = self.emit_inference_seeded_literal_arg(arg, &arg.ty)? {
-                seed
+                arg_plan.apply_after_value_plan(seed)
             } else {
-                self.emit_expr_for_use(arg, use_site)?
+                arg_plan.apply_after_value_plan(self.emit_expr_for_use(arg, use_site)?)
             }
         } else {
-            self.emit_expr_for_use(arg, use_site)?
+            arg_plan.apply_after_value_plan(self.emit_expr_for_use(arg, use_site)?)
         };
-
-        if let IrExprKind::Var { access, .. } = &arg.kind {
-            match access {
-                VarAccess::BorrowMut => return Ok(quote! { &mut #emitted }),
-                VarAccess::Borrow if matches!(target_ty, Some(IrType::Ref(_) | IrType::RefMut(_)) | None) => {
-                    return Ok(quote! { &#emitted });
-                }
-                _ => {}
-            }
-        }
-
-        match &param.ty {
-            IrType::Ref(_) => match &arg.ty {
-                IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                _ => return Ok(quote! { &#emitted }),
-            },
-            IrType::RefMut(_) => match &arg.ty {
-                IrType::Ref(_) | IrType::RefMut(_) => return Ok(emitted),
-                _ => return Ok(quote! { &mut #emitted }),
-            },
-            _ => {}
-        }
-
-        let mut tokens = match use_site {
-            ValueUseSite::ExternalCallArg { target_ty } => self
-                .external_list_arg_element_coercion(arg, target_ty, emitted.clone())
-                .unwrap_or(emitted),
-            _ => emitted,
-        };
-        if incan_call_arg_needs_rust_mut_borrow(param) {
-            match &arg.ty {
-                IrType::Ref(_) | IrType::RefMut(_) => {}
-                _ => tokens = quote! { &mut #tokens },
-            }
-        }
         let _ = idx;
-        Ok(tokens)
+        Ok(emitted)
     }
 
     /// Emit a canonical callee path when the compiler knows how to materialize that namespace at the current call
@@ -1359,6 +1200,16 @@ impl<'a> IrEmitter<'a> {
             for seg in module_path.iter().skip(1) {
                 let ident = Self::rust_ident(seg);
                 segments.push(quote! { #ident });
+            }
+            segments
+        } else if module_path.first().map(String::as_str) == Some("pub") {
+            let mut segments = Vec::new();
+            for seg in module_path.iter().skip(1) {
+                let ident = Self::rust_ident(seg);
+                segments.push(quote! { #ident });
+            }
+            if segments.is_empty() {
+                return Ok(None);
             }
             segments
         } else if *self.qualify_internal_canonical_paths.borrow() && self.is_internal_module_path(&module_path) {
@@ -1511,7 +1362,7 @@ mod tests {
     use crate::backend::ir::expr::{
         IrCallArg, IrCallArgKind, IrInteropCoercionKind, Literal as IrLiteral, VarAccess, VarRefKind,
     };
-    use crate::backend::ir::types::{IrType, Mutability};
+    use crate::backend::ir::types::{IR_UNION_TYPE_NAME, IrType, Mutability};
     use crate::backend::ir::{FunctionRegistry, IrEmitter, TypedExpr};
     use incan_core::lang::types::numerics::NumericTypeId;
 
@@ -1663,10 +1514,7 @@ mod tests {
         let tokens = emitter
             .emit_call_expr(&func, &[], &[pos_arg(left), pos_arg(right)], None, Some(&path))
             .map_err(|err| std::io::Error::other(format!("canonical assert_eq should emit: {err:?}")))?;
-        assert_eq!(
-            render(tokens),
-            "if(left)!=(right){panic!(\"AssertionError:left!=right\");}"
-        );
+        assert_eq!(render(tokens), "ifleft!=right{panic!(\"AssertionError:left!=right\");}");
         Ok(())
     }
 
@@ -1690,7 +1538,7 @@ mod tests {
             .map_err(|err| std::io::Error::other(format!("canonical assert_eq with message should emit: {err:?}")))?;
         assert_eq!(
             render(tokens),
-            "if(left)!=(right){{let__incan_assert_msg=msg;if__incan_assert_msg.is_empty(){panic!(\"AssertionError:left!=right\");}else{panic!(\"AssertionError:{};{}\",__incan_assert_msg,\"left!=right\");}}}"
+            "ifleft!=right{{let__incan_assert_msg=msg;if__incan_assert_msg.is_empty(){panic!(\"AssertionError:left!=right\");}else{panic!(\"AssertionError:{};{}\",__incan_assert_msg,\"left!=right\");}}}"
         );
         Ok(())
     }
@@ -1727,7 +1575,25 @@ mod tests {
             })?;
         assert_eq!(
             render(tokens),
-            "if(encoded>0)!=(true){panic!(\"AssertionError:left!=right\");}"
+            "if(encoded>0)!=true{panic!(\"AssertionError:left!=right\");}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn emit_canonical_assert_ne_reuses_string_binop_plan() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let func = rust_call_target("assert_ne");
+        let left = local_arg("value", IrType::Ref(Box::new(IrType::String)));
+        let right = local_arg("target", IrType::String);
+        let path = canonical_testing_path("assert_ne");
+        let tokens = emitter
+            .emit_call_expr(&func, &[], &[pos_arg(left), pos_arg(right)], None, Some(&path))
+            .map_err(|err| std::io::Error::other(format!("canonical assert_ne should emit: {err:?}")))?;
+        assert_eq!(
+            render(tokens),
+            "ifincan_stdlib::strings::str_eq(&value,&target){panic!(\"AssertionError:left==right\");}"
         );
         Ok(())
     }
@@ -1830,6 +1696,115 @@ mod tests {
             .emit_call_expr(&func, &[], &[pos_arg(err)], None, Some(&path))
             .map_err(|err| std::io::Error::other(format!("canonical assert_is_err should emit: {err:?}")))?;
         assert_eq!(render(tokens), "(\"boom\").to_string()");
+        Ok(())
+    }
+
+    #[test]
+    fn emit_call_expr_keeps_return_context_union_string_seed_as_union_value() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let union_ty = IrType::NamedGeneric(
+            IR_UNION_TYPE_NAME.to_string(),
+            vec![IrType::String, IrType::Bool, IrType::Float, IrType::Int],
+        );
+        let mut registry = FunctionRegistry::new();
+        registry.register(
+            "lit".to_string(),
+            vec![FunctionParam {
+                name: "value".to_string(),
+                ty: union_ty.clone(),
+                mutability: Mutability::Immutable,
+                is_self: false,
+                kind: ParamKind::Normal,
+                default: None,
+            }],
+            IrType::String,
+        );
+        let emitter = IrEmitter::new(&registry);
+        emitter.in_return_context.replace(true);
+        let func = TypedExpr::new(
+            IrExprKind::Var {
+                name: "lit".to_string(),
+                access: VarAccess::Copy,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::Function {
+                params: vec![union_ty],
+                ret: Box::new(IrType::String),
+            },
+        );
+        let arg = TypedExpr::new(IrExprKind::String("open".to_string()), IrType::String);
+        let tokens = emitter
+            .emit_call_expr(&func, &[], &[pos_arg(arg)], None, None)
+            .map_err(|err| {
+                std::io::Error::other(format!(
+                    "union string literal call should emit without post-wrapper coercion: {err:?}"
+                ))
+            })?;
+
+        assert_eq!(
+            render(tokens),
+            "lit(__IncanUnion43fbd19e99c1db05::V0(\"open\".to_string()))"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn emit_public_union_call_result_as_option_payload_issue745() -> Result<(), Box<dyn std::error::Error>> {
+        let union_ty = IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), vec![IrType::Int, IrType::String]);
+        let public_union_ty = IrType::RustDisplay(format!(
+            "querykit::{}",
+            union_ty.union_type_name().ok_or("expected anonymous union type name")?
+        ));
+        let lit_signature = FunctionSignature {
+            params: Vec::new(),
+            return_type: union_ty.clone(),
+        };
+        let lit = TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(local_arg(
+                    "lit",
+                    IrType::Function {
+                        params: Vec::new(),
+                        ret: Box::new(public_union_ty.clone()),
+                    },
+                )),
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: Some(lit_signature),
+                canonical_path: Some(vec!["pub".to_string(), "querykit".to_string(), "lit".to_string()]),
+            },
+            public_union_ty.clone(),
+        );
+        let accept_signature = FunctionSignature {
+            params: vec![FunctionParam {
+                name: "value".to_string(),
+                ty: IrType::Option(Box::new(union_ty)),
+                mutability: Mutability::Immutable,
+                is_self: false,
+                kind: ParamKind::Normal,
+                default: None,
+            }],
+            return_type: IrType::Unit,
+        };
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let accept = local_arg(
+            "accept_optional",
+            IrType::Function {
+                params: vec![IrType::Option(Box::new(public_union_ty))],
+                ret: Box::new(IrType::Unit),
+            },
+        );
+        let path = vec!["pub".to_string(), "querykit".to_string(), "accept_optional".to_string()];
+        let tokens = emitter
+            .emit_call_expr(&accept, &[], &[pos_arg(lit)], Some(&accept_signature), Some(&path))
+            .map_err(|err| {
+                std::io::Error::other(format!(
+                    "public union call result should emit as an Option payload: {err:?}"
+                ))
+            })?;
+
+        assert_eq!(render(tokens), "querykit::accept_optional(Some(querykit::lit()))");
         Ok(())
     }
 
@@ -2054,6 +2029,45 @@ mod tests {
                 ))
             })?;
         assert_eq!(render(tokens), "consume(&state,&plan)");
+        Ok(())
+    }
+
+    #[test]
+    fn rest_aware_call_arg_uses_argument_plan_without_double_borrow() -> Result<(), Box<dyn std::error::Error>> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let func = rust_call_target("takes_ref_rest");
+        let signature = FunctionSignature {
+            params: vec![
+                FunctionParam {
+                    name: "value".to_string(),
+                    ty: IrType::Ref(Box::new(IrType::Struct("demo::Thing".to_string()))),
+                    mutability: Mutability::Immutable,
+                    is_self: false,
+                    kind: ParamKind::Normal,
+                    default: None,
+                },
+                FunctionParam {
+                    name: "rest".to_string(),
+                    ty: IrType::List(Box::new(IrType::Int)),
+                    mutability: Mutability::Immutable,
+                    is_self: false,
+                    kind: ParamKind::RestPositional,
+                    default: None,
+                },
+            ],
+            return_type: IrType::Unit,
+        };
+        let arg = local_arg("value", IrType::Struct("demo::Thing".to_string()));
+        let tokens = emitter
+            .emit_call_expr(&func, &[], &[pos_arg(arg)], Some(&signature), None)
+            .map_err(|err| std::io::Error::other(format!("rest-aware call should emit borrowed arg: {err:?}")))?;
+        let rendered = render(tokens);
+        assert!(rendered.starts_with("takes_ref_rest(&value,"));
+        assert!(
+            !rendered.contains("&&value"),
+            "argument plan must not add a second borrow after emit_expr_for_use: {rendered}"
+        );
         Ok(())
     }
 

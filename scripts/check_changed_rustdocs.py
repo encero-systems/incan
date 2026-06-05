@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Fail when touched Rust source files contain undocumented non-test functions or methods.
+"""Fail when changed Rust source files contain undocumented non-test functions or methods.
 
-This script is intentionally scoped to changed `.rs` files so the branch enforces a boyscout-style documentation
-standard without requiring an immediate repo-wide documentation migration.
+By default, this checks both staged and unstaged `.rs` changes. Pass `--base <ref>` or set `INCAN_RUSTDOC_GATE_BASE`
+when a release or review branch needs to be checked against a comparison base such as `origin/release/v0.2`.
 
 Eventually, we can replace this script with the following clippy rules:
 #![warn(missing_docs)]
@@ -11,6 +11,8 @@ Eventually, we can replace this script with the following clippy rules:
 
 from __future__ import annotations
 
+import argparse
+import os
 import re
 import subprocess
 import sys
@@ -27,10 +29,16 @@ ATTR_RE = re.compile(r"^\s*#\s*\[")
 HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(?P<start>\d+)(?:,(?P<count>\d+))? @@")
 
 
-def changed_rust_files() -> dict[Path, set[int]]:
-    """Return changed Rust source files and their changed current-file line numbers."""
+def merge_changed_lines(target: dict[Path, set[int]], source: dict[Path, set[int]]) -> None:
+    """Merge changed-line data from one parsed diff into `target`."""
+    for path, lines in source.items():
+        target.setdefault(path, set()).update(lines)
+
+
+def changed_rust_files_from_diff_args(args: list[str]) -> dict[Path, set[int]]:
+    """Return changed Rust source files and current-file line numbers for one `git diff` invocation."""
     result = subprocess.run(
-        ["git", "diff", "--unified=0", "--", "*.rs"],
+        args,
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -50,6 +58,7 @@ def changed_rust_files() -> dict[Path, set[int]]:
                 or rel.endswith("/tests.rs")
                 or "/examples/" in rel
                 or rel.startswith("examples/")
+                or rel.startswith("crates/third_party/")
             ):
                 current_path = None
                 continue
@@ -65,6 +74,23 @@ def changed_rust_files() -> dict[Path, set[int]]:
         if count == 0:
             continue
         files[current_path].update(range(start, start + count))
+    return files
+
+
+def changed_rust_files(base_ref: str | None) -> dict[Path, set[int]]:
+    """Return changed Rust source files and their changed current-file line numbers."""
+    if base_ref:
+        return changed_rust_files_from_diff_args(["git", "diff", "--unified=0", base_ref, "--", "*.rs"])
+
+    files: dict[Path, set[int]] = {}
+    merge_changed_lines(
+        files,
+        changed_rust_files_from_diff_args(["git", "diff", "--unified=0", "--", "*.rs"]),
+    )
+    merge_changed_lines(
+        files,
+        changed_rust_files_from_diff_args(["git", "diff", "--cached", "--unified=0", "--", "*.rs"]),
+    )
     return files
 
 
@@ -148,6 +174,32 @@ def quote_macro_lines(lines: list[str]) -> set[int]:
     return quoted
 
 
+def trait_impl_lines(lines: list[str]) -> set[int]:
+    """Return line numbers inside explicit trait implementation blocks."""
+    trait_impls: set[int] = set()
+    brace_depth = 0
+    active_impl_depth: int | None = None
+
+    for index, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        open_braces = line.count("{")
+        close_braces = line.count("}")
+
+        if active_impl_depth is None and stripped.startswith("impl ") and " for " in stripped and "{" in stripped:
+            active_impl_depth = brace_depth + open_braces
+
+        if active_impl_depth is not None:
+            trait_impls.add(index)
+
+        brace_depth += open_braces
+        brace_depth -= close_braces
+
+        if active_impl_depth is not None and brace_depth < active_impl_depth:
+            active_impl_depth = None
+
+    return trait_impls
+
+
 def function_end_line(lines: list[str], fn_index: int) -> int:
     """Return the best-effort inclusive end line for a function starting at `fn_index`."""
     depth = 0
@@ -170,6 +222,7 @@ def missing_docs(path: Path, changed_lines: set[int]) -> list[tuple[int, str]]:
     lines = path.read_text().splitlines()
     test_lines = test_module_lines(lines)
     quoted_lines = quote_macro_lines(lines)
+    trait_impls = trait_impl_lines(lines)
     misses: list[tuple[int, str]] = []
     for index, line in enumerate(lines):
         match = FN_RE.match(line)
@@ -179,6 +232,8 @@ def missing_docs(path: Path, changed_lines: set[int]) -> list[tuple[int, str]]:
         if line_no in test_lines:
             continue
         if line_no in quoted_lines:
+            continue
+        if line_no in trait_impls:
             continue
         end_line = function_end_line(lines, index)
         if not any(line_no <= changed <= end_line for changed in changed_lines):
@@ -191,10 +246,22 @@ def missing_docs(path: Path, changed_lines: set[int]) -> list[tuple[int, str]]:
     return misses
 
 
-def main() -> int:
+def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse command-line options for the rustdoc gate."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--base",
+        default=os.environ.get("INCAN_RUSTDOC_GATE_BASE"),
+        help="optional git ref to diff against instead of staged plus unstaged changes",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
     """Run the touched-file rustdoc gate and print failures in `path:line:name` form."""
+    args = parse_args(sys.argv[1:] if argv is None else argv)
     misses: list[tuple[Path, int, str]] = []
-    for path, changed_lines in changed_rust_files().items():
+    for path, changed_lines in changed_rust_files(args.base).items():
         for line, name in missing_docs(path, changed_lines):
             misses.append((path, line, name))
 

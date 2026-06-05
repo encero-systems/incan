@@ -7,9 +7,9 @@ use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
 
 use super::super::decl::Visibility;
-use super::super::expr::{IrExprKind, Pattern};
+use super::super::expr::{IrExprKind, MatchArm, Pattern};
 use super::super::types::IrType;
-use super::IrEmitter;
+use super::{EmitError, IrEmitter};
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 use incan_core::lang::types::numerics;
@@ -22,10 +22,16 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit the generated Rust type path for an anonymous ordinary union with an optional explicit module qualifier.
     pub(super) fn emit_union_type_path_with_qualifier(&self, ty: &IrType, qualifier: Option<&[String]>) -> TokenStream {
-        let union_name = ty
+        let ty = self.resolve_type_aliases_for_emit(ty);
+        let (semantic_ty, external_qualifier) = match &ty {
+            IrType::ExternalUnion { library, union } => (union.as_ref(), Some(vec![library.clone()])),
+            _ => (&ty, None),
+        };
+        let union_name = semantic_ty
             .union_type_name()
             .unwrap_or_else(|| super::super::types::IR_UNION_TYPE_NAME.to_string());
         let n = Self::rust_ident(&union_name);
+        let qualifier = qualifier.or(external_qualifier.as_deref());
         if let Some(qualifier) = qualifier
             && let Some((first, rest)) = qualifier.split_first()
         {
@@ -122,8 +128,15 @@ impl<'a> IrEmitter<'a> {
                 if name == surface_types::as_str(SurfaceTypeId::ValidationError) {
                     return quote! { incan_stdlib::validation::ValidationError };
                 }
+                if *self.qualify_internal_canonical_paths.borrow()
+                    && let Some(path) = self.emit_dependency_type_path(name)
+                {
+                    return path;
+                }
                 Self::emit_path_ident(name)
             }
+            IrType::RustDisplay(display) => display.parse().unwrap_or_else(|_| quote! { _ }),
+            IrType::ExternalUnion { .. } => self.emit_union_type_path(ty),
             IrType::NamedGeneric(name, _) if name == super::super::types::IR_UNION_TYPE_NAME => {
                 self.emit_union_type_path(ty)
             }
@@ -135,13 +148,21 @@ impl<'a> IrEmitter<'a> {
                     Some(CollectionTypeId::Generator) => Some(quote! { incan_stdlib::iter::Generator }),
                     _ => None,
                 };
-                let n = Self::emit_path_ident(name);
                 let ts: Vec<_> = args.iter().map(|t| self.emit_type(t)).collect();
                 if let Some(n) = frozen_name {
                     quote! { #n < #(#ts),* > }
+                } else if *self.qualify_internal_canonical_paths.borrow()
+                    && let Some(n) = self.emit_dependency_type_path(name)
+                {
+                    quote! { #n < #(#ts),* > }
                 } else {
+                    let n = Self::emit_path_ident(name);
                     quote! { #n < #(#ts),* > }
                 }
+            }
+            IrType::TypeToken(inner) => {
+                let inner_ty = self.emit_type(inner);
+                quote! { incan_stdlib::reflection::TypeToken<#inner_ty> }
             }
             IrType::ImplTrait(bound) => {
                 let bound_tokens = self.emit_trait_bound(bound);
@@ -169,6 +190,15 @@ impl<'a> IrEmitter<'a> {
             }
             IrType::Unknown => quote! { _ },
         }
+    }
+
+    /// Emit the Rust function type for a callable value.
+    pub(in crate::backend::ir::emit) fn emit_callable_fn_type(&self, params: &[IrType], ret: &IrType) -> TokenStream {
+        let previous = self.qualify_internal_canonical_paths.replace(true);
+        let param_tokens = params.iter().map(|param| self.emit_type(param)).collect::<Vec<_>>();
+        let ret_tokens = self.emit_type(ret);
+        self.qualify_internal_canonical_paths.replace(previous);
+        quote! { fn(#(#param_tokens),*) -> #ret_tokens }
     }
 
     // ========================================================================
@@ -373,6 +403,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Collect string literal patterns from a match pattern tree.
     fn collect_string_literal_patterns<'p>(pattern: &'p Pattern, values: &mut Vec<&'p str>) -> bool {
         match pattern {
             Pattern::Literal(lit) => {
@@ -422,5 +453,73 @@ impl<'a> IrEmitter<'a> {
         }
 
         (self.emit_pattern(pattern), None)
+    }
+
+    /// Emit compiler-introduced match-arm bindings.
+    fn emit_match_arm_binding_lets(&self, arm: &MatchArm, for_guard: bool) -> Result<Vec<TokenStream>, EmitError> {
+        let mut bindings = Vec::new();
+        for binding in &arm.bindings {
+            let value_expr = if for_guard {
+                let guard_uses_binding = arm
+                    .guard
+                    .as_ref()
+                    .is_some_and(|guard| super::super::scanners::expr_uses_binding_name(guard, &binding.name));
+                if !guard_uses_binding {
+                    continue;
+                }
+                binding.guard_value.as_ref().unwrap_or(&binding.value)
+            } else {
+                &binding.value
+            };
+            let name = Self::rust_ident(&binding.name);
+            let ty = self.emit_type(&binding.ty);
+            let value = self.emit_expr(value_expr)?;
+            bindings.push(quote! { let #name: #ty = #value; });
+        }
+        Ok(bindings)
+    }
+
+    /// Emit a match arm guard, including compiler-introduced bindings required by narrowed pattern lowering.
+    pub(super) fn emit_match_arm_guard(
+        &self,
+        arm: &MatchArm,
+        pattern_guard: Option<TokenStream>,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let arm_guard = arm.guard.as_ref().map(|guard| self.emit_expr(guard)).transpose()?;
+        let guard = match (pattern_guard, arm_guard) {
+            (Some(pattern_guard), Some(arm_guard)) => Some(quote! { (#pattern_guard) && (#arm_guard) }),
+            (Some(pattern_guard), None) => Some(pattern_guard),
+            (None, Some(arm_guard)) => Some(arm_guard),
+            (None, None) => None,
+        };
+        let Some(guard) = guard else {
+            return Ok(None);
+        };
+        if arm.bindings.is_empty() || arm.guard.is_none() {
+            return Ok(Some(guard));
+        }
+        let bindings = self.emit_match_arm_binding_lets(arm, true)?;
+        if bindings.is_empty() {
+            return Ok(Some(guard));
+        }
+        Ok(Some(quote! {{
+            #(#bindings)*
+            #guard
+        }}))
+    }
+
+    /// Emit a match arm body, including compiler-introduced bindings required by narrowed pattern lowering.
+    pub(super) fn emit_match_arm_body(&self, arm: &MatchArm) -> Result<TokenStream, EmitError> {
+        let body = self.emit_expr(&arm.body)?;
+        if arm.bindings.is_empty() {
+            return Ok(body);
+        }
+
+        let bindings = self.emit_match_arm_binding_lets(arm, false)?;
+
+        Ok(quote! {{
+            #(#bindings)*
+            #body
+        }})
     }
 }

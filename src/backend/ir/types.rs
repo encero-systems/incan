@@ -83,6 +83,24 @@ pub enum IrType {
     /// - Codegen emits this as `Name<Arg0, Arg1, ...>`.
     NamedGeneric(String, Vec<IrType>),
 
+    /// Zero-sized value-level marker for an Incan source type, emitted as `incan_stdlib::reflection::TypeToken<T>`.
+    TypeToken(Box<IrType>),
+
+    /// Exact Rust type display carried from interop metadata.
+    ///
+    /// This is reserved for Rust boundary shapes that the Incan type model cannot faithfully spell yet, such as
+    /// borrowed slices (`&[T]`) in closure parameters.
+    RustDisplay(String),
+
+    /// Anonymous union wrapper owned by a public dependency crate.
+    ///
+    /// The inner type keeps the semantic union members available to assignment, argument, collection, and option
+    /// conversion planning while emission uses `library::__IncanUnion...` instead of re-owning the wrapper locally.
+    ExternalUnion {
+        library: String,
+        union: Box<IrType>,
+    },
+
     /// Opaque trait return type emitted as Rust `impl Trait`, RFC 042.
     ImplTrait(IrTraitBound),
 
@@ -122,10 +140,13 @@ impl IrType {
             IrType::Tuple(items) | IrType::NamedGeneric(_, items) => {
                 items.iter().any(IrType::contains_generic_parameter)
             }
+            IrType::TypeToken(inner) => inner.contains_generic_parameter(),
             IrType::Function { params, ret } => {
                 params.iter().any(IrType::contains_generic_parameter) || ret.contains_generic_parameter()
             }
+            IrType::ExternalUnion { union, .. } => union.contains_generic_parameter(),
             IrType::Generic(_) => true,
+            IrType::RustDisplay(_) => false,
             _ => false,
         }
     }
@@ -150,8 +171,10 @@ impl IrType {
             | IrType::Ref(_)
             | IrType::RefMut(_) => true,
             IrType::Tuple(items) => items.iter().all(IrType::is_copy),
+            IrType::TypeToken(_) => true,
             IrType::Option(inner) => inner.is_copy(),
             IrType::Result(ok, err) => ok.is_copy() && err.is_copy(),
+            IrType::ExternalUnion { .. } => false,
             _ => false,
         }
     }
@@ -204,10 +227,13 @@ impl IrType {
             IrType::Struct(name) => name.clone(),
             IrType::Enum(name) => name.clone(),
             IrType::Trait(name) => name.clone(),
+            IrType::RustDisplay(display) => display.clone(),
+            IrType::ExternalUnion { union, .. } => union.incan_name(),
             IrType::NamedGeneric(name, args) => {
                 let inner: Vec<_> = args.iter().map(|a| a.incan_name()).collect();
                 format!("{}[{}]", name, inner.join(", "))
             }
+            IrType::TypeToken(inner) => format!("Type[{}]", inner.incan_name()),
             IrType::ImplTrait(bound) => {
                 if bound.type_args.is_empty() {
                     bound.trait_path.clone()
@@ -254,6 +280,11 @@ impl IrType {
             IrType::Result(ok, err) => format!("Result<{}, {}>", ok.rust_name(), err.rust_name()),
             IrType::Struct(name) | IrType::Enum(name) => name.clone(),
             IrType::Trait(name) => format!("dyn {}", name),
+            IrType::RustDisplay(display) => display.clone(),
+            IrType::ExternalUnion { library, union } => union
+                .union_type_name()
+                .map(|name| format!("{library}::{name}"))
+                .unwrap_or_else(|| union.rust_name()),
             IrType::NamedGeneric(name, _) if name == IR_UNION_TYPE_NAME => {
                 self.union_type_name().unwrap_or_else(|| IR_UNION_TYPE_NAME.to_string())
             }
@@ -261,6 +292,7 @@ impl IrType {
                 let inner: Vec<_> = args.iter().map(|a| a.rust_name()).collect();
                 format!("{}<{}>", name, inner.join(", "))
             }
+            IrType::TypeToken(inner) => format!("incan_stdlib::reflection::TypeToken<{}>", inner.rust_name()),
             IrType::ImplTrait(bound) => {
                 let args = if bound.type_args.is_empty() {
                     String::new()
@@ -288,6 +320,7 @@ impl IrType {
     pub fn union_members(&self) -> Option<&[IrType]> {
         match self {
             IrType::NamedGeneric(name, members) if name == IR_UNION_TYPE_NAME => Some(members.as_slice()),
+            IrType::ExternalUnion { union, .. } => union.union_members(),
             _ => None,
         }
     }

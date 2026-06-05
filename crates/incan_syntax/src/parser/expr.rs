@@ -384,8 +384,14 @@ impl<'a> Parser<'a> {
     /// Parse postfix forms such as calls, method calls, field access, indexing, and `?`.
     fn postfix(&mut self) -> Result<Spanned<Expr>, CompileError> {
         let mut expr = self.primary()?;
+        let mut fluent_layout_depth = 0usize;
 
         loop {
+            if self.consume_fluent_chain_terminator(&mut fluent_layout_depth) {
+                break;
+            }
+            self.consume_fluent_chain_continuation(&mut fluent_layout_depth);
+
             if self.match_token(&TokenKind::Punctuation(PunctuationId::Question)) {
                 let span = Span::new(expr.span.start, self.tokens[self.pos - 1].span.end);
                 expr = Spanned::new(Expr::Try(Box::new(expr)), span);
@@ -497,8 +503,73 @@ impl<'a> Parser<'a> {
         Ok(expr)
     }
 
+    /// Consume the layout prefix for an indented fluent method/field continuation.
+    ///
+    /// This accepts source shaped as:
+    ///
+    /// ```text
+    /// value = receiver
+    ///     .method()
+    ///     .field
+    /// ```
+    ///
+    /// The lexer emits ordinary `Newline`/`Indent`/`Dedent` tokens for that layout. Treating the indented leading
+    /// `.` as expression continuation keeps fluent APIs writable without requiring wrapping parentheses.
+    fn consume_fluent_chain_continuation(&mut self, fluent_layout_depth: &mut usize) -> bool {
+        if !self.check(&TokenKind::Newline) {
+            return false;
+        }
+
+        let next = self.tokens.get(self.pos + 1).map(|token| &token.kind);
+        let after_next = self.tokens.get(self.pos + 2).map(|token| &token.kind);
+        if matches!(next, Some(TokenKind::Indent))
+            && matches!(after_next, Some(TokenKind::Punctuation(PunctuationId::Dot)))
+        {
+            self.advance(); // newline
+            self.advance(); // continuation indent
+            *fluent_layout_depth += 1;
+            return true;
+        }
+
+        if *fluent_layout_depth > 0 && matches!(next, Some(TokenKind::Punctuation(PunctuationId::Dot))) {
+            self.advance(); // newline between continuation lines
+            return true;
+        }
+
+        false
+    }
+
+    /// Consume the layout suffix that closes an indented fluent continuation.
+    fn consume_fluent_chain_terminator(&mut self, fluent_layout_depth: &mut usize) -> bool {
+        if *fluent_layout_depth == 0 || !self.check(&TokenKind::Newline) {
+            return false;
+        }
+
+        let mut next_non_newline = self.pos;
+        while matches!(
+            self.tokens.get(next_non_newline).map(|token| &token.kind),
+            Some(TokenKind::Newline)
+        ) {
+            next_non_newline += 1;
+        }
+
+        if !matches!(
+            self.tokens.get(next_non_newline).map(|token| &token.kind),
+            Some(TokenKind::Dedent)
+        ) {
+            return false;
+        }
+
+        while self.pos < next_non_newline {
+            self.advance(); // final continuation newline or blank continuation line
+        }
+        self.advance(); // continuation dedent
+        *fluent_layout_depth = fluent_layout_depth.saturating_sub(1);
+        true
+    }
+
     /// Parse one call-site type argument: either a full [`Type`] or the inference placeholder `_`.
-    fn call_site_type_arg(&mut self) -> Result<Spanned<Type>, CompileError> {
+    pub(super) fn call_site_type_arg(&mut self) -> Result<Spanned<Type>, CompileError> {
         if let TokenKind::Ident(name) = &self.peek().kind
             && name == "_"
         {
@@ -512,7 +583,7 @@ impl<'a> Parser<'a> {
     /// Parse optional explicit call-site type arguments (`[T, U]`) without consuming non-call brackets.
     ///
     /// This is intentionally conservative: we only treat brackets as call-site type args when the matching `]` is followed immediately by `(`.
-    fn call_site_type_args(&mut self) -> Result<Vec<Spanned<Type>>, CompileError> {
+    pub(super) fn call_site_type_args(&mut self) -> Result<Vec<Spanned<Type>>, CompileError> {
         if !self.check(&TokenKind::Punctuation(PunctuationId::LBracket)) {
             return Ok(Vec::new());
         }
@@ -670,6 +741,10 @@ impl<'a> Parser<'a> {
             return self.race_for_expr(start);
         }
 
+        if let Some(expr) = self.try_vocab_block_expression(start)? {
+            return Ok(expr);
+        }
+
         // self
         if self.match_token(&TokenKind::Keyword(KeywordId::SelfKw)) {
             let end = self.tokens[self.pos - 1].span.end;
@@ -726,6 +801,371 @@ impl<'a> Parser<'a> {
             &format!("{:?}", self.peek().kind),
             self.current_span(),
         ))
+    }
+
+    /// Parse a metadata-declared vocab block in expression position.
+    ///
+    /// Only declarations whose rich DSL surface says `desugars_to_expression()` are accepted here. The low-level
+    /// keyword activation still supplies the parser entrypoint, while the rich declaration metadata decides whether the
+    /// raw block can occupy a value position.
+    fn try_vocab_block_expression(&mut self, start: usize) -> Result<Option<Spanned<Expr>>, CompileError> {
+        let Some(keyword_name) = self.current_vocab_keyword_name() else {
+            return Ok(None);
+        };
+        let parent_keyword = self.vocab_block_stack.last().cloned();
+        let Some(spec) = self
+            .find_active_vocab_block_spec(&keyword_name, parent_keyword.as_deref())
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        if spec.desugar_target != incan_vocab::DesugarTarget::Expression {
+            return Ok(None);
+        }
+        if !self.has_top_level_colon_before_statement_end(self.pos + 1)
+            && !self.vocab_expression_block_has_brace_delimiter(&spec)
+        {
+            return Ok(None);
+        }
+
+        let block = self.parse_vocab_expression_block(keyword_name, spec)?;
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Some(Spanned::new(
+            Expr::VocabBlock(Box::new(block)),
+            Span::new(start, end),
+        )))
+    }
+
+    /// Return whether a vocab expression declaration has a top-level `{` delimiter after its optional header args.
+    fn vocab_expression_block_has_brace_delimiter(&self, spec: &ActiveImportedKeywordSpec) -> bool {
+        let mut idx = self.pos + 1 + spec.compound_tokens.len();
+        let mut paren_depth = 0usize;
+        let mut bracket_depth = 0usize;
+        let mut brace_depth = 0usize;
+
+        while let Some(token) = self.tokens.get(idx) {
+            match token.kind {
+                TokenKind::Punctuation(PunctuationId::LParen) => paren_depth += 1,
+                TokenKind::Punctuation(PunctuationId::RParen) => {
+                    paren_depth = paren_depth.saturating_sub(1);
+                }
+                TokenKind::Punctuation(PunctuationId::LBracket) => bracket_depth += 1,
+                TokenKind::Punctuation(PunctuationId::RBracket) => {
+                    bracket_depth = bracket_depth.saturating_sub(1);
+                }
+                TokenKind::Punctuation(PunctuationId::LBrace)
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>
+                {
+                    return true;
+                }
+                TokenKind::Punctuation(PunctuationId::LBrace) => brace_depth += 1,
+                TokenKind::Punctuation(PunctuationId::RBrace) => {
+                    brace_depth = brace_depth.saturating_sub(1);
+                }
+                TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof
+                    if paren_depth == 0 && bracket_depth == 0 && brace_depth == 0 =>
+                {
+                    return false;
+                }
+                _ => {}
+            }
+            idx += 1;
+        }
+
+        false
+    }
+
+    /// Parse the raw block carrier shared by expression-position vocab declarations.
+    fn parse_vocab_expression_block(
+        &mut self,
+        keyword_name: String,
+        spec: ActiveImportedKeywordSpec,
+    ) -> Result<VocabBlockStmt, CompileError> {
+        let spec_compound_tokens = spec.compound_tokens.clone();
+        self.advance();
+        self.consume_vocab_compound_tokens(&spec_compound_tokens)?;
+
+        let mut header_args = Vec::new();
+        while !self.check_punct(PunctuationId::Colon) && !self.check_punct(PunctuationId::LBrace) {
+            header_args.push(self.expression()?);
+            if !self.match_punct(PunctuationId::Comma) {
+                break;
+            }
+        }
+
+        let (body, body_item_trailing_commas) = if self.match_punct(PunctuationId::Colon) {
+            self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+            self.expect_suite_indent("Expected indented block after vocab keyword")?;
+            let body = self.parse_scoped_vocab_indented_body(
+                &keyword_name,
+                spec.clause_body_kind,
+                spec.expression_item_modifiers.clone(),
+            )?;
+            self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
+            let body_item_trailing_commas = vec![false; body.len()];
+            (body, body_item_trailing_commas)
+        } else if self.match_punct(PunctuationId::LBrace) {
+            self.parse_scoped_vocab_braced_body(
+                &keyword_name,
+                spec.clause_body_kind,
+                spec.expression_item_modifiers.clone(),
+            )?
+        } else {
+            return Err(errors::expected_token_message(
+                "Expected ':' or '{' after vocab expression declaration header",
+                &format!("{:?}", self.peek().kind),
+                self.current_span(),
+            ));
+        };
+
+        Ok(VocabBlockStmt {
+            keyword: keyword_name,
+            keyword_binding: VocabKeywordBinding {
+                dependency_key: spec.dependency_key,
+                activation_namespace: spec.activation_namespace,
+                surface_kind: spec.surface_kind,
+                compound_tokens: spec_compound_tokens,
+                placement: spec.placement,
+                clause_body_kind: spec.clause_body_kind,
+            },
+            decorators: Vec::new(),
+            header_args,
+            body,
+            body_item_trailing_commas,
+        })
+    }
+
+    /// Parse an indentation-delimited vocab body with the same scoped context used by statement vocab blocks.
+    fn parse_scoped_vocab_indented_body(
+        &mut self,
+        keyword_name: &str,
+        clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
+        expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
+    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        self.vocab_block_stack.push(keyword_name.to_string());
+        self.vocab_body_kind_stack.push(clause_body_kind);
+        self.vocab_expression_item_modifier_stack
+            .push(expression_item_modifiers);
+        let body = self.block();
+        self.vocab_block_stack.pop();
+        self.vocab_body_kind_stack.pop();
+        self.vocab_expression_item_modifier_stack.pop();
+        body
+    }
+
+    /// Parse a brace-delimited vocab body.
+    ///
+    /// Braced vocab syntax does not receive lexer newline/indent tokens, so clause boundaries are recognized from the
+    /// active child keyword metadata for the owning declaration rather than from source line breaks.
+    fn parse_scoped_vocab_braced_body(
+        &mut self,
+        keyword_name: &str,
+        clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
+        expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
+    ) -> Result<(Vec<Spanned<Statement>>, Vec<bool>), CompileError> {
+        self.vocab_block_stack.push(keyword_name.to_string());
+        self.vocab_body_kind_stack.push(clause_body_kind);
+        self.vocab_expression_item_modifier_stack
+            .push(expression_item_modifiers);
+        let body = self.braced_vocab_body(None);
+        self.vocab_block_stack.pop();
+        self.vocab_body_kind_stack.pop();
+        self.vocab_expression_item_modifier_stack.pop();
+        body
+    }
+
+    /// Parse braced body items until the matching `}`.
+    fn braced_vocab_body(
+        &mut self,
+        sibling_parent_keyword: Option<String>,
+    ) -> Result<(Vec<Spanned<Statement>>, Vec<bool>), CompileError> {
+        let mut body = Vec::new();
+        let mut body_item_trailing_commas = Vec::new();
+        self.skip_newlines();
+        while !self.check_punct(PunctuationId::RBrace) && !self.is_at_end() {
+            if self.braced_vocab_body_boundary(sibling_parent_keyword.as_deref()) {
+                break;
+            }
+            if let Some(child) = self.try_braced_vocab_child()? {
+                body.push(child);
+            } else if self.vocab_expression_list_items_enabled() {
+                body.push(self.braced_vocab_expression_list_item()?);
+            } else {
+                let start = self.current_span().start;
+                let stmt = self.assignment_or_expr_stmt()?;
+                let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+                body.push(Spanned::new(stmt, Span::new(start, end)));
+            }
+            self.skip_newlines();
+            body_item_trailing_commas.push(self.match_punct(PunctuationId::Comma));
+            self.skip_newlines();
+        }
+        if sibling_parent_keyword.is_none() {
+            self.expect_punct(PunctuationId::RBrace, "Expected '}' after vocab expression block")?;
+        }
+        Ok((body, body_item_trailing_commas))
+    }
+
+    /// Parse one child clause/declaration inside a braced vocab body when metadata says the current token starts one.
+    fn try_braced_vocab_child(&mut self) -> Result<Option<Spanned<Statement>>, CompileError> {
+        let parent_keyword = self.vocab_block_stack.last().cloned();
+        let Some(keyword_name) = self.current_vocab_keyword_name() else {
+            return Ok(None);
+        };
+        let Some(spec) = self
+            .find_active_vocab_block_spec(&keyword_name, parent_keyword.as_deref())
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        let start = self.current_span().start;
+        let block = self.parse_braced_vocab_child_from_spec(keyword_name, spec, parent_keyword)?;
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Some(Spanned::new(
+            Statement::VocabBlock(block),
+            Span::new(start, end),
+        )))
+    }
+
+    /// Parse one metadata-selected child item in braced vocab syntax.
+    fn parse_braced_vocab_child_from_spec(
+        &mut self,
+        keyword_name: String,
+        spec: ActiveImportedKeywordSpec,
+        sibling_parent_keyword: Option<String>,
+    ) -> Result<VocabBlockStmt, CompileError> {
+        let spec_compound_tokens = spec.compound_tokens.clone();
+        self.advance();
+        self.consume_vocab_compound_tokens(&spec_compound_tokens)?;
+
+        let (body, body_item_trailing_commas) = if self.match_punct(PunctuationId::Colon) {
+            self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+            self.expect_suite_indent("Expected indented block after vocab keyword")?;
+            let body = self.parse_scoped_vocab_indented_body(
+                &keyword_name,
+                spec.clause_body_kind,
+                spec.expression_item_modifiers.clone(),
+            )?;
+            self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
+            let body_item_trailing_commas = vec![false; body.len()];
+            (body, body_item_trailing_commas)
+        } else if self.match_punct(PunctuationId::LBrace) {
+            self.parse_scoped_vocab_braced_body(
+                &keyword_name,
+                spec.clause_body_kind,
+                spec.expression_item_modifiers.clone(),
+            )?
+        } else {
+            self.parse_braced_vocab_inline_body(
+                &keyword_name,
+                spec.clause_body_kind,
+                spec.expression_item_modifiers.clone(),
+                sibling_parent_keyword,
+            )?
+        };
+
+        Ok(VocabBlockStmt {
+            keyword: keyword_name,
+            keyword_binding: VocabKeywordBinding {
+                dependency_key: spec.dependency_key,
+                activation_namespace: spec.activation_namespace,
+                surface_kind: spec.surface_kind,
+                compound_tokens: spec_compound_tokens,
+                placement: spec.placement,
+                clause_body_kind: spec.clause_body_kind,
+            },
+            decorators: Vec::new(),
+            header_args: Vec::new(),
+            body,
+            body_item_trailing_commas,
+        })
+    }
+
+    /// Parse the inline body after a braced child keyword, e.g. `FROM orders` or `SELECT amount as total`.
+    fn parse_braced_vocab_inline_body(
+        &mut self,
+        keyword_name: &str,
+        clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
+        expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
+        sibling_parent_keyword: Option<String>,
+    ) -> Result<(Vec<Spanned<Statement>>, Vec<bool>), CompileError> {
+        self.vocab_block_stack.push(keyword_name.to_string());
+        self.vocab_body_kind_stack.push(clause_body_kind);
+        self.vocab_expression_item_modifier_stack
+            .push(expression_item_modifiers);
+
+        let body = match clause_body_kind {
+            Some(incan_vocab::ClauseBodyKind::ExpressionList) => {
+                self.braced_expression_items_until_boundary(sibling_parent_keyword.as_deref())
+            }
+            Some(incan_vocab::ClauseBodyKind::Expression) | None => {
+                self.braced_single_expression_until_boundary(sibling_parent_keyword.as_deref())
+            }
+            _ => self.braced_vocab_body(sibling_parent_keyword),
+        };
+
+        self.vocab_block_stack.pop();
+        self.vocab_body_kind_stack.pop();
+        self.vocab_expression_item_modifier_stack.pop();
+        body
+    }
+
+    /// Parse one expression clause body in braced syntax.
+    fn braced_single_expression_until_boundary(
+        &mut self,
+        sibling_parent_keyword: Option<&str>,
+    ) -> Result<(Vec<Spanned<Statement>>, Vec<bool>), CompileError> {
+        if self.braced_vocab_body_boundary(sibling_parent_keyword) {
+            return Ok((Vec::new(), Vec::new()));
+        }
+        let start = self.current_span().start;
+        let expr = self.expression()?;
+        let end = expr.span.end;
+        Ok((
+            vec![Spanned::new(Statement::Expr(expr), Span::new(start, end))],
+            vec![false],
+        ))
+    }
+
+    /// Parse expression-list entries in braced syntax until the next sibling clause/declaration.
+    fn braced_expression_items_until_boundary(
+        &mut self,
+        sibling_parent_keyword: Option<&str>,
+    ) -> Result<(Vec<Spanned<Statement>>, Vec<bool>), CompileError> {
+        let mut statements = Vec::new();
+        let mut trailing_commas = Vec::new();
+        while !self.braced_vocab_body_boundary(sibling_parent_keyword) {
+            statements.push(self.braced_vocab_expression_list_item()?);
+            self.skip_newlines();
+            let had_comma = self.match_punct(PunctuationId::Comma);
+            trailing_commas.push(had_comma);
+            if !had_comma && self.braced_vocab_body_boundary(sibling_parent_keyword) {
+                break;
+            }
+            self.skip_newlines();
+        }
+        Ok((statements, trailing_commas))
+    }
+
+    /// Parse one expression-list item in braced syntax.
+    fn braced_vocab_expression_list_item(&mut self) -> Result<Spanned<Statement>, CompileError> {
+        let start = self.current_span().start;
+        let expr = self.expression()?;
+        let statement = if let Some(item) = self.vocab_expression_list_item_tail(expr.clone())? {
+            Statement::VocabExpressionItem(item)
+        } else {
+            Statement::Expr(expr)
+        };
+        let end = self.tokens[self.pos.saturating_sub(1)].span.end;
+        Ok(Spanned::new(statement, Span::new(start, end)))
+    }
+
+    /// Return whether braced parsing reached a terminator for the current inline body.
+    fn braced_vocab_body_boundary(&self, sibling_parent_keyword: Option<&str>) -> bool {
+        self.check_punct(PunctuationId::RBrace)
+            || self.is_at_end()
+            || sibling_parent_keyword
+                .is_some_and(|parent| self.current_starts_vocab_block_for_parent(Some(parent)))
     }
 
     /// Parse `partial Target(name=value)` after the `partial` marker has already been consumed.
@@ -1269,17 +1709,21 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Convert lexer f-string segments into parsed AST parts while preserving interpolation spans and format markers.
     fn convert_fstring_parts(&self, parts: &[LexFStringPart]) -> Vec<FStringPart> {
         parts
             .iter()
             .map(|p| match p {
                 LexFStringPart::Literal(s) => FStringPart::Literal(s.clone()),
                 LexFStringPart::Expr { text, offset } => {
-                    // Parse simple field access chains like "user.name" or "obj.field.sub"
                     let expr_span = Span::new(*offset, offset + text.len() + 2);
-                    let mut expr = self.parse_fstring_expr(text);
+                    let (expr_text, format) = split_fstring_format(text);
+                    let mut expr = self.parse_fstring_expr(expr_text);
                     self.shift_expr_spans(&mut expr, offset + 1);
-                    FStringPart::Expr(Spanned::new(expr, expr_span))
+                    FStringPart::Expr {
+                        expr: Spanned::new(expr, expr_span),
+                        format,
+                    }
                 }
             })
             .collect()
@@ -1441,8 +1885,8 @@ impl<'a> Parser<'a> {
             }
             Expr::FString(parts) => {
                 for part in parts {
-                    if let FStringPart::Expr(value) = part {
-                        self.shift_spanned_expr(value, offset);
+                    if let FStringPart::Expr { expr, .. } = part {
+                        self.shift_spanned_expr(expr, offset);
                     }
                 }
             }
@@ -1483,6 +1927,7 @@ impl<'a> Parser<'a> {
                     }
                 }
             },
+            Expr::VocabBlock(_) => {}
         }
     }
 
@@ -1521,6 +1966,7 @@ impl<'a> Parser<'a> {
         Expr::Ident(s.to_string())
     }
 
+    /// Parse a `match` expression.
     fn match_expr(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         let subject = self.expression()?;
         self.expect(
@@ -1547,7 +1993,6 @@ impl<'a> Parser<'a> {
                 next_leading = 0;
             }
         }
-
         self.expect(&TokenKind::Dedent, "Expected dedent after match body")?;
         let end = self.tokens[self.pos - 1].span.end;
         Ok(Spanned::new(
@@ -1556,6 +2001,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse one arm of a `match` expression.
     fn match_arm(&mut self) -> Result<Spanned<MatchArm>, CompileError> {
         let start = self.current_span().start;
 
@@ -1810,6 +2256,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse an `if` expression.
     fn if_expr(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::If), "Expected 'if'")?;
         let condition = self.expression()?;
@@ -1844,6 +2291,7 @@ impl<'a> Parser<'a> {
         ))
     }
 
+    /// Parse a `loop` expression.
     fn loop_expr(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::Loop), "Expected 'loop'")?;
         self.expect(
@@ -2217,6 +2665,7 @@ impl<'a> Parser<'a> {
         Ok(clauses)
     }
 
+    /// Parse a parenthesized expression or tuple literal.
     fn paren_or_tuple(&mut self, start: usize) -> Result<Spanned<Expr>, CompileError> {
         // Implicit line continuation: skip newlines after (
         self.skip_newlines();
@@ -2355,6 +2804,7 @@ impl<'a> Parser<'a> {
         result
     }
 
+    /// Parse call arguments.
     fn call_args(&mut self) -> Result<Vec<CallArg>, CompileError> {
         // Implicit line continuation: skip newlines after (
         self.skip_newlines();
@@ -2474,4 +2924,42 @@ impl<'a> Parser<'a> {
         Ok(partial_args)
     }
 
+}
+
+/// Split a raw f-string interpolation body into expression text plus the supported top-level format marker.
+fn split_fstring_format(text: &str) -> (&str, FStringFormat) {
+    let mut depth = 0usize;
+    let mut quote = None;
+    let mut escaped = false;
+    let mut format_colon = None;
+
+    for (idx, ch) in text.char_indices() {
+        if let Some(active_quote) = quote {
+            if escaped {
+                escaped = false;
+            } else if ch == '\\' {
+                escaped = true;
+            } else if ch == active_quote {
+                quote = None;
+            }
+            continue;
+        }
+
+        match ch {
+            '\'' | '"' => quote = Some(ch),
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = depth.saturating_sub(1),
+            ':' if depth == 0 => format_colon = Some(idx),
+            _ => {}
+        }
+    }
+
+    if let Some(idx) = format_colon {
+        let spec = text[idx + 1..].trim();
+        if spec == "?" {
+            return (text[..idx].trim_end(), FStringFormat::Debug);
+        }
+    }
+
+    (text, FStringFormat::Display)
 }

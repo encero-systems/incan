@@ -16,7 +16,7 @@ The user-facing contract is the Incan `std.*` surface declared by the stdlib stu
 
 #### `HasFieldInfo` - Reflection Support
 
-Provides compile-time reflection for Incan models and classes:
+Provides compile-time field-name and field-type reflection for Incan models and classes:
 
 ```rust
 pub trait HasFieldInfo {
@@ -26,6 +26,10 @@ pub trait HasFieldInfo {
 ```
 
 **Used by**: All Incan models and classes automatically implement this via `#[derive(FieldInfo)]`
+
+#### `HasFieldMetadata` / `HasClassName` - Generic Reflection Support
+
+Generated Incan models and classes also implement value-level reflection traits used by compiler-inferred generic bounds. These traits back generic Incan calls such as `value.__fields__()` and `value.__class_name__()` without changing the concrete reflection helpers emitted on each model or class. Primitive type arguments implement the type-level class-name reflection trait, so generic helpers can read stable source names such as `int`, `float`, `str`, and `bool` through `T.__class_name__()`.
 
 #### `ToJson` / `FromJson` - Serialization Helpers
 
@@ -55,6 +59,7 @@ use incan_stdlib::prelude::*;
 This brings in:
 
 - `HasFieldInfo` trait
+- `HasFieldMetadata` and `HasClassName` traits
 - `FieldInfo` record type
 - `ToJson` / `FromJson` traits (when `json` feature enabled)
 

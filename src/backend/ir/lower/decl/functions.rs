@@ -2,6 +2,8 @@
 
 use super::super::super::Mutability;
 use super::super::super::decl::{FunctionParam, IrFunction, IrTraitBound, IrTraitBoundOrigin};
+use super::super::super::expr::{IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry};
+use super::super::super::stmt::{AssignTarget, IrStmt, IrStmtKind};
 use super::super::super::types::IrType;
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
@@ -29,6 +31,292 @@ fn body_contains_yield(body: &[ast::Spanned<ast::Statement>]) -> bool {
         ast::Statement::VocabBlock(stmt) => body_contains_yield(&stmt.body),
         _ => false,
     })
+}
+
+/// Collect generic callable-name type parameters referenced by an expression.
+fn collect_generic_callable_name_type_params_from_expr(expr: &super::super::super::IrExpr, out: &mut Vec<String>) {
+    match &expr.kind {
+        IrExprKind::Field { object, field } => {
+            if field == "__name__"
+                && let IrType::Generic(name) = &object.ty
+                && !out.contains(name)
+            {
+                out.push(name.clone());
+            }
+            collect_generic_callable_name_type_params_from_expr(object, out);
+        }
+        IrExprKind::BinOp { left, right, .. } => {
+            collect_generic_callable_name_type_params_from_expr(left, out);
+            collect_generic_callable_name_type_params_from_expr(right, out);
+        }
+        IrExprKind::UnaryOp { operand, .. }
+        | IrExprKind::Await(operand)
+        | IrExprKind::Try(operand)
+        | IrExprKind::NumericResize { expr: operand, .. }
+        | IrExprKind::Cast { expr: operand, .. }
+        | IrExprKind::InteropCoerce { expr: operand, .. } => {
+            collect_generic_callable_name_type_params_from_expr(operand, out);
+        }
+        IrExprKind::Call { func, args, .. } => {
+            collect_generic_callable_name_type_params_from_expr(func, out);
+            for arg in args {
+                collect_generic_callable_name_type_params_from_expr(&arg.expr, out);
+            }
+        }
+        IrExprKind::BuiltinCall { args, .. } => {
+            for arg in args {
+                collect_generic_callable_name_type_params_from_expr(arg, out);
+            }
+        }
+        IrExprKind::KnownMethodCall { args, .. } => {
+            for arg in args {
+                collect_generic_callable_name_type_params_from_expr(&arg.expr, out);
+            }
+        }
+        IrExprKind::MethodCall { receiver, args, .. } => {
+            collect_generic_callable_name_type_params_from_expr(receiver, out);
+            for arg in args {
+                collect_generic_callable_name_type_params_from_expr(&arg.expr, out);
+            }
+        }
+        IrExprKind::Index { object, index } => {
+            collect_generic_callable_name_type_params_from_expr(object, out);
+            collect_generic_callable_name_type_params_from_expr(index, out);
+        }
+        IrExprKind::Slice {
+            target,
+            start,
+            end,
+            step,
+        } => {
+            collect_generic_callable_name_type_params_from_expr(target, out);
+            for expr in [start, end, step].into_iter().flatten() {
+                collect_generic_callable_name_type_params_from_expr(expr, out);
+            }
+        }
+        IrExprKind::ListComp {
+            element,
+            iterable,
+            filter,
+            ..
+        } => {
+            collect_generic_callable_name_type_params_from_expr(element, out);
+            collect_generic_callable_name_type_params_from_expr(iterable, out);
+            if let Some(filter) = filter {
+                collect_generic_callable_name_type_params_from_expr(filter, out);
+            }
+        }
+        IrExprKind::DictComp {
+            key,
+            value,
+            iterable,
+            filter,
+            ..
+        } => {
+            collect_generic_callable_name_type_params_from_expr(key, out);
+            collect_generic_callable_name_type_params_from_expr(value, out);
+            collect_generic_callable_name_type_params_from_expr(iterable, out);
+            if let Some(filter) = filter {
+                collect_generic_callable_name_type_params_from_expr(filter, out);
+            }
+        }
+        IrExprKind::Generator { element, clauses } => {
+            collect_generic_callable_name_type_params_from_expr(element, out);
+            for clause in clauses {
+                match clause {
+                    IrGeneratorClause::For { iterable, .. } => {
+                        collect_generic_callable_name_type_params_from_expr(iterable, out);
+                    }
+                    IrGeneratorClause::If(condition) => {
+                        collect_generic_callable_name_type_params_from_expr(condition, out);
+                    }
+                }
+            }
+        }
+        IrExprKind::List(items) => {
+            for item in items {
+                match item {
+                    IrListEntry::Element(value) | IrListEntry::Spread(value) => {
+                        collect_generic_callable_name_type_params_from_expr(value, out);
+                    }
+                }
+            }
+        }
+        IrExprKind::Dict(items) => {
+            for item in items {
+                match item {
+                    IrDictEntry::Pair(key, value) => {
+                        collect_generic_callable_name_type_params_from_expr(key, out);
+                        collect_generic_callable_name_type_params_from_expr(value, out);
+                    }
+                    IrDictEntry::Spread(value) => {
+                        collect_generic_callable_name_type_params_from_expr(value, out);
+                    }
+                }
+            }
+        }
+        IrExprKind::Set(items) | IrExprKind::Tuple(items) => {
+            for item in items {
+                collect_generic_callable_name_type_params_from_expr(item, out);
+            }
+        }
+        IrExprKind::Struct { fields, .. } => {
+            for (_, value) in fields {
+                collect_generic_callable_name_type_params_from_expr(value, out);
+            }
+        }
+        IrExprKind::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_generic_callable_name_type_params_from_expr(condition, out);
+            collect_generic_callable_name_type_params_from_expr(then_branch, out);
+            if let Some(else_branch) = else_branch {
+                collect_generic_callable_name_type_params_from_expr(else_branch, out);
+            }
+        }
+        IrExprKind::Match { scrutinee, arms } => {
+            collect_generic_callable_name_type_params_from_expr(scrutinee, out);
+            for arm in arms {
+                for binding in &arm.bindings {
+                    collect_generic_callable_name_type_params_from_expr(&binding.value, out);
+                    if let Some(guard_value) = &binding.guard_value {
+                        collect_generic_callable_name_type_params_from_expr(guard_value, out);
+                    }
+                }
+                if let Some(guard) = &arm.guard {
+                    collect_generic_callable_name_type_params_from_expr(guard, out);
+                }
+                collect_generic_callable_name_type_params_from_expr(&arm.body, out);
+            }
+        }
+        IrExprKind::Closure { body, .. } => {
+            collect_generic_callable_name_type_params_from_expr(body, out);
+        }
+        IrExprKind::Block { stmts, value } => {
+            collect_generic_callable_name_type_params_from_stmts(stmts, out);
+            if let Some(value) = value {
+                collect_generic_callable_name_type_params_from_expr(value, out);
+            }
+        }
+        IrExprKind::Loop { body } => collect_generic_callable_name_type_params_from_stmts(body, out),
+        IrExprKind::Race { arms, .. } => {
+            for arm in arms {
+                collect_generic_callable_name_type_params_from_expr(&arm.awaitable, out);
+                collect_generic_callable_name_type_params_from_expr(&arm.body, out);
+            }
+        }
+        IrExprKind::Range { start, end, .. } => {
+            for expr in [start, end].into_iter().flatten() {
+                collect_generic_callable_name_type_params_from_expr(expr, out);
+            }
+        }
+        IrExprKind::Format { parts } => {
+            for part in parts {
+                if let super::super::super::expr::FormatPart::Expr { expr, .. } = part {
+                    collect_generic_callable_name_type_params_from_expr(expr, out);
+                }
+            }
+        }
+        IrExprKind::RegisterCallableName { callable, .. } => {
+            collect_generic_callable_name_type_params_from_expr(callable, out);
+        }
+        IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+            collect_generic_callable_name_type_params_from_expr(value, out);
+        }
+        IrExprKind::Var { .. }
+        | IrExprKind::StaticRead { .. }
+        | IrExprKind::StaticBinding { .. }
+        | IrExprKind::AssociatedFunction { .. }
+        | IrExprKind::TypeToken { .. }
+        | IrExprKind::FunctionItem { .. }
+        | IrExprKind::Unit
+        | IrExprKind::None
+        | IrExprKind::Bool(_)
+        | IrExprKind::Int(_)
+        | IrExprKind::IntLiteral(_)
+        | IrExprKind::Float(_)
+        | IrExprKind::Decimal(_)
+        | IrExprKind::String(_)
+        | IrExprKind::Bytes(_)
+        | IrExprKind::Literal(_)
+        | IrExprKind::FieldsList(_)
+        | IrExprKind::SerdeToJson
+        | IrExprKind::SerdeFromJson(_) => {}
+    }
+}
+
+/// Collect generic callable-name type parameters referenced by statements.
+fn collect_generic_callable_name_type_params_from_stmts(stmts: &[IrStmt], out: &mut Vec<String>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            IrStmtKind::Expr(expr)
+            | IrStmtKind::Yield(expr)
+            | IrStmtKind::Let { value: expr, .. }
+            | IrStmtKind::CompoundAssign { value: expr, .. } => {
+                collect_generic_callable_name_type_params_from_expr(expr, out);
+            }
+            IrStmtKind::Assign { target, value } => {
+                collect_generic_callable_name_type_params_from_assign_target(target, out);
+                collect_generic_callable_name_type_params_from_expr(value, out);
+            }
+            IrStmtKind::Return(Some(expr)) => collect_generic_callable_name_type_params_from_expr(expr, out),
+            IrStmtKind::Break { value: Some(expr), .. } => {
+                collect_generic_callable_name_type_params_from_expr(expr, out);
+            }
+            IrStmtKind::While { condition, body, .. } => {
+                collect_generic_callable_name_type_params_from_expr(condition, out);
+                collect_generic_callable_name_type_params_from_stmts(body, out);
+            }
+            IrStmtKind::For { iterable, body, .. } => {
+                collect_generic_callable_name_type_params_from_expr(iterable, out);
+                collect_generic_callable_name_type_params_from_stmts(body, out);
+            }
+            IrStmtKind::Loop { body, .. } | IrStmtKind::Block(body) => {
+                collect_generic_callable_name_type_params_from_stmts(body, out);
+            }
+            IrStmtKind::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                collect_generic_callable_name_type_params_from_expr(condition, out);
+                collect_generic_callable_name_type_params_from_stmts(then_branch, out);
+                if let Some(else_branch) = else_branch {
+                    collect_generic_callable_name_type_params_from_stmts(else_branch, out);
+                }
+            }
+            IrStmtKind::Match { scrutinee, arms } => {
+                collect_generic_callable_name_type_params_from_expr(scrutinee, out);
+                for arm in arms {
+                    for binding in &arm.bindings {
+                        collect_generic_callable_name_type_params_from_expr(&binding.value, out);
+                        if let Some(guard_value) = &binding.guard_value {
+                            collect_generic_callable_name_type_params_from_expr(guard_value, out);
+                        }
+                    }
+                    if let Some(guard) = &arm.guard {
+                        collect_generic_callable_name_type_params_from_expr(guard, out);
+                    }
+                    collect_generic_callable_name_type_params_from_expr(&arm.body, out);
+                }
+            }
+            IrStmtKind::Return(None) | IrStmtKind::Break { value: None, .. } | IrStmtKind::Continue(_) => {}
+        }
+    }
+}
+
+/// Collect generic callable-name type parameters referenced by an assignment target.
+fn collect_generic_callable_name_type_params_from_assign_target(target: &AssignTarget, out: &mut Vec<String>) {
+    match target {
+        AssignTarget::Field { object, .. } => collect_generic_callable_name_type_params_from_expr(object, out),
+        AssignTarget::Index { object, index } => {
+            collect_generic_callable_name_type_params_from_expr(object, out);
+            collect_generic_callable_name_type_params_from_expr(index, out);
+        }
+        AssignTarget::Var(_) | AssignTarget::StaticBinding(_) | AssignTarget::Static(_) => {}
+    }
 }
 
 impl AstLowering {
@@ -133,6 +421,21 @@ impl AstLowering {
 
         let mut all_type_params = Self::lower_type_params(&f.type_params);
         all_type_params.extend(hidden_type_params);
+        let mut callable_name_type_params = Vec::new();
+        collect_generic_callable_name_type_params_from_stmts(&body, &mut callable_name_type_params);
+        for type_param_name in callable_name_type_params {
+            if let Some(type_param) = all_type_params
+                .iter_mut()
+                .find(|type_param| type_param.name == type_param_name)
+                && !type_param.bounds.iter().any(|bound| {
+                    bound.trait_path == "__IncanCallableName"
+                        && bound.type_args.is_empty()
+                        && bound.assoc_types.is_empty()
+                })
+            {
+                type_param.bounds.push(IrTraitBound::simple("__IncanCallableName"));
+            }
+        }
         if is_generator {
             for type_param in &mut all_type_params {
                 for trait_path in ["Send", "Static"] {
@@ -175,6 +478,15 @@ impl AstLowering {
         format!("__incan_decorated_{name}")
     }
 
+    /// Return the span used for synthetic decorator callee nodes.
+    ///
+    /// The full decorator factory call keeps the source decorator span for typechecker handoff. Nested synthetic
+    /// callees must not reuse that span because expression metadata is span-keyed and the factory result type would
+    /// otherwise overwrite the callee's callable signature during lowering.
+    pub(in crate::backend::ir::lower) fn decorator_synthetic_callee_span() -> ast::Span {
+        ast::Span::default()
+    }
+
     /// Build an expression that resolves a decorator's path through ordinary expression lowering.
     pub(in crate::backend::ir::lower) fn decorator_path_expr(
         decorator: &ast::Decorator,
@@ -211,34 +523,45 @@ impl AstLowering {
             if !self.is_user_defined_decorator_candidate(&decorator.node) {
                 continue;
             }
-            let callable = if decorator.node.is_call {
-                let args = Self::decorator_call_args(decorator)?;
-                let path = &decorator.node.path.segments;
-                if path.len() >= 2 {
-                    let base_path = ImportPath {
-                        parent_levels: decorator.node.path.parent_levels,
-                        is_absolute: decorator.node.path.is_absolute,
-                        segments: path[..path.len() - 1].to_vec(),
-                    };
-                    let base = Self::decorator_path_expr_from_import_path(&base_path, decorator.span);
-                    let method = path.last().cloned().unwrap_or_default();
-                    Spanned::new(
-                        Expr::MethodCall(Box::new(base), method, Vec::new(), args),
-                        decorator.span,
-                    )
-                } else {
-                    let callee = Self::decorator_path_expr(&decorator.node, decorator.span);
-                    Spanned::new(Expr::Call(Box::new(callee), Vec::new(), args), decorator.span)
-                }
-            } else {
-                Self::decorator_path_expr(&decorator.node, decorator.span)
-            };
+            let callable = Self::decorator_callable_expr(decorator)?;
             current = Spanned::new(
                 Expr::Call(Box::new(callable), Vec::new(), vec![ast::CallArg::Positional(current)]),
-                decorator.span,
+                Self::decorator_synthetic_callee_span(),
             );
         }
         Ok(current)
+    }
+
+    /// Build the callable expression for one decorator before it is applied to the decorated function value.
+    pub(in crate::backend::ir::lower) fn decorator_callable_expr(
+        decorator: &Spanned<ast::Decorator>,
+    ) -> Result<Spanned<Expr>, LoweringError> {
+        if decorator.node.is_call {
+            let args = Self::decorator_call_args(decorator)?;
+            let path = &decorator.node.path.segments;
+            if path.len() >= 2 {
+                let base_path = ImportPath {
+                    parent_levels: decorator.node.path.parent_levels,
+                    is_absolute: decorator.node.path.is_absolute,
+                    segments: path[..path.len() - 1].to_vec(),
+                };
+                let base =
+                    Self::decorator_path_expr_from_import_path(&base_path, Self::decorator_synthetic_callee_span());
+                let method = path.last().cloned().unwrap_or_default();
+                Ok(Spanned::new(
+                    Expr::MethodCall(Box::new(base), method, decorator.node.type_args.clone(), args),
+                    decorator.span,
+                ))
+            } else {
+                let callee = Self::decorator_path_expr(&decorator.node, Self::decorator_synthetic_callee_span());
+                Ok(Spanned::new(
+                    Expr::Call(Box::new(callee), decorator.node.type_args.clone(), args),
+                    decorator.span,
+                ))
+            }
+        } else {
+            Ok(Self::decorator_path_expr(&decorator.node, decorator.span))
+        }
     }
 
     /// Convert parsed decorator arguments into ordinary call arguments for lowering.

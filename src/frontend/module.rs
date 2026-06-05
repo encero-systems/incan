@@ -455,6 +455,11 @@ pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
                     exports.push(ExportedSymbol::Function(f.name.clone()));
                 }
             }
+            Declaration::Partial(p) => {
+                if matches!(p.visibility, Visibility::Public) {
+                    exports.push(ExportedSymbol::Function(p.name.clone()));
+                }
+            }
             Declaration::Import(import) => {
                 // Both `from module import X` and `from rust::crate import X` are treated as re-exports. This lets
                 // stdlib files like `response.incn` expose axum types (`from rust::axum import Json`) to importers
@@ -472,7 +477,7 @@ pub fn exported_symbols(ast: &Program) -> Vec<ExportedSymbol> {
                     }
                 }
             }
-            Declaration::Partial(_) | Declaration::Docstring(_) | Declaration::TestModule(_) => {}
+            Declaration::Docstring(_) | Declaration::TestModule(_) => {}
         }
     }
 
@@ -1089,6 +1094,65 @@ source-root = "library"
             ExportedSymbol::Function(name) => assert_eq!(name, "calculate"),
             _ => panic!("Expected Function export"),
         }
+    }
+
+    #[test]
+    fn test_exported_symbols_same_name_overload_functions() -> Result<(), Vec<String>> {
+        let source = r#"
+pub model ColumnExpr:
+    name: str
+
+pub model IntColumnExpr:
+    source: str
+
+pub model FloatColumnExpr:
+    source: str
+
+pub model StringColumnExpr:
+    source: str
+
+pub def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:
+    return IntColumnExpr(source=expr.name)
+
+pub def cast(expr: ColumnExpr, target: Type[float]) -> FloatColumnExpr:
+    return FloatColumnExpr(source=expr.name)
+
+pub def cast(expr: ColumnExpr, target: Type[str]) -> StringColumnExpr:
+    return StringColumnExpr(source=expr.name)
+
+pub def cast(expr: ColumnExpr, target: str) -> ColumnExpr:
+    return ColumnExpr(name=f"{expr.name}:{target}")
+"#;
+        let tokens = lexer::lex(source).map_err(|e| e.iter().map(|x| x.message.clone()).collect::<Vec<_>>())?;
+        let ast = parser::parse(&tokens).map_err(|e| e.iter().map(|x| x.message.clone()).collect::<Vec<_>>())?;
+        let exports = exported_symbols(&ast);
+        assert!(
+            exports
+                .iter()
+                .any(|export| matches!(export, ExportedSymbol::Function(name) if name == "cast")),
+            "expected overloaded public function export, got {exports:?}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_exported_symbols_partial() -> Result<(), Vec<String>> {
+        let source = r#"
+pub def route(method: str, path: str) -> str:
+  return path
+
+pub get = partial route(method="GET")
+"#;
+        let tokens = lexer::lex(source).map_err(|e| e.iter().map(|x| x.message.clone()).collect::<Vec<_>>())?;
+        let ast = parser::parse(&tokens).map_err(|e| e.iter().map(|x| x.message.clone()).collect::<Vec<_>>())?;
+        let exports = exported_symbols(&ast);
+        assert!(
+            exports
+                .iter()
+                .any(|export| matches!(export, ExportedSymbol::Function(name) if name == "get")),
+            "expected public partial callable export, got {exports:?}"
+        );
+        Ok(())
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Reflection (Reference)
 
-Models and classes provide built-in reflection helpers for runtime introspection.
+Models and classes provide built-in reflection helpers for runtime introspection. Generic type-argument reflection also exposes stable source names for primitive type arguments.
 
 For the curated `std.reflection` module surface, see [Standard library reference: `std.reflection`](stdlib/reflection.md).
 
@@ -31,6 +31,75 @@ def main() -> None:
     for info in u.__fields__():
         println(f"{info.name}: {info.type_name}")
 ```
+
+## Generic Value Reflection
+
+Generic helpers may call `value.__class_name__()` and `value.__fields__()` on a type parameter. The compiler treats those calls as reflection capabilities and emits the required runtime bounds for the generated Rust function, so the generic helper has the same field metadata result as a direct concrete call when it is instantiated with a reflectable model or class.
+
+```incan
+def reflected_field_count[T](value: T) -> int:
+    return len(value.__fields__())
+```
+
+## Generic Type Reflection
+
+Generic schema helpers may also reflect on an explicit type argument without constructing a dummy value. This is the intended shape for APIs that need a model's schema rather than one model instance.
+
+```incan
+def schema_field_count[T]() -> int:
+    return len(T.__fields__())
+
+def schema_name[T]() -> str:
+    return T.__class_name__()
+```
+
+Callers instantiate those helpers with a reflectable model or class type:
+
+```incan
+model User:
+    name: str
+    email: str
+
+println(schema_name[User]())
+println(schema_field_count[User]())
+```
+
+Primitive type arguments support `T.__class_name__()` for type-directed APIs that need a stable source-level primitive identity:
+
+```incan
+def primitive_target[T]() -> str:
+    return str(T.__class_name__())
+
+println(primitive_target[int]())    # "int"
+println(primitive_target[float]())  # "float"
+println(primitive_target[str]())    # "str"
+println(primitive_target[bool]())   # "bool"
+```
+
+Primitive type arguments do not support `T.__fields__()`, because primitives do not have source fields.
+
+## Type Tokens
+
+A type name in value position is accepted only when the expected type is a compiler-emitted `Type[T]` token. `Type[T]` is a zero-sized marker used for type-directed APIs, not a general runtime type object. This lets libraries offer overloads whose return types remain precise:
+
+```incan
+def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:
+    return int_column_expr(expr)
+
+def cast(expr: ColumnExpr, target: Type[float]) -> FloatColumnExpr:
+    return float_column_expr(expr)
+
+def cast(expr: ColumnExpr, target: str) -> ColumnExpr:
+    return dynamic_cast(expr, target)
+
+amount: IntColumnExpr = cast(col("amount"), int)
+total: FloatColumnExpr = mul(cast(col("unit_price"), float), cast(col("qty"), float))
+fallback: ColumnExpr = cast(col("amount"), "decimal(10,2)")
+```
+
+Aliases preserve the overload set, so compatibility spellings such as `safe_cast = alias cast` can expose the same `Type[T]` token and fallback-string call surface without wrapper overloads.
+
+Use explicit type arguments such as `helper[int](...)` when an API needs compile-time type reflection inside the function body. A single generic function still has one declared return type, so `cast[T](expr)` cannot by itself express "return `IntColumnExpr` for `T=int` and `FloatColumnExpr` for `T=float`" unless that API declares a broader union or a future type-level return mapping feature.
 
 ### `FieldInfo` structure
 

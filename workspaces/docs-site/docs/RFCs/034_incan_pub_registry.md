@@ -13,6 +13,8 @@
 
 Define the `incan.pub` package registry: the protocols, guarantees, and CLI commands that allow Incan library authors to publish packages and consumers to resolve them. The registry must be EU-hosted, integrity-verified, signature-aware, and operationally cheap enough to run with predictable capped spend. Exact vendor choice and launch-era cost numbers are implementation details, not the core contract.
 
+This Draft was originally written against RFC 031's generated-Rust library artifact shape. The package format and resolution model below are now amended to align with the backend replacement direction: generated Rust may remain an internal/debug artifact, but it is not the public package compatibility path. The registry stores Incan package artifacts with semantic manifests, ABI/package metadata, and optional backend artifacts; consumers resolve Incan semantics first, not downloaded generated Rust source.
+
 ## Constraints
 
 Two non-negotiable requirements drive every decision in this RFC:
@@ -139,21 +141,22 @@ This is a static site generated from the index — no dynamic server needed for 
 
 ### The package format
 
-A `.crate` file is a gzipped tarball containing the Rust crate output from `incan build --lib` plus the `.incnlib` type manifest:
+An Incan package artifact is a compressed archive, conventionally `.incanpkg`, containing package metadata, semantic manifests, ABI/package metadata, and optional emitted artifacts:
 
 ```text
-mylib-0.1.0.crate (tar.gz):
+mylib-0.1.0.incanpkg (tar.gz):
 └── mylib-0.1.0/
-    ├── Cargo.toml              # Generated Rust crate metadata
-    ├── src/
-    │   ├── lib.rs              # Generated Rust source
-    │   └── widgets.rs
-    └── .incnlib                # Type manifest (JSON, from RFC 031)
+    ├── incan-package.json      # Package identity, dependencies, ABI/schema versions
+    ├── .incnlib                # Checked type/API manifest
+    ├── semantic/               # Optional semantic package fragments
+    ├── abi/                    # Optional Rust-facing ABI/package metadata
+    ├── src/                    # Optional source snapshot, when publishing policy allows it
+    └── artifacts/              # Optional target artifacts and inspection reports
 ```
 
-The `.incnlib` file is invisible to Cargo (which ignores unknown files in the tarball). The `incan` CLI extracts it for typechecking; `cargo build` only sees the Rust source.
+Generated Rust source is not required to be present and must not be the public compatibility contract. If an implementation includes generated Rust for inspection, debugging, or migration, that output is an artifact with provenance metadata, not the semantic source of truth for package consumers.
 
-This is a single artifact — the type manifest and compiled Rust source are never stored or transferred separately. This simplifies every part of the pipeline: publish uploads one file, download retrieves one file, cache stores one file.
+This is still one immutable package artifact for the registry: publish uploads one archive, download retrieves one archive, cache stores one archive, and checksums/signatures cover the archive as a whole. The compiler and backend decide how to consume package semantics and emit target-specific code for the current build.
 
 ### Index format
 
@@ -174,9 +177,10 @@ index/my/li/mylib
 |---|---|---|
 | `name` | string | Package name |
 | `vers` | string | SemVer version |
-| `cksum` | string | SHA256 of the `.crate` tarball (prefixed with `sha256:`) |
+| `cksum` | string | SHA256 of the package archive (prefixed with `sha256:`) |
 | `deps` | array | Incan library dependencies (`name` + `req` version range) |
-| `rust_deps` | array | Rust crate dependencies (merged into consumer's Cargo.toml) |
+| `rust_deps` | array | Rust crate dependencies required by package backend/ABI metadata, resolved by the compiler backend rather than blindly merged into user-authored manifests |
+| `artifact_kind` | string | Package artifact format, such as `incanpkg` |
 | `incan_version` | string | Minimum compiler version required |
 | `yanked` | bool | If true, existing lockfiles still resolve but new resolves skip |
 | `publisher` | string | Publisher identity (username) |
@@ -207,7 +211,7 @@ Headers:
   X-Signature: MEUC... (base64, optional in Phase 1)
   X-Certificate: MIIB... (base64, optional in Phase 1)
 
-Body: .crate tarball (binary)
+Body: Incan package archive (binary)
 ```
 
 **Server-side validation:**
@@ -217,11 +221,13 @@ Body: .crate tarball (binary)
 3. Verify `(name, version)` does not already exist → 409 Conflict
 4. Verify `X-Checksum` matches SHA256 of request body
 5. If signature provided: verify Sigstore signature is valid, signer matches publisher
-6. Extract `.incnlib` from tarball → verify it parses (basic structural validation)
-7. Store `.crate` in object storage: `crates/<name>/<version>.crate`
-8. Store signature artifacts: `crates/<name>/<version>.crate.sig`, `.cert`
-9. Update index: append version line to `index/<prefix>/<name>`
-10. Invalidate CDN cache for the index entry 11. Return 200
+6. Extract `incan-package.json` and `.incnlib` from the archive and verify they parse
+7. Reject archives that require generated Rust source as the package compatibility path
+8. Store package archive in object storage: `packages/<name>/<version>.incanpkg`
+9. Store signature artifacts: `packages/<name>/<version>.incanpkg.sig`, `.cert`
+10. Update index: append version line to `index/<prefix>/<name>`
+11. Invalidate CDN cache for the index entry
+12. Return 200
 
 **Response:** `{ "published": "mylib", "version": "0.1.0" }`
 
@@ -233,15 +239,15 @@ Headers:
 Body: { "name": "mylib", "version": "0.1.0" }
 ```
 
-Sets `yanked: true` in the index entry. Does not delete the `.crate` file (existing lockfiles and builds that reference this exact version still work).
+Sets `yanked: true` in the index entry. Does not delete the package archive (existing lockfiles and builds that reference this exact version still work).
 
 #### `GET /index/<prefix>/<name>`
 
 Returns the JSON-lines index file for the named package. Served from object storage, cached at CDN edge.
 
-#### `GET /crates/<name>/<version>.crate`
+#### `GET /packages/<name>/<version>.incanpkg`
 
-Returns the `.crate` tarball. Served from object storage, cached at CDN edge. Immutable forever — cache headers set to maximum TTL.
+Returns the package archive. Served from object storage, cached at CDN edge. Immutable forever, with cache headers set to maximum TTL.
 
 ### Authentication
 
@@ -270,22 +276,22 @@ $ incan login
 
 ### Package signing with Sigstore
 
-Every `incan publish` signs the `.crate` tarball using [Sigstore](https://sigstore.dev) keyless signing:
+Every `incan publish` signs the package archive using [Sigstore](https://sigstore.dev) keyless signing:
 
 **Publish side:**
 
 1. `incan publish` initiates an OIDC flow (opens browser → GitHub/GitLab/Google login)
 2. Sigstore's Fulcio CA issues a short-lived signing certificate tied to the OIDC identity
-3. The `.crate` file's SHA256 digest is signed with the ephemeral private key
+3. The package archive's SHA256 digest is signed with the ephemeral private key
 4. The signature + certificate + checksum are recorded in Sigstore's Rekor transparency log
-5. The signature and certificate are sent to the registry alongside the `.crate`
+5. The signature and certificate are sent to the registry alongside the package archive
 
 **Verification side (`incan build`):**
 
-1. Download `.crate` + `.sig` + `.cert` from registry
-2. Verify SHA256 of `.crate` matches the index checksum
+1. Download package archive + `.sig` + `.cert` from registry
+2. Verify SHA256 of the archive matches the index checksum
 3. Verify the certificate was issued by Sigstore Fulcio CA
-4. Verify the signature matches the `.crate` digest
+4. Verify the signature matches the archive digest
 5. Verify the signer identity in the certificate matches the `publisher` field in the index
 6. Verify the signature is recorded in Sigstore Rekor (transparency log lookup)
 
@@ -325,12 +331,14 @@ Resolution:
 2. For each registry dep: `GET https://incan.pub/index/<prefix>/<name>`
 3. Parse JSON lines, filter by version requirement, select newest matching non-yanked version
 4. Check local cache `~/.incan/libs/<name>-<version>/` — if cached and checksum matches, skip download
-5. `GET https://incan.pub/crates/<name>/<version>.crate`
+5. `GET https://incan.pub/packages/<name>/<version>.incanpkg`
 6. Verify SHA256 checksum matches index entry
 7. Verify Sigstore signature (if present; warn if absent)
 8. Extract to `~/.incan/libs/<name>-<version>/`
-9. Load `.incnlib` into typechecker symbol table
-10. Wire Rust crate as path dependency in generated `Cargo.toml`
+9. Load `.incnlib`, package metadata, and ABI/semantic facts into the compiler package database
+10. Let the backend consume those package facts and emit the target build artifacts
+
+The resolver must not wire downloaded generated Rust source into generated `Cargo.toml` as the package compatibility path. Rust-facing consumption should go through the ABI/Cargo-native package direction rather than treating generated Rust internals as public API.
 
 **Lockfile (`incan.lock`):** on first resolution, write resolved versions + checksums to `incan.lock`. Subsequent builds use the lockfile for reproducibility. `incan update` re-resolves.
 
@@ -342,7 +350,7 @@ Resolution:
 | `incan remove <pkg>` | Remove a dependency from `incan.toml` |
 | `incan update` | Re-resolve all dependencies and update `incan.lock` |
 | `incan login` | Authenticate with `incan.pub`, save token to `~/.incan/credentials` |
-| `incan publish` | Build library, package `.crate`, sign, upload to registry |
+| `incan publish` | Build library, package `.incanpkg`, sign, upload to registry |
 | `incan yank <pkg> <ver>` | Mark a version as yanked (still downloadable but skipped in new resolves) |
 | `incan search <query>` | Search the registry index (client-side text search over cached index) |
 | `incan owner add <user> <pkg>` | Add a co-owner for a package |
@@ -432,10 +440,10 @@ The registry service should talk to object storage via an S3-compatible API or e
 
 Kellnr is a self-hosted Rust crate registry that implements the Cargo registry protocol. It was considered and rejected because:
 
-- It only speaks the Cargo registry protocol — no awareness of `.incnlib` manifests
+- It only speaks the Cargo registry protocol and has no awareness of Incan package manifests, semantic metadata, or ABI metadata
 - Requires a persistent server (no scale-to-zero)
 - Written in Rust, not Incan (misses the dogfooding opportunity)
-- The `.incnlib`-in-`.crate` trick makes Cargo protocol compatibility free anyway — any tool that can download a `.crate` gets both the Rust source and the type manifest
+- Treating generated Rust as a Cargo package artifact would recreate the public-compatibility path the backend direction is moving away from
 
 ## Reference service implementation (informative)
 
@@ -449,9 +457,9 @@ The important design constraint is portability:
 
 ## Interaction with existing features
 
-- **RFC 031 (library system):** This RFC builds directly on RFC 031. The `.incnlib` manifest format, `pub::` import syntax, and `incan build --lib` command are defined there. This RFC adds the distribution layer on top.
-- **RFC 027 (incan-vocab):** Library soft keyword declarations are serialized into the `.incnlib` manifest during `incan build --lib` and included in the `.crate` tarball. The registry is unaware of soft keywords — it just stores and serves packages.
-- **`rust::` imports (RFC 005):** `pub::` registry imports and `rust::` Rust crate imports coexist. A package's Rust dependencies (from its generated `Cargo.toml`) are listed in the index entry's `rust_deps` field.
+- **RFC 031 (library system):** This RFC builds on RFC 031's `.incnlib` manifest format, `pub::` import syntax, and `incan build --lib` command, but supersedes any assumption that generated Rust source is the registry package contract.
+- **RFC 027 (incan-vocab):** Library soft keyword declarations are serialized into checked package metadata during `incan build --lib` and included in the package archive. The registry is unaware of soft keywords; it stores and serves packages.
+- **`rust::` imports (RFC 005):** `pub::` registry imports and `rust::` Rust crate imports coexist. A package's Rust dependencies may appear in package metadata, but the compiler backend owns how they are linked into the target build.
 
 ## Alternatives considered
 

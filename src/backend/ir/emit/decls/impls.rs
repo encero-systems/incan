@@ -176,7 +176,7 @@ impl<'a> IrEmitter<'a> {
                 })
                 .map(|m| self.emit_trait_method(m))
                 .collect::<Result<_, _>>()?;
-            if Self::is_serde_serialize_trait_name(trait_name)
+            if incan_core::lang::stdlib::is_stdlib_json_serialize_trait_name(trait_name)
                 && !impl_block.methods.iter().any(|method| method.name == "to_json")
             {
                 trait_methods.push(quote! {
@@ -185,7 +185,7 @@ impl<'a> IrEmitter<'a> {
                     }
                 });
             }
-            if Self::is_serde_deserialize_trait_name(trait_name)
+            if incan_core::lang::stdlib::is_stdlib_json_deserialize_trait_name(trait_name)
                 && !impl_block.methods.iter().any(|method| method.name == "from_json")
             {
                 trait_methods.push(quote! {
@@ -250,22 +250,6 @@ impl<'a> IrEmitter<'a> {
         })
     }
 
-    /// Return whether a trait impl target names the stdlib JSON serialization trait or an imported alias of it.
-    fn is_serde_serialize_trait_name(trait_name: &str) -> bool {
-        matches!(
-            trait_name,
-            "Serialize" | "JsonSerialize" | "json.Serialize" | "std.serde.json.Serialize"
-        )
-    }
-
-    /// Return whether a trait impl target names the stdlib JSON deserialization trait or an imported alias of it.
-    fn is_serde_deserialize_trait_name(trait_name: &str) -> bool {
-        matches!(
-            trait_name,
-            "Deserialize" | "JsonDeserialize" | "json.Deserialize" | "std.serde.json.Deserialize"
-        )
-    }
-
     /// Return the final path segment of a trait name.
     fn trait_short_name(trait_name: &str) -> &str {
         trait_name
@@ -328,8 +312,11 @@ impl<'a> IrEmitter<'a> {
         }))
     }
 
-    /// Emit the generated `__fields__` reflection method for a struct when field metadata is available.
-    fn emit_fields_method(&self, struct_name: &str) -> Result<Option<TokenStream>, EmitError> {
+    /// Build reflection metadata entries for model fields.
+    pub(in crate::backend::ir::emit) fn reflection_field_info_entries(
+        &self,
+        struct_name: &str,
+    ) -> Result<Option<(Literal, Vec<TokenStream>)>, EmitError> {
         let Some(field_names) = self.struct_field_names.get(struct_name) else {
             return Ok(None);
         };
@@ -373,6 +360,14 @@ impl<'a> IrEmitter<'a> {
         }
 
         let field_count = Literal::usize_unsuffixed(field_infos.len());
+        Ok(Some((field_count, field_infos)))
+    }
+
+    /// Emit the generated `__fields__` reflection method for a struct when field metadata is available.
+    fn emit_fields_method(&self, struct_name: &str) -> Result<Option<TokenStream>, EmitError> {
+        let Some((field_count, field_infos)) = self.reflection_field_info_entries(struct_name)? else {
+            return Ok(None);
+        };
         Ok(Some(quote! {
             /// Returns field metadata for this type.
             pub fn __fields__(&self) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {

@@ -5,7 +5,7 @@ Raw Snappy is an advanced interop surface for systems that store individual Snap
 from `std.compression` autodetection because raw blocks have no stable stream signature.
 """
 
-from rust::snap::raw @ "1" import Decoder as RawDecoder, Encoder as RawEncoder
+from rust::snap::raw import Decoder as RawDecoder, Encoder as RawEncoder
 from std.compression._core import Codec, CompressionError, _codec_error, _reject_level
 
 

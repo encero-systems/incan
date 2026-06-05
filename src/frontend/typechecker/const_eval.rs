@@ -793,6 +793,12 @@ impl TypeChecker {
             }
 
             Expr::Call(callee, type_args, args) if type_args.is_empty() => {
+                if let Expr::Ident(callee_name) = &callee.node
+                    && self.is_const_model_constructor_name(callee_name)
+                {
+                    return self.eval_const_model_constructor(callee_name, args, expected, stack, decl_span, expr.span);
+                }
+
                 let Some(ResolvedType::Named(expected_name)) = expected else {
                     self.errors.push(errors::const_expression_not_allowed(expr.span));
                     return None;
@@ -834,6 +840,9 @@ impl TypeChecker {
                     value: None,
                 })
             }
+            Expr::Constructor(name, args) if self.is_const_model_constructor_name(name) => {
+                self.eval_const_model_constructor(name, args, expected, stack, decl_span, expr.span)
+            }
 
             // Disallowed constructs for RFC 008 phase 1.
             Expr::Call(_, _, _)
@@ -850,6 +859,7 @@ impl TypeChecker {
             | Expr::Range { .. }
             | Expr::Field(_, _)
             | Expr::Surface(_)
+            | Expr::VocabBlock(_)
             | Expr::Try(_)
             | Expr::Paren(_)
             | Expr::Constructor(_, _)
@@ -862,6 +872,144 @@ impl TypeChecker {
                 None
             }
         }
+    }
+
+    /// Return whether a name resolves to a model constructor that can be considered for const literal validation.
+    fn is_const_model_constructor_name(&self, name: &str) -> bool {
+        self.lookup_type_info(name)
+            .is_some_and(|info| matches!(info, TypeInfo::Model(_)))
+    }
+
+    /// Evaluate a model constructor in a const initializer.
+    ///
+    /// This keeps `const` model literals declaration-safe: every provided field must itself be const-evaluable, all
+    /// required fields must be explicit, and omitted defaults are rejected because model defaults are ordinary runtime
+    /// expressions rather than const metadata.
+    fn eval_const_model_constructor(
+        &mut self,
+        type_name: &str,
+        args: &[CallArg],
+        expected: Option<&ResolvedType>,
+        stack: &mut Vec<String>,
+        decl_span: Span,
+        call_span: Span,
+    ) -> Option<ConstEvalResult> {
+        if let Some(expected_ty) = expected
+            && !matches!(expected_ty, ResolvedType::Named(name) if name == type_name)
+            && !matches!(expected_ty, ResolvedType::Unknown)
+        {
+            return Some(ConstEvalResult {
+                ty: ResolvedType::Named(type_name.to_string()),
+                kind: ConstKind::RustNative,
+                value: None,
+            });
+        }
+
+        let Some(TypeInfo::Model(model)) = self.lookup_type_info(type_name).cloned() else {
+            self.errors.push(errors::const_expression_not_allowed(call_span));
+            return None;
+        };
+
+        let mut provided = std::collections::HashSet::new();
+        let mut result_kind = ConstKind::RustNative;
+        let mut had_error = false;
+
+        for arg in args {
+            let CallArg::Named(field_name, value) = arg else {
+                self.errors
+                    .push(errors::positional_constructor_args_not_supported(type_name, call_span));
+                had_error = true;
+                continue;
+            };
+
+            let Some((canonical_name, field_info)) = Self::resolve_const_model_field(&model.fields, field_name) else {
+                self.eval_const_expr(value, None, stack, decl_span);
+                self.errors
+                    .push(errors::missing_field(type_name, field_name, value.span));
+                had_error = true;
+                continue;
+            };
+
+            if !provided.insert(canonical_name.clone()) {
+                self.errors.push(errors::duplicate_field_in_call(
+                    type_name,
+                    canonical_name.as_str(),
+                    value.span,
+                ));
+                had_error = true;
+                continue;
+            }
+
+            let Some(field_result) = self.eval_const_expr(value, Some(&field_info.ty), stack, decl_span) else {
+                had_error = true;
+                continue;
+            };
+            if field_result.kind == ConstKind::Frozen {
+                result_kind = ConstKind::Frozen;
+            }
+
+            if field_result.ty != field_info.ty {
+                match self.const_int_value_checked_against_numeric_expected(&field_result, &field_info.ty, value.span) {
+                    Some(true) => {}
+                    Some(false) => had_error = true,
+                    None => {
+                        self.errors.push(errors::field_type_mismatch(
+                            field_name,
+                            &field_info.ty.to_string(),
+                            &field_result.ty.to_string(),
+                            value.span,
+                        ));
+                        had_error = true;
+                    }
+                }
+            }
+        }
+
+        for (field_name, field_info) in &model.fields {
+            if provided.contains(field_name) {
+                continue;
+            }
+            if field_info.has_default {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Const model constructor '{}' must provide field '{}' explicitly; model defaults are not evaluated in const initializers",
+                        type_name, field_name
+                    ),
+                    call_span,
+                ));
+            } else {
+                self.errors.push(errors::missing_required_constructor_field(
+                    type_name, field_name, call_span,
+                ));
+            }
+            had_error = true;
+        }
+
+        if had_error {
+            return None;
+        }
+
+        Some(ConstEvalResult {
+            ty: ResolvedType::Named(type_name.to_string()),
+            kind: result_kind,
+            value: None,
+        })
+    }
+
+    /// Resolve a model constructor field by canonical source name or model alias.
+    fn resolve_const_model_field<'a>(
+        fields: &'a std::collections::HashMap<String, crate::frontend::symbols::FieldInfo>,
+        field_name: &str,
+    ) -> Option<(String, &'a crate::frontend::symbols::FieldInfo)> {
+        fields
+            .get(field_name)
+            .map(|info| (field_name.to_string(), info))
+            .or_else(|| {
+                fields
+                    .iter()
+                    .find(|(_, info)| info.alias.as_deref() == Some(field_name))
+                    .map(|(name, info)| (name.clone(), info))
+            })
     }
 
     /// Evaluate a literal in a const context, optionally checking it against an expected type.

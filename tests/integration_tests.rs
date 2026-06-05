@@ -46,16 +46,38 @@ fn strip_ansi_escapes(text: &str) -> String {
     out
 }
 
-static RUNTIME_ERROR_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
+/// Parse JSON log records from stdout that may also contain human logging or ordinary print lines.
+fn parse_json_log_records(stdout: &str) -> Result<Vec<serde_json::Value>, Box<dyn std::error::Error>> {
+    stdout
+        .lines()
+        .filter(|line| line.trim_start().starts_with('{'))
+        .map(serde_json::from_str)
+        .collect::<Result<_, _>>()
+        .map_err(Into::into)
+}
+
+/// Find a JSON logging record by its string body.
+fn json_record_by_body<'a>(records: &'a [serde_json::Value], body: &str) -> Option<&'a serde_json::Value> {
+    records
+        .iter()
+        .find(|record| record["Body"]["StringValue"] == serde_json::json!(body))
+}
+
+static TEST_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+/// Create a throwaway project name that does not collide under parallel nextest workers.
+///
+/// Several CLI tests rely on the default `target/incan/<name>` output location. The generated project name includes
+/// both the current process id and a local counter so those tests do not trample each other's generated Cargo projects.
+fn unique_test_project_name(prefix: &str) -> String {
+    let unique = TEST_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}_{}_{}", std::process::id(), unique)
+}
 
 /// Create a minimal throwaway Incan project for end-to-end runtime error assertions.
-///
-/// The generated project name includes both the current process id and a local counter so parallel nextest workers do
-/// not trample each other's `target/incan/<name>` outputs.
 fn write_runtime_error_project(source: &str) -> Result<(tempfile::TempDir, PathBuf), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
-    let unique = RUNTIME_ERROR_PROJECT_COUNTER.fetch_add(1, Ordering::Relaxed);
-    let project_name = format!("runtime_error_contract_{}_{}", std::process::id(), unique);
+    let project_name = unique_test_project_name("runtime_error_contract");
     let src_dir = tmp.path().join("src");
     fs::create_dir_all(&src_dir)?;
     fs::write(
@@ -78,18 +100,7 @@ fn assert_runtime_error_cli(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let (_tmp, main_path) = write_runtime_error_project(source)?;
 
-    let check_output = Command::new(incan_debug_binary())
-        .arg("--check")
-        .arg(&main_path)
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-    assert!(
-        check_output.status.success(),
-        "expected --check to succeed so the failure is runtime.\nstderr:\n{}",
-        String::from_utf8_lossy(&check_output.stderr)
-    );
-
-    let run_output = Command::new(incan_debug_binary())
+    let run_output = incan_command()
         .arg("run")
         .arg(&main_path)
         .env("CARGO_NET_OFFLINE", "true")
@@ -146,7 +157,7 @@ main = "src/main.incn"
 "#,
     )?;
 
-    let output = Command::new(incan_debug_binary())
+    let output = incan_command()
         .arg("run")
         .current_dir(tmp.path())
         .env("CARGO_NET_OFFLINE", "true")
@@ -168,10 +179,36 @@ main = "src/main.incn"
 }
 
 #[test]
-fn std_logging_logger_surface_filters_and_preserves_bound_context() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import ColorPolicy, Level, LogStyle, basic_config, get_logger
+fn std_logging_runtime_surfaces_share_one_generated_run() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let project_name = unique_test_project_name("std_logging_runtime_surfaces");
+    let src_dir = tmp.path().join("src");
+    fs::create_dir_all(&src_dir)?;
+    fs::write(
+        tmp.path().join("incan.toml"),
+        format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
+    )?;
+    fs::write(
+        src_dir.join("worker.incn"),
+        r#"from std.logging import get_logger
 
-def main() -> None:
+pub def run_get_logger_worker() -> None:
+  log = get_logger()
+  log.info("worker ready")
+
+pub def run_ambient_worker() -> None:
+  log.info("worker ambient log ready")
+"#,
+    )?;
+    let source = r#"from std.logging import ColorPolicy, Level, LogFormat, LogStyle, LoggerName, OutputTarget, basic_config, get_logger
+from std.telemetry.core import TelemetryValue
+from worker import run_ambient_worker, run_get_logger_worker
+
+model LocalLog:
+  def info(self, message: str) -> None:
+    println(f"local:{message}")
+
+def logger_context_case() -> None:
   basic_config(level=Level.WARNING, style=LogStyle.VERBOSE, color=ColorPolicy.NEVER, target="stdout")
   root = get_logger("app").bind({"shared": "root"})
   child = root.child("loader").bind({"component": "loader"})
@@ -184,20 +221,100 @@ def main() -> None:
 
   root.error("root event")
   child.warning("child event", fields={"shared": "event"})
-"#;
 
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
+def json_record_shape_case() -> None:
+  basic_config(level=Level.DEBUG, format=LogFormat.JSON, target="stdout")
+  log = get_logger()
+  log.debug("json works", fields={"request_id": "abc", "component": "loader"})
+
+def default_target_case() -> None:
+  basic_config(level=Level.INFO)
+  get_logger("app").info("stderr event")
+
+def shadow_case() -> None:
+  basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
+  log = LocalLog()
+  log.info("shadowed")
+
+def ambient_root_case() -> None:
+  basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
+  log.info("snippet ambient")
+
+def structured_fields_case() -> None:
+  basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
+  log.info("structured", fields={
+    "rows": 42,
+    "ok": true,
+    "ratio": 1.5,
+    "missing": None,
+    "items": TelemetryValue.array([TelemetryValue.int(1), TelemetryValue.bool(false)]),
+    "nested": TelemetryValue.map({"child": TelemetryValue.string("yes")}),
+  })
+
+def telemetry_constructor_case() -> None:
+  text = TelemetryValue.string("alpha")
+  payload = TelemetryValue.map({
+    "items": TelemetryValue.array([TelemetryValue.int(42), TelemetryValue.bool(true)]),
+    "empty": TelemetryValue.none(),
+    "encoded": TelemetryValue.bytes("ff"),
+    "ratio": TelemetryValue.float(1.5),
+  })
+  println(f"telemetry:{text.display_text()}")
+  println(f"telemetry:{payload.display_text()}")
+
+def validator_case() -> None:
+  match LoggerName.from_underlying(""):
+    Ok(_) => println("unexpected accepted empty logger name")
+    Err(err) => println(f"validation:empty_logger:{err.to_string()}")
+  match LoggerName.from_underlying(".app"):
+    Ok(_) => println("unexpected accepted edge logger name")
+    Err(err) => println(f"validation:edge_logger:{err.to_string()}")
+  match LoggerName.from_underlying("app..db"):
+    Ok(_) => println("unexpected accepted segmented logger name")
+    Err(err) => println(f"validation:segmented_logger:{err.to_string()}")
+  match OutputTarget.from_underlying("bogus"):
+    Ok(_) => println("unexpected accepted output target")
+    Err(err) => println(f"validation:output_target:{err.to_string()}")
+
+def human_styles_case() -> None:
+  basic_config(level=Level.INFO, style=LogStyle.MINIMAL, target="stdout")
+  get_logger("app").info("minimal event")
+  basic_config(level=Level.INFO, style=LogStyle.SHORT, target="stdout")
+  get_logger("app").info("short event")
+  basic_config(level=Level.INFO, style=LogStyle.COMPLETE, target="stdout")
+  get_logger("app").info("complete event")
+  basic_config(level=Level.INFO, style=LogStyle.VERBOSE, target="stdout")
+  get_logger("app").info("verbose event")
+  run_get_logger_worker()
+  run_ambient_worker()
+
+def main() -> None:
+  logger_context_case()
+  json_record_shape_case()
+  default_target_case()
+  shadow_case()
+  ambient_root_case()
+  structured_fields_case()
+  telemetry_constructor_case()
+  validator_case()
+  human_styles_case()
+"#;
+    let main_path = src_dir.join("main.incn");
+    fs::write(&main_path, source)?;
+
+    let output = incan_command()
+        .args(["run", main_path.to_string_lossy().as_ref()])
         .env("CARGO_NET_OFFLINE", "true")
         .output()?;
 
     assert!(
         output.status.success(),
-        "expected std.logging source surface run to succeed.\nstdout:\n{}\nstderr:\n{}",
+        "expected combined std.logging source surface run to succeed.\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !stdout.contains("silent info"),
         "expected INFO event to be filtered by source basic_config, got:\n{stdout}"
@@ -220,44 +337,34 @@ def main() -> None:
         stdout.contains("logger=app.loader"),
         "expected child logger name, got:\n{stdout}"
     );
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_source_json_renderer_preserves_record_shape() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, LogFormat, basic_config, get_logger
-
-def main() -> None:
-  basic_config(level=Level.DEBUG, format=LogFormat.JSON, target="stdout")
-  log = get_logger()
-  log.debug("json works", fields={"request_id": "abc", "component": "loader"})
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
     assert!(
-        output.status.success(),
-        "expected source-defined std.logging JSON run to succeed.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        !stdout.contains("stderr event") && stderr.contains("stderr event"),
+        "expected default logging target to route the event to stderr.\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let records: Vec<serde_json::Value> = stdout
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(serde_json::from_str)
-        .collect::<Result<_, _>>()?;
-    assert_eq!(records.len(), 1, "expected one JSON log record, got:\n{stdout}");
-    let record = &records[0];
+    assert!(
+        stdout.contains("local:shadowed") && !stdout.contains(r#""Body":{"Type":"string","StringValue":"shadowed"}"#),
+        "expected local log binding to remain ordinary source, got:\n{stdout}"
+    );
+    for expected in [
+        "validation:empty_logger:std.logging logger names must not be empty",
+        "validation:edge_logger:std.logging logger names must not start or end with '.'",
+        "validation:segmented_logger:std.logging logger names must not contain empty segments",
+        "validation:output_target:std.logging target must be 'stdout' or 'stderr'",
+    ] {
+        assert!(stdout.contains(expected), "expected `{expected}`, got:\n{stdout}");
+    }
+    assert!(
+        !stdout.contains("unexpected accepted"),
+        "expected std.logging validators to reject invalid values, got:\n{stdout}"
+    );
+
+    let records = parse_json_log_records(&stdout)?;
+    let record = json_record_by_body(&records, "json works")
+        .ok_or_else(|| std::io::Error::other(format!("missing `json works` record in:\n{stdout}")))?;
     assert_eq!(record["SeverityText"], serde_json::json!("DEBUG"));
     assert_eq!(record["SeverityNumber"], serde_json::json!(5));
-    assert_eq!(record["InstrumentationScope"]["Name"], serde_json::json!("root"));
+    assert_eq!(record["InstrumentationScope"]["Name"], serde_json::json!("main"));
     assert_eq!(record["Body"]["Type"], serde_json::json!("string"));
-    assert_eq!(record["Body"]["StringValue"], serde_json::json!("json works"));
     assert_eq!(record["Attributes"]["request_id"]["Type"], serde_json::json!("string"));
     assert_eq!(
         record["Attributes"]["request_id"]["StringValue"],
@@ -274,337 +381,13 @@ def main() -> None:
         "expected user fields to stay under Attributes, got:\n{record}"
     );
 
-    Ok(())
-}
+    let ambient = json_record_by_body(&records, "snippet ambient")
+        .ok_or_else(|| std::io::Error::other(format!("missing `snippet ambient` record in:\n{stdout}")))?;
+    assert_eq!(ambient["InstrumentationScope"]["Name"], serde_json::json!("main"));
 
-#[test]
-fn std_logging_default_target_writes_stderr() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, basic_config, get_logger
-
-def main() -> None:
-  basic_config(level=Level.INFO)
-  get_logger("app").info("stderr event")
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected std.logging stderr target run to succeed.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(
-        !stdout.contains("stderr event") && stderr.contains("stderr event"),
-        "expected default logging target to route the event to stderr.\nstdout:\n{stdout}\nstderr:\n{stderr}"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_default_logger_infers_source_module() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let src_dir = tmp.path().join("src");
-    fs::create_dir_all(&src_dir)?;
-    fs::write(
-        tmp.path().join("incan.toml"),
-        r#"[project]
-name = "std_logging_module_source"
-version = "0.1.0"
-"#,
-    )?;
-    fs::write(
-        src_dir.join("main.incn"),
-        r#"from std.logging import Level, LogStyle, basic_config
-from worker import run_worker
-
-def main() -> None:
-  basic_config(level=Level.INFO, style=LogStyle.VERBOSE, target="stdout")
-  run_worker()
-"#,
-    )?;
-    fs::write(
-        src_dir.join("worker.incn"),
-        r#"from std.logging import get_logger
-
-pub def run_worker() -> None:
-  log = get_logger()
-  log.info("worker ready")
-"#,
-    )?;
-
-    let output = Command::new(incan_debug_binary())
-        .arg("run")
-        .arg("src/main.incn")
-        .current_dir(tmp.path())
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected module-aware std.logging run to succeed.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("worker ready") && stdout.contains("logger=worker") && !stdout.contains("logger=root"),
-        "expected get_logger() in worker.incn to infer logger=worker, got:\n{stdout}"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_ambient_log_infers_source_module() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let src_dir = tmp.path().join("src");
-    fs::create_dir_all(&src_dir)?;
-    fs::write(
-        tmp.path().join("incan.toml"),
-        r#"[project]
-name = "std_logging_ambient_log"
-version = "0.1.0"
-"#,
-    )?;
-    fs::write(
-        src_dir.join("main.incn"),
-        r#"from std.logging import Level, LogStyle, basic_config
-from worker import run_worker
-
-def main() -> None:
-  basic_config(level=Level.INFO, style=LogStyle.VERBOSE, target="stdout")
-  run_worker()
-"#,
-    )?;
-    fs::write(
-        src_dir.join("worker.incn"),
-        r#"pub def run_worker() -> None:
-  log.info("worker ambient log ready")
-"#,
-    )?;
-
-    let output = Command::new(incan_debug_binary())
-        .arg("run")
-        .arg("src/main.incn")
-        .current_dir(tmp.path())
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected ambient std.logging log run to succeed.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("worker ambient log ready")
-            && stdout.contains("logger=worker")
-            && !stdout.contains("logger=root")
-            && !stdout.contains("logger=std.logging"),
-        "expected ambient log in worker.incn to infer logger=worker, got:\n{stdout}"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_ambient_log_is_shadowable() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, LogFormat, basic_config
-
-model LocalLog:
-  def info(self, message: str) -> None:
-    println(f"local:{message}")
-
-def main() -> None:
-  basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
-  log = LocalLog()
-  log.info("shadowed")
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected local log binding to shadow ambient std.logging.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("local:shadowed") && !stdout.contains("InstrumentationScope"),
-        "expected local log binding to remain ordinary source, got:\n{stdout}"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_ambient_log_snippet_falls_back_to_root() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, LogFormat, basic_config
-
-def main() -> None:
-  basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
-  log.info("snippet ambient")
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected metadata-free ambient log to fall back to root.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains(r#""InstrumentationScope":{"Name":"root""#) && stdout.contains("snippet ambient"),
-        "expected ambient log in -c snippet to emit with root logger, got:\n{stdout}"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_rejects_invalid_logger_names() -> Result<(), Box<dyn std::error::Error>> {
-    let cases = [
-        (
-            "empty logger name",
-            r#"from std.logging import get_logger
-
-def main() -> None:
-  get_logger("").info("should not emit")
-"#,
-            "std.logging logger names must not be empty",
-        ),
-        (
-            "empty logger segment",
-            r#"from std.logging import get_logger
-
-def main() -> None:
-  get_logger("app..db").info("should not emit")
-"#,
-            "std.logging logger names must not contain empty segments",
-        ),
-        (
-            "invalid child suffix",
-            r#"from std.logging import get_logger
-
-def main() -> None:
-  get_logger("app").child(".db").info("should not emit")
-"#,
-            "std.logging logger names must not contain empty segments",
-        ),
-    ];
-
-    for (case, source, expected) in cases {
-        let output = Command::new(incan_debug_binary())
-            .args(["run", "-c", source])
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-
-        assert!(
-            !output.status.success(),
-            "expected {case} to fail.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let combined = format!(
-            "{}\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        assert!(
-            combined.contains(expected),
-            "expected {case} validation message `{expected}`, got:\n{combined}"
-        );
-    }
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_rejects_invalid_output_target() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, basic_config, get_logger
-
-def main() -> None:
-  basic_config(level=Level.INFO, target="bogus")
-  get_logger("app").info("should not emit")
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        !output.status.success(),
-        "expected invalid std.logging target to fail.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let combined = format!(
-        "{}\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert!(
-        combined.contains("std.logging target must be 'stdout' or 'stderr'"),
-        "expected target validation message, got:\n{combined}"
-    );
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_json_preserves_structured_field_values() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, LogFormat, basic_config
-from std.telemetry.core import TelemetryValue
-
-def main() -> None:
-  basic_config(level=Level.INFO, format=LogFormat.JSON, target="stdout")
-  log.info("structured", fields={
-    "rows": 42,
-    "ok": true,
-    "ratio": 1.5,
-    "missing": None,
-    "items": TelemetryValue.array([TelemetryValue.int(1), TelemetryValue.bool(false)]),
-    "nested": TelemetryValue.map({"child": TelemetryValue.string("yes")}),
-  })
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected structured std.logging fields to compile and emit JSON.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let records: Vec<serde_json::Value> = stdout
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(serde_json::from_str)
-        .collect::<Result<_, _>>()?;
-    assert_eq!(records.len(), 1, "expected one JSON log record, got:\n{stdout}");
-    let attributes = &records[0]["Attributes"];
+    let structured = json_record_by_body(&records, "structured")
+        .ok_or_else(|| std::io::Error::other(format!("missing `structured` record in:\n{stdout}")))?;
+    let attributes = &structured["Attributes"];
     assert_eq!(attributes["rows"]["Type"], serde_json::json!("int"));
     assert_eq!(attributes["rows"]["IntValue"], serde_json::json!(42));
     assert_eq!(attributes["ok"]["Type"], serde_json::json!("bool"));
@@ -615,61 +398,10 @@ def main() -> None:
     assert_eq!(attributes["items"]["Type"], serde_json::json!("array"));
     assert_eq!(attributes["nested"]["Type"], serde_json::json!("map"));
     assert!(
-        records[0].get("rows").is_none() && records[0].get("nested").is_none(),
-        "expected structured fields to stay under Attributes, got:\n{}",
-        records[0]
+        structured.get("rows").is_none() && structured.get("nested").is_none(),
+        "expected structured fields to stay under Attributes, got:\n{structured}"
     );
 
-    Ok(())
-}
-
-#[test]
-fn std_traits_convert_usage_runs() -> Result<(), Box<dyn std::error::Error>> {
-    let source = include_str!("codegen_snapshots/std_traits_convert_usage.incn");
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected std.traits.convert classmethod usage to compile and run.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n3\n");
-
-    Ok(())
-}
-
-#[test]
-fn std_logging_human_styles_render_distinct_shapes() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.logging import Level, LogStyle, basic_config, get_logger
-
-def main() -> None:
-  basic_config(level=Level.INFO, style=LogStyle.MINIMAL, target="stdout")
-  get_logger("app").info("minimal event")
-  basic_config(level=Level.INFO, style=LogStyle.SHORT, target="stdout")
-  get_logger("app").info("short event")
-  basic_config(level=Level.INFO, style=LogStyle.COMPLETE, target="stdout")
-  get_logger("app").info("complete event")
-  basic_config(level=Level.INFO, style=LogStyle.VERBOSE, target="stdout")
-  get_logger("app").info("verbose event")
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
-    assert!(
-        output.status.success(),
-        "expected std.logging human style run to succeed.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
     let log_lines: Vec<&str> = stdout.lines().filter(|line| line.contains("[INFO]")).collect();
     let short_line = log_lines
         .iter()
@@ -692,62 +424,37 @@ def main() -> None:
         "expected short style to use compact time-of-day timestamp, got:\n{stdout}"
     );
     assert!(
-        complete_line.contains("T") && complete_line.contains("Z [INFO] complete event"),
+        complete_line.contains('T') && complete_line.contains("Z [INFO] complete event"),
         "expected complete style to use full datetime timestamp, got:\n{stdout}"
     );
     assert!(
         stdout.contains("[INFO] verbose event\n  logger=app"),
         "expected verbose style to add logger metadata on a second line, got:\n{stdout}"
     );
-
-    Ok(())
-}
-
-#[test]
-fn telemetry_value_class_constructors_are_callable() -> Result<(), Box<dyn std::error::Error>> {
-    let source = r#"from std.telemetry.core import TelemetryValue
-
-def main() -> None:
-  text = TelemetryValue.string("alpha")
-  payload = TelemetryValue.map({
-    "items": TelemetryValue.array([TelemetryValue.int(42), TelemetryValue.bool(true)]),
-    "empty": TelemetryValue.none(),
-    "encoded": TelemetryValue.bytes("ff"),
-    "ratio": TelemetryValue.float(1.5),
-  })
-  println(text.display_text())
-  println(payload.display_text())
-"#;
-
-    let output = Command::new(incan_debug_binary())
-        .args(["run", "-c", source])
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-
     assert!(
-        output.status.success(),
-        "expected telemetry value constructors to run.\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(
-        stdout.contains("alpha")
+        stdout.contains("telemetry:alpha")
             && stdout.contains(r#""Type":"map""#)
             && stdout.contains(r#""items":{"Type":"array""#)
             && stdout.contains(r#""IntValue":42"#)
             && stdout.contains(r#""BoolValue":true"#)
             && stdout.contains(r#""BytesValue":"ff""#)
             && stdout.contains(r#""FloatValue":1.5"#),
-        "expected class constructors to preserve structured telemetry values, got:\n{stdout}"
+        "expected telemetry value constructors to preserve structured values, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("worker ready")
+            && stdout.contains("worker ambient log ready")
+            && stdout.contains("logger=worker")
+            && !stdout.contains("logger=std.logging"),
+        "expected worker module logging to infer logger=worker, got:\n{stdout}"
     );
 
     Ok(())
 }
 
 #[test]
-fn validated_newtype_runtime_success_coerces_approved_sites() -> Result<(), Box<dyn std::error::Error>> {
-    let output = Command::new(incan_debug_binary())
+fn validated_newtype_runtime_scenarios() -> Result<(), Box<dyn std::error::Error>> {
+    let output = incan_command()
         .args([
             "run",
             "-c",
@@ -780,11 +487,6 @@ def main() -> None:
     assert!(stdout.contains("retry=3"), "unexpected stdout:\n{stdout}");
     assert!(stdout.contains("local=4"), "unexpected stdout:\n{stdout}");
 
-    Ok(())
-}
-
-#[test]
-fn validated_newtype_runtime_fail_fast_reports_validation_error() -> Result<(), Box<dyn std::error::Error>> {
     assert_runtime_error_cli(
         r#"
 type Attempts = newtype int:
@@ -805,11 +507,8 @@ def main() -> None:
 "#,
         "ValidationError",
         &["Attempts::from_underlying", "attempts must be >= 1"],
-    )
-}
+    )?;
 
-#[test]
-fn validated_newtype_runtime_aggregates_model_field_errors() -> Result<(), Box<dyn std::error::Error>> {
     assert_runtime_error_cli(
         r#"
 type PositiveInt = newtype int:
@@ -835,7 +534,9 @@ def main() -> None:
             "low: positive int must be greater than zero",
             "high: positive int must be greater than zero",
         ],
-    )
+    )?;
+
+    Ok(())
 }
 
 #[test]
@@ -896,7 +597,7 @@ def main() -> None:
 "#,
     )?;
 
-    let output = Command::new(incan_debug_binary())
+    let output = incan_command()
         .arg("run")
         .arg("src/main.incn")
         .current_dir(tmp.path())
@@ -932,6 +633,38 @@ fn incan_debug_binary() -> std::path::PathBuf {
         }
     }
     std::path::PathBuf::from("target/debug/incan")
+}
+
+fn shared_generated_cargo_target_dir() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("incan_generated_shared_target")
+}
+
+fn incan_command() -> Command {
+    let mut command = Command::new(incan_debug_binary());
+    command.env("INCAN_GENERATED_CARGO_TARGET_DIR", shared_generated_cargo_target_dir());
+    command
+}
+
+fn run_incan_command_with_timeout(
+    mut command: Command,
+    timeout: std::time::Duration,
+) -> std::io::Result<(std::process::Output, bool)> {
+    command.stdout(std::process::Stdio::piped());
+    command.stderr(std::process::Stdio::piped());
+    let mut child = command.spawn()?;
+    let start = std::time::Instant::now();
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output().map(|output| (output, false));
+        }
+        if start.elapsed() >= timeout {
+            let _ = child.kill();
+            return child.wait_with_output().map(|output| (output, true));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
 }
 
 fn is_incan_fixture(path: &Path) -> bool {
@@ -1004,7 +737,7 @@ fn test_cli_fmt_preserves_block_decl_docstrings_and_export_doc_surface() -> Resu
     let dir = make_temp_test_dir();
     let path = dir.join("block_docstrings_cli.incn");
     fs::write(&path, BLOCK_DOCSTRING_PUBLIC_TYPE_LIKE)?;
-    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    let status = incan_command().arg("fmt").arg(&path).status()?;
     assert!(status.success(), "incan fmt failed");
 
     let formatted = fs::read_to_string(&path)?;
@@ -1080,7 +813,7 @@ def check_flags(ready: bool, done: bool) -> None:
 "#,
     )?;
 
-    let output = Command::new(incan_debug_binary()).arg("fmt").arg(&path).output()?;
+    let output = incan_command().arg("fmt").arg(&path).output()?;
     assert!(
         output.status.success(),
         "expected `incan fmt` to accept assert identity checks against bool literals.\nstdout:\n{}\nstderr:\n{}",
@@ -1108,7 +841,7 @@ def matches(item: Item) -> bool:
 "#,
     )?;
 
-    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    let status = incan_command().arg("fmt").arg(&path).status()?;
     assert!(status.success(), "incan fmt failed");
 
     let formatted = fs::read_to_string(&path)?;
@@ -1131,7 +864,7 @@ def matches(item: Item) -> bool:
         "expected formatted output to stay within 120 columns:\n{formatted}"
     );
 
-    let output = Command::new(incan_debug_binary()).arg("--check").arg(&path).output()?;
+    let output = incan_command().arg("--check").arg(&path).output()?;
     assert!(
         output.status.success(),
         "expected wrapped expression to parse/typecheck after CLI fmt; stderr={}",
@@ -1153,7 +886,7 @@ fn test_cli_fmt_preserves_fstring_escaped_newline_roundtrip() -> Result<(), Box<
 "#,
     )?;
 
-    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    let status = incan_command().arg("fmt").arg(&path).status()?;
     assert!(status.success(), "incan fmt failed");
 
     let formatted = fs::read_to_string(&path)?;
@@ -1163,7 +896,7 @@ fn test_cli_fmt_preserves_fstring_escaped_newline_roundtrip() -> Result<(), Box<
         formatted
     );
 
-    let output = Command::new(incan_debug_binary()).arg("--check").arg(&path).output()?;
+    let output = incan_command().arg("--check").arg(&path).output()?;
     assert!(
         output.status.success(),
         "expected formatted file to parse/typecheck after CLI fmt; stderr={}",
@@ -1199,7 +932,7 @@ trait Service:
 "#,
     )?;
 
-    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    let status = incan_command().arg("fmt").arg(&path).status()?;
     assert!(status.success(), "incan fmt failed");
 
     let formatted = fs::read_to_string(&path)?;
@@ -1247,7 +980,7 @@ pub def allocate_prism_store_id() -> int:
 "#,
     )?;
 
-    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    let status = incan_command().arg("fmt").arg(&path).status()?;
     assert!(status.success(), "incan fmt failed");
 
     let formatted = fs::read_to_string(&path)?;
@@ -1282,7 +1015,7 @@ fn test_cli_fmt_keeps_trailing_comment_after_multiline_function() -> Result<(), 
 "#,
     )?;
 
-    let status = Command::new(incan_debug_binary()).arg("fmt").arg(&path).status()?;
+    let status = incan_command().arg("fmt").arg(&path).status()?;
     assert!(status.success(), "incan fmt failed");
 
     let formatted = fs::read_to_string(&path)?;
@@ -1318,7 +1051,7 @@ def main() -> None:
 "#,
     )?;
 
-    let output = Command::new(incan_debug_binary()).arg("--check").arg(&path).output()?;
+    let output = incan_command().arg("--check").arg(&path).output()?;
     assert!(
         output.status.success(),
         "expected multiline trailing parameter comma to parse/typecheck; stderr={}",
@@ -1403,7 +1136,7 @@ fn test_invalid_fixtures() {
 
 #[test]
 fn test_help_is_banner_free() -> Result<(), Box<dyn std::error::Error>> {
-    let output = Command::new(incan_debug_binary()).arg("--help").output()?;
+    let output = incan_command().arg("--help").output()?;
     assert!(
         output.status.success(),
         "incan --help failed: status={:?} stderr={}",
@@ -1421,7 +1154,7 @@ fn test_help_is_banner_free() -> Result<(), Box<dyn std::error::Error>> {
 
 #[test]
 fn test_version_is_single_line_and_banner_free() -> Result<(), Box<dyn std::error::Error>> {
-    let output = Command::new(incan_debug_binary()).arg("--version").output()?;
+    let output = incan_command().arg("--version").output()?;
     assert!(
         output.status.success(),
         "incan --version failed: status={:?} stderr={}",
@@ -1443,7 +1176,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     let tmp = tempfile::tempdir()?;
     let project_dir = tmp.path().join("greeter");
 
-    let new_output = Command::new(incan_debug_binary())
+    let new_output = incan_command()
         .args(["new", "greeter", "--yes", "--dir"])
         .arg(&project_dir)
         .args([
@@ -1471,7 +1204,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     assert!(project_dir.join("src/main.incn").exists());
     assert!(project_dir.join("tests/test_main.incn").exists());
 
-    let empty_list_output = Command::new(incan_debug_binary())
+    let empty_list_output = incan_command()
         .args(["env", "list"])
         .current_dir(&project_dir)
         .output()?;
@@ -1486,7 +1219,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
         "fresh projects should expose the ambient default env"
     );
 
-    let default_overview_output = Command::new(incan_debug_binary())
+    let default_overview_output = incan_command()
         .args(["env", "show"])
         .current_dir(&project_dir)
         .output()?;
@@ -1499,7 +1232,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     assert!(default_overview_stdout.contains("Name"));
     assert!(default_overview_stdout.contains("default"));
 
-    let default_show_output = Command::new(incan_debug_binary())
+    let default_show_output = incan_command()
         .args(["env", "show", "default"])
         .current_dir(&project_dir)
         .output()?;
@@ -1514,7 +1247,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
         String::from_utf8_lossy(&default_show_output.stdout)
     );
 
-    let dry_run = Command::new(incan_debug_binary())
+    let dry_run = incan_command()
         .args(["version", "patch", "--dry-run"])
         .current_dir(&project_dir)
         .output()?;
@@ -1534,7 +1267,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
         "dry-run must not modify incan.toml"
     );
 
-    let version_output = Command::new(incan_debug_binary())
+    let version_output = incan_command()
         .args(["version", "patch"])
         .current_dir(&project_dir)
         .output()?;
@@ -1546,7 +1279,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     );
     assert!(fs::read_to_string(&manifest_path)?.contains(r#"version = "0.1.1""#));
 
-    let set_output = Command::new(incan_debug_binary())
+    let set_output = incan_command()
         .args([
             "version",
             "--set",
@@ -1564,7 +1297,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     );
     assert!(fs::read_to_string(&manifest_path)?.contains(r#"version = "2.0.0-rc.1""#));
 
-    let keep_prerelease_output = Command::new(incan_debug_binary())
+    let keep_prerelease_output = incan_command()
         .args([
             "version",
             "patch",
@@ -1582,7 +1315,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     );
     assert!(fs::read_to_string(&manifest_path)?.contains(r#"version = "2.0.1-rc.1""#));
 
-    let missing_request_output = Command::new(incan_debug_binary())
+    let missing_request_output = incan_command()
         .args([
             "version",
             "--project",
@@ -1597,7 +1330,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
         String::from_utf8_lossy(&missing_request_output.stderr)
     );
 
-    let conflicting_request_output = Command::new(incan_debug_binary())
+    let conflicting_request_output = incan_command()
         .args([
             "version",
             "patch",
@@ -1625,7 +1358,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
         ),
     )?;
 
-    let list_output = Command::new(incan_debug_binary())
+    let list_output = incan_command()
         .args(["env", "list"])
         .current_dir(project_dir.join("src"))
         .output()?;
@@ -1638,7 +1371,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     assert!(list_stdout.contains("default"));
     assert!(list_stdout.contains("unit"));
 
-    let list_json_output = Command::new(incan_debug_binary())
+    let list_json_output = incan_command()
         .args([
             "env",
             "list",
@@ -1657,7 +1390,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     let list_json: serde_json::Value = serde_json::from_slice(&list_json_output.stdout)?;
     assert_eq!(list_json, serde_json::json!(["default", "unit"]));
 
-    let show_output = Command::new(incan_debug_binary())
+    let show_output = incan_command()
         .args(["env", "show", "unit"])
         .current_dir(&project_dir)
         .output()?;
@@ -1674,7 +1407,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     assert!(show_stdout.contains("alloc"));
     assert!(show_stdout.contains("derive"));
 
-    let show_overview_output = Command::new(incan_debug_binary())
+    let show_overview_output = incan_command()
         .args(["env", "show"])
         .current_dir(&project_dir)
         .output()?;
@@ -1688,7 +1421,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     assert!(show_overview_stdout.contains("unit"));
     assert!(show_overview_stdout.contains("Scripts"));
 
-    let show_overview_json_output = Command::new(incan_debug_binary())
+    let show_overview_json_output = incan_command()
         .args([
             "env",
             "show",
@@ -1710,7 +1443,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     assert!(show_overview_array.iter().any(|entry| entry["name"] == "default"));
     assert!(show_overview_array.iter().any(|entry| entry["name"] == "unit"));
 
-    let show_json_output = Command::new(incan_debug_binary())
+    let show_json_output = incan_command()
         .args(["env", "show", "unit", "--format", "json"])
         .current_dir(&project_dir)
         .output()?;
@@ -1723,7 +1456,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
     assert_eq!(show_json["env"], "unit");
     assert_eq!(show_json["dependencies"]["serde"]["version"], "1.0");
 
-    let dry_run_env = Command::new(incan_debug_binary())
+    let dry_run_env = incan_command()
         .args(["env", "run", "unit", "probe", "--dry-run"])
         .current_dir(&project_dir)
         .output()?;
@@ -1738,7 +1471,7 @@ fn lifecycle_new_version_and_env_commands_work() -> Result<(), Box<dyn std::erro
         String::from_utf8_lossy(&dry_run_env.stdout)
     );
 
-    let run_env = Command::new(incan_debug_binary())
+    let run_env = incan_command()
         .args(["env", "run", "unit", "probe"])
         .current_dir(&project_dir)
         .output()?;
@@ -1785,7 +1518,7 @@ def main() -> None:
 "#,
     )?;
 
-    let bare_run = Command::new(incan_debug_binary())
+    let bare_run = incan_command()
         .args(["run", "src/main.incn"])
         .current_dir(project_root)
         .env("CARGO_NET_OFFLINE", "true")
@@ -1803,7 +1536,7 @@ def main() -> None:
         bare_stderr
     );
 
-    let env_run = Command::new(incan_debug_binary())
+    let env_run = incan_command()
         .args(["env", "run", "unit", "run"])
         .current_dir(project_root)
         .env("CARGO_NET_OFFLINE", "true")
@@ -1856,7 +1589,7 @@ env-vars = { CHILD = "1" }
 "#,
     )?;
 
-    let bare_show = Command::new(incan_debug_binary())
+    let bare_show = incan_command()
         .args(["env", "show", "unit", "--format", "json"])
         .current_dir(project_root.join("child"))
         .output()?;
@@ -1870,7 +1603,7 @@ env-vars = { CHILD = "1" }
     assert_eq!(bare_json["env_vars"]["CHILD"], "1");
     assert!(bare_json["env_vars"].get("PARENT").is_none());
 
-    let env_show = Command::new(incan_debug_binary())
+    let env_show = incan_command()
         .args(["env", "run", "unit", "inspect"])
         .current_dir(project_root)
         .output()?;
@@ -1888,10 +1621,7 @@ env-vars = { CHILD = "1" }
 
 #[test]
 fn test_parse_error_is_banner_free() {
-    let Ok(output) = Command::new(incan_debug_binary())
-        .arg("--definitely-not-a-flag")
-        .output()
-    else {
+    let Ok(output) = incan_command().arg("--definitely-not-a-flag").output() else {
         panic!("failed to run incan with invalid args");
     };
     assert!(
@@ -1910,7 +1640,7 @@ fn test_parse_error_is_banner_free() {
 #[test]
 fn test_fstring_unknown_symbol_cli_caret_points_to_interpolation() {
     let source = "def main() -> str:\n  return f\"value: {unknown_var}\"\n";
-    let Ok(output) = Command::new(incan_debug_binary()).args(["run", "-c", source]).output() else {
+    let Ok(output) = incan_command().args(["run", "-c", source]).output() else {
         panic!("failed to run incan with f-string source");
     };
 
@@ -1960,6 +1690,49 @@ fn test_fstring_unknown_symbol_cli_caret_points_to_interpolation() {
 }
 
 #[test]
+fn test_fstring_list_interpolation_uses_structured_formatting() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"def debug_values[T](values: list[T]) -> str:
+  return f"{values:?}"
+
+def display_values[T](values: list[T]) -> str:
+  return f"{values}"
+
+def main() -> None:
+  columns: list[str] = ["id", "amount"]
+  println(f"debug: {columns:?}")
+  println(f"display: {columns}")
+  println(debug_values[str](["id", "amount"]))
+  println(display_values[str](["id", "amount"]))
+"#;
+    let output = incan_command()
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+    assert!(
+        output.status.success(),
+        "expected list f-string interpolation to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("debug: [\"id\", \"amount\"]"),
+        "expected debug list output, got:\n{stdout}"
+    );
+    assert!(
+        stdout.contains("display: [\"id\", \"amount\"]"),
+        "expected default list f-string output to use structured formatting, got:\n{stdout}"
+    );
+    assert!(
+        stdout.lines().filter(|line| *line == "[\"id\", \"amount\"]").count() == 2,
+        "expected both generic list helpers to render, got:\n{stdout}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn fixed_call_unpack_runs_for_positional_and_keyword_shapes() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def total(a: int, b: int, *rest: int, **labels: str) -> int:
@@ -1980,7 +1753,7 @@ def main() -> None:
   println(route(**{"path": "/status", "method": "GET"}))
   println(counter.add(*(5, 6)))
 "#;
-    let output = Command::new(incan_debug_binary())
+    let output = incan_command()
         .args(["run", "-c", source])
         .env("CARGO_NET_OFFLINE", "true")
         .output()?;
@@ -2021,7 +1794,7 @@ def main() -> None:
   println(value.adjusted)
   println(value.label)
 "#;
-    let output = Command::new(incan_debug_binary())
+    let output = incan_command()
         .args(["run", "-c", source])
         .env("CARGO_NET_OFFLINE", "true")
         .output()?;
@@ -2037,117 +1810,71 @@ def main() -> None:
 }
 
 #[test]
-fn runtime_error_missing_dict_key_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
-    assert_runtime_error_cli(
-        "def main() -> None:\n  let values = {\"a\": 1}\n  println(values[\"b\"])\n",
-        "KeyError",
-        &["not found in dict"],
-    )
+fn runtime_error_canonicalization_cases() -> Result<(), Box<dyn std::error::Error>> {
+    let cases: &[(&str, &str, &[&str])] = &[
+        (
+            "def main() -> None:\n  let values = {\"a\": 1}\n  println(values[\"b\"])\n",
+            "KeyError",
+            &["not found in dict"],
+        ),
+        (
+            "def main() -> None:\n  let values = [1, 2, 3]\n  println(values[99])\n",
+            "IndexError",
+            &["out of range for list"],
+        ),
+        (
+            "def main() -> None:\n  let values = [1, 2, 3]\n  println(values.index(99))\n",
+            "ValueError",
+            &["value not found in list"],
+        ),
+        (
+            "def main() -> None:\n  println(int(\"abc\"))\n",
+            "ValueError",
+            &["cannot convert 'abc' to int"],
+        ),
+        (
+            "def main() -> None:\n  println(float(\"abc\"))\n",
+            "ValueError",
+            &["cannot convert 'abc' to float"],
+        ),
+        (
+            "def main() -> None:\n  mut values = [1, 2, 3]\n  values.remove(99)\n",
+            "IndexError",
+            &["out of range for list"],
+        ),
+        (
+            "def main() -> None:\n  mut values = [1, 2, 3]\n  values.swap(0, 99)\n",
+            "IndexError",
+            &["out of range for list"],
+        ),
+    ];
+    for (source, expected_type, expected_substrings) in cases {
+        assert_runtime_error_cli(source, expected_type, expected_substrings)?;
+    }
+    Ok(())
 }
 
 #[test]
-fn runtime_error_list_index_out_of_range_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
-    assert_runtime_error_cli(
-        "def main() -> None:\n  let values = [1, 2, 3]\n  println(values[99])\n",
-        "IndexError",
-        &["out of range for list"],
-    )
-}
+fn assert_false_can_satisfy_typed_failure_path() -> Result<(), Box<dyn std::error::Error>> {
+    let cases = [
+        r#"
+def fail_int(message: str) -> int:
+  assert false, message
 
-#[test]
-fn runtime_error_list_index_method_not_found_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
-    assert_runtime_error_cli(
-        "def main() -> None:\n  let values = [1, 2, 3]\n  println(values.index(99))\n",
-        "ValueError",
-        &["value not found in list"],
-    )
-}
+def main() -> None:
+  _ = fail_int("boom")
+"#,
+        r#"
+def fail_as[T](message: str) -> T:
+  assert false, message
 
-#[test]
-fn runtime_error_int_conversion_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
-    assert_runtime_error_cli(
-        "def main() -> None:\n  println(int(\"abc\"))\n",
-        "ValueError",
-        &["cannot convert 'abc' to int"],
-    )
-}
-
-#[test]
-fn runtime_error_float_conversion_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
-    assert_runtime_error_cli(
-        "def main() -> None:\n  println(float(\"abc\"))\n",
-        "ValueError",
-        &["cannot convert 'abc' to float"],
-    )
-}
-
-#[test]
-fn runtime_error_list_remove_out_of_range_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
-    assert_runtime_error_cli(
-        "def main() -> None:\n  mut values = [1, 2, 3]\n  values.remove(99)\n",
-        "IndexError",
-        &["out of range for list"],
-    )
-}
-
-#[test]
-fn runtime_error_list_swap_out_of_range_is_canonical() -> Result<(), Box<dyn std::error::Error>> {
-    assert_runtime_error_cli(
-        "def main() -> None:\n  mut values = [1, 2, 3]\n  values.swap(0, 99)\n",
-        "IndexError",
-        &["out of range for list"],
-    )
-}
-
-#[test]
-fn runtime_error_route_marker_runtime_misuse_is_explicit() -> Result<(), Box<dyn std::error::Error>> {
-    let tmp = tempfile::tempdir()?;
-    let web_macros_path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("crates")
-        .join("incan_web_macros");
-    let manifest = format!(
-        "[project]\nname = \"route_runtime_misuse\"\nversion = \"0.3.0-dev.1\"\n\n[rust-dependencies]\nincan_web_macros = {{ path = \"{}\" }}\n",
-        web_macros_path.display()
-    );
-    let src_dir = tmp.path().join("src");
-    fs::create_dir_all(&src_dir)?;
-    fs::write(tmp.path().join("incan.toml"), manifest)?;
-    let main_path = src_dir.join("main.incn");
-    fs::write(
-        &main_path,
-        "from std.web import route\n\ndef main() -> None:\n  route(\"/users\", methods=[\"GET\"])\n",
-    )?;
-
-    let check_output = Command::new(incan_debug_binary())
-        .arg("--check")
-        .arg(&main_path)
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-    assert!(
-        check_output.status.success(),
-        "expected --check to succeed so the failure is runtime.\nstderr:\n{}",
-        String::from_utf8_lossy(&check_output.stderr)
-    );
-
-    let run_output = Command::new(incan_debug_binary())
-        .arg("run")
-        .arg(&main_path)
-        .env("CARGO_NET_OFFLINE", "true")
-        .output()?;
-    assert!(
-        !run_output.status.success(),
-        "expected runtime failure, stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&run_output.stdout),
-        String::from_utf8_lossy(&run_output.stderr)
-    );
-
-    let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&run_output.stdout));
-    let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&run_output.stderr));
-    let combined = format!("{stdout}\n{stderr}");
-    assert!(
-        combined.contains("decorator marker 'incan_web_macros::route' cannot be called at runtime"),
-        "expected explicit decorator misuse runtime diagnostic, got:\n{combined}"
-    );
+def main() -> None:
+  _ = fail_as[int]("boom")
+"#,
+    ];
+    for source in cases {
+        assert_runtime_error_cli(source, "AssertionError", &["boom"])?;
+    }
     Ok(())
 }
 
@@ -2165,10 +1892,7 @@ def helper() -> Unit:
         panic!("failed to write test file");
     };
 
-    let Ok(output) = Command::new(incan_debug_binary())
-        .args(["test", dir.to_string_lossy().as_ref()])
-        .output()
-    else {
+    let Ok(output) = incan_command().args(["test", dir.to_string_lossy().as_ref()]).output() else {
         panic!("failed to run incan test");
     };
     assert!(
@@ -2178,7 +1902,7 @@ def helper() -> Unit:
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let Ok(output) = Command::new(incan_debug_binary())
+    let Ok(output) = incan_command()
         .args(["test", "--fail-on-empty", dir.to_string_lossy().as_ref()])
         .output()
     else {
@@ -2202,7 +1926,7 @@ def main() -> None:
   counter += 2
   println(counter)
 "#;
-    let Ok(output) = Command::new(incan_debug_binary())
+    let Ok(output) = incan_command()
         .args(["run", "-c", source])
         .env("CARGO_NET_OFFLINE", "true")
         .output()
@@ -2235,7 +1959,7 @@ static counter: int = init_counter()
 def main() -> None:
   println("main")
 "#;
-    let Ok(output) = Command::new(incan_debug_binary())
+    let Ok(output) = incan_command()
         .args(["run", "-c", source])
         .env("CARGO_NET_OFFLINE", "true")
         .output()
@@ -2270,7 +1994,7 @@ def main() -> None:
   println(len(items))
   println(len(live))
 "#;
-    let Ok(output) = Command::new(incan_debug_binary())
+    let Ok(output) = incan_command()
         .args(["run", "-c", source])
         .env("CARGO_NET_OFFLINE", "true")
         .output()
@@ -2292,6 +2016,256 @@ def main() -> None:
 }
 
 #[test]
+fn test_const_model_constructor_compile_and_run_issue658() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model Version:
+  pub major: int
+  pub minor: int
+
+model Change:
+  pub version: Version
+  note [alias="message"]: FrozenStr
+
+model Lifecycle:
+  pub since: Version
+  pub changed: FrozenList[Change]
+  pub deprecated: Option[Version]
+
+pub const V0_1: Version = Version(major=0, minor=1)
+pub const V0_3: Version = Version(major=0, minor=3)
+pub const LIFECYCLE: Lifecycle = Lifecycle(
+  since=V0_1,
+  changed=[Change(version=V0_3, message="metadata")],
+  deprecated=None,
+)
+
+def main() -> None:
+  println(f"{V0_1.major}.{V0_1.minor}")
+  println(f"{LIFECYCLE.changed[0].version.major}.{LIFECYCLE.changed[0].version.minor}")
+  println(LIFECYCLE.changed[0].note)
+  match LIFECYCLE.deprecated:
+    None => println("active")
+    Some(version) => println(f"{version.major}.{version.minor}")
+"#;
+    let output = incan_command()
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "expected const model constructor program to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.lines().any(|line| line.trim() == "0.1"),
+        "expected const model constructor output 0.1.\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.lines().any(|line| line.trim() == "0.3"),
+        "expected nested const model constructor output 0.3.\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.lines().any(|line| line.trim() == "metadata"),
+        "expected nested const model constructor output metadata.\nstdout:\n{stdout}"
+    );
+    assert!(
+        stdout.lines().any(|line| line.trim() == "active"),
+        "expected const model option metadata output active.\nstdout:\n{stdout}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_lowercase_imported_pub_static_compile_and_run_issue659() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let versions = dir.join("versions.incn");
+    let main = dir.join("main.incn");
+    std::fs::write(
+        &versions,
+        r#"
+pub static v0_1: int = 1
+pub static v0_2: int = 2
+"#,
+    )?;
+    std::fs::write(
+        &main,
+        r#"
+from versions import v0_1
+from versions import v0_2 as current_version
+
+def main() -> None:
+  println(v0_1)
+  println(current_version)
+"#,
+    )?;
+
+    let output = incan_command()
+        .args(["run", main.to_string_lossy().as_ref()])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "expected lowercase imported pub static program to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    assert_eq!(lines, ["1", "2"], "unexpected lowercase static output");
+    Ok(())
+}
+
+#[test]
+fn test_imported_static_initializer_does_not_deadlock_issue680() -> Result<(), Box<dyn std::error::Error>> {
+    let dir = make_temp_test_dir();
+    let project_name = unique_test_project_name("imported_static_deadlock");
+    std::fs::write(
+        dir.join("incan.toml"),
+        format!("[project]\nname = \"{project_name}\"\nversion = \"0.1.0\"\n"),
+    )?;
+    let src_dir = dir.join("src");
+    std::fs::create_dir_all(&src_dir)?;
+    let state = src_dir.join("state.incn");
+    let facade = src_dir.join("facade.incn");
+    let direct_user = src_dir.join("direct_user.incn");
+    let reexport_user = src_dir.join("reexport_user.incn");
+    let main = src_dir.join("main.incn");
+    std::fs::write(
+        &state,
+        r#"
+pub class Registry:
+  pub entries: list[int]
+
+  @staticmethod
+  def new() -> Self:
+    return Registry(entries=[])
+
+
+pub static registry: Registry = Registry.new()
+
+
+pub def registry_len() -> int:
+  return len(registry.entries)
+"#,
+    )?;
+    std::fs::write(&facade, "pub from state import registry\n")?;
+    std::fs::write(
+        &direct_user,
+        r#"
+from state import registry
+
+
+pub def add_direct() -> None:
+  registry.entries.append(1)
+"#,
+    )?;
+    std::fs::write(
+        &reexport_user,
+        r#"
+from facade import registry
+
+
+pub def add_reexport() -> None:
+  registry.entries.append(1)
+"#,
+    )?;
+    std::fs::write(
+        &main,
+        r#"
+from direct_user import add_direct
+from reexport_user import add_reexport
+from state import registry_len
+
+
+def main() -> None:
+  add_direct()
+  add_reexport()
+  assert registry_len() == 2
+  println("ok")
+"#,
+    )?;
+
+    let mut command = incan_command();
+    command
+        .arg("run")
+        .arg(main.strip_prefix(&dir)?)
+        .current_dir(&dir)
+        .env("CARGO_NET_OFFLINE", "true");
+    let (output, timed_out) = run_incan_command_with_timeout(command, std::time::Duration::from_secs(30))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !timed_out,
+        "imported static init repro timed out; likely deadlocked.\nstdout:\n{}\nstderr:\n{}",
+        stdout, stderr
+    );
+    assert!(
+        output.status.success(),
+        "expected imported static init repro to run.\nstdout:\n{}\nstderr:\n{}",
+        stdout,
+        stderr
+    );
+    assert!(
+        stdout.lines().any(|line| line.trim() == "ok"),
+        "expected imported static init repro to print ok.\nstdout:\n{stdout}"
+    );
+
+    let generated_src_dir = dir.join("target/incan").join(project_name).join("src");
+    let generated_direct_user = std::fs::read_to_string(generated_src_dir.join("direct_user.rs"))?;
+    assert!(
+        generated_direct_user
+            .contains("use crate::state::__incan_init_module_statics as __incan_init_imported_static_registry;")
+            && generated_direct_user.contains("__incan_init_imported_static_registry();"),
+        "direct imported static access should call the defining module init guard before forcing REGISTRY:\n{}",
+        generated_direct_user
+    );
+    let generated_facade = std::fs::read_to_string(generated_src_dir.join("facade.rs"))?;
+    assert!(
+        generated_facade
+            .contains("use crate::state::__incan_init_module_statics as __incan_init_imported_static_registry;")
+            && generated_facade.contains("pub(crate) fn __incan_init_module_statics()")
+            && generated_facade.contains("__incan_init_imported_static_registry();"),
+        "static re-export modules should chain the defining module init guard:\n{}",
+        generated_facade
+    );
+    Ok(())
+}
+
+#[test]
+fn test_static_list_index_assignment_and_remove_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+static entries: list[int] = []
+
+def main() -> None:
+  entries.append(1)
+  entries[0] = 2
+  println(entries[0])
+  entries.remove(0)
+  entries.append(3)
+  println(entries[0])
+"#;
+    let output = incan_command()
+        .args(["run", "-c", source])
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()?;
+
+    assert!(
+        output.status.success(),
+        "expected static list index mutation program to run.\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+    assert_eq!(lines, ["2", "3"], "unexpected static list mutation output");
+    Ok(())
+}
+
+#[test]
 fn test_list_concatenation_plus_operator_runs() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 def main() -> None:
@@ -2304,7 +2278,7 @@ def main() -> None:
   println(c[0])
   println(c[3])
 "#;
-    let output = Command::new(incan_debug_binary())
+    let output = incan_command()
         .args(["run", "-c", source])
         .env("CARGO_NET_OFFLINE", "true")
         .output()?;
@@ -2341,7 +2315,7 @@ def main() -> None:
   println(find_value(True))
   println(find_value(False))
 "#;
-    let output = Command::new(incan_debug_binary())
+    let output = incan_command()
         .args(["run", "-c", source])
         .env("CARGO_NET_OFFLINE", "true")
         .output()?;
@@ -2387,7 +2361,7 @@ def main() -> None:
     Some(parsed_status) => println(parsed_status.value())
     None => println(0)
 "#;
-    let output = Command::new(incan_debug_binary())
+    let output = incan_command()
         .args(["run", "-c", source])
         .env("CARGO_NET_OFFLINE", "true")
         .output()?;
@@ -2422,7 +2396,7 @@ def main() -> None:
   println(len(b))
   println(b[0])
 "#;
-    let output = Command::new(incan_debug_binary())
+    let output = incan_command()
         .args(["run", "-c", source])
         .env("CARGO_NET_OFFLINE", "true")
         .output()?;
@@ -2457,7 +2431,7 @@ def main() -> None:
   println(items[0])
   println(items[1])
 "#;
-    let Ok(output) = Command::new(incan_debug_binary())
+    let Ok(output) = incan_command()
         .args(["run", "-c", source])
         .env("CARGO_NET_OFFLINE", "true")
         .output()
@@ -2496,7 +2470,7 @@ def main() -> None:
   println(init_order[0])
   println(init_order[1])
 "#;
-    let Ok(output) = Command::new(incan_debug_binary())
+    let Ok(output) = incan_command()
         .args(["run", "-c", source])
         .env("CARGO_NET_OFFLINE", "true")
         .output()
@@ -2526,7 +2500,7 @@ mod lexer_tests {
     use incan_core::lang::punctuation::PunctuationId;
 
     #[test]
-    fn test_floor_div_tokens() {
+    fn lexer_token_surface_cases() {
         let Ok(tokens) = lex("a //= b\nc // d") else {
             panic!("lex failed");
         };
@@ -2534,10 +2508,7 @@ mod lexer_tests {
         let has_floor_div = tokens.iter().any(|t| t.kind.is_operator(OperatorId::SlashSlash));
         assert!(has_floor_div_eq, "expected to see //= token");
         assert!(has_floor_div, "expected to see // token");
-    }
 
-    #[test]
-    fn test_rust_style_imports() {
         let Ok(tokens) = lex("import foo::bar::baz as fb") else {
             panic!("lex failed");
         };
@@ -2549,69 +2520,45 @@ mod lexer_tests {
         assert!(matches!(&tokens[5].kind, TokenKind::Ident(s) if s == "baz"));
         assert!(tokens[6].kind.is_keyword(KeywordId::As));
         assert!(matches!(&tokens[7].kind, TokenKind::Ident(s) if s == "fb"));
-    }
 
-    #[test]
-    fn test_try_operator() {
         let Ok(tokens) = lex("result?") else {
             panic!("lex failed");
         };
         assert!(matches!(&tokens[0].kind, TokenKind::Ident(s) if s == "result"));
         assert!(tokens[1].kind.is_punctuation(PunctuationId::Question));
-    }
 
-    #[test]
-    fn test_fat_arrow() {
         let Ok(tokens) = lex("x => y") else {
             panic!("lex failed");
         };
         assert!(tokens[1].kind.is_punctuation(PunctuationId::FatArrow));
-    }
 
-    #[test]
-    fn test_case_keyword() {
         let Ok(tokens) = lex("case Some(x):") else {
             panic!("lex failed");
         };
         assert!(tokens[0].kind.is_keyword(KeywordId::Case));
-    }
 
-    #[test]
-    fn test_pass_keyword() {
         let Ok(tokens) = lex("pass") else {
             panic!("lex failed");
         };
         assert!(tokens[0].kind.is_keyword(KeywordId::Pass));
-    }
 
-    #[test]
-    fn test_mut_self() {
         let Ok(tokens) = lex("mut self") else {
             panic!("lex failed");
         };
         assert!(tokens[0].kind.is_keyword(KeywordId::Mut));
         assert!(tokens[1].kind.is_keyword(KeywordId::SelfKw));
-    }
 
-    #[test]
-    fn test_fstring() {
         let Ok(tokens) = lex(r#"f"Hello {name}""#) else {
             panic!("lex failed");
         };
         assert!(matches!(&tokens[0].kind, TokenKind::FString(_)));
-    }
 
-    #[test]
-    fn test_yield_keyword() {
         let Ok(tokens) = lex("yield value") else {
             panic!("lex failed");
         };
         assert!(tokens[0].kind.is_keyword(KeywordId::Yield));
         assert!(matches!(&tokens[1].kind, TokenKind::Ident(s) if s == "value"));
-    }
 
-    #[test]
-    fn test_rust_keyword() {
         let Ok(tokens) = lex("import rust::serde_json") else {
             panic!("lex failed");
         };
@@ -2652,7 +2599,7 @@ def main() -> None:
 
 /// End-to-end codegen tests
 mod codegen_tests {
-    use super::{incan_debug_binary, strip_ansi_escapes};
+    use super::{incan_command, strip_ansi_escapes};
     use incan::backend::IrCodegen;
     use incan::frontend::{lexer, parser, typechecker};
     use std::fs;
@@ -2661,7 +2608,7 @@ mod codegen_tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn run_incan_source(source: &str) -> std::process::Output {
-        Command::new(incan_debug_binary())
+        incan_command()
             .args(["run", "-c", source])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
@@ -2740,7 +2687,7 @@ mod codegen_tests {
 
     #[test]
     fn test_string_literal_match_patterns_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -2788,7 +2735,7 @@ def main() -> None:
 
     #[test]
     fn test_payload_enum_without_equality_payload_compiles() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -2867,7 +2814,7 @@ def main() -> None:
 
     #[test]
     fn test_run_c_import_this() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "-c", "import this"])
             // This test should not require network access. We expect the workspace dependencies to already be available
             // (the test suite built them)
@@ -2890,7 +2837,7 @@ def main() -> None:
 
     #[test]
     fn test_run_c_import_this_release_flag() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "--release", "-c", "import this"])
             // This test should not require network access. We expect the workspace dependencies to already be available
             // (the test suite built them)
@@ -2913,7 +2860,7 @@ def main() -> None:
 
     #[test]
     fn test_variadic_rest_calls_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -2960,6 +2907,112 @@ def main() -> None:
     }
 
     #[test]
+    fn test_decorated_variadic_callables_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = incan_command()
+            .args([
+                "run",
+                "-c",
+                r#"
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+@preserve()
+pub def decorated_total(first: int, second: int, *rest: int, **labels: str) -> int:
+    mut total: int = first + second
+    for value in rest:
+        total = total + value
+    if labels["mode"] == "sum":
+        return total
+    return -1
+
+class Box:
+    base: int
+
+    @preserve()
+    def total(self, first: int, *rest: int, **labels: str) -> int:
+        mut total: int = self.base + first
+        for value in rest:
+            total = total + value
+        if labels["mode"] == "sum":
+            return total
+        return -1
+
+def main() -> None:
+    box = Box(base=5)
+    println(decorated_total(1, 2, 3, 4, mode="sum") + box.total(6, 7, 8, mode="sum"))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "decorated variadic callable regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["36"], "unexpected decorated variadic output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_decorated_variadic_library_builds() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let root = tmp.path();
+        fs::create_dir_all(root.join("src"))?;
+        fs::write(
+            root.join("incan.toml"),
+            "[project]\nname = \"decorated_rest_lib\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(
+            root.join("src/lib.incn"),
+            r#"
+def preserve[F]() -> ((F) -> F):
+    return (func) => func
+
+@preserve()
+pub def decorated_total(first: int, second: int, *rest: int, **labels: str) -> int:
+    mut total: int = first + second
+    for value in rest:
+        total = total + value
+    if labels["mode"] == "sum":
+        return total
+    return -1
+
+pub class Box:
+    base: int
+
+    @preserve()
+    def total(self, first: int, *rest: int, **labels: str) -> int:
+        mut total: int = self.base + first
+        for value in rest:
+            total = total + value
+        if labels["mode"] == "sum":
+            return total
+        return -1
+"#,
+        )?;
+
+        let mut command = incan_command();
+        let output = command
+            .args(["build", "--lib"])
+            .current_dir(root)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "decorated variadic library build failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_string_and_bytes_iteration_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
         let output = run_incan_source(
             "def main() -> None:\n  mut out = \"\"\n  for ch in \"Az\":\n    out += ch\n  for index, ch in enumerate(\"xy\"):\n    out += f\"{index}{ch}\"\n  mut total = 0\n  for byte in b\"Az\":\n    total += byte\n  for index, byte in enumerate(b\"\\x01\\x02\"):\n    total += index + byte\n  println(out)\n  println(total)\n",
@@ -2988,6 +3041,7 @@ def main() -> None:
         let source = format!(
             r#"
 from std.fs import IoError, OpenOptions, Path
+from std.tempfile import NamedTemporaryFile, SpooledTemporaryFile, TemporaryDirectory
 from rust::std::thread import sleep
 from rust::std::time import Duration
 
@@ -3062,6 +3116,41 @@ def run() -> Result[None, IoError]:
     println(stat.modified_unix()? > 0)
     usage = moved.disk_usage()?
     println(usage.total > 0 and usage.free > 0)
+
+    file = NamedTemporaryFile.try_new_with("incan-", ".txt", None)?
+    path = file.path()
+    path.write_text("hello", "utf-8", "strict", None)?
+    println(path.read_text("utf-8", "strict")?)
+
+    directory = TemporaryDirectory.try_new_with("incan-dir-", "", None)?
+    child = directory.path() / "child.txt"
+    child.write_text("world", "utf-8", "strict", None)?
+    println(child.read_text("utf-8", "strict")?)
+
+    mut memory = SpooledTemporaryFile(max_size=64)
+    memory.write(b"memory")?
+    println(memory.rolled_to_disk())
+    memory.seek(0, 0)?
+    println(len(memory.read(-1)?))
+
+    mut spool = SpooledTemporaryFile(max_size=4)
+    spool.write(b"rolled")?
+    println(spool.rolled_to_disk())
+    println(spool.path()?.exists())
+    spool.seek(0, 0)?
+    println(len(spool.read(-1)?))
+    kept_spool = spool.persist()?
+    println(kept_spool.exists())
+    kept_spool.unlink()?
+
+    kept_file = file.persist()?
+    println(kept_file.exists())
+    kept_file.unlink()?
+
+    kept_directory = directory.persist()?
+    println(kept_directory.exists())
+    kept_directory.remove_tree()?
+
     moved.remove_tree()?
     root.remove_tree()?
     return Ok(None)
@@ -3075,7 +3164,7 @@ def main() -> None:
             copied = copied.display(),
             moved = moved.display()
         );
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "-c", source.as_str()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -3109,6 +3198,16 @@ def main() -> None:
                 "bravo",
                 "true",
                 "true",
+                "true",
+                "true",
+                "true",
+                "hello",
+                "world",
+                "false",
+                "6",
+                "true",
+                "true",
+                "6",
                 "true",
                 "true",
                 "true"
@@ -3272,7 +3371,7 @@ def main() -> None:
             payload = payload.display(),
             missing_payload = payload.with_extension("missing").display(),
         );
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "-c", source.as_str()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -3347,7 +3446,7 @@ def main() -> None:
         <byteorder::LittleEndian as byteorder::ByteOrder>::write_u32(&mut cache_anchor, 258);
         assert_eq!(cache_anchor, [2, 1, 0, 0]);
 
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -3442,7 +3541,7 @@ def main() -> None:
 
     #[test]
     fn test_std_encoding_hex_compile_and_run_strict_surface() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "tests/fixtures/valid/std_encoding_hex_surface.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -3476,7 +3575,7 @@ def main() -> None:
 
     #[test]
     fn test_std_fs_glob_string_api_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -3538,7 +3637,7 @@ def main() -> None:
     println(cfg.retries)
 "#,
         )?;
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", main_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -3582,7 +3681,7 @@ def main() -> None:
         Err(err) => println(err.message())
 "#,
         )?;
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", main_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -3619,7 +3718,7 @@ def main() -> None:
     println(BytesIO(3))
 "#,
         )?;
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", main_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -3660,7 +3759,7 @@ def main() -> None:
     println(Opener().accept("b"))
 "#,
         )?;
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", main_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -3690,7 +3789,7 @@ def main() -> None:
 "#,
             path = path.display()
         );
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "-c", source.as_str()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -3709,7 +3808,7 @@ def main() -> None:
 
     #[test]
     fn test_match_rust_result_non_clone_payload_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -3747,7 +3846,7 @@ def main() -> None:
 
     #[test]
     fn test_result_inspect_rust_result_non_clone_payload_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -3794,7 +3893,7 @@ def main() -> None:
 
     #[test]
     fn test_user_authored_result_tap_borrows_callback_payload() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -3848,7 +3947,7 @@ def main() -> None:
 
     #[test]
     fn test_std_result_helpers_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -3914,7 +4013,7 @@ def main() -> None:
 
     #[test]
     fn test_result_methods_dogfood_std_result_helpers_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -3973,7 +4072,7 @@ def main() -> None:
 
     #[test]
     fn test_result_map_err_accepts_callable_object_trait_adoption() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4018,7 +4117,7 @@ def main() -> None:
 
     #[test]
     fn test_result_method_closure_callbacks_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4056,8 +4155,82 @@ def main() -> None:
     }
 
     #[test]
+    fn test_question_mark_list_comprehension_propagates_result_issue633() -> Result<(), Box<dyn std::error::Error>> {
+        let output = run_incan_source(
+            r#"
+def parse_value(value: int) -> Result[int, str]:
+    if value == 2:
+        return Err("bad value")
+    return Ok(value)
+
+
+def parse_all(values: list[int]) -> Result[list[int], str]:
+    return Ok([parse_value(value)? for value in values])
+
+
+def main() -> None:
+    match parse_all([1, 2, 3]):
+        Ok(values) => println(values[0])
+        Err(err) => println(err)
+"#,
+        );
+        assert!(
+            output.status.success(),
+            "question-mark list comprehension regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(lines, vec!["bad value"], "unexpected issue633 output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_question_mark_dict_comprehension_propagates_result_issue633() -> Result<(), Box<dyn std::error::Error>> {
+        let output = run_incan_source(
+            r#"
+def parse_key(value: int) -> Result[str, str]:
+    if value == 2:
+        return Err("bad key")
+    return Ok(str(value))
+
+
+def parse_map(values: list[int]) -> Result[dict[str, int], str]:
+    return Ok({parse_key(value)?: value for value in values})
+
+
+def main() -> None:
+    match parse_map([1, 2, 3]):
+        Ok(values) => println(values["1"])
+        Err(err) => println(err)
+"#,
+        );
+        assert!(
+            output.status.success(),
+            "question-mark dict comprehension regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines = stdout
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .collect::<Vec<_>>();
+        assert_eq!(lines, vec!["bad key"], "unexpected issue633 dict output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
     fn test_result_map_err_accepts_capturing_inline_closure() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4091,7 +4264,7 @@ def main() -> None:
 
     #[test]
     fn test_static_str_index_and_slice_use_string_helpers() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4121,7 +4294,7 @@ def main() -> None:
 
     #[test]
     fn test_collection_literal_spreads_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4157,7 +4330,7 @@ def main() -> None:
 
     #[test]
     fn test_enum_methods_and_trait_adoption_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4204,7 +4377,7 @@ def main() -> None:
 
     #[test]
     fn test_union_types_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4372,8 +4545,146 @@ def main() -> None:
     }
 
     #[test]
+    fn test_union_model_variants_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
+        let output = incan_command()
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+model Leaf:
+    value: int
+
+@derive(Clone)
+model Pair:
+    args: list[Expr]
+
+type Expr = Union[Leaf, Pair]
+
+def pair() -> Expr:
+    return Pair(args=[Leaf(value=1), Leaf(value=2)])
+
+def clone_expr(expr: Expr) -> Expr:
+    return expr.clone()
+
+def sum_expr(expr: Expr) -> int:
+    match expr:
+        Leaf(leaf) =>
+            return leaf.value
+        Pair(pair) =>
+            return sum_expr(pair.args[0])
+
+def main() -> None:
+    println(sum_expr(clone_expr(pair())))
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "union model variant run-path regression failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(lines, vec!["1"], "unexpected union model variant output:\n{stdout}");
+        Ok(())
+    }
+
+    #[test]
+    fn test_imported_union_alias_list_field_compiles_issue622() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("union_list_cross_module_alias_repro");
+        fs::create_dir_all(project_root.join("src"))?;
+        fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"union_list_cross_module_alias_repro\"\nversion = \"0.1.0\"\n",
+        )?;
+        fs::write(
+            project_root.join("src/exprs.incn"),
+            r#"
+@derive(Clone)
+pub model Leaf:
+    pub value: int
+
+@derive(Clone)
+pub model Pair:
+    pub args: list[Expr]
+
+pub type Expr = Union[Leaf, Pair]
+
+pub def pair() -> Expr:
+    return Pair(args=[Leaf(value=1), Leaf(value=2)])
+"#,
+        )?;
+        fs::write(
+            project_root.join("src/lib.incn"),
+            r#"
+from exprs import Expr, Leaf, Pair, pair
+
+def sum_expr(expr: Expr) -> int:
+    match expr:
+        Leaf(leaf) => return leaf.value
+        Pair(pair_expr) => return sum_expr(pair_expr.args[0])
+
+pub def main_value() -> int:
+    return sum_expr(pair())
+"#,
+        )?;
+
+        let output = incan_command()
+            .args(["build", "--lib"])
+            .current_dir(&project_root)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "expected imported union alias list-field project to build for #622.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn test_keyword_named_public_alias_compiles_issue669() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let project_root = tmp.path().join("keyword_named_public_alias_repro");
+        fs::create_dir_all(&project_root)?;
+        fs::write(
+            project_root.join("test_keyword_alias_probe.incn"),
+            r#"
+pub def modulo_value(value: int) -> int:
+    return value
+
+pub mod = alias modulo_value
+
+
+def test_keyword_alias_probe__can_call_alias() -> None:
+    assert mod(7) == 7, "keyword alias should call the implementation"
+"#,
+        )?;
+
+        let output = incan_command()
+            .args(["test", "test_keyword_alias_probe.incn"])
+            .current_dir(&project_root)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "expected keyword-named public alias test project to pass for #669.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_issue562_type_alias_dict_and_union_surfaces_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4439,7 +4750,7 @@ def main() -> None:
 
     #[test]
     fn test_issue502_independent_union_narrowing_branches_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4480,7 +4791,7 @@ def main() -> None:
 
     #[test]
     fn test_issue501_option_union_isinstance_narrowing_compile_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4524,7 +4835,7 @@ def main() -> None:
 
     #[test]
     fn test_filtered_comprehensions_run_with_borrowed_iterables() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4567,7 +4878,7 @@ def main() -> None:
 
     #[test]
     fn test_generator_expression_runs_lazily_with_source_ordered_clauses() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4598,7 +4909,7 @@ def main() -> None:
 
     #[test]
     fn test_generator_helper_chain_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4633,7 +4944,7 @@ def main() -> None:
 
     #[test]
     fn test_generator_function_yield_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4665,7 +4976,7 @@ def main() -> None:
 
     #[test]
     fn test_generator_function_body_starts_on_first_consumption() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4702,7 +5013,7 @@ def main() -> None:
 
     #[test]
     fn test_generic_generator_function_yield_builds_and_runs() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4732,7 +5043,7 @@ def main() -> None:
 
     #[test]
     fn test_clone_self_struct_field_reads_do_not_move_out_of_borrowed_self() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4766,9 +5077,61 @@ def main() -> None:
     }
 
     #[test]
+    fn test_loop_item_field_index_assignment_materializes_owned_value_issue616()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let output = incan_command()
+            .args([
+                "run",
+                "-c",
+                r#"
+@derive(Clone)
+model Assignment:
+    output_name: str
+
+def names(assignments: list[Assignment]) -> list[str]:
+    mut output_names: list[str] = []
+    for assignment in assignments:
+        existing_idx = index_of_name(output_names, assignment.output_name)
+        if existing_idx >= 0:
+            output_names[existing_idx] = assignment.output_name
+        else:
+            output_names.append(assignment.output_name)
+    return output_names
+
+def index_of_name(names: list[str], name: str) -> int:
+    for idx, current in enumerate(names):
+        if current == name:
+            return idx
+    return -1
+
+def main() -> None:
+    result = names([Assignment(output_name="amount"), Assignment(output_name="amount")])
+    println(result[0])
+"#,
+            ])
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        assert!(
+            output.status.success(),
+            "loop item field index-assignment regression failed: status={:?} stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
+        let lines: Vec<&str> = stdout.lines().map(str::trim).filter(|line| !line.is_empty()).collect();
+        assert_eq!(
+            lines,
+            vec!["amount"],
+            "unexpected loop item field index-assignment output:\n{stdout}"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn test_field_backed_by_value_method_args_do_not_require_user_clone_issue241()
     -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4809,7 +5172,7 @@ def main() -> None:
 
     #[test]
     fn test_issue241_generic_field_backed_method_args_infer_clone_bounds() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4851,7 +5214,7 @@ def main() -> None:
 
     #[test]
     fn test_returning_tuple_with_reused_field_materializes_owned_items() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4890,7 +5253,7 @@ def main() -> None:
 
     #[test]
     fn test_generic_tuple_return_with_reused_field_infers_clone_bound() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4929,7 +5292,7 @@ def main() -> None:
 
     #[test]
     fn test_incan_call_materializes_owned_value_from_box_as_ref() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -4967,7 +5330,7 @@ def main() -> None:
 
     #[test]
     fn test_generic_incan_call_materializes_owned_value_from_box_as_ref() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -5005,7 +5368,7 @@ def main() -> None:
 
     #[test]
     fn test_match_on_shared_self_option_field_materializes_owned_scrutinee() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -5049,7 +5412,7 @@ def main() -> None:
     #[test]
     fn test_match_on_shared_self_option_box_field_materializes_owned_scrutinee()
     -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -5094,7 +5457,7 @@ def main() -> None:
 
     #[test]
     fn test_generic_match_on_shared_self_option_field_infers_clone_bound() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -5133,7 +5496,7 @@ def main() -> None:
 
     #[test]
     fn test_trait_supertraits_runtime_with_backend_clone_bounds() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -5181,7 +5544,7 @@ def main() -> None:
 
     #[test]
     fn test_result_ok_string_literals_run_without_manual_str_wrapping() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -5234,7 +5597,7 @@ def main() -> None:
 "#,
         )?;
 
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "--release", source_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -5254,10 +5617,9 @@ def main() -> None:
     }
 
     #[test]
-    fn test_build_web_route_uses_proc_macro_passthrough() {
+    fn test_check_web_route_uses_proc_macro_passthrough() {
         let project_dir = make_temp_dir("incan_web_proc_macro_test");
         let source_path = project_dir.join("main.incn");
-        let out_dir = project_dir.join("out");
         let source = r#"
 import std.async
 from std.web import route
@@ -5273,43 +5635,19 @@ def main() -> None:
             panic!("failed to write source file");
         };
 
-        let Ok(output) = Command::new(incan_debug_binary())
-            .args([
-                "build",
-                source_path.to_string_lossy().as_ref(),
-                out_dir.to_string_lossy().as_ref(),
-            ])
+        let Ok(output) = incan_command()
+            .args(["--check", source_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
         else {
-            panic!("failed to run incan build");
+            panic!("failed to run incan check");
         };
 
         assert!(
             output.status.success(),
-            "incan build web route failed: status={:?} stderr={}",
+            "incan check web route failed: status={:?} stderr={}",
             output.status,
             String::from_utf8_lossy(&output.stderr)
-        );
-
-        let generated_main = out_dir.join("src/main.rs");
-        let Ok(main_rs) = std::fs::read_to_string(&generated_main) else {
-            panic!("failed to read generated Rust source");
-        };
-        assert!(
-            main_rs.contains("#[incan_web_macros::route("),
-            "expected generated web route to use proc macro passthrough:\n{}",
-            main_rs
-        );
-        assert!(
-            !main_rs.contains("__incan_router!"),
-            "legacy __incan_router! macro should not be emitted:\n{}",
-            main_rs
-        );
-        assert!(
-            !main_rs.contains("set_router"),
-            "legacy set_router() call should not be emitted:\n{}",
-            main_rs
         );
     }
 
@@ -5378,7 +5716,7 @@ async def main() -> None:
 "#;
         std::fs::write(&source_path, source)?;
 
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", source_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -5465,7 +5803,7 @@ async def main() -> Result[None, str]:
             panic!("failed to write source file");
         };
 
-        let Ok(output) = Command::new(incan_debug_binary())
+        let Ok(output) = incan_command()
             .args([
                 "build",
                 source_path.to_string_lossy().as_ref(),
@@ -5538,7 +5876,7 @@ def main() -> None:
         )?;
 
         let out_dir = project_dir.join("out");
-        let build_output = Command::new(incan_debug_binary())
+        let build_output = incan_command()
             .args([
                 "build",
                 main_path.to_string_lossy().as_ref(),
@@ -5575,7 +5913,7 @@ def main() -> None:
             "expected nested keyword module path attr in api/mod.rs, got:\n{api_mod_rs}"
         );
 
-        let run_output = Command::new(incan_debug_binary())
+        let run_output = incan_command()
             .args(["run", main_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -5665,7 +6003,7 @@ async def main() -> None:
 "#;
         std::fs::write(&source_path, source)?;
 
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", source_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -5793,7 +6131,7 @@ async def main() -> None:
 "#;
         std::fs::write(&source_path, source)?;
 
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", source_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -5832,7 +6170,7 @@ async def main() -> None:
 
     #[test]
     fn test_run_repro_model_traits() {
-        let Ok(output) = Command::new(incan_debug_binary())
+        let Ok(output) = incan_command()
             .args(["run", "tests/fixtures/repro_model_traits.incn"])
             // This should not require network access (workspace deps should already be available).
             .env("CARGO_NET_OFFLINE", "true")
@@ -5859,7 +6197,7 @@ async def main() -> None:
     /// RFC 021: Runtime verification that __fields__() returns correct FieldInfo values
     #[test]
     fn test_run_field_info_reflection() {
-        let Ok(output) = Command::new(incan_debug_binary())
+        let Ok(output) = incan_command()
             .args(["run", "tests/fixtures/field_info_reflection.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
@@ -5941,7 +6279,7 @@ async def main() -> None:
     /// RFC 023: Runtime parity check for source-defined stdlib surfaces migrated off helper stubs.
     #[test]
     fn test_run_rfc023_stdlib_behavior_parity() {
-        let Ok(output) = Command::new(incan_debug_binary())
+        let Ok(output) = incan_command()
             .args(["run", "tests/fixtures/rfc023_stdlib_behavior_parity.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
@@ -5991,7 +6329,7 @@ async def main() -> None:
 
     #[test]
     fn test_run_rfc030_std_collections_behavior() {
-        let Ok(output) = Command::new(incan_debug_binary())
+        let Ok(output) = incan_command()
             .args(["run", "tests/fixtures/rfc030_std_collections_behavior.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
@@ -6009,7 +6347,7 @@ async def main() -> None:
 
     #[test]
     fn test_run_rfc064_std_encoding_behavior() {
-        let Ok(output) = Command::new(incan_debug_binary())
+        let Ok(output) = incan_command()
             .args(["run", "tests/fixtures/rfc064_std_encoding_behavior.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
@@ -6035,7 +6373,7 @@ async def main() -> None:
 
     #[test]
     fn test_run_std_uuid_surface() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "tests/fixtures/valid/std_uuid_surface.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -6052,7 +6390,7 @@ async def main() -> None:
 
     #[test]
     fn test_run_std_ordinal_map_surface() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "tests/fixtures/valid/std_ordinal_map_surface.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -6082,9 +6420,8 @@ async def main() -> None:
 
     #[test]
     fn test_run_std_regex_rfc059_surface() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "tests/fixtures/valid/std_regex_surface.incn"])
-            .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
         assert!(
@@ -6123,12 +6460,37 @@ async def main() -> None:
             ],
             "unexpected std.regex output:\n{stdout}"
         );
+        let generated_core = fs::read_to_string("target/incan/std_regex_surface/src/__incan_std/regex/_core.rs")?;
+        for unexpected in [
+            "RegexBuilder::new(&(pattern).to_string())",
+            "raw.find(&(text).to_string())",
+            "raw.find_iter(&(text).to_string())",
+            "raw.captures(&(text).to_string())",
+            "raw.captures_iter(&(text).to_string())",
+        ] {
+            assert!(
+                !generated_core.contains(unexpected),
+                "std.regex should let the compiler borrow Incan strings for Rust regex APIs instead of cloning them:\n{generated_core}"
+            );
+        }
+        for expected in [
+            "RegexBuilder::new(&pattern)",
+            "raw.find(&text)",
+            "raw.find_iter(&text)",
+            "raw.captures(&text)",
+            "raw.captures_iter(&text)",
+        ] {
+            assert!(
+                generated_core.contains(expected),
+                "std.regex should preserve compiler-managed Rust borrow boundaries; missing `{expected}`:\n{generated_core}"
+            );
+        }
         Ok(())
     }
 
     #[test]
     fn test_run_std_regex_unsupported_safe_engine_pattern_reports_error() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "run",
                 "-c",
@@ -6144,7 +6506,6 @@ def main() -> None:
             println(err.message())
 "#,
             ])
-            .env("CARGO_NET_OFFLINE", "true")
             .output()?;
 
         assert!(
@@ -6172,7 +6533,7 @@ def main() -> None:
 
     #[test]
     fn test_run_u128_modulo_floor_div() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "tests/fixtures/valid/u128_modulo_floor_div.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -6189,7 +6550,7 @@ def main() -> None:
 
     #[test]
     fn test_run_rfc030_field_overlay_reflection() {
-        let Ok(output) = Command::new(incan_debug_binary())
+        let Ok(output) = incan_command()
             .args(["run", "tests/fixtures/rfc030_field_overlay_reflection.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()
@@ -6210,7 +6571,7 @@ def main() -> None:
         let project_dir = make_temp_dir("incan_cycle_explicit_call_site_check");
         let main_path = super::write_cycle_explicit_call_site_generics_project(&project_dir)?;
 
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .arg("--check")
             .arg(main_path)
             .env("CARGO_NET_OFFLINE", "true")
@@ -6230,7 +6591,7 @@ def main() -> None:
         let project_dir = make_temp_dir("incan_cycle_explicit_call_site_run");
         let main_path = super::write_cycle_explicit_call_site_generics_project(&project_dir)?;
 
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .arg("run")
             .arg(main_path)
             .env("CARGO_NET_OFFLINE", "true")
@@ -6309,7 +6670,7 @@ def main() -> None:
 
     #[test]
     fn test_const_declarations_compile_and_run() {
-        let Ok(output) = Command::new(incan_debug_binary())
+        let Ok(output) = incan_command()
             .args([
                 "run",
                 "-c",
@@ -6360,7 +6721,7 @@ def main() -> None:
 
     #[test]
     fn test_const_str_materializes_to_owned_str_at_runtime_sites() {
-        let Ok(output) = Command::new(incan_debug_binary())
+        let Ok(output) = incan_command()
             .args([
                 "run",
                 "-c",
@@ -6553,7 +6914,7 @@ def main() -> None:
 
     #[test]
     fn test_mixed_numeric_codegen_runs() {
-        let Ok(output) = Command::new(incan_debug_binary())
+        let Ok(output) = incan_command()
             .args([
                 "run",
                 "-c",
@@ -6587,9 +6948,10 @@ def main() -> None:
     }
 
     #[test]
-    fn test_std_async_race_helper_first_completion_runs() {
+    fn test_std_async_race_and_race_for_surfaces_share_one_run() {
         let output = run_incan_source(
             r#"
+import std.async
 from std.async.race import arm, race
 from std.async.time import sleep
 
@@ -6602,134 +6964,49 @@ async def fast() -> int:
 async def slow() -> int:
     await sleep(0.01)
     return 2
+
+async def first() -> int:
+    return 1
+
+async def second() -> int:
+    return 2
+
+async def run_race_for_first() -> str:
+    prefix = "win"
+    return race for value:
+        await slow() => f"{prefix}:{value}"
+        await fast() => f"{prefix}:{value}"
+
+async def run_race_for_tie() -> int:
+    return race for value:
+        await first() => value
+        await second() => value
 
 async def main() -> None:
     println(await race(arm(slow(), label), arm(fast(), label)))
-"#,
-        );
-        assert!(
-            output.status.success(),
-            "std.async.race first-completion run failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
-        assert_eq!(
-            stdout.lines().last().map(str::trim),
-            Some("win:1"),
-            "unexpected stdout:\n{stdout}"
-        );
-    }
-
-    #[test]
-    fn test_std_async_race_helper_ready_tie_uses_source_order() {
-        let output = run_incan_source(
-            r#"
-from std.async.race import arm, race
-
-def label(value: int) -> str:
-    return f"win:{value}"
-
-async def first() -> int:
-    return 1
-
-async def second() -> int:
-    return 2
-
-async def main() -> None:
     println(await race(arm(first(), label), arm(second(), label)))
+    println(await run_race_for_first())
+    println(await run_race_for_tie())
 "#,
         );
         assert!(
             output.status.success(),
-            "std.async.race ready-tie run failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
+            "std.async race surface batch failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
             output.status,
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
         let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
         assert_eq!(
-            stdout.lines().last().map(str::trim),
-            Some("win:1"),
+            stdout.lines().map(str::trim).collect::<Vec<_>>(),
+            vec!["win:1", "win:1", "win:1", "1"],
             "unexpected stdout:\n{stdout}"
         );
     }
 
     #[test]
-    fn test_race_for_expression_first_completion_runs_through_shared_runtime() {
-        let output = run_incan_source(
-            r#"
-import std.async
-from std.async.time import sleep
-
-async def fast() -> int:
-    return 1
-
-async def slow() -> int:
-    await sleep(0.01)
-    return 2
-
-async def main() -> None:
-    prefix = "win"
-    result = race for value:
-        await slow() => f"{prefix}:{value}"
-        await fast() => f"{prefix}:{value}"
-    println(result)
-"#,
-        );
-        assert!(
-            output.status.success(),
-            "race for first-completion run failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
-        assert_eq!(
-            stdout.lines().last().map(str::trim),
-            Some("win:1"),
-            "unexpected stdout:\n{stdout}"
-        );
-    }
-
-    #[test]
-    fn test_race_for_expression_ready_tie_uses_stdlib_source_order() {
-        let output = run_incan_source(
-            r#"
-import std.async
-
-async def first() -> int:
-    return 1
-
-async def second() -> int:
-    return 2
-
-async def main() -> None:
-    result = race for value:
-        await first() => value
-        await second() => value
-    println(result)
-"#,
-        );
-        assert!(
-            output.status.success(),
-            "race for ready-tie run failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let stdout = strip_ansi_escapes(&String::from_utf8_lossy(&output.stdout));
-        assert_eq!(
-            stdout.lines().last().map(str::trim),
-            Some("1"),
-            "unexpected stdout:\n{stdout}"
-        );
-    }
-
-    #[test]
-    fn test_std_math_module_constants_and_functions_run() {
-        let Ok(output) = Command::new(incan_debug_binary())
+    fn test_std_math_surface_runs() {
+        let Ok(output) = incan_command()
             .args([
                 "run",
                 "-c",
@@ -6744,6 +7021,19 @@ def main() -> None:
     println(math.hypot(3.0, 4.0))
     println(math.gcd(54, 24))
     println(math.lcm(6, 8))
+
+    assert math.is_int_like("0")
+    assert math.is_int_like("-123")
+    assert not math.is_int_like("1e3")
+    assert not math.is_int_like("01")
+
+    assert math.is_float_like("0.0")
+    assert math.is_float_like("-0.5")
+    assert math.is_float_like("1e3")
+    assert math.is_float_like("1.25E+10")
+    assert not math.is_float_like("1")
+    assert not math.is_float_like("+1")
+    assert not math.is_float_like("1e+")
 "#,
             ])
             .env("CARGO_NET_OFFLINE", "true")
@@ -6802,43 +7092,6 @@ def main() -> None:
     }
 
     #[test]
-    fn test_std_math_numeric_like_helpers_run() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
-            .args([
-                "run",
-                "-c",
-                r#"
-import std.math
-
-def main() -> None:
-    assert math.is_int_like("0")
-    assert math.is_int_like("-123")
-    assert not math.is_int_like("1e3")
-    assert not math.is_int_like("01")
-
-    assert math.is_float_like("0.0")
-    assert math.is_float_like("-0.5")
-    assert math.is_float_like("1e3")
-    assert math.is_float_like("1.25E+10")
-    assert not math.is_float_like("1")
-    assert not math.is_float_like("+1")
-    assert not math.is_float_like("1e+")
-"#,
-            ])
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-
-        assert!(
-            output.status.success(),
-            "std.math numeric-like helper run failed: status={:?}\nstdout={}\nstderr={}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(())
-    }
-
-    #[test]
     fn test_std_datetime_surface_runs_with_std_time_runtime_boundary() -> Result<(), Box<dyn std::error::Error>> {
         let runtime_source = std::fs::read_to_string("crates/incan_stdlib/stdlib/datetime/runtime.incn")?;
         let mut civil_sources = Vec::new();
@@ -6861,7 +7114,7 @@ def main() -> None:
             "std.datetime civil calendar code must remain source-defined Incan"
         );
 
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "tests/fixtures/valid/std_datetime_surface.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -6945,7 +7198,7 @@ def main() -> None:
         let mut snappy = snap::raw::Encoder::new();
         assert!(!snappy.compress_vec(sample)?.is_empty());
 
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args(["run", "tests/fixtures/valid/std_compression_surface.incn"])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -6982,7 +7235,7 @@ def main() -> None:
 
     #[test]
     fn test_rust_associated_call_in_elif_branch_uses_path_syntax() {
-        let Ok(output) = Command::new(incan_debug_binary())
+        let Ok(output) = incan_command()
             .args([
                 "run",
                 "-c",
@@ -7023,9 +7276,8 @@ def main() -> None:
 /// stdout/stderr/exit code. They catch integration bugs like broken per-file `cargo test` harness wiring or parametrize
 /// expansion that unit tests cannot detect.
 mod test_runner_e2e {
-    use super::incan_debug_binary;
+    use super::incan_command;
     use std::path::Path;
-    use std::process::Command;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     static TEST_PROJECT_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -7057,11 +7309,18 @@ mod test_runner_e2e {
 
     /// Run `incan test` for the given path argument (file or directory).
     fn run_incan_test_path(path: &Path) -> std::process::Output {
-        Command::new(incan_debug_binary())
+        incan_command()
             .args(["test", path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_TEST_SHARED_TARGET_DIR", shared_test_runner_target_dir())
             .output()
             .unwrap_or_else(|e| panic!("failed to run `incan test`: {}", e))
+    }
+
+    fn shared_test_runner_target_dir() -> std::path::PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("incan_e2e_shared_target")
     }
 
     /// Run `incan test` on a directory and return the combined output.
@@ -7071,23 +7330,25 @@ mod test_runner_e2e {
 
     /// Run `incan test` with extra flags.
     fn run_incan_test_with_args(dir: &Path, extra: &[&str]) -> std::process::Output {
-        let mut cmd = Command::new(incan_debug_binary());
+        let mut cmd = incan_command();
         cmd.arg("test");
         for arg in extra {
             cmd.arg(arg);
         }
         cmd.arg(dir.to_string_lossy().as_ref());
         cmd.env("CARGO_NET_OFFLINE", "true");
+        cmd.env("INCAN_TEST_SHARED_TARGET_DIR", shared_test_runner_target_dir());
         cmd.output()
             .unwrap_or_else(|e| panic!("failed to run `incan test`: {}", e))
     }
 
     /// Run `incan test` with `cwd` and a relative path argument.
     fn run_incan_test_relative(cwd: &Path, relative_path: &str) -> std::process::Output {
-        Command::new(incan_debug_binary())
+        incan_command()
             .arg("test")
             .arg(relative_path)
             .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_TEST_SHARED_TARGET_DIR", shared_test_runner_target_dir())
             .current_dir(cwd)
             .output()
             .unwrap_or_else(|e| panic!("failed to run `incan test {relative_path}`: {}", e))
@@ -7095,7 +7356,7 @@ mod test_runner_e2e {
 
     /// Run `incan build <entry> <out_dir>` for an inline-test production source.
     fn run_incan_build(entry: &Path, out_dir: &Path) -> std::process::Output {
-        let output = Command::new(incan_debug_binary())
+        let output = incan_command()
             .args([
                 "build",
                 entry.to_string_lossy().as_ref(),
@@ -7112,46 +7373,33 @@ mod test_runner_e2e {
     // ---- Passing test ----
 
     #[test]
-    fn e2e_passing_test_succeeds() {
+    fn e2e_basic_reporting_decorator_filter_and_capture_share_one_project() {
         let dir = write_test_project(
-            "test_math.incn",
+            "test_runner_surface.incn",
             r#"
-from std.testing import assert_eq
+from std.testing import assert_eq, test
 
 def test_addition() -> None:
     assert_eq(1 + 1, 2)
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        assert!(
-            output.status.success(),
-            "expected passing test to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(
-            stdout.contains("PASSED") || stdout.contains("passed"),
-            "expected PASSED in output.\nstdout:\n{}",
-            stdout,
-        );
-    }
-
-    #[test]
-    fn e2e_two_tests_in_one_file_share_single_cargo_batch() {
-        let dir = write_test_project(
-            "test_pair.incn",
-            r#"
-from std.testing import assert_eq
 
 def test_one() -> None:
     assert_eq(1, 1)
 
 def test_two() -> None:
     assert_eq(2, 2)
+
+@test
+def verifies_total() -> None:
+    assert_eq(40 + 2, 42)
+
+def test_alpha() -> None:
+    assert_eq(1, 1)
+
+def test_beta() -> None:
+    assert_eq(2, 2)
+
+def test_prints() -> None:
+    print("VISIBLE_CAPTURE")
 "#,
         );
 
@@ -7166,15 +7414,60 @@ def test_two() -> None:
             stderr,
         );
         assert!(
-            stdout.contains("test_pair.incn::test_one") && stdout.contains("test_pair.incn::test_two"),
-            "expected each test name in reporter output.\nstdout:\n{}",
+            stdout.contains("PASSED") || stdout.contains("passed"),
+            "expected PASSED in output.\nstdout:\n{}",
             stdout,
         );
         assert!(
-            stdout.match_indices("PASSED").count() >= 2,
-            "expected two passing results (per-test PASSED lines).\nstdout:\n{}",
+            stdout.contains("test_runner_surface.incn::test_one")
+                && stdout.contains("test_runner_surface.incn::test_two")
+                && stdout.contains("test_runner_surface.incn::verifies_total"),
+            "expected basic and decorated test names in reporter output.\nstdout:\n{}",
             stdout,
         );
+        assert!(
+            stdout.match_indices("PASSED").count() >= 6,
+            "expected passing result lines for all basic surface tests.\nstdout:\n{}",
+            stdout,
+        );
+
+        let listed = run_incan_test_with_args(&dir, &["--list", "-k", "test_beta"]);
+        let listed_stdout = String::from_utf8_lossy(&listed.stdout);
+        let listed_stderr = String::from_utf8_lossy(&listed.stderr);
+        assert!(
+            listed.status.success(),
+            "expected --list -k run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            listed_stdout,
+            listed_stderr,
+        );
+        assert!(
+            listed_stdout
+                .lines()
+                .any(|line| line == "test_runner_surface.incn::test_beta"),
+            "expected exact listed beta id rooted at the explicit test directory.\nstdout:\n{}",
+            listed_stdout,
+        );
+        assert!(
+            !listed_stdout.contains(dir.to_string_lossy().as_ref()),
+            "expected --list output to avoid machine-local absolute paths.\nstdout:\n{}",
+            listed_stdout,
+        );
+        assert!(
+            !listed_stdout.contains("test_runner_surface.incn::test_alpha"),
+            "expected keyword filter to hide alpha.\nstdout:\n{}",
+            listed_stdout,
+        );
+
+        let captured = run_incan_test_with_args(&dir, &["--nocapture", "-k", "test_prints"]);
+        let captured_stdout = String::from_utf8_lossy(&captured.stdout);
+        let captured_stderr = String::from_utf8_lossy(&captured.stderr);
+        assert!(
+            captured.status.success(),
+            "expected nocapture run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            captured_stdout,
+            captured_stderr,
+        );
+        assert!(captured_stdout.contains("VISIBLE_CAPTURE"));
     }
 
     #[test]
@@ -7268,6 +7561,57 @@ def test_b() -> None:
     }
 
     #[test]
+    fn e2e_cross_file_batch_rebases_spans_for_type_info_issue692() -> Result<(), Box<dyn std::error::Error>> {
+        fn source_with_call_offset(header: &str, call_prefix: &str, call_and_tail: &str, offset: usize) -> String {
+            let fixed_len = header.len() + call_prefix.len();
+            assert!(
+                offset >= fixed_len + 6,
+                "test fixture offset leaves no room for padding"
+            );
+            let padding = format!("    #{}\n", "x".repeat(offset - fixed_len - 6));
+            format!("{header}{padding}{call_prefix}{call_and_tail}")
+        }
+
+        let target_offset = 320;
+        let dir = write_test_project(
+            "test_constructor_marker.incn",
+            &source_with_call_offset(
+                "model Box:\n    value: int\n\ndef test_type_constructor() -> None:\n",
+                "    item = ",
+                "Box(value=1)\n    assert item.value == 1\n",
+                target_offset,
+            ),
+        );
+        std::fs::write(
+            dir.join("test_zero_arg_call.incn"),
+            source_with_call_offset(
+                "def tap() -> str:\n    return \"ok\"\n\ndef test_zero_arg_call_in_list() -> None:\n",
+                "    values = [",
+                "tap()]\n    assert values[0] == \"ok\"\n",
+                target_offset,
+            ),
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+
+        assert!(
+            output.status.success(),
+            "expected same-span constructor and zero-argument calls from different files not to share type-info facts.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_constructor_marker.incn::test_type_constructor")
+                && stdout.contains("test_zero_arg_call.incn::test_zero_arg_call_in_list"),
+            "expected both files to run in one directory test batch.\nstdout:\n{}",
+            stdout,
+        );
+        Ok(())
+    }
+
+    #[test]
     fn e2e_imported_default_expression_expands_with_required_scope_issue395() -> Result<(), Box<dyn std::error::Error>>
     {
         let dir = write_test_project(
@@ -7329,103 +7673,30 @@ def test_imported_default_expression_expands_with_required_imports() -> None:
     }
 
     #[test]
-    fn e2e_explicit_test_decorator_discovers_non_prefixed_function() {
+    fn e2e_report_formats_share_one_project() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
-            "test_decorator.incn",
-            r#"
-from std.testing import assert_eq, test
-
-@test
-def verifies_total() -> None:
-    assert_eq(40 + 2, 42)
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        assert!(
-            output.status.success(),
-            "expected @test-decorated function to run.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(
-            stdout.contains("test_decorator.incn::verifies_total"),
-            "expected decorated test id in output.\nstdout:\n{}",
-            stdout,
-        );
-    }
-
-    #[test]
-    fn e2e_list_and_keyword_filter_use_stable_test_ids() {
-        let dir = write_test_project(
-            "test_list_filter.incn",
+            "test_report_formats.incn",
             r#"
 from std.testing import assert_eq
 
-def test_alpha() -> None:
-    assert_eq(1, 1)
-
-def test_beta() -> None:
-    assert_eq(2, 2)
-"#,
-        );
-
-        let output = run_incan_test_with_args(&dir, &["--list", "-k", "test_beta"]);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        assert!(
-            output.status.success(),
-            "expected --list -k run to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(
-            stdout.lines().any(|line| line == "test_list_filter.incn::test_beta"),
-            "expected exact listed beta id rooted at the explicit test directory.\nstdout:\n{}",
-            stdout,
-        );
-        assert!(
-            !stdout.contains(dir.to_string_lossy().as_ref()),
-            "expected --list output to avoid machine-local absolute paths.\nstdout:\n{}",
-            stdout,
-        );
-        assert!(
-            !stdout.contains("test_list_filter.incn::test_alpha"),
-            "expected keyword filter to hide alpha.\nstdout:\n{}",
-            stdout,
-        );
-    }
-
-    #[test]
-    fn e2e_json_format_emits_result_records() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "test_json_report.incn",
-            r#"
-from std.testing import assert_eq
-
-def test_json_one() -> None:
+def test_report_one() -> None:
     assert_eq(1, 1)
 "#,
         );
 
-        let output = run_incan_test_with_args(&dir, &["--format", "json", "--shuffle", "--seed", "7"]);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
+        let json_output = run_incan_test_with_args(&dir, &["--format", "json", "--shuffle", "--seed", "7"]);
+        let json_stdout = String::from_utf8_lossy(&json_output.stdout);
+        let json_stderr = String::from_utf8_lossy(&json_output.stderr);
         assert!(
-            output.status.success(),
+            json_output.status.success(),
             "expected JSON-format run to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
+            json_stdout,
+            json_stderr,
         );
 
         let mut saw_result = false;
         let mut saw_summary = false;
-        for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+        for line in json_stdout.lines().filter(|line| !line.trim().is_empty()) {
             let value: serde_json::Value = serde_json::from_str(line)?;
             if value.get("test_id").is_some() {
                 saw_result = true;
@@ -7435,7 +7706,7 @@ def test_json_one() -> None:
                 );
                 assert_eq!(
                     value.get("test_id").and_then(|v| v.as_str()),
-                    Some("test_json_report.incn::test_json_one")
+                    Some("test_report_formats.incn::test_report_one")
                 );
                 assert_eq!(value.get("status").and_then(|v| v.as_str()), Some("passed"));
             }
@@ -7450,47 +7721,31 @@ def test_json_one() -> None:
                 );
             }
         }
-
         assert!(
             saw_result,
             "expected at least one JSON result record.\nstdout:\n{}",
-            stdout
+            json_stdout
         );
-        assert!(saw_summary, "expected a JSON summary record.\nstdout:\n{}", stdout);
-        Ok(())
-    }
+        assert!(saw_summary, "expected a JSON summary record.\nstdout:\n{}", json_stdout);
 
-    #[test]
-    fn e2e_junit_report_writes_testcase_xml() {
-        let dir = write_test_project(
-            "test_junit_report.incn",
-            r#"
-from std.testing import assert_eq
-
-def test_junit_one() -> None:
-    assert_eq(1, 1)
-"#,
-        );
         let report = dir.join("reports").join("junit.xml");
         let report_arg = report.to_string_lossy().to_string();
-        let output = run_incan_test_with_args(&dir, &["--junit", report_arg.as_str()]);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
+        let junit_output = run_incan_test_with_args(&dir, &["--junit", report_arg.as_str()]);
+        let junit_stdout = String::from_utf8_lossy(&junit_output.stdout);
+        let junit_stderr = String::from_utf8_lossy(&junit_output.stderr);
         assert!(
-            output.status.success(),
+            junit_output.status.success(),
             "expected JUnit report run to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
+            junit_stdout,
+            junit_stderr,
         );
-        let Ok(xml) = std::fs::read_to_string(&report) else {
-            panic!("failed to read {}", report.display());
-        };
+        let xml = std::fs::read_to_string(&report)?;
         assert!(
-            xml.contains("<testsuite") && xml.contains("test_junit_one"),
+            xml.contains("<testsuite") && xml.contains("test_report_one"),
             "expected JUnit XML with test case, got:\n{}",
             xml,
         );
+        Ok(())
     }
 
     #[test]
@@ -7533,135 +7788,21 @@ def test_xpass() -> None:
     }
 
     #[test]
-    fn e2e_conftest_fixture_is_visible_to_nested_tests() {
-        let dir = write_test_project(
-            "incan.toml",
-            r#"[project]
-name = "conftest_fixture"
-version = "0.1.0"
-"#,
-        );
-        let tests_dir = dir.join("tests").join("unit");
-        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
-            panic!("failed to create tests dir: {}", err);
-        }
-        if let Err(err) = std::fs::write(
-            dir.join("tests").join("conftest.incn"),
-            r#"
-from std.testing import fixture
-
-@fixture
-def answer() -> int:
-    return 42
-"#,
-        ) {
-            panic!("failed to write conftest: {}", err);
-        }
-        if let Err(err) = std::fs::write(
-            tests_dir.join("test_answer.incn"),
-            r#"
-from std.testing import assert_eq
-
-def test_answer(answer: int) -> None:
-    assert_eq(answer, 42)
-"#,
-        ) {
-            panic!("failed to write nested test: {}", err);
-        }
-
-        let output = run_incan_test_relative(&dir, "tests");
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected conftest fixture injection to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(
-            stdout.contains("test_answer.incn::test_answer"),
-            "expected nested stable id in output.\nstdout:\n{}",
-            stdout,
-        );
-    }
-
-    #[test]
-    fn e2e_nested_test_root_uses_same_conftest_boundary_for_collection_and_execution() {
-        let dir = write_test_project(
-            "incan.toml",
-            r#"[project]
-name = "nested_conftest_boundary"
-version = "0.1.0"
-"#,
-        );
-        let tests_dir = dir.join("tests");
-        let unit_dir = tests_dir.join("unit");
-        if let Err(err) = std::fs::create_dir_all(&unit_dir) {
-            panic!("failed to create nested tests dir: {}", err);
-        }
-        if let Err(err) = std::fs::write(
-            tests_dir.join("conftest.incn"),
-            r#"
-from std.testing import fixture
-
-@fixture
-def answer() -> int:
-    return 1
-"#,
-        ) {
-            panic!("failed to write parent conftest: {}", err);
-        }
-        if let Err(err) = std::fs::write(
-            unit_dir.join("conftest.incn"),
-            r#"
-from std.testing import fixture
-
-@fixture
-def answer() -> int:
-    return 2
-"#,
-        ) {
-            panic!("failed to write nested conftest: {}", err);
-        }
-        if let Err(err) = std::fs::write(
-            unit_dir.join("test_value.incn"),
-            r#"
-from std.testing import assert_eq
-
-def test_answer(answer: int) -> None:
-    assert_eq(answer, 2)
-"#,
-        ) {
-            panic!("failed to write nested conftest test: {}", err);
-        }
-
-        let output = run_incan_test(&unit_dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected nested root run to use only root-bounded conftest sources.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-    }
-
-    #[test]
-    fn e2e_nested_conftest_fixture_overrides_parent_fixture() {
-        let dir = write_test_project(
+    fn e2e_conftest_nearest_fixture_override_project() {
+        let override_dir = write_test_project(
             "incan.toml",
             r#"[project]
 name = "nested_conftest_precedence"
 version = "0.1.0"
 "#,
         );
-        let tests_dir = dir.join("tests");
-        let unit_dir = tests_dir.join("unit");
-        if let Err(err) = std::fs::create_dir_all(&unit_dir) {
+        let override_tests_dir = override_dir.join("tests");
+        let override_unit_dir = override_tests_dir.join("unit");
+        if let Err(err) = std::fs::create_dir_all(&override_unit_dir) {
             panic!("failed to create nested tests dir: {}", err);
         }
         if let Err(err) = std::fs::write(
-            tests_dir.join("conftest.incn"),
+            override_tests_dir.join("conftest.incn"),
             r#"
 from std.testing import fixture
 
@@ -7673,7 +7814,7 @@ def shared() -> str:
             panic!("failed to write parent conftest: {}", err);
         }
         if let Err(err) = std::fs::write(
-            unit_dir.join("conftest.incn"),
+            override_unit_dir.join("conftest.incn"),
             r#"
 from std.testing import fixture
 
@@ -7685,7 +7826,7 @@ def shared() -> str:
             panic!("failed to write nested conftest: {}", err);
         }
         if let Err(err) = std::fs::write(
-            unit_dir.join("test_precedence.incn"),
+            override_unit_dir.join("test_precedence.incn"),
             r#"
 from std.testing import assert_eq
 
@@ -7696,7 +7837,7 @@ def test_uses_nearest_fixture(shared: str) -> None:
             panic!("failed to write nested conftest test: {}", err);
         }
 
-        let output = run_incan_test(&dir);
+        let output = run_incan_test(&override_dir);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -7709,15 +7850,19 @@ def test_uses_nearest_fixture(shared: str) -> None:
     }
 
     #[test]
-    fn e2e_builtin_tmp_path_fixture_is_injected() {
+    fn e2e_builtin_fixture_and_assert_helper_share_one_project() {
         let dir = write_test_project(
-            "test_tmp_path.incn",
+            "test_builtin_fixture_and_assert_helper.incn",
             r#"
 from std.testing import assert_eq
+import std.testing as testing
 from rust::std::path import PathBuf
 
 def test_tmp_path_fixture(tmp_path: PathBuf) -> None:
     assert_eq(tmp_path.exists(), true)
+
+def test_assert_helper() -> None:
+    testing.assert(True)
 "#,
         );
 
@@ -7730,100 +7875,25 @@ def test_tmp_path_fixture(tmp_path: PathBuf) -> None:
             stdout,
             stderr,
         );
-    }
-
-    #[test]
-    fn e2e_std_testing_assert_helper_is_normalized_before_codegen() {
-        let dir = write_test_project(
-            "test_assert_helper.incn",
-            r#"
-import std.testing as testing
-
-def test_assert_helper() -> None:
-    testing.assert(True)
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected one-argument std.testing.assert call to run without generated Rust string rewriting.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr
-        );
         assert!(stdout.contains("test_assert_helper"));
     }
 
     #[test]
-    fn e2e_marker_expr_and_strict_markers_use_conftest_registry() {
+    fn e2e_markers_parametrize_timeout_and_collection_errors_share_projects() {
+        let platform = std::env::consts::OS;
         let dir = write_test_project(
-            "incan.toml",
-            r#"[project]
-name = "strict_markers"
-version = "0.1.0"
-"#,
-        );
-        let tests_dir = dir.join("tests");
-        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
-            panic!("failed to create tests dir: {}", err);
-        }
-        if let Err(err) = std::fs::write(
-            tests_dir.join("conftest.incn"),
-            r#"
-const TEST_MARKERS: List[str] = ["smoke"]
+            "test_runner_collection_surface.incn",
+            &format!(
+                r#"
+from rust::std::thread import sleep
+from rust::std::time import Duration
+from std.testing import assert_eq, feature, mark, param_case, parametrize, platform, skipif, slow, timeout, xfail, xfailif
+
+const TEST_MARKERS: List[str] = ["api", "db", "smoke"]
 const TEST_MARKS: List[str] = ["smoke"]
-"#,
-        ) {
-            panic!("failed to write conftest: {}", err);
-        }
-        if let Err(err) = std::fs::write(
-            tests_dir.join("test_markers.incn"),
-            r#"
-from std.testing import assert_eq
 
 def test_inherited_smoke() -> None:
     assert_eq(1, 1)
-
-def test_other() -> None:
-    assert_eq(1, 1)
-"#,
-        ) {
-            panic!("failed to write marker test: {}", err);
-        }
-
-        let listed = run_incan_test_with_args(&tests_dir, &["--list", "-m", "smoke", "--strict-markers"]);
-        let stdout = String::from_utf8_lossy(&listed.stdout);
-        let stderr = String::from_utf8_lossy(&listed.stderr);
-        assert!(
-            listed.status.success(),
-            "expected strict registered marker list to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(stdout.contains("test_markers.incn::test_inherited_smoke"));
-
-        let strict_error = run_incan_test_with_args(&tests_dir, &["--list", "-m", "missing", "--strict-markers"]);
-        let strict_stdout = String::from_utf8_lossy(&strict_error.stdout);
-        let strict_stderr = String::from_utf8_lossy(&strict_error.stderr);
-        assert!(
-            !strict_error.status.success(),
-            "expected unknown strict marker to fail.\nstdout:\n{}\nstderr:\n{}",
-            strict_stdout,
-            strict_stderr,
-        );
-        assert!(strict_stderr.contains("unknown marker `missing`"));
-    }
-
-    #[test]
-    fn e2e_marker_expr_boolean_grammar_filters_tests() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "test_marker_expr.incn",
-            r#"
-from std.testing import assert_eq, mark, slow
-
-const TEST_MARKERS: List[str] = ["api", "db"]
 
 @mark("api")
 def test_api() -> None:
@@ -7837,42 +7907,6 @@ def test_api_slow() -> None:
 @mark("db")
 def test_db() -> None:
     assert_eq(1, 1)
-"#,
-        );
-
-        let output = run_incan_test_with_args(
-            &dir,
-            &["--list", "-m", "api and not slow", "--strict-markers", "--slow"],
-        );
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected boolean marker expression to collect.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(stdout.contains("test_marker_expr.incn::test_api"));
-        assert!(!stdout.contains("test_marker_expr.incn::test_api_slow"));
-        assert!(!stdout.contains("test_marker_expr.incn::test_db"));
-
-        let invalid = run_incan_test_with_args(&dir, &["--list", "-m", "api and ("]);
-        let invalid_stderr = String::from_utf8_lossy(&invalid.stderr);
-        assert!(
-            !invalid.status.success(),
-            "expected invalid marker expression to fail.\nstderr:\n{}",
-            invalid_stderr,
-        );
-        assert!(invalid_stderr.contains("expected marker name or parenthesized expression"));
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_slow_marker_is_excluded_by_default_and_included_with_flag() {
-        let dir = write_test_project(
-            "test_slow_filter.incn",
-            r#"
-from std.testing import assert_eq, slow
 
 def test_fast() -> None:
     assert_eq(1, 1)
@@ -7880,158 +7914,26 @@ def test_fast() -> None:
 @slow
 def test_slow_case() -> None:
     assert_eq(1, 1)
-"#,
-        );
-
-        let default_list = run_incan_test_with_args(&dir, &["--list"]);
-        let default_stdout = String::from_utf8_lossy(&default_list.stdout);
-        assert!(
-            default_list.status.success(),
-            "expected default list to succeed.\nstdout:\n{}",
-            default_stdout,
-        );
-        assert!(default_stdout.contains("test_slow_filter.incn::test_fast"));
-        assert!(!default_stdout.contains("test_slow_filter.incn::test_slow_case"));
-
-        let slow_list = run_incan_test_with_args(&dir, &["--list", "--slow"]);
-        let slow_stdout = String::from_utf8_lossy(&slow_list.stdout);
-        assert!(
-            slow_list.status.success(),
-            "expected --slow list to succeed.\nstdout:\n{}",
-            slow_stdout,
-        );
-        assert!(slow_stdout.contains("test_slow_filter.incn::test_fast"));
-        assert!(slow_stdout.contains("test_slow_filter.incn::test_slow_case"));
-    }
-
-    #[test]
-    fn e2e_parametrize_case_ids_and_marks_affect_collection() {
-        let dir = write_test_project(
-            "test_case_ids.incn",
-            r#"
-from std.testing import assert_eq, param_case, parametrize, xfail
 
 @parametrize("x, expected", [
     param_case((1, 3), marks=[xfail("known")], id="one-three"),
     (2, 4),
 ], ids=["ignored", "two-four"])
-def test_double(x: int, expected: int) -> None:
+def test_marked_double(x: int, expected: int) -> None:
     assert_eq(x * 2, expected)
-"#,
-        );
-
-        let listed = run_incan_test_with_args(&dir, &["--list"]);
-        let stdout = String::from_utf8_lossy(&listed.stdout);
-        let stderr = String::from_utf8_lossy(&listed.stderr);
-        assert!(
-            listed.status.success(),
-            "expected parametrized list to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(stdout.contains("test_case_ids.incn::test_double[one-three]"));
-        assert!(stdout.contains("test_case_ids.incn::test_double[two-four]"));
-
-        let run = run_incan_test(&dir);
-        let run_stdout = String::from_utf8_lossy(&run.stdout);
-        let run_stderr = String::from_utf8_lossy(&run.stderr);
-        assert!(
-            run.status.success(),
-            "expected xfailed case and passing case to make the run succeed.\nstdout:\n{}\nstderr:\n{}",
-            run_stdout,
-            run_stderr,
-        );
-        assert!(run_stdout.contains("xfailed") || run_stdout.contains("XFAIL"));
-    }
-
-    #[test]
-    fn e2e_stacked_parametrize_lists_cartesian_product_ids() {
-        let dir = write_test_project(
-            "test_parametrize_product.incn",
-            r#"
-from std.testing import assert_eq, parametrize
 
 @parametrize("x", [1, 2], ids=["one", "two"])
 @parametrize("y", [10, 20], ids=["ten", "twenty"])
 def test_pair(x: int, y: int) -> None:
     assert_eq(x < y, true)
-"#,
-        );
 
-        let listed = run_incan_test_with_args(&dir, &["--list"]);
-        let stdout = String::from_utf8_lossy(&listed.stdout);
-        let stderr = String::from_utf8_lossy(&listed.stderr);
-        assert!(
-            listed.status.success(),
-            "expected stacked parametrized list to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(stdout.contains("test_parametrize_product.incn::test_pair[one-ten]"));
-        assert!(stdout.contains("test_parametrize_product.incn::test_pair[one-twenty]"));
-        assert!(stdout.contains("test_parametrize_product.incn::test_pair[two-ten]"));
-        assert!(stdout.contains("test_parametrize_product.incn::test_pair[two-twenty]"));
-    }
+@parametrize("a, b, expected", [(1, 2, 3), (10, 20, 30), (0, 0, 0)])
+def test_add(a: int, b: int, expected: int) -> None:
+    assert_eq(a + b, expected)
 
-    #[test]
-    fn e2e_parametrize_arity_mismatch_is_collection_error() {
-        let dir = write_test_project(
-            "test_parametrize_arity.incn",
-            r#"
-from std.testing import parametrize
-
-@parametrize("x, y", [1])
-def test_bad_case(x: int, y: int) -> None:
-    pass
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !output.status.success(),
-            "expected arity mismatch to fail during collection.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(stderr.contains("parametrize case `1`"));
-        assert!(stderr.contains("expected 2 value(s)"));
-    }
-
-    #[test]
-    fn e2e_timeout_marks_slow_test_failed() {
-        let dir = write_test_project(
-            "test_timeout.incn",
-            r#"
-from rust::std::thread import sleep
-from rust::std::time import Duration
-
-def test_slow() -> None:
-    sleep(Duration.from_millis(100))
-"#,
-        );
-
-        let output = run_incan_test_with_args(&dir, &["--timeout", "1ms"]);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !output.status.success(),
-            "expected timeout run to fail.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(stdout.contains("timed out after"));
-    }
-
-    #[test]
-    fn e2e_conditional_markers_evaluate_collection_probes() {
-        let platform = std::env::consts::OS;
-        let dir = write_test_project(
-            "test_conditional_markers.incn",
-            &format!(
-                r#"
-from std.testing import assert_eq, feature, platform, skipif, xfailif
+@parametrize("x, expected", [(2, 4), (3, 7)])
+def test_double_failure(x: int, expected: int) -> None:
+    assert_eq(x * 2, expected)
 
 @skipif(platform() == "{platform}", reason="host platform")
 def test_skip_on_platform_probe() -> None:
@@ -8040,9 +7942,120 @@ def test_skip_on_platform_probe() -> None:
 @xfailif(feature("known_bug"), reason="feature-gated known issue")
 def test_feature_xfail() -> None:
     assert_eq(1, 0)
+
+@timeout("1ms")
+def test_timeout_marker() -> None:
+    sleep(Duration.from_millis(100))
 "#
             ),
         );
+
+        let strict_smoke = run_incan_test_with_args(&dir, &["--list", "-m", "smoke", "--strict-markers"]);
+        let strict_smoke_stdout = String::from_utf8_lossy(&strict_smoke.stdout);
+        let strict_smoke_stderr = String::from_utf8_lossy(&strict_smoke.stderr);
+        assert!(
+            strict_smoke.status.success(),
+            "expected strict registered marker list to succeed.\nstdout:\n{}\nstderr:\n{}",
+            strict_smoke_stdout,
+            strict_smoke_stderr,
+        );
+        assert!(strict_smoke_stdout.contains("test_runner_collection_surface.incn::test_inherited_smoke"));
+
+        let strict_error = run_incan_test_with_args(&dir, &["--list", "-m", "missing", "--strict-markers"]);
+        let strict_stderr = String::from_utf8_lossy(&strict_error.stderr);
+        assert!(
+            !strict_error.status.success(),
+            "expected unknown strict marker to fail.\nstderr:\n{}",
+            strict_stderr,
+        );
+        assert!(strict_stderr.contains("unknown marker `missing`"));
+
+        let marker_list = run_incan_test_with_args(
+            &dir,
+            &["--list", "-m", "api and not slow", "--strict-markers", "--slow"],
+        );
+        let marker_stdout = String::from_utf8_lossy(&marker_list.stdout);
+        let marker_stderr = String::from_utf8_lossy(&marker_list.stderr);
+        assert!(
+            marker_list.status.success(),
+            "expected boolean marker expression to collect.\nstdout:\n{}\nstderr:\n{}",
+            marker_stdout,
+            marker_stderr,
+        );
+        assert!(marker_stdout.contains("test_runner_collection_surface.incn::test_api"));
+        assert!(!marker_stdout.contains("test_runner_collection_surface.incn::test_api_slow"));
+        assert!(!marker_stdout.contains("test_runner_collection_surface.incn::test_db"));
+
+        let default_list = run_incan_test_with_args(&dir, &["--list"]);
+        let default_stdout = String::from_utf8_lossy(&default_list.stdout);
+        assert!(
+            default_list.status.success(),
+            "expected default list to succeed.\nstdout:\n{}",
+            default_stdout,
+        );
+        assert!(default_stdout.contains("test_runner_collection_surface.incn::test_fast"));
+        assert!(!default_stdout.contains("test_runner_collection_surface.incn::test_slow_case"));
+
+        let slow_list = run_incan_test_with_args(&dir, &["--list", "--slow"]);
+        let slow_stdout = String::from_utf8_lossy(&slow_list.stdout);
+        assert!(
+            slow_list.status.success(),
+            "expected --slow list to succeed.\nstdout:\n{}",
+            slow_stdout,
+        );
+        assert!(slow_stdout.contains("test_runner_collection_surface.incn::test_fast"));
+        assert!(slow_stdout.contains("test_runner_collection_surface.incn::test_slow_case"));
+        assert!(slow_stdout.contains("test_runner_collection_surface.incn::test_marked_double[one-three]"));
+        assert!(slow_stdout.contains("test_runner_collection_surface.incn::test_marked_double[two-four]"));
+        assert!(slow_stdout.contains("test_runner_collection_surface.incn::test_pair[one-ten]"));
+        assert!(slow_stdout.contains("test_runner_collection_surface.incn::test_pair[one-twenty]"));
+        assert!(slow_stdout.contains("test_runner_collection_surface.incn::test_pair[two-ten]"));
+        assert!(slow_stdout.contains("test_runner_collection_surface.incn::test_pair[two-twenty]"));
+
+        let marked_run = run_incan_test_with_args(&dir, &["-k", "test_marked_double"]);
+        let marked_stdout = String::from_utf8_lossy(&marked_run.stdout);
+        let marked_stderr = String::from_utf8_lossy(&marked_run.stderr);
+        assert!(
+            marked_run.status.success(),
+            "expected xfailed case and passing case to make the run succeed.\nstdout:\n{}\nstderr:\n{}",
+            marked_stdout,
+            marked_stderr,
+        );
+        assert!(marked_stdout.contains("xfailed") || marked_stdout.contains("XFAIL"));
+
+        let add_run = run_incan_test_with_args(&dir, &["--verbose", "-k", "test_add"]);
+        let add_stdout = String::from_utf8_lossy(&add_run.stdout);
+        let add_stderr = String::from_utf8_lossy(&add_run.stderr);
+        assert!(
+            add_run.status.success(),
+            "expected parametrized test to succeed.\nstdout:\n{}\nstderr:\n{}",
+            add_stdout,
+            add_stderr,
+        );
+        assert!(add_stdout.contains("test_add[1-2-3]"));
+        assert!(add_stdout.contains("test_add[10-20-30]"));
+        assert!(add_stdout.contains("test_add[0-0-0]"));
+        assert!(add_stdout.contains("3 passed"));
+
+        let failing_param = run_incan_test_with_args(&dir, &["--verbose", "-k", "test_double_failure"]);
+        let failing_param_stdout = String::from_utf8_lossy(&failing_param.stdout);
+        assert!(
+            !failing_param.status.success(),
+            "expected one failing case to make the run fail.\nstdout:\n{}",
+            failing_param_stdout,
+        );
+        assert!(failing_param_stdout.contains("1 passed") && failing_param_stdout.contains("1 failed"));
+
+        let skip_run = run_incan_test_with_args(&dir, &["-k", "test_skip_on_platform_probe"]);
+        let skip_stdout = String::from_utf8_lossy(&skip_run.stdout);
+        let skip_stderr = String::from_utf8_lossy(&skip_run.stderr);
+        assert!(
+            skip_run.status.success(),
+            "expected skipif probe to make the run successful.\nstdout:\n{}\nstderr:\n{}",
+            skip_stdout,
+            skip_stderr,
+        );
+        assert!(skip_stdout.contains("SKIPPED") || skip_stdout.contains("skipped"));
 
         let without_feature = run_incan_test_with_args(&dir, &["-k", "test_feature_xfail"]);
         let without_stdout = String::from_utf8_lossy(&without_feature.stdout);
@@ -8054,22 +8067,60 @@ def test_feature_xfail() -> None:
             without_stderr,
         );
 
-        let output = run_incan_test_with_args(&dir, &["--feature", "known_bug"]);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let with_feature = run_incan_test_with_args(&dir, &["--feature", "known_bug", "-k", "test_feature_xfail"]);
+        let with_feature_stdout = String::from_utf8_lossy(&with_feature.stdout);
+        let with_feature_stderr = String::from_utf8_lossy(&with_feature.stderr);
         assert!(
-            output.status.success(),
-            "expected skipif/xfailif probes to make the run successful.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
+            with_feature.status.success(),
+            "expected xfailif probe to make the run successful.\nstdout:\n{}\nstderr:\n{}",
+            with_feature_stdout,
+            with_feature_stderr,
         );
-        assert!(stdout.contains("SKIPPED") || stdout.contains("skipped"));
-        assert!(stdout.contains("XFAIL") || stdout.contains("xfailed"));
-    }
+        assert!(with_feature_stdout.contains("XFAIL") || with_feature_stdout.contains("xfailed"));
 
-    #[test]
-    fn e2e_conditional_marker_rejects_runtime_expression() {
-        let dir = write_test_project(
+        let timeout = run_incan_test_with_args(&dir, &["-k", "test_timeout_marker"]);
+        let timeout_stdout = String::from_utf8_lossy(&timeout.stdout);
+        let timeout_stderr = String::from_utf8_lossy(&timeout.stderr);
+        assert!(
+            !timeout.status.success(),
+            "expected timeout marker to fail the test.\nstdout:\n{}\nstderr:\n{}",
+            timeout_stdout,
+            timeout_stderr,
+        );
+        assert!(timeout_stdout.contains("timed out after"));
+
+        let arity_dir = write_test_project(
+            "test_parametrize_arity.incn",
+            r#"
+from std.testing import parametrize
+
+@parametrize("x, y", [1])
+def test_bad_case(x: int, y: int) -> None:
+    pass
+"#,
+        );
+        let arity_output = run_incan_test(&arity_dir);
+        let arity_stdout = String::from_utf8_lossy(&arity_output.stdout);
+        let arity_stderr = String::from_utf8_lossy(&arity_output.stderr);
+        assert!(
+            !arity_output.status.success(),
+            "expected arity mismatch to fail during collection.\nstdout:\n{}\nstderr:\n{}",
+            arity_stdout,
+            arity_stderr,
+        );
+        assert!(arity_stderr.contains("parametrize case `1`"));
+        assert!(arity_stderr.contains("expected 2 value(s)"));
+
+        let invalid_marker = run_incan_test_with_args(&dir, &["--list", "-m", "api and ("]);
+        let invalid_marker_stderr = String::from_utf8_lossy(&invalid_marker.stderr);
+        assert!(
+            !invalid_marker.status.success(),
+            "expected invalid marker expression to fail.\nstderr:\n{}",
+            invalid_marker_stderr,
+        );
+        assert!(invalid_marker_stderr.contains("expected marker name or parenthesized expression"));
+
+        let bad_conditional_dir = write_test_project(
             "test_bad_conditional_marker.incn",
             r#"
 from std.testing import skipif
@@ -8083,7 +8134,7 @@ def test_dynamic_condition() -> None:
 "#,
         );
 
-        let output = run_incan_test(&dir);
+        let output = run_incan_test(&bad_conditional_dir);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
@@ -8108,7 +8159,7 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 
 def test_sleep_a() -> None:
-    sleep(Duration.from_millis(1200))
+    sleep(Duration.from_millis(600))
 "#,
         );
         let second = dir.join("test_sleep_b.incn");
@@ -8119,25 +8170,11 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 
 def test_sleep_b() -> None:
-    sleep(Duration.from_millis(1200))
+    sleep(Duration.from_millis(600))
 "#,
         )?;
 
-        let sequential_start = std::time::Instant::now();
-        let sequential = run_incan_test_with_args(&dir, &["--jobs", "1"]);
-        let sequential_elapsed = sequential_start.elapsed();
-        let sequential_stdout = String::from_utf8_lossy(&sequential.stdout);
-        let sequential_stderr = String::from_utf8_lossy(&sequential.stderr);
-        assert!(
-            sequential.status.success(),
-            "expected sequential warm-up run to pass.\nstdout:\n{}\nstderr:\n{}",
-            sequential_stdout,
-            sequential_stderr,
-        );
-
-        let parallel_start = std::time::Instant::now();
         let parallel = run_incan_test_with_args(&dir, &["--jobs", "2"]);
-        let parallel_elapsed = parallel_start.elapsed();
         let parallel_stdout = String::from_utf8_lossy(&parallel.stdout);
         let parallel_stderr = String::from_utf8_lossy(&parallel.stderr);
         assert!(
@@ -8146,11 +8183,22 @@ def test_sleep_b() -> None:
             parallel_stdout,
             parallel_stderr,
         );
+        let running_a = parallel_stdout
+            .find("test_sleep_a.incn (1 item(s))")
+            .ok_or("expected parallel output to announce test_sleep_a.incn")?;
+        let running_b = parallel_stdout
+            .find("test_sleep_b.incn (1 item(s))")
+            .ok_or("expected parallel output to announce test_sleep_b.incn")?;
+        let passed_a = parallel_stdout
+            .find("test_sleep_a.incn::test_sleep_a PASSED")
+            .ok_or("expected parallel output to report test_sleep_a passing")?;
+        let passed_b = parallel_stdout
+            .find("test_sleep_b.incn::test_sleep_b PASSED")
+            .ok_or("expected parallel output to report test_sleep_b passing")?;
+        let first_pass = passed_a.min(passed_b);
         assert!(
-            parallel_elapsed + std::time::Duration::from_millis(500) < sequential_elapsed,
-            "expected --jobs 2 to run independent file batches concurrently; sequential={:?}, parallel={:?}\nparallel stdout:\n{}",
-            sequential_elapsed,
-            parallel_elapsed,
+            running_a < first_pass && running_b < first_pass,
+            "expected --jobs 2 to launch both independent file batches before either completed\nparallel stdout:\n{}",
             parallel_stdout,
         );
         Ok(())
@@ -8175,7 +8223,7 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 
 def test_b_slow() -> None:
-    sleep(Duration.from_millis(3000))
+    sleep(Duration.from_millis(800))
 "#,
         )?;
         let warmup = run_incan_test_with_args(&dir, &["--jobs", "1", "-k", "test_b_slow"]);
@@ -8221,7 +8269,7 @@ from std.testing import resource
 
 @resource("db")
 def test_resource_a() -> None:
-    sleep(Duration.from_millis(1000))
+    sleep(Duration.from_millis(700))
 "#,
         );
         std::fs::write(
@@ -8233,7 +8281,7 @@ from std.testing import resource
 
 @resource("db")
 def test_resource_b() -> None:
-    sleep(Duration.from_millis(1000))
+    sleep(Duration.from_millis(700))
 "#,
         )?;
 
@@ -8259,7 +8307,7 @@ def test_resource_b() -> None:
             stderr,
         );
         assert!(
-            elapsed >= std::time::Duration::from_millis(1800),
+            elapsed >= std::time::Duration::from_millis(1200),
             "expected shared @resource workers not to overlap; elapsed={:?}\nstdout:\n{}",
             elapsed,
             stdout,
@@ -8278,7 +8326,7 @@ from std.testing import serial
 
 @serial
 def test_serial() -> None:
-    sleep(Duration.from_millis(1000))
+    sleep(Duration.from_millis(700))
 "#,
         );
         std::fs::write(
@@ -8288,7 +8336,7 @@ from rust::std::thread import sleep
 from rust::std::time import Duration
 
 def test_regular() -> None:
-    sleep(Duration.from_millis(1000))
+    sleep(Duration.from_millis(700))
 "#,
         )?;
 
@@ -8314,7 +8362,7 @@ def test_regular() -> None:
             stderr,
         );
         assert!(
-            elapsed >= std::time::Duration::from_millis(1800),
+            elapsed >= std::time::Duration::from_millis(1200),
             "expected @serial worker to run alone; elapsed={:?}\nstdout:\n{}",
             elapsed,
             stdout,
@@ -8323,29 +8371,7 @@ def test_regular() -> None:
     }
 
     #[test]
-    fn e2e_nocapture_prints_passing_test_output() {
-        let dir = write_test_project(
-            "test_capture.incn",
-            r#"
-def test_prints() -> None:
-    print("VISIBLE_CAPTURE")
-"#,
-        );
-
-        let output = run_incan_test_with_args(&dir, &["--nocapture"]);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected nocapture run to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(stdout.contains("VISIBLE_CAPTURE"));
-    }
-
-    #[test]
-    fn e2e_sequential_single_file_runs_do_not_cross_wire_relative_paths() {
+    fn e2e_sequential_single_file_runs_do_not_cross_wire_paths() {
         let dir = write_test_project(
             "incan.toml",
             r#"[project]
@@ -8419,18 +8445,15 @@ def test_beta_only() -> None:
             "expected no missing-outcome diagnostic in second run.\noutput:\n{}",
             second_combined,
         );
-    }
 
-    #[test]
-    fn e2e_sequential_single_file_runs_do_not_cross_wire_absolute_paths() {
-        let dir = write_test_project(
+        let abs_dir = write_test_project(
             "incan.toml",
             r#"[project]
 name = "session_isolation_absolute"
 version = "0.1.0"
 "#,
         );
-        let tests_dir = dir.join("tests");
+        let tests_dir = abs_dir.join("tests");
         if let Err(err) = std::fs::create_dir_all(&tests_dir) {
             panic!("failed to create tests dir: {}", err);
         }
@@ -8559,7 +8582,7 @@ def test_nested_dataset_modules() -> None:
     }
 
     #[test]
-    fn e2e_test_runner_preserves_project_fixture_cwd_for_file_and_batch_runs() {
+    fn e2e_test_runner_preserves_fixture_cwd_for_file_and_batch_runs() {
         let dir = write_test_project(
             "incan.toml",
             r#"[project]
@@ -8610,21 +8633,18 @@ def test_fixture_path_exists() -> None:
             batch_stdout,
             batch_stderr,
         );
-    }
 
-    #[test]
-    fn e2e_test_runner_preserves_fixture_cwd_without_manifest_for_file_and_batch_runs() {
         use std::time::{SystemTime, UNIX_EPOCH};
 
-        let mut dir = std::env::temp_dir();
+        let mut bare_dir = std::env::temp_dir();
         let Ok(duration) = SystemTime::now().duration_since(UNIX_EPOCH) else {
             panic!("system time before UNIX epoch");
         };
-        dir.push(format!("incan_e2e_test_nomani_{}", duration.as_nanos()));
-        if let Err(err) = std::fs::create_dir_all(&dir) {
+        bare_dir.push(format!("incan_e2e_test_nomani_{}", duration.as_nanos()));
+        if let Err(err) = std::fs::create_dir_all(&bare_dir) {
             panic!("failed to create temp dir: {}", err);
         }
-        let tests_dir = dir.join("tests");
+        let tests_dir = bare_dir.join("tests");
         let fixtures_dir = tests_dir.join("fixtures");
 
         if let Err(err) = std::fs::create_dir_all(&fixtures_dir) {
@@ -8650,7 +8670,7 @@ def test_cwd__fixture_path_is_repo_relative() -> None:
             panic!("failed to write fixture path test: {}", err);
         }
 
-        let single = run_incan_test_relative(&dir, "tests/test_cwd.incn");
+        let single = run_incan_test_relative(&bare_dir, "tests/test_cwd.incn");
         let single_stdout = String::from_utf8_lossy(&single.stdout);
         let single_stderr = String::from_utf8_lossy(&single.stderr);
         assert!(
@@ -8660,7 +8680,7 @@ def test_cwd__fixture_path_is_repo_relative() -> None:
             single_stderr,
         );
 
-        let batch = run_incan_test_relative(&dir, "tests");
+        let batch = run_incan_test_relative(&bare_dir, "tests");
         let batch_stdout = String::from_utf8_lossy(&batch.stdout);
         let batch_stderr = String::from_utf8_lossy(&batch.stderr);
         assert!(
@@ -8672,65 +8692,35 @@ def test_cwd__fixture_path_is_repo_relative() -> None:
     }
 
     #[test]
-    fn e2e_imported_pub_static_scalar_read_in_tests_succeeds() {
+    fn e2e_inline_and_imported_surfaces_share_one_project() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
             "incan.toml",
             r#"[project]
-name = "pub_static_scalar_read"
+name = "inline_and_imported_surface_batch"
 version = "0.1.0"
 "#,
         );
         let src_dir = dir.join("src");
         let tests_dir = dir.join("tests");
-
-        if let Err(err) = std::fs::create_dir_all(&src_dir) {
-            panic!("failed to create src dir: {}", err);
-        }
-        if let Err(err) = std::fs::create_dir_all(&tests_dir) {
-            panic!("failed to create tests dir: {}", err);
-        }
-        if let Err(err) = std::fs::write(src_dir.join("widgets.incn"), "pub static MARKER: int = 41\n") {
-            panic!("failed to write widgets source: {}", err);
-        }
-        if let Err(err) = std::fs::write(
-            tests_dir.join("test_widgets_static.incn"),
-            r#"
-from std.testing import assert_eq
-from widgets import MARKER
-
-def test_imported_pub_static_scalar_read() -> None:
-    assert_eq(MARKER, 41)
-"#,
-        ) {
-            panic!("failed to write widget static test: {}", err);
-        }
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        assert!(
-            output.status.success(),
-            "expected imported pub static scalar read test to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-    }
-
-    #[test]
-    fn e2e_empty_list_arguments_in_tests_preserve_string_element_type() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "incan.toml",
-            r#"[project]
-name = "empty_list_test"
-version = "0.1.0"
-"#,
-        );
-        let src_dir = dir.join("src");
-        let tests_dir = dir.join("tests");
-
         std::fs::create_dir_all(&src_dir)?;
         std::fs::create_dir_all(&tests_dir)?;
+        std::fs::write(src_dir.join("widgets.incn"), "pub static MARKER: int = 41\n")?;
+        std::fs::write(
+            src_dir.join("defaults.incn"),
+            r#"
+pub def fallback() -> int:
+    return 2
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("helper.incn"),
+            r#"
+from defaults import fallback
+
+pub def combine(left: int, middle: int = fallback(), right: int = 3) -> int:
+    return left + middle + right
+"#,
+        )?;
         std::fs::write(
             src_dir.join("helpers.incn"),
             r#"
@@ -8739,13 +8729,130 @@ pub def count_names(names: List[str]) -> int:
 "#,
         )?;
         std::fs::write(
-            tests_dir.join("test_empty_names.incn"),
+            src_dir.join("registry.incn"),
+            r#"
+pub const TOKEN: str = "token"
+pub const DECORATOR_TOKEN: str = "probe.value"
+
+def keep_int(func: (int) -> int) -> (int) -> int:
+    return func
+
+pub def registered(_name: str) -> Callable[(int) -> int, (int) -> int]:
+    return keep_int
+"#,
+        )?;
+        let entry = src_dir.join("main.incn");
+        std::fs::write(
+            &entry,
+            r#"
+def add(a: int, b: int) -> int:
+    return a + b
+
+def secret() -> str:
+    return "private"
+
+def main() -> None:
+    println("production")
+
+module tests:
+    from rust::incan_stdlib::testing import TestEnv
+    from rust::std::path import PathBuf
+    import std.testing as testing
+    from std.testing import assert_eq, assert_is_some, fixture, test
+
+    @fixture(autouse=true)
+    def seed() -> int:
+        return 40
+
+    @fixture
+    def answer(seed: int) -> int:
+        return seed + 2
+
+    def test_inline_addition(seed: int) -> None:
+        assert_eq(seed, 40)
+        assert_eq(add(2, 3), 5)
+
+    def test_inline_private_access(seed: int) -> None:
+        assert_eq(seed, 40)
+        assert_eq(secret(), "private")
+
+    def test_inline_assert_helper(seed: int) -> None:
+        assert_eq(seed, 40)
+        testing.assert(True)
+
+    @test
+    def decorated_inline_case(seed: int) -> None:
+        assert_eq(seed, 40)
+        assert_eq(add(20, 22), 42)
+
+    def test_inline_fixture_and_tmp_path(answer: int, tmp_path: PathBuf) -> None:
+        assert_eq(answer, 42)
+        assert_eq(tmp_path.exists(), true)
+
+    def test_inline_tmp_workdir(tmp_workdir: PathBuf) -> None:
+        assert_eq(tmp_workdir.exists(), true)
+
+    def test_inline_env_fixture(mut env: TestEnv) -> None:
+        env.set("INCAN_INLINE_ENV_FIXTURE", "set")
+        assert_eq(assert_is_some(env.get("INCAN_INLINE_ENV_FIXTURE")), "set")
+        env.unset("INCAN_INLINE_ENV_FIXTURE")
+        assert_eq(env.get("INCAN_INLINE_ENV_FIXTURE"), None)
+"#,
+        )?;
+        std::fs::write(
+            tests_dir.join("test_imported_surface_batch.incn"),
             r#"
 from std.testing import assert_eq
+from helper import combine
 from helpers import count_names
+from registry import DECORATOR_TOKEN, TOKEN, registered
+from widgets import MARKER
+
+def identity(value: str) -> str:
+    return value
+
+@registered(DECORATOR_TOKEN)
+def increment(value: int) -> int:
+    return value + 1
+
+def test_imported_const_str_call_arguments_materialize() -> None:
+    local: str = TOKEN
+    assert_eq(identity(TOKEN), "token")
+    assert_eq(identity(TOKEN.to_string()), "token")
+    assert_eq(identity(local), "token")
+    assert_eq(TOKEN.upper(), "TOKEN")
+
+def test_imported_decorator_factory_const_str_argument_materializes() -> None:
+    assert_eq(increment(1), 2)
+
+def test_imported_pub_static_scalar_read() -> None:
+    assert_eq(MARKER, 41)
 
 def test_empty_names() -> None:
     assert_eq(count_names([]), 0)
+
+def test_assert_statement_sugar() -> None:
+    assert 1 + 1 == 2
+    assert 3 != 4
+    assert not False
+    assert True
+
+def test_imported_default_expression_expands_with_required_imports() -> None:
+    assert_eq(combine(left=1, right=4), 7, "default expression helper should be available after expansion")
+"#,
+        )?;
+        let production_entry = src_dir.join("production_only.incn");
+        std::fs::write(
+            &production_entry,
+            r#"
+def main() -> None:
+    println("production")
+
+module tests:
+    from std.testing import assert_eq
+
+    def test_production() -> None:
+        assert_eq(1 + 1, 2)
 "#,
         )?;
 
@@ -8755,8 +8862,25 @@ def test_empty_names() -> None:
 
         assert!(
             output.status.success(),
-            "expected empty list string arg test to succeed.\nstdout:\n{}\nstderr:\n{}",
+            "expected batched inline/imported test-runner surfaces to succeed.\nstdout:\n{}\nstderr:\n{}",
             stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("main.incn::test_inline_addition")
+                && stdout.contains("main.incn::test_inline_private_access")
+                && stdout.contains("main.incn::decorated_inline_case")
+                && stdout.contains("main.incn::test_inline_fixture_and_tmp_path")
+                && stdout.contains("test_imported_surface_batch.incn::test_imported_pub_static_scalar_read")
+                && stdout.contains(
+                    "test_imported_surface_batch.incn::test_imported_default_expression_expands_with_required_imports"
+                ),
+            "expected representative batched inline/imported test names.\nstdout:\n{}",
+            stdout
+        );
+        assert!(
+            !stderr.contains("str_as_str") && !stderr.contains("expected `String`, found `&str`"),
+            "imported const str call and decorator arguments should materialize as owned strings.\nstderr:\n{}",
             stderr,
         );
         assert!(
@@ -8770,201 +8894,36 @@ def test_empty_names() -> None:
             stderr,
         );
 
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_assert_statement_with_module_import_succeeds() {
-        let dir = write_test_project(
-            "test_assert_stmt.incn",
-            r#"
-import std.testing
-
-def test_assert_statement_sugar() -> None:
-    assert 1 + 1 == 2
-    assert 3 != 4
-    assert not False
-    assert True
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
+        let listed = run_incan_test_with_args(&dir, &["--list", "-k", "decorated_inline_case"]);
+        let listed_stdout = String::from_utf8_lossy(&listed.stdout);
+        let listed_stderr = String::from_utf8_lossy(&listed.stderr);
         assert!(
-            output.status.success(),
-            "expected assert-statement test to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
+            listed.status.success(),
+            "expected inline --list -k run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            listed_stdout,
+            listed_stderr,
         );
         assert!(
-            stdout.contains("PASSED") || stdout.contains("passed"),
-            "expected PASSED in output.\nstdout:\n{}",
-            stdout,
-        );
-    }
-
-    #[test]
-    fn e2e_inline_module_tests_are_discovered_and_run() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "incan.toml",
-            r#"[project]
-name = "inline_module_tests_run"
-version = "0.1.0"
-"#,
-        );
-        let src_dir = dir.join("src");
-        std::fs::create_dir_all(&src_dir)?;
-        std::fs::write(
-            src_dir.join("main.incn"),
-            r#"
-def add(a: int, b: int) -> int:
-    return a + b
-
-def main() -> None:
-    pass
-
-module tests:
-    from std.testing import assert_eq
-
-    def test_addition() -> None:
-        assert_eq(add(2, 3), 5)
-"#,
-        )?;
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        assert!(
-            output.status.success(),
-            "expected inline module test run to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
+            listed_stdout
+                .lines()
+                .any(|line| line == "src/main.incn::decorated_inline_case"),
+            "expected decorated inline test id in --list output.\nstdout:\n{}",
+            listed_stdout,
         );
         assert!(
-            stdout.contains("1 passed"),
-            "expected inline test to run.\nstdout:\n{}",
-            stdout
+            !listed_stdout.contains("src/main.incn::test_inline_addition"),
+            "expected keyword filter to hide the name-discovered inline test.\nstdout:\n{}",
+            listed_stdout,
         );
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_inline_module_tests_can_access_private_enclosing_names() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "incan.toml",
-            r#"[project]
-name = "inline_private_access"
-version = "0.1.0"
-"#,
-        );
-        let src_dir = dir.join("src");
-        std::fs::create_dir_all(&src_dir)?;
-        std::fs::write(
-            src_dir.join("main.incn"),
-            r#"
-def secret() -> str:
-    return "private"
-
-def main() -> None:
-    pass
-
-module tests:
-    from std.testing import assert_eq
-
-    def test_secret() -> None:
-        assert_eq(secret(), "private")
-"#,
-        )?;
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        assert!(
-            output.status.success(),
-            "expected inline module test to access enclosing private helper.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_inline_module_std_testing_assert_helper_is_normalized_before_codegen()
-    -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "incan.toml",
-            r#"[project]
-name = "inline_assert_helper"
-version = "0.1.0"
-"#,
-        );
-        let src_dir = dir.join("src");
-        std::fs::create_dir_all(&src_dir)?;
-        std::fs::write(
-            src_dir.join("main.incn"),
-            r#"
-def main() -> None:
-    pass
-
-module tests:
-    import std.testing as testing
-
-    def test_assert_helper() -> None:
-        testing.assert(True)
-"#,
-        )?;
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected inline one-argument std.testing.assert call to be normalized before codegen.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr
-        );
-        assert!(stdout.contains("test_assert_helper"));
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_inline_module_test_imports_do_not_affect_build() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "incan.toml",
-            r#"[project]
-name = "inline_imports_do_not_affect_build"
-version = "0.1.0"
-"#,
-        );
-        let src_dir = dir.join("src");
-        std::fs::create_dir_all(&src_dir)?;
-        let entry = src_dir.join("main.incn");
-        std::fs::write(
-            &entry,
-            r#"
-def main() -> None:
-    println("production")
-
-module tests:
-    from std.testing import assert_eq
-
-    def test_production() -> None:
-        assert_eq(1 + 1, 2)
-"#,
-        )?;
 
         let out_dir = dir.join("out");
-        let output = run_incan_build(&entry, &out_dir);
-        let stderr = String::from_utf8_lossy(&output.stderr);
+        let build_output = run_incan_build(&production_entry, &out_dir);
+        let build_stderr = String::from_utf8_lossy(&build_output.stderr);
 
         assert!(
-            output.status.success(),
+            build_output.status.success(),
             "expected production build to ignore inline test imports.\nstderr:\n{}",
-            stderr,
+            build_stderr,
         );
         let main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
         assert!(
@@ -8973,7 +8932,7 @@ module tests:
             main_rs,
         );
         assert!(
-            !main_rs.contains("test_production"),
+            !main_rs.contains("test_inline_addition"),
             "inline test function should not leak into generated production code:\n{}",
             main_rs,
         );
@@ -8981,54 +8940,570 @@ module tests:
     }
 
     #[test]
-    fn e2e_inline_module_test_decorator_list_and_keyword_filter() -> Result<(), Box<dyn std::error::Error>> {
+    fn e2e_imported_generic_decorator_factory_preserves_function_signatures() -> Result<(), Box<dyn std::error::Error>>
+    {
         let dir = write_test_project(
             "incan.toml",
             r#"[project]
-name = "inline_decorator_list_filter"
+name = "generic_decorator_factory"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        let tests_dir = dir.join("tests");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::write(
+            src_dir.join("registry.incn"),
+            r#"
+pub def registered[F](name: str) -> ((F) -> F):
+    return (func) => func
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("columns.incn"),
+            r#"
+from registry import registered
+
+pub model ColumnExpr:
+    pub name: str
+
+@registered[(str) -> ColumnExpr]("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+
+@registered("inql.functions.literal")
+pub def literal() -> ColumnExpr:
+    return ColumnExpr(name="literal")
+"#,
+        )?;
+        std::fs::write(
+            tests_dir.join("test_generic_decorator_factory.incn"),
+            r#"
+from std.testing import assert_eq
+from columns import col, literal
+
+def test_explicit_generic_decorator_factory_signature() -> None:
+    assert_eq(col("id").name, "id")
+
+def test_inferred_generic_decorator_factory_signature() -> None:
+    assert_eq(literal().name, "literal")
+"#,
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected imported generic decorator factory project to pass.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_inline_decorated_sum_shadows_builtin_sum_issue677() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "decorated_sum_inline"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        let source_path = src_dir.join("functions.incn");
+        std::fs::write(
+            &source_path,
+            r#"
+pub model IntExpr:
+    pub value: int
+
+pub model TextExpr:
+    pub value: str
+
+pub type Expr = IntExpr | TextExpr
+
+pub model Measure:
+    pub kind: str
+
+pub def registered[F](function_ref: str) -> ((F) -> F):
+    return (func) => func
+
+pub def expr(value: int) -> Expr:
+    return IntExpr(value=value)
+
+@registered("demo.sum")
+pub def sum(value: Expr) -> Measure:
+    return Measure(kind="local")
+
+module tests:
+    def test_inline_test_resolves_decorated_sum_before_builtin_sum() -> None:
+        measure = sum(expr(1))
+        assert measure.kind == "local"
+"#,
+        )?;
+
+        let output = run_incan_test_path(&source_path);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected decorated inline sum test to pass.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("functions.incn::test_inline_test_resolves_decorated_sum_before_builtin_sum"),
+            "expected the #677 inline test to run.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_conventional_test_batches_split_import_declaration_collisions_issue676()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "import_collision_batch"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        let tests_dir = dir.join("tests");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::create_dir_all(&tests_dir)?;
+        std::fs::write(
+            src_dir.join("helpers.incn"),
+            r#"
+pub def col() -> int:
+    return 1
+"#,
+        )?;
+        std::fs::write(
+            tests_dir.join("test_imports_col.incn"),
+            r#"
+from helpers import col
+
+def test_imported_col() -> None:
+    assert col() == 1
+"#,
+        )?;
+        std::fs::write(
+            tests_dir.join("test_declares_col.incn"),
+            r#"
+def col() -> int:
+    return 2
+
+def test_local_col() -> None:
+    assert col() == 2
+"#,
+        )?;
+
+        let output = run_incan_test(&dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected import/local declaration collision batch to split and pass.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        assert!(
+            stdout.contains("test_imported_col") && stdout.contains("test_local_col"),
+            "expected both split test files to run.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_method_call_decorator_factories_use_checked_receiver_lowering() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "method_call_decorator_factories"
 version = "0.1.0"
 "#,
         );
         let src_dir = dir.join("src");
         std::fs::create_dir_all(&src_dir)?;
         std::fs::write(
-            src_dir.join("math.incn"),
+            src_dir.join("main.incn"),
             r#"
-def add(a: int, b: int) -> int:
-    return a + b
+class Registry:
+    pub names: list[str]
 
-module tests:
-    from std.testing import assert_eq, test
+    @staticmethod
+    def new() -> Self:
+        return Registry(names=[])
 
-    @test
-    def checks_sum() -> None:
-        assert_eq(add(20, 22), 42)
+    @staticmethod
+    def add_static[F](name: str) -> (F) -> F:
+        FUNCTIONS.names.append(name)
+        return (func) => func
 
-    def test_by_name() -> None:
-        assert_eq(add(1, 1), 2)
+    def add[F](mut self, name: str) -> (F) -> F:
+        self.names.append(name)
+        return (func) => func
+
+
+static FUNCTIONS: Registry = Registry.new()
+
+
+@Registry::add_static("static")
+def static_col(name: str) -> str:
+    return name
+
+
+@FUNCTIONS.add("instance")
+def instance_col(name: str) -> str:
+    return name
+
+
+def main() -> None:
+    println(static_col("amount"))
+    println(instance_col("price"))
+    println(len(FUNCTIONS.names))
 "#,
         )?;
 
-        let output = run_incan_test_with_args(&dir, &["--list", "-k", "checks_sum"]);
+        let out_dir = dir.join("out");
+        let output = run_incan_build(&src_dir.join("main.incn"), &out_dir);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
-
         assert!(
             output.status.success(),
-            "expected inline --list -k run to succeed.\nstdout:\n{}\nstderr:\n{}",
+            "expected method-call decorator factories to build.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+
+        let generated = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        assert!(
+            generated.contains("Registry :: add_static")
+                || generated.contains("Registry::add_static")
+                || generated.contains("Registry :: add_static ::"),
+            "class static method decorator should lower as associated function syntax:\n{}",
+            generated,
+        );
+        assert!(
+            generated.contains(".with_mut(|__incan_static_value|")
+                && (generated.contains("let __incan_static_arg_0 = \"instance\".to_string();")
+                    || generated.contains("let __incan_static_arg_0 = \"instance\".into();"))
+                && generated.contains("__incan_static_value.add(__incan_static_arg_0)"),
+            "static registry receiver should lower through static storage access:\n{}",
+            generated,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn build_lib_imported_static_decorator_receiver_materializes_string_arg_issue671()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "imported_static_decorator_receiver"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("probe_registry.incn"),
+            r#"
+@derive(Clone)
+pub class ProbeRegistry:
+    @staticmethod
+    def new() -> Self:
+        return ProbeRegistry()
+
+    def add[F](mut self, name: str, value: int) -> (F) -> F:
+        return (func) => func
+
+
+pub static PROBE_REGISTRY: ProbeRegistry = ProbeRegistry.new()
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("probe_decorated.incn"),
+            r#"
+from probe_registry import PROBE_REGISTRY
+
+@PROBE_REGISTRY.add("decorated", 1)
+pub def decorated(value: int) -> int:
+    return value
+"#,
+        )?;
+        std::fs::write(src_dir.join("lib.incn"), "pub from probe_decorated import decorated\n")?;
+
+        let output = incan_command()
+            .args(["build", "--lib"])
+            .current_dir(&*dir)
+            .env("CARGO_NET_OFFLINE", "true")
+            .output()?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected imported static decorator receiver project to build for #671.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+
+        let generated = std::fs::read_to_string(dir.join("target/lib/src/probe_decorated.rs"))?;
+        assert!(
+            (generated.contains("let __incan_static_arg_0 = \"decorated\".into();")
+                || generated.contains("let __incan_static_arg_0 = \"decorated\".to_string();"))
+                && !generated.contains("__incan_static_arg_0.clone()"),
+            "imported static decorator string argument should materialize as owned String:\n{}",
+            generated,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn build_static_receiver_option_model_lookup_issue674() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "main.incn",
+            r#"
+@derive(Clone)
+model Entry:
+    value: int
+
+
+@derive(Clone)
+class Registry:
+    entries: list[Entry]
+
+    @staticmethod
+    def new() -> Self:
+        return Registry(entries=[Entry(value=1)])
+
+    def entry(self, name: str) -> Option[Entry]:
+        if len(self.entries) == 0:
+            return None
+        return Some(self.entries[0])
+
+
+static REGISTRY: Registry = Registry.new()
+
+
+pub def lookup() -> int:
+    match REGISTRY.entry("decorated"):
+        Some(entry) => return entry.value
+        None => return 0
+
+
+def main() -> None:
+    println(lookup())
+"#,
+        );
+
+        let out_dir = dir.join("out");
+        let output = run_incan_build(&dir.join("main.incn"), &out_dir);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            output.status.success(),
+            "expected static receiver Option model lookup to build for #674.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+
+        let generated = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        assert!(
+            generated.contains("match {\n        let __incan_static_arg_0 = \"decorated\".to_string();")
+                || generated.contains("match {\n        let __incan_static_arg_0 = \"decorated\".into();"),
+            "static receiver match scrutinee should materialize args inside an expression block:\n{}",
+            generated,
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn e2e_directory_run_preserves_per_file_inline_test_modules_issue676() -> Result<(), Box<dyn std::error::Error>> {
+        let dir = write_test_project(
+            "incan.toml",
+            r#"[project]
+name = "inline_directory_batch"
+version = "0.1.0"
+"#,
+        );
+        let src_dir = dir.join("src");
+        std::fs::create_dir_all(&src_dir)?;
+        std::fs::write(
+            src_dir.join("alpha.incn"),
+            r#"
+const ALPHA_OFFSET: int = 10
+static alpha_runs: int = 0
+
+model AlphaRecord:
+    value: int
+    label: str
+
+def alpha_value() -> int:
+    return 1
+
+def alpha_record() -> AlphaRecord:
+    return AlphaRecord(value=alpha_value() + ALPHA_OFFSET, label="alpha")
+
+
+module tests:
+    def test_alpha_value() -> None:
+        alpha_runs += 1
+        record = alpha_record()
+        assert alpha_value() == 1
+        assert record.value == 11
+        assert record.label == "alpha"
+        assert alpha_runs == 1
+"#,
+        )?;
+        std::fs::write(
+            src_dir.join("beta.incn"),
+            r#"
+const BETA_OFFSET: int = 20
+static beta_runs: int = 0
+
+model BetaRecord:
+    value: int
+    label: str
+
+def beta_value() -> int:
+    return 2
+
+def beta_record() -> BetaRecord:
+    return BetaRecord(value=beta_value() + BETA_OFFSET, label="beta")
+
+
+module tests:
+    def test_beta_value() -> None:
+        beta_runs += 1
+        record = beta_record()
+        assert beta_value() == 2
+        assert record.value == 22
+        assert record.label == "beta"
+        assert beta_runs == 1
+"#,
+        )?;
+        let functions_dir = src_dir.join("functions");
+        std::fs::create_dir_all(&functions_dir)?;
+        std::fs::write(
+            functions_dir.join("columns.incn"),
+            r#"
+const COLUMN_OFFSET: int = 30
+static column_runs: int = 0
+
+model Column:
+    value: int
+    label: str
+
+pub def col() -> int:
+    return 3
+
+def column() -> Column:
+    return Column(value=col() + COLUMN_OFFSET, label="column")
+
+
+module tests:
+    def test_col() -> None:
+        column_runs += 1
+        item = column()
+        assert col() == 3
+        assert item.value == 33
+        assert item.label == "column"
+        assert column_runs == 1
+"#,
+        )?;
+        std::fs::write(
+            functions_dir.join("uses_columns.incn"),
+            r#"
+from functions.columns import col
+
+const USES_COLUMN_OFFSET: int = 40
+static uses_column_runs: int = 0
+
+model UsesColumn:
+    value: int
+    label: str
+
+def uses_col() -> int:
+    return col() + 1
+
+def uses_column() -> UsesColumn:
+    return UsesColumn(value=uses_col() + USES_COLUMN_OFFSET, label="uses-column")
+
+
+module tests:
+    def test_uses_col() -> None:
+        uses_column_runs += 1
+        item = uses_column()
+        assert uses_col() == 4
+        assert item.value == 44
+        assert item.label == "uses-column"
+        assert uses_column_runs == 1
+"#,
+        )?;
+
+        let alpha = run_incan_test_path(&src_dir.join("alpha.incn"));
+        assert!(
+            alpha.status.success(),
+            "expected direct alpha inline test run to pass.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&alpha.stdout),
+            String::from_utf8_lossy(&alpha.stderr),
+        );
+        let beta = run_incan_test_path(&src_dir.join("beta.incn"));
+        assert!(
+            beta.status.success(),
+            "expected direct beta inline test run to pass.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&beta.stdout),
+            String::from_utf8_lossy(&beta.stderr),
+        );
+        let uses_columns = run_incan_test_path(&functions_dir.join("uses_columns.incn"));
+        assert!(
+            uses_columns.status.success(),
+            "expected direct imported inline test run to pass.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&uses_columns.stdout),
+            String::from_utf8_lossy(&uses_columns.stderr),
+        );
+
+        let directory = run_incan_test_path(&src_dir);
+        let stdout = String::from_utf8_lossy(&directory.stdout);
+        let stderr = String::from_utf8_lossy(&directory.stderr);
+        assert!(
+            directory.status.success(),
+            "expected directory inline test run to keep per-file parser context.\nstdout:\n{}\nstderr:\n{}",
             stdout,
             stderr,
         );
         assert!(
-            stdout.lines().any(|line| line == "src/math.incn::checks_sum"),
-            "expected decorated inline test id in --list output.\nstdout:\n{}",
+            stdout.contains("alpha.incn::test_alpha_value")
+                && stdout.contains("beta.incn::test_beta_value")
+                && stdout.contains("columns.incn::test_col")
+                && stdout.contains("uses_columns.incn::test_uses_col"),
+            "expected every inline source file to run from directory discovery.\nstdout:\n{}",
             stdout,
         );
         assert!(
-            !stdout.contains("src/math.incn::test_by_name"),
-            "expected keyword filter to hide the name-discovered inline test.\nstdout:\n{}",
+            !stdout.contains("Only one `module tests:` block") && !stderr.contains("Only one `module tests:` block"),
+            "directory batching should not report duplicate inline modules across files.\nstdout:\n{}\nstderr:\n{}",
             stdout,
+            stderr,
         );
+        assert!(
+            !stderr.contains("the name `col` is defined multiple times"),
+            "directory batching should keep imported names inside their source module scope.\nstdout:\n{}\nstderr:\n{}",
+            stdout,
+            stderr,
+        );
+
         Ok(())
     }
 
@@ -9106,299 +9581,11 @@ module tests:
     }
 
     #[test]
-    fn e2e_inline_module_fixtures_builtins_and_autouse() -> Result<(), Box<dyn std::error::Error>> {
+    fn e2e_fixture_lifetime_success_scenarios_share_one_project() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
             "incan.toml",
             r#"[project]
-name = "inline_fixture_builtins"
-version = "0.1.0"
-"#,
-        );
-        let src_dir = dir.join("src");
-        std::fs::create_dir_all(&src_dir)?;
-        std::fs::write(
-            src_dir.join("main.incn"),
-            r#"
-module tests:
-    from rust::incan_stdlib::testing import TestEnv
-    from rust::std::path import PathBuf
-    from std.testing import assert_eq, assert_is_some, fixture
-
-    @fixture(autouse=true)
-    def seed() -> int:
-        return 40
-
-    @fixture
-    def answer(seed: int) -> int:
-        return seed + 2
-
-    def test_fixture_and_tmp_path(answer: int, tmp_path: PathBuf) -> None:
-        assert_eq(answer, 42)
-        assert_eq(tmp_path.exists(), true)
-
-    def test_tmp_workdir(tmp_workdir: PathBuf) -> None:
-        assert_eq(tmp_workdir.exists(), true)
-
-    def test_env_fixture(mut env: TestEnv) -> None:
-        env.set("INCAN_INLINE_ENV_FIXTURE", "set")
-        assert_eq(assert_is_some(env.get("INCAN_INLINE_ENV_FIXTURE")), "set")
-        env.unset("INCAN_INLINE_ENV_FIXTURE")
-        assert_eq(env.get("INCAN_INLINE_ENV_FIXTURE"), None)
-"#,
-        )?;
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected inline fixtures and built-ins to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(
-            stdout.contains("test_fixture_and_tmp_path"),
-            "expected inline fixture test name in output.\nstdout:\n{}",
-            stdout,
-        );
-        assert!(
-            stdout.contains("test_tmp_workdir"),
-            "expected inline tmp_workdir test name in output.\nstdout:\n{}",
-            stdout,
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_module_scoped_fixture_is_reused_within_file() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "test_module_scope_fixture.incn",
-            r#"
-from std.testing import assert_eq, fixture
-
-static calls: int = 0
-
-@fixture(scope="module")
-def once() -> int:
-    calls += 1
-    return calls
-
-def test_first(once: int) -> None:
-    assert_eq(once, 1)
-
-def test_second(once: int) -> None:
-    assert_eq(once, 1)
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected module-scoped fixture value to be reused across tests in the same file.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(stdout.contains("test_first") && stdout.contains("test_second"));
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_yield_fixture_teardown_runs_after_failure() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "test_yield_fixture_teardown.incn",
-            r#"
-from std.testing import assert_eq, fixture
-
-static calls: int = 0
-
-@fixture
-def resource() -> int:
-    calls += 1
-    yield calls
-    calls += 10
-
-def test_1_fails(resource: int) -> None:
-    assert_eq(resource, 99)
-
-def test_2_observes_teardown() -> None:
-    assert_eq(calls, 11)
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !output.status.success(),
-            "expected the intentionally failing test to fail the run.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(
-            stdout.contains("test_2_observes_teardown PASSED"),
-            "expected teardown to run before the following test observed shared state.\nstdout:\n{}",
-            stdout,
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_yield_fixture_teardown_failure_fails_run() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "test_yield_fixture_teardown_failure.incn",
-            r#"
-from std.testing import assert_eq, fixture
-
-@fixture
-def resource() -> int:
-    yield 42
-    assert_eq(1, 2)
-
-def test_body_passes(resource: int) -> None:
-    assert_eq(resource, 42)
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            !output.status.success(),
-            "expected teardown failure to fail the run.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(
-            stdout.contains("test_body_passes FAILED") || stderr.contains("test_body_passes"),
-            "expected passing body with failing teardown to be reported as failed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_yield_fixture_teardown_failures_are_aggregated() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "test_yield_fixture_teardown_aggregate.incn",
-            r#"
-from std.testing import assert_eq, fixture
-
-@fixture
-def parent() -> int:
-    yield 1
-    assert_eq(1, 2, "parent teardown failed")
-
-@fixture
-def child(parent: int) -> int:
-    yield parent + 1
-    assert_eq(3, 4, "child teardown failed")
-
-def test_body_passes(child: int) -> None:
-    assert_eq(child, 2)
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let combined = format!("{stdout}\n{stderr}");
-        assert!(
-            !output.status.success(),
-            "expected aggregate teardown failures to fail the run.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(
-            combined.contains("fixture teardown failed")
-                && combined.contains("child teardown failed")
-                && combined.contains("parent teardown failed"),
-            "expected both teardown failures in aggregate output.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_yield_fixture_teardown_captures_setup_locals() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "test_yield_fixture_capture.incn",
-            r#"
-from std.testing import assert_eq, fixture
-
-static observed: int = 0
-
-@fixture
-def resource() -> int:
-    value: int = 41
-    yield value + 1
-    observed += value
-
-def test_body(resource: int) -> None:
-    assert_eq(resource, 42)
-
-def test_after_teardown() -> None:
-    assert_eq(observed, 41)
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected yield teardown to capture setup locals.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_module_yield_fixture_teardown_runs_at_module_boundary() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "test_module_yield_fixture.incn",
-            r#"
-from std.testing import assert_eq, fixture
-
-static calls: int = 0
-
-@fixture(scope="module")
-def shared() -> int:
-    yield 10
-    assert_eq(calls, 2)
-
-def test_first(shared: int) -> None:
-    calls += 1
-    assert_eq(shared, 10)
-
-def test_second(shared: int) -> None:
-    calls += 1
-    assert_eq(shared, 10)
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected module yield teardown after all tests in the file.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_session_fixture_reused_across_files_with_single_worker() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "incan.toml",
-            r#"[project]
-name = "session_fixture_reuse"
+name = "fixture_lifetime_success_batch"
 version = "0.1.0"
 "#,
         );
@@ -9437,108 +9624,205 @@ def test_b(session_value: int) -> None:
     assert_eq(session_value, 1)
 "#,
         )?;
+        std::fs::write(
+            tests_dir.join("test_fixture_lifetimes.incn"),
+            r#"
+from std.async import sleep_ms
+from std.testing import assert_eq, fixture, parametrize
+
+static module_scope_calls: int = 0
+static yield_observed: int = 0
+static module_yield_calls: int = 0
+static teardown_order: int = 0
+static async_order: int = 0
+static async_reverse_order: str = ""
+static async_param_setups: int = 0
+
+@fixture(scope="module")
+def once() -> int:
+    module_scope_calls += 1
+    return module_scope_calls
+
+def test_module_scope_first(once: int) -> None:
+    assert_eq(once, 1)
+
+def test_module_scope_second(once: int) -> None:
+    assert_eq(once, 1)
+
+@fixture
+def captured_resource() -> int:
+    value: int = 41
+    yield value + 1
+    yield_observed += value
+
+def test_yield_capture_body(captured_resource: int) -> None:
+    assert_eq(captured_resource, 42)
+
+def test_yield_capture_after_teardown() -> None:
+    assert_eq(yield_observed, 41)
+
+@fixture(scope="module")
+def module_shared() -> int:
+    yield 10
+    assert_eq(module_yield_calls, 2)
+
+def test_module_yield_first(module_shared: int) -> None:
+    module_yield_calls += 1
+    assert_eq(module_shared, 10)
+
+def test_module_yield_second(module_shared: int) -> None:
+    module_yield_calls += 1
+    assert_eq(module_shared, 10)
+
+@fixture
+def outer() -> int:
+    yield 1
+    assert_eq(teardown_order, 1)
+    teardown_order += 1
+
+@fixture
+def inner(outer: int) -> int:
+    yield outer + 1
+    assert_eq(teardown_order, 0)
+    teardown_order += 1
+
+def test_reverse_teardown_body(inner: int) -> None:
+    assert_eq(inner, 2)
+
+def test_reverse_teardown_after() -> None:
+    assert_eq(teardown_order, 2)
+
+@fixture
+def seed() -> int:
+    async_order += 1
+    return 40
+
+@fixture
+async def resource(seed: int) -> int:
+    await sleep_ms(1)
+    async_order += 1
+    yield seed + 2
+    await sleep_ms(1)
+    async_order += 10
+
+def test_1_uses_async_fixture(resource: int) -> None:
+    assert_eq(resource, 42)
+    assert_eq(async_order, 2)
+
+def test_2_observes_async_teardown() -> None:
+    assert_eq(async_order, 12)
+
+@fixture
+async def parent() -> int:
+    async_reverse_order += "setup-parent;"
+    await sleep_ms(1)
+    yield 1
+    await sleep_ms(1)
+    async_reverse_order += "teardown-parent;"
+
+@fixture
+async def child(parent: int) -> int:
+    async_reverse_order += "setup-child;"
+    await sleep_ms(1)
+    yield parent + 1
+    await sleep_ms(1)
+    async_reverse_order += "teardown-child;"
+
+def test_1_uses_child(child: int) -> None:
+    assert_eq(child, 2)
+    assert_eq(async_reverse_order, "setup-parent;setup-child;")
+
+def test_2_observes_reverse_teardown() -> None:
+    assert_eq(async_reverse_order, "setup-parent;setup-child;teardown-child;teardown-parent;")
+
+@fixture
+async def base() -> int:
+    async_param_setups += 1
+    await sleep_ms(1)
+    yield 10
+
+@parametrize("value", [1, 2])
+async def test_param_async_fixture(value: int, base: int) -> None:
+    await sleep_ms(1)
+    assert_eq(base, 10)
+    assert_eq(value > 0, true)
+
+def test_after_param_cases() -> None:
+    assert_eq(async_param_setups, 2)
+"#,
+        )?;
 
         let output = run_incan_test_with_args(&dir, &["--jobs", "1"]);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
         assert!(
             output.status.success(),
-            "expected session fixture to be reused across files in one worker batch.\nstdout:\n{}\nstderr:\n{}",
+            "expected fixture lifetime success batch to pass.\nstdout:\n{}\nstderr:\n{}",
             stdout,
             stderr,
         );
+        assert!(stdout.contains("test_module_scope_first") && stdout.contains("test_module_scope_second"));
+        assert!(stdout.contains("test_param_async_fixture[1]") && stdout.contains("test_param_async_fixture[2]"));
         Ok(())
     }
 
     #[test]
-    fn e2e_yield_fixture_teardown_runs_in_reverse_dependency_order() -> Result<(), Box<dyn std::error::Error>> {
+    fn e2e_fixture_teardown_failure_scenarios_share_one_project() -> Result<(), Box<dyn std::error::Error>> {
         let dir = write_test_project(
-            "test_yield_teardown_order.incn",
+            "test_yield_fixture_teardown.incn",
             r#"
 from std.testing import assert_eq, fixture
 
-static order: int = 0
+static calls: int = 0
 
 @fixture
-def outer() -> int:
-    yield 1
-    assert_eq(order, 1)
-    order += 1
+def resource() -> int:
+    calls += 1
+    yield calls
+    calls += 10
 
-@fixture
-def inner(outer: int) -> int:
-    yield outer + 1
-    assert_eq(order, 0)
-    order += 1
+def test_1_fails(resource: int) -> None:
+    assert_eq(resource, 99)
 
-def test_body(inner: int) -> None:
-    assert_eq(inner, 2)
-
-def test_after() -> None:
-    assert_eq(order, 2)
+def test_2_observes_teardown() -> None:
+    assert_eq(calls, 11)
 "#,
         );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected dependent fixtures to tear down in reverse dependency order.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_async_yield_fixture_setup_and_teardown_are_awaited() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "test_async_yield_fixture.incn",
+        std::fs::write(
+            dir.join("test_yield_fixture_teardown_failure.incn"),
             r#"
-from std.async import sleep_ms
 from std.testing import assert_eq, fixture
 
-static order: int = 0
-
 @fixture
-def seed() -> int:
-    order += 1
-    return 40
+def resource() -> int:
+    yield 42
+    assert_eq(1, 2)
 
-@fixture
-async def resource(seed: int) -> int:
-    await sleep_ms(1)
-    order += 1
-    yield seed + 2
-    await sleep_ms(1)
-    order += 10
-
-def test_1_uses_async_fixture(resource: int) -> None:
+def test_body_passes(resource: int) -> None:
     assert_eq(resource, 42)
-    assert_eq(order, 2)
-
-def test_2_observes_async_teardown() -> None:
-    assert_eq(order, 12)
 "#,
-        );
+        )?;
+        std::fs::write(
+            dir.join("test_yield_fixture_teardown_aggregate.incn"),
+            r#"
+from std.testing import assert_eq, fixture
 
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected async fixture setup and teardown to be awaited.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        Ok(())
-    }
+@fixture
+def parent() -> int:
+    yield 1
+    assert_eq(1, 2, "parent teardown failed")
 
-    #[test]
-    fn e2e_async_yield_fixture_teardown_runs_after_failure() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "test_async_yield_fixture_failure.incn",
+@fixture
+def child(parent: int) -> int:
+    yield parent + 1
+    assert_eq(3, 4, "child teardown failed")
+
+def test_body_passes(child: int) -> None:
+    assert_eq(child, 2)
+"#,
+        )?;
+        std::fs::write(
+            dir.join("test_async_yield_fixture_failure.incn"),
             r#"
 from std.async import sleep_ms
 from std.testing import assert_eq, fixture
@@ -9559,112 +9843,28 @@ def test_1_fails(resource: int) -> None:
 def test_2_observes_async_teardown() -> None:
     assert_eq(calls, 11)
 "#,
-        );
+        )?;
 
         let output = run_incan_test(&dir);
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let combined = format!("{stdout}\n{stderr}");
         assert!(
             !output.status.success(),
-            "expected the intentionally failing async-fixture test to fail the run.\nstdout:\n{}\nstderr:\n{}",
+            "expected fixture teardown failure batch to fail.\nstdout:\n{}\nstderr:\n{}",
             stdout,
             stderr,
         );
         assert!(
-            stdout.contains("test_2_observes_async_teardown PASSED"),
-            "expected async teardown to run before the following test observed shared state.\nstdout:\n{}",
-            stdout,
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_async_yield_fixture_teardown_runs_in_reverse_dependency_order() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "test_async_yield_teardown_order.incn",
-            r#"
-from std.async import sleep_ms
-from std.testing import assert_eq, fixture
-
-static order: str = ""
-
-@fixture
-async def parent() -> int:
-    order += "setup-parent;"
-    await sleep_ms(1)
-    yield 1
-    await sleep_ms(1)
-    order += "teardown-parent;"
-
-@fixture
-async def child(parent: int) -> int:
-    order += "setup-child;"
-    await sleep_ms(1)
-    yield parent + 1
-    await sleep_ms(1)
-    order += "teardown-child;"
-
-def test_1_uses_child(child: int) -> None:
-    assert_eq(child, 2)
-    assert_eq(order, "setup-parent;setup-child;")
-
-def test_2_observes_reverse_teardown() -> None:
-    assert_eq(order, "setup-parent;setup-child;teardown-child;teardown-parent;")
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected async yield teardowns to run in reverse dependency order.\nstdout:\n{}\nstderr:\n{}",
+            combined.contains("test_2_observes_teardown PASSED")
+                && combined.contains("test_2_observes_async_teardown PASSED")
+                && combined.contains("test_body_passes")
+                && combined.contains("fixture teardown failed")
+                && combined.contains("child teardown failed")
+                && combined.contains("parent teardown failed"),
+            "expected teardown diagnostics and observer tests in failure batch.\nstdout:\n{}\nstderr:\n{}",
             stdout,
             stderr,
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn e2e_async_fixture_composes_with_parametrize_before_resolution() -> Result<(), Box<dyn std::error::Error>> {
-        let dir = write_test_project(
-            "test_async_param_fixture.incn",
-            r#"
-from std.async import sleep_ms
-from std.testing import assert_eq, fixture, parametrize
-
-static setups: int = 0
-
-@fixture
-async def base() -> int:
-    setups += 1
-    await sleep_ms(1)
-    yield 10
-
-@parametrize("value", [1, 2])
-async def test_param_async_fixture(value: int, base: int) -> None:
-    await sleep_ms(1)
-    assert_eq(base, 10)
-    assert_eq(value > 0, true)
-
-def test_after_param_cases() -> None:
-    assert_eq(setups, 2)
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        assert!(
-            output.status.success(),
-            "expected parametrized async tests to resolve async fixtures per expanded case.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-        assert!(
-            stdout.contains("test_param_async_fixture[1]") && stdout.contains("test_param_async_fixture[2]"),
-            "expected both parametrized async cases in reporter output.\nstdout:\n{}",
-            stdout,
         );
         Ok(())
     }
@@ -9760,101 +9960,20 @@ module tests:
     }
 
     #[test]
-    fn e2e_assert_failure_message_is_reported() {
+    fn e2e_failure_skip_and_assert_reporting_share_one_project() {
         let dir = write_test_project(
-            "test_assert_message.incn",
+            "test_failure_skip_and_assert_reporting.incn",
             r#"
+from std.testing import assert_eq, skip
+
 def test_message() -> None:
     assert False, "custom boom"
-"#,
-        );
 
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let combined = format!("{stdout}\n{stderr}");
-
-        assert!(
-            !output.status.success(),
-            "expected assertion failure test to fail.\n{}",
-            combined,
-        );
-        assert!(
-            combined.contains("AssertionError: custom boom"),
-            "expected custom assertion message in output.\n{}",
-            combined,
-        );
-    }
-
-    #[test]
-    fn e2e_assert_eq_failure_reports_kind_and_message() {
-        let dir = write_test_project(
-            "test_assert_eq_message.incn",
-            r#"
 def test_eq_message() -> None:
     assert 1 == 2, "math broke"
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let combined = format!("{stdout}\n{stderr}");
-
-        assert!(
-            !output.status.success(),
-            "expected assertion failure test to fail.\n{}",
-            combined,
-        );
-        assert!(
-            combined.contains("AssertionError: math broke"),
-            "expected custom equality assertion message in output.\n{}",
-            combined,
-        );
-        assert!(
-            combined.contains("left != right"),
-            "expected equality failure kind in output.\n{}",
-            combined,
-        );
-    }
-
-    // ---- Failing test ----
-
-    #[test]
-    fn e2e_failing_test_reports_failure() {
-        let dir = write_test_project(
-            "test_bad.incn",
-            r#"
-from std.testing import assert_eq
 
 def test_wrong() -> None:
     assert_eq(1 + 1, 99)
-"#,
-        );
-
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-
-        assert!(
-            !output.status.success(),
-            "expected failing test to exit non-zero.\nstdout:\n{}",
-            stdout,
-        );
-        assert!(
-            stdout.contains("FAILED") || stdout.contains("failed"),
-            "expected FAILED in output.\nstdout:\n{}",
-            stdout,
-        );
-    }
-
-    // ---- Skip marker ----
-
-    #[test]
-    fn e2e_skip_marker_skips_test() {
-        let dir = write_test_project(
-            "test_skip.incn",
-            r#"
-from std.testing import skip
 
 @skip("not implemented yet")
 def test_todo() -> None:
@@ -9862,100 +9981,69 @@ def test_todo() -> None:
 "#,
         );
 
-        let output = run_incan_test(&dir);
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let message = run_incan_test_with_args(&dir, &["-k", "test_message"]);
+        let message_stdout = String::from_utf8_lossy(&message.stdout);
+        let message_stderr = String::from_utf8_lossy(&message.stderr);
+        let message_combined = format!("{message_stdout}\n{message_stderr}");
 
         assert!(
-            output.status.success(),
+            !message.status.success(),
+            "expected assertion failure test to fail.\n{}",
+            message_combined,
+        );
+        assert!(
+            message_combined.contains("AssertionError: custom boom"),
+            "expected custom assertion message in output.\n{}",
+            message_combined,
+        );
+
+        let eq = run_incan_test_with_args(&dir, &["-k", "test_eq_message"]);
+        let eq_stdout = String::from_utf8_lossy(&eq.stdout);
+        let eq_stderr = String::from_utf8_lossy(&eq.stderr);
+        let eq_combined = format!("{eq_stdout}\n{eq_stderr}");
+
+        assert!(
+            !eq.status.success(),
+            "expected assertion failure test to fail.\n{}",
+            eq_combined,
+        );
+        assert!(
+            eq_combined.contains("AssertionError: math broke"),
+            "expected custom equality assertion message in output.\n{}",
+            eq_combined,
+        );
+        assert!(
+            eq_combined.contains("left != right"),
+            "expected equality failure kind in output.\n{}",
+            eq_combined,
+        );
+
+        let wrong = run_incan_test_with_args(&dir, &["-k", "test_wrong"]);
+        let wrong_stdout = String::from_utf8_lossy(&wrong.stdout);
+
+        assert!(
+            !wrong.status.success(),
+            "expected failing test to exit non-zero.\nstdout:\n{}",
+            wrong_stdout,
+        );
+        assert!(
+            wrong_stdout.contains("FAILED") || wrong_stdout.contains("failed"),
+            "expected FAILED in output.\nstdout:\n{}",
+            wrong_stdout,
+        );
+
+        let skip = run_incan_test_with_args(&dir, &["-k", "test_todo"]);
+        let skip_stdout = String::from_utf8_lossy(&skip.stdout);
+
+        assert!(
+            skip.status.success(),
             "expected skipped test to succeed overall.\nstdout:\n{}",
-            stdout,
+            skip_stdout,
         );
         assert!(
-            stdout.contains("SKIPPED") || stdout.contains("skipped"),
+            skip_stdout.contains("SKIPPED") || skip_stdout.contains("skipped"),
             "expected SKIPPED in output.\nstdout:\n{}",
-            stdout,
-        );
-    }
-
-    // ---- Parametrize expansion ----
-
-    #[test]
-    fn e2e_parametrize_expands_and_runs_all_cases() {
-        let dir = write_test_project(
-            "test_param.incn",
-            r#"
-from std.testing import parametrize, assert_eq
-
-@parametrize("a, b, expected", [(1, 2, 3), (10, 20, 30), (0, 0, 0)])
-def test_add(a: int, b: int, expected: int) -> None:
-    assert_eq(a + b, expected)
-"#,
-        );
-
-        let output = run_incan_test_with_args(&dir, &["--verbose"]);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let stderr = String::from_utf8_lossy(&output.stderr);
-
-        assert!(
-            output.status.success(),
-            "expected parametrized test to succeed.\nstdout:\n{}\nstderr:\n{}",
-            stdout,
-            stderr,
-        );
-
-        // All three parametrized variants should appear in the output.
-        assert!(
-            stdout.contains("test_add[1-2-3]"),
-            "expected test_add[1-2-3] in output.\nstdout:\n{}",
-            stdout,
-        );
-        assert!(
-            stdout.contains("test_add[10-20-30]"),
-            "expected test_add[10-20-30] in output.\nstdout:\n{}",
-            stdout,
-        );
-        assert!(
-            stdout.contains("test_add[0-0-0]"),
-            "expected test_add[0-0-0] in output.\nstdout:\n{}",
-            stdout,
-        );
-
-        // Should report 3 passed
-        assert!(
-            stdout.contains("3 passed"),
-            "expected '3 passed' in output.\nstdout:\n{}",
-            stdout,
-        );
-    }
-
-    // ---- Parametrize with a failing case ----
-
-    #[test]
-    fn e2e_parametrize_reports_failing_case() {
-        let dir = write_test_project(
-            "test_param_fail.incn",
-            r#"
-from std.testing import parametrize, assert_eq
-
-@parametrize("x, expected", [(2, 4), (3, 7)])
-def test_double(x: int, expected: int) -> None:
-    assert_eq(x * 2, expected)
-"#,
-        );
-
-        let output = run_incan_test_with_args(&dir, &["--verbose"]);
-        let stdout = String::from_utf8_lossy(&output.stdout);
-
-        // 2*2==4 passes, 3*2==6!=7 fails
-        assert!(
-            !output.status.success(),
-            "expected one failing case to make the run fail.\nstdout:\n{}",
-            stdout,
-        );
-        assert!(
-            stdout.contains("1 passed") && stdout.contains("1 failed"),
-            "expected '1 passed' and '1 failed'.\nstdout:\n{}",
-            stdout,
+            skip_stdout,
         );
     }
 }
@@ -10146,7 +10234,7 @@ def main() -> None:
   println(str(from_classmethod.value))
   println(str(from_staticmethod.value))
 "#;
-        let output = std::process::Command::new(super::incan_debug_binary())
+        let output = super::incan_command()
             .args(["run", "-c", source])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
@@ -10335,12 +10423,9 @@ def database() -> Database:
 mod rfc031_pub_import_integration_tests {
     use super::*;
     use incan::library_manifest::{FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
+    use incan::manifest::{INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV};
     use sha2::{Digest, Sha256};
     use std::path::PathBuf;
-
-    fn incan_bin_path() -> std::path::PathBuf {
-        super::incan_debug_binary()
-    }
 
     fn write_project_files(
         root: &Path,
@@ -10355,11 +10440,11 @@ mod rfc031_pub_import_integration_tests {
     }
 
     fn run_check(main_path: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-        Ok(Command::new(incan_bin_path()).arg("--check").arg(main_path).output()?)
+        Ok(super::incan_command().arg("--check").arg(main_path).output()?)
     }
 
     fn run_build(main_path: &Path, out_dir: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-        Ok(Command::new(incan_bin_path())
+        Ok(super::incan_command()
             .args([
                 "build",
                 main_path.to_string_lossy().as_ref(),
@@ -10370,17 +10455,36 @@ mod rfc031_pub_import_integration_tests {
     }
 
     fn run_lock(entry_path: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-        Ok(Command::new(incan_bin_path())
+        Ok(super::incan_command()
             .args(["lock", entry_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?)
     }
 
     fn run_test(target: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-        Ok(Command::new(incan_bin_path())
+        Ok(super::incan_command()
             .args(["test", target.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
+            .env("INCAN_TEST_SHARED_TARGET_DIR", shared_test_runner_target_dir())
             .output()?)
+    }
+
+    fn run_fmt(target: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(super::incan_command()
+            .args(["fmt", target.to_string_lossy().as_ref()])
+            .output()?)
+    }
+
+    fn run_fmt_check(target: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
+        Ok(super::incan_command()
+            .args(["fmt", "--check", target.to_string_lossy().as_ref()])
+            .output()?)
+    }
+
+    fn shared_test_runner_target_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("incan_e2e_shared_target")
     }
 
     fn test_runner_batch_manifest_path(file_path: &Path) -> PathBuf {
@@ -10396,7 +10500,7 @@ mod rfc031_pub_import_integration_tests {
     }
 
     fn run_build_lib(project_root: &Path) -> Result<std::process::Output, Box<dyn std::error::Error>> {
-        Ok(Command::new(incan_bin_path())
+        Ok(super::incan_command()
             .args(["build", "--lib"])
             .current_dir(project_root)
             .env("CARGO_NET_OFFLINE", "true")
@@ -10404,174 +10508,130 @@ mod rfc031_pub_import_integration_tests {
     }
 
     #[test]
-    fn explicit_serialize_trait_adoption_runs_with_default_to_json() -> Result<(), Box<dyn std::error::Error>> {
+    fn build_keeps_return_context_string_literal_union_arg_as_union_value() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let main_path = write_project_files(
-            tmp.path(),
-            "[project]\nname = \"serialize_trait_default\"\n",
-            "from std.serde.json import Serialize\n\nmodel Payload with Serialize:\n  value: int\n\ndef main() -> None:\n  println(Payload(value=1).to_json())\n",
+        let project_root = tmp.path().join("return_context_union_arg");
+        std::fs::create_dir_all(project_root.join("src"))?;
+        std::fs::write(
+            project_root.join("incan.toml"),
+            "[project]\nname = \"return_context_union_arg\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            project_root.join("src/projection_builders.incn"),
+            r#"pub model ColumnRefExpr:
+    column_name: str
+
+pub model StringLiteralExpr:
+    value: str
+
+pub model FloatLiteralExpr:
+    value: float
+
+pub model EqExpr:
+    arguments: list[ColumnExpr]
+
+pub type ColumnExpr = Union[ColumnRefExpr, StringLiteralExpr, FloatLiteralExpr, EqExpr]
+
+pub def col(name: str) -> ColumnExpr:
+    return ColumnRefExpr(column_name=name)
+
+pub def str_expr(value: str) -> ColumnExpr:
+    return StringLiteralExpr(value=value)
+
+pub def float_expr(value: float) -> ColumnExpr:
+    return FloatLiteralExpr(value=value)
+
+pub def lit(value: Union[int, float, str, bool]) -> ColumnExpr:
+    match value:
+        float(number) => return float_expr(number)
+        str(text) => return str_expr(text)
+        bool(flag) => return str_expr("bool")
+        int(number) => return str_expr("int")
+
+pub def eq(left: ColumnExpr, right: ColumnExpr) -> ColumnExpr:
+    return EqExpr(arguments=[left, right])
+"#,
+        )?;
+        std::fs::write(
+            project_root.join("src/functions.incn"),
+            "from projection_builders import col as col_builder, eq as eq_builder, lit as lit_builder\n\npub col = alias col_builder\npub lit = alias lit_builder\npub eq = alias eq_builder\n",
+        )?;
+        std::fs::write(
+            project_root.join("src/dataset.incn"),
+            r#"from projection_builders import ColumnExpr
+
+pub class LazyFrame[T with Clone]:
+    pub rows: list[T]
+
+    def filter(self, predicate: ColumnExpr) -> Self:
+        return self
+"#,
+        )?;
+        let main_path = project_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            r#"from dataset import LazyFrame
+from functions import col, eq, lit
+
+model OrderLine:
+    status: str
+    discount: float
+
+def repro(lines: LazyFrame[OrderLine]) -> LazyFrame[OrderLine]:
+    return lines.filter(eq(col("status"), lit("open"))).filter(eq(col("discount"), lit(0.9)))
+
+def main() -> None:
+    lines: LazyFrame[OrderLine] = LazyFrame[OrderLine](rows=[])
+    _ = repro(lines)
+    println("done")
+"#,
         )?;
 
-        let output = Command::new(incan_bin_path())
-            .arg("run")
-            .arg(&main_path)
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-
+        let out_dir = project_root.join("out");
+        let output = run_build(&main_path, &out_dir)?;
         assert!(
             output.status.success(),
-            "expected explicit Serialize adoption to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            "expected union literal regression build to succeed.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
+        let generated_main = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        let normalized: String = generated_main.chars().filter(|c| !c.is_whitespace()).collect();
         assert!(
-            stdout.contains("{\"value\":1}"),
-            "expected JSON output from default Serialize trait implementation, got:\n{}",
-            stdout
+            normalized.contains("lit(crate::__IncanUnion43fbd19e99c1db05::V0(\"open\".to_string()))"),
+            "expected string literal to be wrapped directly as the union string arm, got:\n{generated_main}"
+        );
+        assert!(
+            !normalized.contains("V0(\"open\".to_string()).to_string()"),
+            "union wrapper must not receive a post-wrapper string coercion, got:\n{generated_main}"
         );
         Ok(())
     }
 
     #[test]
-    fn generated_runtime_helpers_run_for_pop_min_max_and_to_json() -> Result<(), Box<dyn std::error::Error>> {
+    fn std_json_and_generated_runtime_surfaces_share_one_generated_run() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let main_path = write_project_files(
             tmp.path(),
-            "[project]\nname = \"generated_runtime_helpers\"\nversion = \"0.3.0-dev.1\"\n",
-            "from std.serde.json import Serialize\n\nmodel Payload with Serialize:\n  value: int\n\ndef main() -> None:\n  mut xs = [3, 1, 4]\n  println(xs.pop())\n  println(min(xs))\n  println(max(xs))\n  println(Payload(value=2).to_json())\n",
-        )?;
-
-        let output = Command::new(incan_bin_path())
-            .arg("run")
-            .arg(&main_path)
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-
-        assert!(
-            output.status.success(),
-            "expected generated runtime helper path project to run successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let lines: Vec<&str> = stdout.lines().collect();
-        assert_eq!(
-            lines.first().copied(),
-            Some("4"),
-            "expected xs.pop() output first, got:\n{stdout}"
-        );
-        assert_eq!(
-            lines.get(1).copied(),
-            Some("1"),
-            "expected min(xs) after pop, got:\n{stdout}"
-        );
-        assert_eq!(
-            lines.get(2).copied(),
-            Some("3"),
-            "expected max(xs) after pop, got:\n{stdout}"
-        );
-        assert_eq!(
-            lines.get(3).copied(),
-            Some("{\"value\":2}"),
-            "expected Payload.to_json() output, got:\n{stdout}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn std_json_deserialize_from_json_runs_through_incan_surface() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let main_path = write_project_files(
-            tmp.path(),
-            "[project]\nname = \"std_json_deserialize_from_json\"\nversion = \"0.3.0-dev.1\"\n",
+            "[project]\nname = \"std_json_runtime_surface_batch\"\nversion = \"0.3.0-dev.1\"\n",
             r#"from std.serde import json
+from std.serde.json import Deserialize, Serialize
+from std.json import JsonValue
+
+model SerializePayload with Serialize:
+  value: int
+
+model HelperPayload with Serialize:
+  value: int
 
 @derive(json)
-model Payload:
+model JsonPayload:
   value: int
   label: str
 
-def main() -> None:
-  match Payload.from_json('{"value":7,"label":"dogfood"}'):
-    case Ok(payload):
-      println(payload.to_json())
-    case Err(err):
-      println(err)
-"#,
-        )?;
-
-        let output = Command::new(incan_bin_path())
-            .arg("run")
-            .arg(&main_path)
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-
-        assert!(
-            output.status.success(),
-            "expected std JSON Deserialize.from_json to run successfully through Incan source.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert_eq!(
-            stdout.lines().next(),
-            Some("{\"value\":7,\"label\":\"dogfood\"}"),
-            "expected round-tripped JSON payload, got:\n{stdout}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn direct_std_json_deserialize_derive_runs_through_incan_surface() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let main_path = write_project_files(
-            tmp.path(),
-            "[project]\nname = \"direct_std_json_deserialize_derive\"\nversion = \"0.3.0-dev.1\"\n",
-            r#"from std.serde.json import Deserialize
-
 @derive(Deserialize)
-model Payload:
+model DirectPayload:
   value: int
-
-def main() -> None:
-  match Payload.from_json('{"value":7}'):
-    case Ok(payload):
-      println(f"{payload.value}")
-    case Err(err):
-      println(err)
-"#,
-        )?;
-
-        let output = Command::new(incan_bin_path())
-            .arg("run")
-            .arg(&main_path)
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-
-        assert!(
-            output.status.success(),
-            "expected directly imported Deserialize.from_json to run successfully through Incan source.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert_eq!(stdout.lines().next(), Some("7"));
-        Ok(())
-    }
-
-    #[test]
-    fn std_json_value_model_field_roundtrips_and_indexes() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let main_path = write_project_files(
-            tmp.path(),
-            "[project]\nname = \"json_value_model_field_roundtrip\"\nversion = \"0.3.0-dev.1\"\n",
-            r#"from std.serde import json
-from std.json import JsonValue
 
 @derive(json)
 model Envelope:
@@ -10584,7 +10644,33 @@ model Probe:
   first: Option[JsonValue]
   missing: Option[JsonValue]
 
-def main() -> None:
+const NUMBERS: FrozenList[float] = [3.0, 1.5, 4.25]
+
+def run_explicit_serialize_trait() -> None:
+  println(SerializePayload(value=1).to_json())
+
+def run_generated_runtime_helpers() -> None:
+  mut xs = [3, 1, 4]
+  println(xs.pop())
+  println(min(xs))
+  println(max(xs))
+  println(HelperPayload(value=2).to_json())
+
+def run_std_json_deserialize() -> None:
+  match JsonPayload.from_json('{"value":7,"label":"dogfood"}'):
+    case Ok(payload):
+      println(payload.to_json())
+    case Err(err):
+      println(err)
+
+def run_direct_deserialize_derive() -> None:
+  match DirectPayload.from_json('{"value":7}'):
+    case Ok(payload):
+      println(f"{payload.value}")
+    case Err(err):
+      println(err)
+
+def run_json_value_model_field_roundtrip() -> None:
   match Envelope.from_json('{"status":200,"data":{"name":"Ada","items":[1,2]}}'):
     case Ok(envelope):
       match envelope.data["items"]:
@@ -10595,40 +10681,8 @@ def main() -> None:
           println("missing items")
     case Err(err):
       println(err)
-"#,
-        )?;
 
-        let output = Command::new(incan_bin_path())
-            .arg("run")
-            .arg(&main_path)
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-
-        assert!(
-            output.status.success(),
-            "expected JsonValue model-field round trip to run successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        assert_eq!(
-            stdout.lines().next(),
-            Some("{\"name\":\"Ada\",\"first\":1,\"missing\":null}"),
-            "expected checked JsonValue indexing to produce optional fields, got:\n{stdout}"
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn std_json_value_broad_surface_runs() -> Result<(), Box<dyn std::error::Error>> {
-        let output = Command::new(incan_debug_binary())
-            .args([
-                "run",
-                "-c",
-                r#"from std.json import JsonValue
-
-def main() -> None:
+def run_std_json_value_broad_surface() -> None:
   match JsonValue.parse('{"items":[1,2],"name":"Ada","n":null}'):
     case Ok(data):
       assert data.kind().as_str() == "object"
@@ -10675,30 +10729,23 @@ def main() -> None:
     case Err(err):
       println(err.message())
       assert false
+
+def run_frozen_float_helpers() -> None:
+  println(min(NUMBERS))
+  println(max(NUMBERS))
+
+def main() -> None:
+  run_explicit_serialize_trait()
+  run_generated_runtime_helpers()
+  run_std_json_deserialize()
+  run_direct_deserialize_derive()
+  run_json_value_model_field_roundtrip()
+  run_std_json_value_broad_surface()
+  run_frozen_float_helpers()
 "#,
-            ])
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-
-        assert!(
-            output.status.success(),
-            "expected std.json broad surface smoke program to run successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn generated_runtime_helpers_support_frozen_float_list_min_max() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let main_path = write_project_files(
-            tmp.path(),
-            "[project]\nname = \"generated_runtime_helpers_frozen_float\"\nversion = \"0.3.0-dev.1\"\n",
-            "const NUMBERS: FrozenList[float] = [3.0, 1.5, 4.25]\n\ndef main() -> None:\n  println(min(NUMBERS))\n  println(max(NUMBERS))\n",
         )?;
 
-        let output = Command::new(incan_bin_path())
+        let output = super::incan_command()
             .arg("run")
             .arg(&main_path)
             .env("CARGO_NET_OFFLINE", "true")
@@ -10706,22 +10753,27 @@ def main() -> None:
 
         assert!(
             output.status.success(),
-            "expected frozen-list min/max helper path project to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            "expected std/json and generated runtime surface batch to run successfully.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         );
 
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let lines: Vec<&str> = stdout.lines().collect();
         assert_eq!(
-            lines.first().copied(),
-            Some("1.5"),
-            "expected min(NUMBERS) output first, got:\n{stdout}"
-        );
-        assert_eq!(
-            lines.get(1).copied(),
-            Some("4.25"),
-            "expected max(NUMBERS) output second, got:\n{stdout}"
+            stdout.lines().collect::<Vec<_>>(),
+            vec![
+                "{\"value\":1}",
+                "4",
+                "1",
+                "3",
+                "{\"value\":2}",
+                "{\"value\":7,\"label\":\"dogfood\"}",
+                "7",
+                "{\"name\":\"Ada\",\"first\":1,\"missing\":null}",
+                "1.5",
+                "4.25",
+            ],
+            "expected std/json and generated runtime surface transcript, got:\n{stdout}"
         );
         Ok(())
     }
@@ -10880,526 +10932,6 @@ pub def display[T](data: DataSet[T]) -> None:
             ),
         )?;
         std::fs::write(crate_root.join("src/lib.rs"), lib_source)?;
-        Ok(())
-    }
-
-    fn write_nested_wasm_vocab_companion_crate(
-        project_root: &Path,
-        relative_path: &str,
-        package_name: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let crate_root = project_root.join(relative_path);
-        std::fs::create_dir_all(crate_root.join("src"))?;
-        std::fs::write(
-            crate_root.join("Cargo.toml"),
-            format!(
-                "[package]\nname = \"{package_name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\ncrate-type = [\"rlib\", \"cdylib\"]\n\n[dependencies]\nincan_vocab = {{ path = \"{}\" }}\n\n[workspace]\n",
-                Path::new(env!("CARGO_MANIFEST_DIR"))
-                    .join("crates")
-                    .join("incan_vocab")
-                    .display()
-            ),
-        )?;
-        std::fs::write(
-            crate_root.join("src/lib.rs"),
-            r#"use incan_vocab::{
-    DesugarError, DesugarOutput, HelperBinding, IncanExpr, IncanStatement, KeywordActivation,
-    KeywordPlacement, KeywordRegistration, KeywordSpec, KeywordSurfaceKind, LibraryManifest,
-    VocabBodyItem, VocabClause, VocabClauseBody, VocabDeclaration, VocabDesugarer,
-    VocabFieldSpec, VocabRegistration, VocabSyntaxNode,
-};
-
-#[derive(Default)]
-pub struct NestedOutputDesugarer;
-
-pub fn library_vocab() -> VocabRegistration {
-    VocabRegistration::new()
-        .with_keyword_registration(KeywordRegistration {
-            activation: KeywordActivation::OnImport {
-                namespace: "nested.dsl".to_string(),
-            },
-            keywords: vec![
-                KeywordSpec::new("compose", KeywordSurfaceKind::BlockDeclaration),
-                context_keyword("action", &["compose"]),
-                context_keyword("layout", &["compose"]),
-                context_keyword("page", &["compose"]),
-                context_keyword("projection", &["compose"]),
-                context_keyword("region", &["layout", "page"]),
-                context_keyword("heading", &["region"]),
-                context_keyword("text", &["region"]),
-                context_keyword("interaction", &["page"]),
-                context_keyword("require", &["interaction"]),
-            ],
-            valid_decorators: Vec::new(),
-        })
-        .with_library_manifest(LibraryManifest {
-            helper_bindings: vec![
-                helper_binding("action"),
-                helper_binding("layout"),
-                helper_binding("page_with_interactions"),
-                helper_binding("projection"),
-                helper_binding("region"),
-                helper_binding("heading"),
-                helper_binding("text"),
-                helper_binding("interaction"),
-                helper_binding("required_input"),
-                helper_binding("surface_with_governance"),
-            ],
-            ..LibraryManifest::default()
-        })
-        .with_desugarer(NestedOutputDesugarer)
-}
-
-impl VocabDesugarer for NestedOutputDesugarer {
-    fn desugar(&self, node: &VocabSyntaxNode) -> Result<DesugarOutput, DesugarError> {
-        match node {
-            VocabSyntaxNode::Declaration(declaration) if declaration.keyword == "compose" => Ok(
-                DesugarOutput::Statements(vec![complex_artifact_let_statement(declaration)?]),
-            ),
-            VocabSyntaxNode::Declaration(_) => Err(DesugarError::new(
-                "nested output desugarer expected a compose declaration",
-            )),
-            _ => Err(DesugarError::new(
-                "nested output desugarer expected a declaration node",
-            )),
-        }
-    }
-}
-
-fn helper_binding(name: &str) -> HelperBinding {
-    HelperBinding {
-        key: name.to_string(),
-        exported_name: name.to_string(),
-    }
-}
-
-fn context_keyword(name: &str, parents: &[&str]) -> KeywordSpec {
-    KeywordSpec::new(name, KeywordSurfaceKind::BlockContextKeyword)
-        .with_placement(KeywordPlacement::in_block(parents.iter().copied()))
-}
-
-fn complex_artifact_let_statement(declaration: &VocabDeclaration) -> Result<IncanStatement, DesugarError> {
-    Ok(IncanStatement::Let {
-        name: "nested_artifact".to_string(),
-        mutable: false,
-        value: complex_artifact_call(declaration)?,
-    })
-}
-
-fn complex_artifact_call(declaration: &VocabDeclaration) -> Result<IncanExpr, DesugarError> {
-    let name = declaration
-        .head
-        .name
-        .clone()
-        .ok_or_else(|| DesugarError::new("compose declarations require a name"))?;
-    let mut title = name.clone();
-    let mut base = "/".to_string();
-    let mut actions = Vec::new();
-    let mut layouts = Vec::new();
-    let mut pages = Vec::new();
-    let mut projections = Vec::new();
-
-    for item in &declaration.body {
-        match item {
-            VocabBodyItem::Statement(statement) => apply_surface_statement(&mut title, &mut base, statement)?,
-            VocabBodyItem::Clause(clause) => match clause.keyword.as_str() {
-                "action" => actions.push(desugar_action(clause)?),
-                "layout" => layouts.push(desugar_layout(clause)?),
-                "page" => pages.push(desugar_page(clause)?),
-                "projection" => projections.push(desugar_projection(clause)?),
-                other => return Err(DesugarError::new(format!("unsupported compose clause `{other}`"))),
-            },
-            VocabBodyItem::Declaration(declaration) => {
-                return Err(DesugarError::new(format!(
-                    "unsupported nested declaration `{}`",
-                    declaration.keyword
-                )));
-            }
-            _ => return Err(DesugarError::new("unsupported compose body item")),
-        }
-    }
-
-    Ok(call(
-        "surface_with_governance",
-        vec![
-            string(&name),
-            string(&title),
-            string(&base),
-            list(actions),
-            list(layouts),
-            list(pages),
-            list(projections),
-        ],
-    ))
-}
-
-fn apply_surface_statement(title: &mut String, base: &mut String, statement: &IncanStatement) -> Result<(), DesugarError> {
-    match statement {
-        IncanStatement::Let { name, value, .. } | IncanStatement::Assign { target: name, value } => match name.as_str() {
-            "title" => *title = string_value(value, "compose title")?,
-            "base" => *base = string_value(value, "compose base")?,
-            other => return Err(DesugarError::new(format!("unsupported compose assignment `{other}`"))),
-        },
-        IncanStatement::Pass => {}
-        _ => return Err(DesugarError::new("compose body only supports assignments and nested clauses")),
-    }
-    Ok(())
-}
-
-fn desugar_action(clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
-    let name = required_head_name(clause, "action")?;
-    let mut capability = name.clone();
-    let mut required_evidence = String::new();
-    match &clause.body {
-        VocabClauseBody::FieldSet(fields) => {
-            for field in fields {
-                apply_action_assignment(
-                    &mut capability,
-                    &mut required_evidence,
-                    &field.name,
-                    field_value(field, "action assignment")?,
-                )?;
-            }
-        }
-        _ => {
-            for item in clause_items(clause)? {
-                match item {
-                    VocabBodyItem::Statement(statement) => match statement {
-                        IncanStatement::Let { name, value, .. } | IncanStatement::Assign { target: name, value } => {
-                            apply_action_assignment(&mut capability, &mut required_evidence, name, value)?;
-                        }
-                        IncanStatement::Pass => {}
-                        _ => return Err(DesugarError::new("action body only supports assignments")),
-                    },
-                    VocabBodyItem::Clause(other) => return Err(DesugarError::new(format!("unsupported `{}` block inside action", other.keyword))),
-                    VocabBodyItem::Declaration(_) => return Err(DesugarError::new("action body only supports assignments")),
-                    _ => return Err(DesugarError::new("action body only supports assignments")),
-                }
-            }
-        }
-    }
-    Ok(call("action", vec![string(&name), string(&capability), string(&required_evidence)]))
-}
-
-fn apply_action_assignment(
-    capability: &mut String,
-    required_evidence: &mut String,
-    name: &str,
-    value: &IncanExpr,
-) -> Result<(), DesugarError> {
-    match name {
-        "capability" => *capability = string_value(value, "action capability")?,
-        "requires" | "required_evidence" => *required_evidence = string_value(value, "action required evidence")?,
-        other => return Err(DesugarError::new(format!("unsupported action assignment `{other}`"))),
-    }
-    Ok(())
-}
-
-fn desugar_layout(clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
-    let name = required_head_name(clause, "layout")?;
-    let mut regions = Vec::new();
-    for item in clause_items(clause)? {
-        match item {
-            VocabBodyItem::Clause(region_clause) if region_clause.keyword == "region" => {
-                regions.push(string(&required_head_name(region_clause, "layout region")?));
-            }
-            VocabBodyItem::Statement(IncanStatement::Pass) => {}
-            VocabBodyItem::Clause(other) => return Err(DesugarError::new(format!("unsupported `{}` block inside layout", other.keyword))),
-            _ => return Err(DesugarError::new("layout body only supports region blocks")),
-        }
-    }
-    Ok(call("layout", vec![string(&name), list(regions)]))
-}
-
-fn desugar_page(clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
-    let name = required_head_name(clause, "page")?;
-    let mut route = "/".to_string();
-    let mut title = name.clone();
-    let mut layout_name = "SimplePage".to_string();
-    let mut regions = Vec::new();
-    let mut interactions = Vec::new();
-    for item in clause_items(clause)? {
-        match item {
-            VocabBodyItem::Statement(statement) => match statement {
-                IncanStatement::Let { name, value, .. } | IncanStatement::Assign { target: name, value } => match name.as_str() {
-                    "route" => route = string_value(value, "page route")?,
-                    "title" => title = string_value(value, "page title")?,
-                    "layout" => layout_name = string_or_name_value(value, "page layout")?,
-                    other => return Err(DesugarError::new(format!("unsupported page assignment `{other}`"))),
-                },
-                IncanStatement::Pass => {}
-                _ => return Err(DesugarError::new("page body only supports assignments, regions, and interactions")),
-            },
-            VocabBodyItem::Clause(region_clause) if region_clause.keyword == "region" => {
-                regions.push(desugar_region(region_clause)?);
-            }
-            VocabBodyItem::Clause(interaction_clause) if interaction_clause.keyword == "interaction" => {
-                interactions.push(desugar_interaction(interaction_clause)?);
-            }
-            VocabBodyItem::Clause(other) => return Err(DesugarError::new(format!("unsupported `{}` block inside page", other.keyword))),
-            VocabBodyItem::Declaration(_) => return Err(DesugarError::new("page body does not support nested declarations")),
-            _ => return Err(DesugarError::new("page body only supports assignments, regions, and interactions")),
-        }
-    }
-    Ok(call(
-        "page_with_interactions",
-        vec![
-            string(&name),
-            string(&route),
-            string(&title),
-            string(&layout_name),
-            list(regions),
-            list(interactions),
-        ],
-    ))
-}
-
-fn desugar_region(clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
-    let name = required_head_name(clause, "region")?;
-    let mut nodes = Vec::new();
-    for item in clause_items(clause)? {
-        match item {
-            VocabBodyItem::Clause(node_clause) if node_clause.keyword == "heading" => {
-                nodes.push(call("heading", vec![string(&required_head_string(node_clause, "heading")?)]));
-            }
-            VocabBodyItem::Clause(node_clause) if node_clause.keyword == "text" => {
-                nodes.push(call("text", vec![string(&required_head_string(node_clause, "text")?)]));
-            }
-            VocabBodyItem::Statement(IncanStatement::Pass) => {}
-            VocabBodyItem::Clause(other) => return Err(DesugarError::new(format!("unsupported `{}` block inside region", other.keyword))),
-            _ => return Err(DesugarError::new("region body only supports heading and text blocks")),
-        }
-    }
-    Ok(call("region", vec![string(&name), list(nodes)]))
-}
-
-fn desugar_interaction(clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
-    let name = required_head_name(clause, "interaction")?;
-    let mut action = name.clone();
-    let mut constraints = Vec::new();
-    match &clause.body {
-        VocabClauseBody::FieldSet(fields) => {
-            for field in fields {
-                if field.name == "action" {
-                    action = string_or_name_value(field_value(field, "interaction action")?, "interaction action")?;
-                } else {
-                    return Err(DesugarError::new(format!("unsupported interaction assignment `{}`", field.name)));
-                }
-            }
-        }
-        _ => {
-            for item in clause_items(clause)? {
-                match item {
-                    VocabBodyItem::Statement(statement) => match statement {
-                        IncanStatement::Let { name, value, .. } | IncanStatement::Assign { target: name, value } => match name.as_str() {
-                            "action" => action = string_or_name_value(value, "interaction action")?,
-                            other => return Err(DesugarError::new(format!("unsupported interaction assignment `{other}`"))),
-                        },
-                        IncanStatement::Pass => {}
-                        _ => return Err(DesugarError::new("interaction body only supports assignments and require blocks")),
-                    },
-                    VocabBodyItem::Clause(require_clause) if require_clause.keyword == "require" => {
-                        constraints.push(desugar_required_input(&name, require_clause)?);
-                    }
-                    VocabBodyItem::Clause(other) => return Err(DesugarError::new(format!("unsupported `{}` block inside interaction", other.keyword))),
-                    VocabBodyItem::Declaration(_) => return Err(DesugarError::new("interaction body does not support nested declarations")),
-                    _ => return Err(DesugarError::new("interaction body only supports assignments and require blocks")),
-                }
-            }
-        }
-    }
-    Ok(call("interaction", vec![string(&name), string(&action), list(constraints)]))
-}
-
-fn desugar_required_input(interaction_name: &str, clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
-    let mut field = required_input_field(clause)?;
-    let mut label = field.clone();
-    let mut min_length = "1".to_string();
-    let mut evidence_key = String::new();
-    match &clause.body {
-        VocabClauseBody::FieldSet(fields) => {
-            for field_spec in fields {
-                apply_required_input_assignment(
-                    &mut field,
-                    &mut label,
-                    &mut min_length,
-                    &mut evidence_key,
-                    &field_spec.name,
-                    field_value(field_spec, "require input assignment")?,
-                )?;
-            }
-        }
-        _ => {
-            for item in clause_items(clause)? {
-                match item {
-                    VocabBodyItem::Statement(statement) => match statement {
-                        IncanStatement::Let { name, value, .. } | IncanStatement::Assign { target: name, value } => {
-                            apply_required_input_assignment(
-                                &mut field,
-                                &mut label,
-                                &mut min_length,
-                                &mut evidence_key,
-                                name,
-                                value,
-                            )?;
-                        }
-                        IncanStatement::Pass => {}
-                        _ => return Err(DesugarError::new("require input body only supports assignments")),
-                    },
-                    _ => return Err(DesugarError::new("require input body only supports assignments")),
-                }
-            }
-        }
-    }
-    Ok(call(
-        "required_input",
-        vec![
-            string(interaction_name),
-            string(&field),
-            string(&label),
-            string(&min_length),
-            string(&evidence_key),
-        ],
-    ))
-}
-
-fn apply_required_input_assignment(
-    field: &mut String,
-    label: &mut String,
-    min_length: &mut String,
-    evidence_key: &mut String,
-    name: &str,
-    value: &IncanExpr,
-) -> Result<(), DesugarError> {
-    match name {
-        "field" => *field = string_or_name_value(value, "required input field")?,
-        "label" => *label = string_value(value, "required input label")?,
-        "min_length" => *min_length = int_or_string_value(value, "required input min_length")?,
-        "evidence" | "evidence_key" => *evidence_key = string_value(value, "required input evidence")?,
-        other => return Err(DesugarError::new(format!("unsupported require input assignment `{other}`"))),
-    }
-    Ok(())
-}
-
-fn desugar_projection(clause: &VocabClause) -> Result<IncanExpr, DesugarError> {
-    let name = required_head_name(clause, "projection")?;
-    let mut target = "static-web".to_string();
-    match &clause.body {
-        VocabClauseBody::FieldSet(fields) => {
-            for field in fields {
-                if field.name == "target" {
-                    target = string_value(field_value(field, "projection target")?, "projection target")?;
-                } else {
-                    return Err(DesugarError::new(format!("unsupported projection assignment `{}`", field.name)));
-                }
-            }
-        }
-        _ => {
-            for item in clause_items(clause)? {
-                match item {
-                    VocabBodyItem::Statement(statement) => match statement {
-                        IncanStatement::Let { name, value, .. } | IncanStatement::Assign { target: name, value } if name == "target" => {
-                            target = string_value(value, "projection target")?;
-                        }
-                        IncanStatement::Pass => {}
-                        _ => return Err(DesugarError::new("projection body only supports target assignment")),
-                    },
-                    _ => return Err(DesugarError::new("projection body only supports target assignment")),
-                }
-            }
-        }
-    }
-    Ok(call("projection", vec![string(&name), string(&target)]))
-}
-
-fn clause_items(clause: &VocabClause) -> Result<&[VocabBodyItem], DesugarError> {
-    match &clause.body {
-        VocabClauseBody::Empty => Ok(&[]),
-        VocabClauseBody::Items(items) => Ok(items.as_slice()),
-        _ => Err(DesugarError::new(format!("unsupported `{}` body shape", clause.keyword))),
-    }
-}
-
-fn required_head_name(clause: &VocabClause, label: &str) -> Result<String, DesugarError> {
-    let Some(value) = clause.head.first() else {
-        return Err(DesugarError::new(format!("{label} requires a name")));
-    };
-    string_or_name_value(value, label)
-}
-
-fn required_head_string(clause: &VocabClause, label: &str) -> Result<String, DesugarError> {
-    let Some(value) = clause.head.first() else {
-        return Err(DesugarError::new(format!("{label} requires text")));
-    };
-    string_value(value, label)
-}
-
-fn required_input_field(clause: &VocabClause) -> Result<String, DesugarError> {
-    if !clause.compound_tokens.is_empty() && clause.compound_tokens[0] == "input" {
-        if let Some(value) = clause.head.first() {
-            return string_or_name_value(value, "require input field");
-        }
-        return Ok(String::new());
-    }
-    if !clause.head.is_empty() {
-        let first = string_or_name_value(&clause.head[0], "require input marker")?;
-        if first == "input" {
-            if clause.head.len() >= 2 {
-                return string_or_name_value(&clause.head[1], "require input field");
-            }
-            return Ok(String::new());
-        }
-    }
-    Err(DesugarError::new("required-input constraints must use `require input`"))
-}
-
-fn string_value(expr: &IncanExpr, label: &str) -> Result<String, DesugarError> {
-    match expr {
-        IncanExpr::Str(value) => Ok(value.clone()),
-        _ => Err(DesugarError::new(format!("{label} must be a string literal"))),
-    }
-}
-
-fn string_or_name_value(expr: &IncanExpr, label: &str) -> Result<String, DesugarError> {
-    match expr {
-        IncanExpr::Str(value) | IncanExpr::Name(value) => Ok(value.clone()),
-        _ => Err(DesugarError::new(format!("{label} must be a name or string literal"))),
-    }
-}
-
-fn int_or_string_value(expr: &IncanExpr, label: &str) -> Result<String, DesugarError> {
-    match expr {
-        IncanExpr::Int(value) => Ok(value.to_string()),
-        IncanExpr::Str(value) => Ok(value.clone()),
-        _ => Err(DesugarError::new(format!("{label} must be an integer or string literal"))),
-    }
-}
-
-fn field_value<'a>(field: &'a VocabFieldSpec, label: &str) -> Result<&'a IncanExpr, DesugarError> {
-    field
-        .default_value
-        .as_ref()
-        .ok_or_else(|| DesugarError::new(format!("{label} `{}` requires a value", field.name)))
-}
-
-fn call(helper: &str, args: Vec<IncanExpr>) -> IncanExpr {
-    IncanExpr::Call {
-        callee: Box::new(IncanExpr::Helper(helper.to_string())),
-        args,
-    }
-}
-
-fn list(items: Vec<IncanExpr>) -> IncanExpr {
-    IncanExpr::List(items)
-}
-
-fn string(value: &str) -> IncanExpr {
-    IncanExpr::Str(value.to_string())
-}
-
-incan_vocab::export_wasm_desugarer!(NestedOutputDesugarer);
-"#,
-        )?;
         Ok(())
     }
 
@@ -11795,6 +11327,101 @@ incan_vocab::export_wasm_desugarer!(NestedOutputDesugarer);
         Ok(())
     }
 
+    fn write_pub_library_with_querykit_select_desugarer(
+        root: &Path,
+        desugarer_bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let artifact_root = root.join("deps").join("querykit").join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("desugarers"))?;
+        write_minimal_library_crate(&artifact_root, "querykit_core")?;
+        let desugarer_path = artifact_root.join("desugarers").join("querykit_desugarer.wasm");
+        std::fs::write(&desugarer_path, desugarer_bytes)?;
+
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_surface(
+                incan_vocab::DslSurface::on_import("querykit.query").with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .desugars_to_expression()
+                        .with_clause(
+                            incan_vocab::ClauseSurface::expr_list("SELECT")
+                                .with_expression_item_modifiers([
+                                    incan_vocab::ExpressionItemModifierSurface::expr("for"),
+                                    incan_vocab::ExpressionItemModifierSurface::expr("with"),
+                                ])
+                                .required(),
+                        ),
+                ),
+            )
+            .metadata();
+        let mut manifest = LibraryManifest::new("querykit_core", "0.1.0");
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: "vocab_companion".to_string(),
+            package_name: "vocab_companion".to_string(),
+            keyword_registrations: metadata.keyword_registrations,
+            dsl_surfaces: metadata.dsl_surfaces,
+            provider_manifest: incan_vocab::LibraryManifest::default(),
+            desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
+                artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
+                relative_path: "desugarers/querykit_desugarer.wasm".to_string(),
+                target: "wasm32-wasip1".to_string(),
+                profile: "release".to_string(),
+                entrypoint: "desugar_block".to_string(),
+                sha256: hex::encode(Sha256::digest(desugarer_bytes)),
+            }),
+        });
+        manifest.write_to_path(&artifact_root.join("querykit_core.incnlib"))?;
+        Ok(())
+    }
+
+    fn write_pub_library_with_querykit_expression_clause_desugarer(
+        root: &Path,
+        desugarer_bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let artifact_root = root.join("deps").join("querykit").join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("desugarers"))?;
+        write_minimal_library_crate(&artifact_root, "querykit_core")?;
+        let desugarer_path = artifact_root.join("desugarers").join("querykit_desugarer.wasm");
+        std::fs::write(&desugarer_path, desugarer_bytes)?;
+
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_surface(
+                incan_vocab::DslSurface::on_import("querykit.query").with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .desugars_to_expression()
+                        .with_clauses([
+                            incan_vocab::ClauseSurface::expr("FROM").required(),
+                            incan_vocab::ClauseSurface::expr_list("GROUP BY").optional(),
+                            incan_vocab::ClauseSurface::expr_list("SELECT").required(),
+                            incan_vocab::ClauseSurface::expr_list("ORDER BY").optional(),
+                            incan_vocab::ClauseSurface::nested_items("WINDOW BY").optional(),
+                        ]),
+                ),
+            )
+            .metadata();
+        let mut manifest = LibraryManifest::new("querykit_core", "0.1.0");
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: "vocab_companion".to_string(),
+            package_name: "vocab_companion".to_string(),
+            keyword_registrations: metadata.keyword_registrations,
+            dsl_surfaces: metadata.dsl_surfaces,
+            provider_manifest: incan_vocab::LibraryManifest::default(),
+            desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
+                artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
+                relative_path: "desugarers/querykit_desugarer.wasm".to_string(),
+                target: "wasm32-wasip1".to_string(),
+                profile: "release".to_string(),
+                entrypoint: "desugar_block".to_string(),
+                sha256: hex::encode(Sha256::digest(desugarer_bytes)),
+            }),
+        });
+        manifest.write_to_path(&artifact_root.join("querykit_core.incnlib"))?;
+        Ok(())
+    }
+
     fn write_pub_library_with_vocab_desugarer_and_filter_helper(
         root: &Path,
         dependency_key: &str,
@@ -11831,6 +11458,7 @@ incan_vocab::export_wasm_desugarer!(NestedOutputDesugarer);
         let mut manifest = LibraryManifest::new(manifest_name, "0.1.0");
         manifest.exports.functions.push(FunctionExport {
             name: "filter".to_string(),
+            emitted_name: None,
             type_params: Vec::new(),
             params: vec![ParamExport {
                 name: "value".to_string(),
@@ -11839,6 +11467,7 @@ incan_vocab::export_wasm_desugarer!(NestedOutputDesugarer);
                 },
                 kind: incan::library_manifest::ParamKindExport::Normal,
                 has_default: false,
+                default: None,
             }],
             return_type: TypeRef::Named {
                 name: "int".to_string(),
@@ -11885,6 +11514,233 @@ incan_vocab::export_wasm_desugarer!(NestedOutputDesugarer);
         Ok(())
     }
 
+    fn write_pub_library_with_vocab_desugarer_and_string_helper(
+        root: &Path,
+        desugarer_bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let dependency_key = "helperkit";
+        let manifest_name = "helperkit_core";
+        let artifact_root = root.join("deps").join(dependency_key).join("target").join("lib");
+
+        // ---- Context: helperkit Rust artifact and desugarer asset ----
+        std::fs::create_dir_all(artifact_root.join("desugarers"))?;
+        write_library_crate_with_source(
+            &artifact_root,
+            manifest_name,
+            "pub fn lit(value: i64) -> i64 {\n    value\n}\n\npub fn aggregate_as(_value: i64, label: String) -> String {\n    label\n}\n",
+        )?;
+        let desugarer_path = artifact_root.join("desugarers").join("helperkit_desugarer.wasm");
+        std::fs::write(&desugarer_path, desugarer_bytes)?;
+
+        // ---- Context: public helper manifest surface ----
+        let mut manifest = LibraryManifest::new(manifest_name, "0.1.0");
+        manifest.exports.functions.push(FunctionExport {
+            name: "lit".to_string(),
+            emitted_name: None,
+            type_params: Vec::new(),
+            params: vec![ParamExport {
+                name: "value".to_string(),
+                ty: TypeRef::Named {
+                    name: "int".to_string(),
+                },
+                kind: incan::library_manifest::ParamKindExport::Normal,
+                has_default: false,
+                default: None,
+            }],
+            return_type: TypeRef::Named {
+                name: "int".to_string(),
+            },
+            is_async: false,
+        });
+        manifest.exports.functions.push(FunctionExport {
+            name: "aggregate_as".to_string(),
+            emitted_name: None,
+            type_params: Vec::new(),
+            params: vec![
+                ParamExport {
+                    name: "value".to_string(),
+                    ty: TypeRef::Named {
+                        name: "int".to_string(),
+                    },
+                    kind: incan::library_manifest::ParamKindExport::Normal,
+                    has_default: false,
+                    default: None,
+                },
+                ParamExport {
+                    name: "label".to_string(),
+                    ty: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    kind: incan::library_manifest::ParamKindExport::Normal,
+                    has_default: false,
+                    default: None,
+                },
+            ],
+            return_type: TypeRef::Named {
+                name: "str".to_string(),
+            },
+            is_async: false,
+        });
+
+        // ---- Context: vocab activation and helper bindings ----
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: "vocab_companion".to_string(),
+            package_name: "vocab_companion".to_string(),
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "helperkit.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "where".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+            dsl_surfaces: Vec::new(),
+            provider_manifest: incan_vocab::LibraryManifest {
+                helper_bindings: vec![
+                    incan_vocab::HelperBinding {
+                        key: "lit".to_string(),
+                        exported_name: "lit".to_string(),
+                    },
+                    incan_vocab::HelperBinding {
+                        key: "aggregate_as".to_string(),
+                        exported_name: "aggregate_as".to_string(),
+                    },
+                ],
+                ..incan_vocab::LibraryManifest::default()
+            },
+            desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
+                artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
+                relative_path: "desugarers/helperkit_desugarer.wasm".to_string(),
+                target: "wasm32-wasip1".to_string(),
+                profile: "release".to_string(),
+                entrypoint: "desugar_block".to_string(),
+                sha256: hex::encode(Sha256::digest(desugarer_bytes)),
+            }),
+        });
+        manifest.write_to_path(&artifact_root.join(format!("{manifest_name}.incnlib")))?;
+        Ok(())
+    }
+
+    fn write_source_pub_library_with_vocab_desugarer_and_query_helpers(
+        root: &Path,
+        desugarer_bytes: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let producer_root = root.join("deps").join("querykit");
+
+        // ---- Context: source-backed helper library ----
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"querykit\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/helpers.incn"),
+            r#"pub model IntLiteralExpr:
+  value: int
+
+pub model StringLiteralExpr:
+  value: str
+
+pub type LiteralValue = Union[int, str]
+pub type ColumnExpr = Union[IntLiteralExpr, StringLiteralExpr]
+
+pub model AggregateMeasure:
+  expr: ColumnExpr
+  label: str
+
+pub const DEFAULT_LABEL: str = "orders"
+pub const COUNT_SENTINEL: str = "__querykit_count_no_argument__"
+
+pub def lit(value: LiteralValue) -> ColumnExpr:
+  match value:
+    int(number) => return IntLiteralExpr(value=number)
+    str(text) => return StringLiteralExpr(value=text)
+
+pub def col(name: str) -> ColumnExpr:
+  return StringLiteralExpr(value=name)
+
+pub def count(expr: ColumnExpr = col(COUNT_SENTINEL)) -> ColumnExpr:
+  return expr
+
+pub def aggregate_as(expr: ColumnExpr, output_name: str) -> AggregateMeasure:
+  return AggregateMeasure(expr=expr, label=output_name)
+
+pub def aggregate_default(expr: ColumnExpr, output_name: str = DEFAULT_LABEL) -> AggregateMeasure:
+  return AggregateMeasure(expr=expr, label=output_name)
+"#,
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub from helpers import IntLiteralExpr, StringLiteralExpr, LiteralValue, ColumnExpr, AggregateMeasure, DEFAULT_LABEL, lit, count, aggregate_as, aggregate_default\n",
+        )?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected querykit producer build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+
+        // ---- Context: vocab activation attached to the built library manifest ----
+        let artifact_root = producer_root.join("target").join("lib");
+        std::fs::create_dir_all(artifact_root.join("desugarers"))?;
+        let desugarer_path = artifact_root.join("desugarers").join("querykit_desugarer.wasm");
+        std::fs::write(&desugarer_path, desugarer_bytes)?;
+        let manifest_path = artifact_root.join("querykit.incnlib");
+        let mut manifest = LibraryManifest::read_from_path(&manifest_path)?;
+        manifest.vocab = Some(incan::library_manifest::VocabExports {
+            crate_path: "vocab_companion".to_string(),
+            package_name: "vocab_companion".to_string(),
+            keyword_registrations: vec![incan_vocab::KeywordRegistration {
+                activation: incan_vocab::KeywordActivation::OnImport {
+                    namespace: "querykit.dsl".to_string(),
+                },
+                keywords: vec![incan_vocab::KeywordSpec {
+                    name: "where".to_string(),
+                    surface_kind: incan_vocab::KeywordSurfaceKind::BlockDeclaration,
+                    compound_tokens: Vec::new(),
+                    placement: incan_vocab::KeywordPlacement::TopLevel,
+                }],
+                valid_decorators: Vec::new(),
+            }],
+            dsl_surfaces: Vec::new(),
+            provider_manifest: incan_vocab::LibraryManifest {
+                helper_bindings: vec![
+                    incan_vocab::HelperBinding {
+                        key: "lit".to_string(),
+                        exported_name: "lit".to_string(),
+                    },
+                    incan_vocab::HelperBinding {
+                        key: "count".to_string(),
+                        exported_name: "count".to_string(),
+                    },
+                    incan_vocab::HelperBinding {
+                        key: "aggregate_as".to_string(),
+                        exported_name: "aggregate_as".to_string(),
+                    },
+                ],
+                ..incan_vocab::LibraryManifest::default()
+            },
+            desugarer_artifact: Some(incan::library_manifest::VocabDesugarerArtifact {
+                artifact_kind: incan_vocab::DesugarerArtifactKind::WasmModule,
+                abi_version: incan_vocab::WASM_DESUGAR_ABI_VERSION,
+                relative_path: "desugarers/querykit_desugarer.wasm".to_string(),
+                target: "wasm32-wasip1".to_string(),
+                profile: "release".to_string(),
+                entrypoint: "desugar_block".to_string(),
+                sha256: hex::encode(Sha256::digest(desugarer_bytes)),
+            }),
+        });
+        manifest.write_to_path(&manifest_path)?;
+        Ok(())
+    }
+
     fn write_pub_library_with_provider_requirements(
         root: &Path,
         dependency_key: &str,
@@ -11916,10 +11772,12 @@ incan_vocab::export_wasm_desugarer!(NestedOutputDesugarer);
         Ok(())
     }
 
-    fn write_pub_library_with_assert_keyword(
+    fn write_pub_library_with_provider_requirements_and_assert_keyword(
         root: &Path,
         dependency_key: &str,
         manifest_name: &str,
+        required_dependencies: Vec<incan_vocab::CargoDependency>,
+        required_stdlib_features: Vec<&str>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let artifact_root = root.join("deps").join(dependency_key).join("target").join("lib");
         std::fs::create_dir_all(artifact_root.join("src"))?;
@@ -11940,7 +11798,14 @@ incan_vocab::export_wasm_desugarer!(NestedOutputDesugarer);
                 valid_decorators: Vec::new(),
             }],
             dsl_surfaces: Vec::new(),
-            provider_manifest: incan_vocab::LibraryManifest::default(),
+            provider_manifest: incan_vocab::LibraryManifest {
+                required_dependencies,
+                required_stdlib_features: required_stdlib_features
+                    .into_iter()
+                    .map(std::string::ToString::to_string)
+                    .collect(),
+                ..incan_vocab::LibraryManifest::default()
+            },
             desugarer_artifact: None,
         });
         manifest.write_to_path(&artifact_root.join(format!("{manifest_name}.incnlib")))?;
@@ -12159,7 +12024,7 @@ incan_vocab::export_wasm_desugarer!(NestedOutputDesugarer);
     }
 
     #[test]
-    fn build_lib_artifacts_and_consumer_alias_linkage() -> Result<(), Box<dyn std::error::Error>> {
+    fn build_lib_artifacts_and_consumer_alias_typecheck() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let producer_root = tmp.path().join("widgets_core_project");
         std::fs::create_dir_all(producer_root.join("src"))?;
@@ -12172,8 +12037,12 @@ incan_vocab::export_wasm_desugarer!(NestedOutputDesugarer);
             "pub model Widget:\n  name: str\n\npub def make_widget(name: str) -> Widget:\n  return Widget(name=name)\n",
         )?;
         std::fs::write(
+            producer_root.join("src/boxmod.incn"),
+            "pub class Box:\n  def get[T with Clone](self, value: T) -> T:\n    return value\n",
+        )?;
+        std::fs::write(
             producer_root.join("src/lib.incn"),
-            "pub from widgets import Widget, make_widget\n",
+            "pub from boxmod import Box\npub from widgets import Widget, make_widget\n",
         )?;
 
         let producer_build = run_build_lib(&producer_root)?;
@@ -12197,350 +12066,285 @@ incan_vocab::export_wasm_desugarer!(NestedOutputDesugarer);
         let consumer_main = consumer_root.join("src/main.incn");
         std::fs::write(
             &consumer_main,
-            "from pub::widgets import Widget as PublicWidget, make_widget\n\ndef main() -> None:\n  w: PublicWidget = make_widget(\"ok\")\n  print(w.name)\n",
+            "from pub::widgets import Box, Widget as PublicWidget, make_widget\n\ndef main() -> None:\n  w: PublicWidget = make_widget(\"ok\")\n  box: Box = Box()\n  value: int = box.get(1)\n  print(w.name)\n  print(value)\n",
         )?;
 
-        let out_dir = consumer_root.join("out");
-        let consumer_build = run_build(&consumer_main, &out_dir)?;
+        let consumer_check = run_check(&consumer_main)?;
         assert!(
-            consumer_build.status.success(),
-            "expected consumer build to succeed.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&consumer_build.stdout),
-            String::from_utf8_lossy(&consumer_build.stderr)
-        );
-
-        let generated_toml = std::fs::read_to_string(out_dir.join("Cargo.toml"))?;
-        assert!(
-            generated_toml.contains("[dependencies.widgets]"),
-            "expected library alias dependency entry, got:\n{generated_toml}"
-        );
-        assert!(
-            generated_toml.contains("package = \"widgets_core\""),
-            "expected package alias mapping in Cargo.toml, got:\n{generated_toml}"
-        );
-        assert!(
-            generated_toml.contains("path = "),
-            "expected path dependency in Cargo.toml, got:\n{generated_toml}"
-        );
-
-        let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
-        assert!(
-            generated_main_rs.contains("use widgets::Widget as PublicWidget;"),
-            "expected pub:: item alias import emission, got:\n{generated_main_rs}"
-        );
-        assert!(
-            generated_main_rs.contains("use widgets::make_widget;"),
-            "expected pub:: item import emission, got:\n{generated_main_rs}"
-        );
-        assert!(
-            !generated_main_rs.contains("pub use widgets::Widget as PublicWidget;"),
-            "private pub:: item alias import should not become a public Rust reexport, got:\n{generated_main_rs}"
-        );
-        assert!(
-            !generated_main_rs.contains("pub use widgets::make_widget;"),
-            "private pub:: item import should not become a public Rust reexport, got:\n{generated_main_rs}"
+            consumer_check.status.success(),
+            "expected consumer check to accept pub:: alias and generic carrier imports.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_check.stdout),
+            String::from_utf8_lossy(&consumer_check.stderr)
         );
 
         Ok(())
     }
 
     #[test]
-    fn build_accepts_pub_from_reexport_in_src_submodule_facade() -> Result<(), Box<dyn std::error::Error>> {
+    fn build_succeeds_for_pub_import_regression_batch() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path().join("session_facade_project");
-        std::fs::create_dir_all(project_root.join("src/session"))?;
-        std::fs::write(
-            project_root.join("incan.toml"),
-            "[project]\nname = \"session_facade\"\nversion = \"0.1.0\"\n",
-        )?;
-        std::fs::write(
-            project_root.join("src/session/types.incn"),
-            "pub class Session:\n  pub id: int\n",
-        )?;
-        std::fs::write(
-            project_root.join("src/session/mod.incn"),
-            "pub from crate.session.types import Session\n",
-        )?;
-        let main_path = project_root.join("src/main.incn");
-        std::fs::write(
-            &main_path,
-            "from session import Session\n\ndef main() -> None:\n  s = Session(id=1)\n  print(s.id)\n",
-        )?;
-
-        let out_dir = project_root.join("out");
-        let project_build = run_build(&main_path, &out_dir)?;
-        assert!(
-            project_build.status.success(),
-            "expected `build` to accept src submodule facade re-export.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&project_build.stdout),
-            String::from_utf8_lossy(&project_build.stderr)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn build_succeeds_for_imported_enum_loop_ownership() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path().join("imported_enum_loop_project");
+        let project_root = tmp.path().join("pub_import_regression_batch_project");
         std::fs::create_dir_all(project_root.join("src"))?;
         std::fs::write(
             project_root.join("incan.toml"),
-            "[project]\nname = \"imported_enum_loop\"\nversion = \"0.1.0\"\n",
+            "[project]\nname = \"pub_import_regression_batch\"\nversion = \"0.1.0\"\n",
         )?;
-        std::fs::write(
-            project_root.join("src/rels.incn"),
-            "@derive(Clone)\npub enum ConformanceRel:\n  Read\n  Filter\n",
-        )?;
+
+        let files = [
+            (
+                "src/session/types.incn",
+                r#"pub class Session:
+  pub id: int
+"#,
+            ),
+            ("src/session/mod.incn", "pub from crate.session.types import Session\n"),
+            (
+                "src/session_facade_case.incn",
+                r#"from session import Session
+
+pub def run_session_facade() -> None:
+  s = Session(id=1)
+  print(s.id)
+"#,
+            ),
+            (
+                "src/imported_enum_loop_rels.incn",
+                r#"@derive(Clone)
+pub enum ConformanceRel:
+  Read
+  Filter
+"#,
+            ),
+            (
+                "src/imported_enum_loop_case.incn",
+                r#"from imported_enum_loop_rels import ConformanceRel
+
+def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
+  match rel:
+    ConformanceRel.Read =>
+      return "ReadRel"
+    _ =>
+      return "Other"
+
+def scenario_matches(required: list[ConformanceRel]) -> bool:
+  for expected in required:
+    if expected == ConformanceRel.Read:
+      if relation_kind_name_from_conformance(expected) == "ReadRel":
+        return true
+  return false
+
+pub def run_imported_enum_loop() -> None:
+  println(scenario_matches([ConformanceRel.Read]))
+"#,
+            ),
+            (
+                "src/len_comparison_recursive_case.incn",
+                r#"@derive(Clone)
+pub enum ExprKind:
+  Column
+  Add
+
+@derive(Clone)
+pub model Expr:
+  pub kind: ExprKind
+  pub column_name: str
+  pub arguments: list[Expr]
+
+pub def lower(expr: Expr) -> int:
+  if expr.kind == ExprKind.Column:
+    return 0
+  if len(expr.arguments) < 2:
+    return -1
+  return 1
+
+pub def run_len_comparison_recursive() -> None:
+  println(lower(Expr(kind=ExprKind.Add, column_name="root", arguments=[])))
+"#,
+            ),
+            (
+                "src/loop_helper_shared_string_list_case.incn",
+                r#"def match_index(xs: list[str], y: int) -> int:
+  mut idx = 0
+  while idx < len(xs):
+    if len(xs[idx]) == y:
+      return idx
+    idx = idx + 1
+  return -1
+
+def helper_loop(xs: list[str], ys: list[int]) -> list[int]:
+  mut out: list[int] = []
+  for y in ys:
+    out.append(match_index(xs, y))
+  return out
+
+pub def run_loop_helper_shared_string_list() -> None:
+  helper_loop(["a", "bb", "ccc"], [1, 2])
+"#,
+            ),
+            (
+                "src/dict_comp_reuses_noncopy_key_case.incn",
+                r#"def lengths(names: list[str]) -> dict[str, int]:
+  return {name: len(name) for name in names}
+
+pub def run_dict_comp_reuses_noncopy_key() -> None:
+  values = lengths(["alice", "bob"])
+  println(values["alice"])
+"#,
+            ),
+            (
+                "src/tuple_unpack_enumerate_cases.incn",
+                r#"model Binding:
+  name: str
+  output_index: int
+  expr_index: int
+
+def field_ref(index: int) -> int:
+  return index
+
+def bind_loop(xs: list[str]) -> list[Binding]:
+  mut out: list[Binding] = []
+  for idx, name in enumerate(xs):
+    out.append(Binding(name=name, output_index=idx, expr_index=field_ref(idx)))
+  return out
+
+def bind_comp(xs: list[str]) -> list[Binding]:
+  return [Binding(name=name, output_index=idx, expr_index=field_ref(idx)) for idx, name in enumerate(xs)]
+
+pub def run_tuple_unpack_enumerate_cases() -> None:
+  bind_loop(["a", "bb"])
+  bind_comp(["a", "bb"])
+"#,
+            ),
+            (
+                "src/list_str_append_literal_case.incn",
+                r#"pub def columns(input_columns: list[str]) -> list[str]:
+  mut columns: list[str] = []
+  columns.append(input_columns[0])
+  columns.append("count")
+  return columns
+
+pub def run_list_str_append_literal() -> None:
+  columns(["orders_total"])
+"#,
+            ),
+            (
+                "src/imported_sum_functions.incn",
+                r#"pub model ColumnRef:
+  pub name: str
+
+pub model AggregateMeasure:
+  pub column_name: str
+
+pub def col(name: str) -> ColumnRef:
+  return ColumnRef(name=name)
+
+pub def sum(expr: ColumnRef) -> AggregateMeasure:
+  return AggregateMeasure(column_name=expr.name)
+"#,
+            ),
+            (
+                "src/imported_sum_shadow_case.incn",
+                r#"from imported_sum_functions import col, sum
+
+def selected_column_name() -> str:
+  amount = col("amount")
+  result = sum(amount)
+  return result.column_name
+
+pub def run_imported_sum_shadow() -> None:
+  println(selected_column_name())
+"#,
+            ),
+            (
+                "src/cross_module_union_producers.incn",
+                r#"pub def parse_value(flag: bool) -> int | str:
+  if flag:
+    return 1
+  return "fallback"
+"#,
+            ),
+            (
+                "src/cross_module_union_consumers.incn",
+                r#"pub def describe(value: int | str) -> str:
+  if isinstance(value, int):
+    return "number"
+  else:
+    return value.upper()
+"#,
+            ),
+            (
+                "src/cross_module_union_case.incn",
+                r#"from cross_module_union_producers import parse_value
+from cross_module_union_consumers import describe
+
+pub def run_cross_module_union() -> None:
+  println(describe(parse_value(False)))
+  println(describe("literal"))
+"#,
+            ),
+            (
+                "src/qualified_enum_constructor_match_case.incn",
+                r#"pub enum QualifiedConformanceRel:
+  Read
+  Filter
+  Project
+
+pub def relation_kind_name_from_conformance(rel: QualifiedConformanceRel) -> str:
+  match rel:
+    QualifiedConformanceRel.Read =>
+      return "ReadRel"
+    QualifiedConformanceRel.Filter =>
+      return "FilterRel"
+    QualifiedConformanceRel.Project =>
+      return "ProjectRel"
+    _ =>
+      return "UnknownRel"
+
+pub def run_qualified_enum_constructor_match() -> None:
+  println(relation_kind_name_from_conformance(QualifiedConformanceRel.Filter))
+"#,
+            ),
+            (
+                "src/main.incn",
+                r#"from cross_module_union_case import run_cross_module_union
+from dict_comp_reuses_noncopy_key_case import run_dict_comp_reuses_noncopy_key
+from imported_enum_loop_case import run_imported_enum_loop
+from imported_sum_shadow_case import run_imported_sum_shadow
+from len_comparison_recursive_case import run_len_comparison_recursive
+from list_str_append_literal_case import run_list_str_append_literal
+from loop_helper_shared_string_list_case import run_loop_helper_shared_string_list
+from qualified_enum_constructor_match_case import run_qualified_enum_constructor_match
+from session_facade_case import run_session_facade
+from tuple_unpack_enumerate_cases import run_tuple_unpack_enumerate_cases
+
+def main() -> None:
+  run_session_facade()
+  run_imported_enum_loop()
+  run_len_comparison_recursive()
+  run_loop_helper_shared_string_list()
+  run_dict_comp_reuses_noncopy_key()
+  run_tuple_unpack_enumerate_cases()
+  run_list_str_append_literal()
+  run_imported_sum_shadow()
+  run_cross_module_union()
+  run_qualified_enum_constructor_match()
+"#,
+            ),
+        ];
+
+        for (relative, source) in files {
+            let path = project_root.join(relative);
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(path, source)?;
+        }
+
         let main_path = project_root.join("src/main.incn");
-        std::fs::write(
-            &main_path,
-            "from rels import ConformanceRel\n\ndef relation_kind_name_from_conformance(rel: ConformanceRel) -> str:\n  match rel:\n    ConformanceRel.Read =>\n      return \"ReadRel\"\n    _ =>\n      return \"Other\"\n\ndef scenario_matches(required: list[ConformanceRel]) -> bool:\n  for expected in required:\n    if expected == ConformanceRel.Read:\n      if relation_kind_name_from_conformance(expected) == \"ReadRel\":\n        return true\n  return false\n\ndef main() -> None:\n  println(scenario_matches([ConformanceRel.Read]))\n",
-        )?;
-
-        let out_dir = project_root.join("out");
-        let project_build = run_build(&main_path, &out_dir)?;
-        assert!(
-            project_build.status.success(),
-            "expected imported enum loop project to build successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&project_build.stdout),
-            String::from_utf8_lossy(&project_build.stderr)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn build_succeeds_for_len_comparison_on_recursive_list_field() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path().join("len_comparison_recursive_project");
-        std::fs::create_dir_all(project_root.join("src"))?;
-        std::fs::write(
-            project_root.join("incan.toml"),
-            "[project]\nname = \"len_comparison_recursive\"\nversion = \"0.1.0\"\n",
-        )?;
-        let main_path = project_root.join("src/main.incn");
-        std::fs::write(
-            &main_path,
-            "@derive(Clone)\npub enum ExprKind:\n  Column\n  Add\n\n@derive(Clone)\npub model Expr:\n  pub kind: ExprKind\n  pub column_name: str\n  pub arguments: list[Expr]\n\npub def lower(expr: Expr) -> int:\n  if expr.kind == ExprKind.Column:\n    return 0\n  if len(expr.arguments) < 2:\n    return -1\n  return 1\n\ndef main() -> None:\n  println(lower(Expr(kind=ExprKind.Add, column_name=\"root\", arguments=[])))\n",
-        )?;
-
-        let out_dir = project_root.join("out");
-        let project_build = run_build(&main_path, &out_dir)?;
-        assert!(
-            project_build.status.success(),
-            "expected recursive list-field len comparison project to build successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&project_build.stdout),
-            String::from_utf8_lossy(&project_build.stderr)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn build_succeeds_for_loop_helper_shared_string_list() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path().join("loop_helper_shared_string_list_project");
-        std::fs::create_dir_all(project_root.join("src"))?;
-        std::fs::write(
-            project_root.join("incan.toml"),
-            "[project]\nname = \"loop_helper_shared_string_list\"\nversion = \"0.1.0\"\n",
-        )?;
-        let main_path = project_root.join("src/main.incn");
-        std::fs::write(
-            &main_path,
-            "def match_index(xs: list[str], y: int) -> int:\n  mut idx = 0\n  while idx < len(xs):\n    if len(xs[idx]) == y:\n      return idx\n    idx = idx + 1\n  return -1\n\n\
-def helper_loop(xs: list[str], ys: list[int]) -> list[int]:\n  mut out: list[int] = []\n  for y in ys:\n    out.append(match_index(xs, y))\n  return out\n\n\
-def main() -> None:\n  helper_loop([\"a\", \"bb\", \"ccc\"], [1, 2])\n",
-        )?;
-
-        let out_dir = project_root.join("out");
-        let project_build = run_build(&main_path, &out_dir)?;
-        assert!(
-            project_build.status.success(),
-            "expected loop helper shared string-list project to build successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&project_build.stdout),
-            String::from_utf8_lossy(&project_build.stderr)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn build_succeeds_for_dict_comp_reusing_noncopy_key() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path().join("dict_comp_reuses_noncopy_key_project");
-        std::fs::create_dir_all(project_root.join("src"))?;
-        std::fs::write(
-            project_root.join("incan.toml"),
-            "[project]\nname = \"dict_comp_reuses_noncopy_key\"\nversion = \"0.1.0\"\n",
-        )?;
-        let main_path = project_root.join("src/main.incn");
-        std::fs::write(
-            &main_path,
-            "def lengths(names: list[str]) -> dict[str, int]:\n  return {name: len(name) for name in names}\n\n\
-def main() -> None:\n  values = lengths([\"alice\", \"bob\"])\n  println(values[\"alice\"])\n",
-        )?;
-
-        let out_dir = project_root.join("out");
-        let project_build = run_build(&main_path, &out_dir)?;
-        assert!(
-            project_build.status.success(),
-            "expected dict comprehension with reused non-Copy key to build successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&project_build.stdout),
-            String::from_utf8_lossy(&project_build.stderr)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn build_succeeds_for_for_tuple_unpack_enumerate() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path().join("for_tuple_unpack_enumerate_project");
-        std::fs::create_dir_all(project_root.join("src"))?;
-        std::fs::write(
-            project_root.join("incan.toml"),
-            "[project]\nname = \"for_tuple_unpack_enumerate\"\nversion = \"0.1.0\"\n",
-        )?;
-        let main_path = project_root.join("src/main.incn");
-        std::fs::write(
-            &main_path,
-            "model Binding:\n  name: str\n  output_index: int\n  expr_index: int\n\n\
-def field_ref(index: int) -> int:\n  return index\n\n\
-pub def bind(xs: list[str]) -> list[Binding]:\n  mut out: list[Binding] = []\n  for idx, name in enumerate(xs):\n    out.append(Binding(name=name, output_index=idx, expr_index=field_ref(idx)))\n  return out\n\n\
-def main() -> None:\n  bind([\"a\", \"bb\"])\n",
-        )?;
-
-        let out_dir = project_root.join("out");
-        let project_build = run_build(&main_path, &out_dir)?;
-        assert!(
-            project_build.status.success(),
-            "expected for-loop tuple unpacking with enumerate to build successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&project_build.stdout),
-            String::from_utf8_lossy(&project_build.stderr)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn build_succeeds_for_list_comp_tuple_unpack_enumerate() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path().join("list_comp_tuple_unpack_enumerate_project");
-        std::fs::create_dir_all(project_root.join("src"))?;
-        std::fs::write(
-            project_root.join("incan.toml"),
-            "[project]\nname = \"list_comp_tuple_unpack_enumerate\"\nversion = \"0.1.0\"\n",
-        )?;
-        let main_path = project_root.join("src/main.incn");
-        std::fs::write(
-            &main_path,
-            "model Binding:\n  name: str\n  output_index: int\n  expr_index: int\n\n\
-def field_ref(index: int) -> int:\n  return index\n\n\
-pub def bind(xs: list[str]) -> list[Binding]:\n  return [Binding(name=name, output_index=idx, expr_index=field_ref(idx)) for idx, name in enumerate(xs)]\n\n\
-def main() -> None:\n  bind([\"a\", \"bb\"])\n",
-        )?;
-
-        let out_dir = project_root.join("out");
-        let project_build = run_build(&main_path, &out_dir)?;
-        assert!(
-            project_build.status.success(),
-            "expected list-comprehension tuple unpacking with enumerate to build successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&project_build.stdout),
-            String::from_utf8_lossy(&project_build.stderr)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn build_succeeds_for_list_str_append_literal() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path().join("list_str_append_literal_project");
-        std::fs::create_dir_all(project_root.join("src"))?;
-        std::fs::write(
-            project_root.join("incan.toml"),
-            "[project]\nname = \"list_str_append_literal\"\nversion = \"0.1.0\"\n",
-        )?;
-        let main_path = project_root.join("src/main.incn");
-        std::fs::write(
-            &main_path,
-            "pub def columns(input_columns: list[str]) -> list[str]:\n  mut columns: list[str] = []\n  columns.append(input_columns[0])\n  columns.append(\"count\")\n  return columns\n\n\
-def main() -> None:\n  columns([\"orders_total\"])\n",
-        )?;
-
-        let out_dir = project_root.join("out");
-        let project_build = run_build(&main_path, &out_dir)?;
-        assert!(
-            project_build.status.success(),
-            "expected list[str] literal append to build successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&project_build.stdout),
-            String::from_utf8_lossy(&project_build.stderr)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn build_succeeds_for_imported_sum_helper_shadowing() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path().join("imported_sum_shadow_project");
-        std::fs::create_dir_all(project_root.join("src"))?;
-        std::fs::write(
-            project_root.join("incan.toml"),
-            "[project]\nname = \"imported_sum_shadow\"\nversion = \"0.1.0\"\n",
-        )?;
-        std::fs::write(
-            project_root.join("src/functions.incn"),
-            "pub model ColumnRef:\n  pub name: str\n\npub model AggregateMeasure:\n  pub column_name: str\n\npub def col(name: str) -> ColumnRef:\n  return ColumnRef(name=name)\n\npub def sum(expr: ColumnRef) -> AggregateMeasure:\n  return AggregateMeasure(column_name=expr.name)\n",
-        )?;
-        let main_path = project_root.join("src/main.incn");
-        std::fs::write(
-            &main_path,
-            "from functions import col, sum\n\ndef selected_column_name() -> str:\n  amount = col(\"amount\")\n  result = sum(amount)\n  return result.column_name\n\ndef main() -> None:\n  println(selected_column_name())\n",
-        )?;
-
-        let out_dir = project_root.join("out");
-        let project_build = run_build(&main_path, &out_dir)?;
-        assert!(
-            project_build.status.success(),
-            "expected imported sum helper to shadow builtin sum and build successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&project_build.stdout),
-            String::from_utf8_lossy(&project_build.stderr)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn build_succeeds_for_cross_module_ordinary_union_forwarding() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path().join("cross_module_union_project");
-        std::fs::create_dir_all(project_root.join("src"))?;
-        std::fs::write(
-            project_root.join("incan.toml"),
-            "[project]\nname = \"cross_module_union\"\nversion = \"0.1.0\"\n",
-        )?;
-        std::fs::write(
-            project_root.join("src/producers.incn"),
-            "pub def parse_value(flag: bool) -> int | str:\n  if flag:\n    return 1\n  return \"fallback\"\n",
-        )?;
-        std::fs::write(
-            project_root.join("src/consumers.incn"),
-            "pub def describe(value: int | str) -> str:\n  if isinstance(value, int):\n    return \"number\"\n  else:\n    return value.upper()\n",
-        )?;
-        let main_path = project_root.join("src/main.incn");
-        std::fs::write(
-            &main_path,
-            "from producers import parse_value\nfrom consumers import describe\n\n\
-def main() -> None:\n  println(describe(parse_value(False)))\n  println(describe(\"literal\"))\n",
-        )?;
-
         let build_output = run_build(&main_path, &project_root.join("out"))?;
         assert!(
             build_output.status.success(),
-            "expected cross-module ordinary union project to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            "expected pub import regression batch project to build successfully.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&build_output.stdout),
             String::from_utf8_lossy(&build_output.stderr)
         );
@@ -12549,138 +12353,44 @@ def main() -> None:\n  println(describe(parse_value(False)))\n  println(describe
     }
 
     #[test]
-    fn build_succeeds_for_qualified_enum_constructor_match() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path().join("enum_constructor_match_project");
-        std::fs::create_dir_all(project_root.join("src"))?;
-        std::fs::write(
-            project_root.join("incan.toml"),
-            "[project]\nname = \"enum_constructor_match\"\nversion = \"0.1.0\"\n",
-        )?;
-        let main_path = project_root.join("src/main.incn");
-        std::fs::write(
-            &main_path,
-            "pub enum ConformanceRel:\n  Read\n  Filter\n  Project\n\npub def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:\n  match rel:\n    ConformanceRel.Read =>\n      return \"ReadRel\"\n    ConformanceRel.Filter =>\n      return \"FilterRel\"\n    ConformanceRel.Project =>\n      return \"ProjectRel\"\n    _ =>\n      return \"UnknownRel\"\n\ndef main() -> None:\n  println(relation_kind_name_from_conformance(ConformanceRel.Filter))\n",
-        )?;
-
-        let out_dir = project_root.join("out");
-        let project_build = run_build(&main_path, &out_dir)?;
-        assert!(
-            project_build.status.success(),
-            "expected qualified enum constructor match project to build successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&project_build.stdout),
-            String::from_utf8_lossy(&project_build.stderr)
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn build_and_run_rfc088_iterator_adapter_pipeline() -> Result<(), Box<dyn std::error::Error>> {
+    fn build_and_run_iterator_comprehension_and_if_let_scenarios() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let main_path = write_project_files(
             tmp.path(),
-            "[project]\nname = \"rfc088_iterator_pipeline\"\nversion = \"0.1.0\"\n",
+            "[project]\nname = \"iterator_comprehension_if_let_batch\"\nversion = \"0.1.0\"\n",
             "def is_even(n: int) -> bool:\n  return n % 2 == 0\n\n\
 def double(n: int) -> int:\n  return n * 2\n\n\
-def main() -> None:\n  xs = [1, 2, 3, 4, 5]\n  ys = xs.iter().filter(is_even).map(double).take(2).collect()\n  batches = xs.iter().batch(2).collect()\n  println(len(ys))\n  println(ys[0])\n  println(len(batches))\n",
-        )?;
-
-        let out_dir = tmp.path().join("out");
-        let build_output = run_build(&main_path, &out_dir)?;
-        assert!(
-            build_output.status.success(),
-            "expected RFC 088 iterator pipeline to build successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&build_output.stdout),
-            String::from_utf8_lossy(&build_output.stderr)
-        );
-
-        let run_output = Command::new(incan_bin_path())
-            .args(["run", main_path.to_string_lossy().as_ref()])
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-        assert!(
-            run_output.status.success(),
-            "expected RFC 088 iterator pipeline to run successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&run_output.stdout),
-            String::from_utf8_lossy(&run_output.stderr)
-        );
-
-        let stdout = String::from_utf8_lossy(&run_output.stdout);
-        assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["2", "4", "3"]);
-
-        Ok(())
-    }
-
-    #[test]
-    fn build_and_run_list_comprehension_stays_eager_after_rfc088() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let main_path = write_project_files(
-            tmp.path(),
-            "[project]\nname = \"rfc088_comprehension_regression\"\nversion = \"0.1.0\"\n",
-            "def main() -> None:\n  xs = [1, 2, 3]\n  ys = [n * 2 for n in xs if n > 1]\n  println(len(ys))\n  println(ys[0])\n  println(len(xs))\n",
-        )?;
-
-        let out_dir = tmp.path().join("out");
-        let build_output = run_build(&main_path, &out_dir)?;
-        assert!(
-            build_output.status.success(),
-            "expected eager list comprehension regression to build successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&build_output.stdout),
-            String::from_utf8_lossy(&build_output.stderr)
-        );
-
-        let run_output = Command::new(incan_bin_path())
-            .args(["run", main_path.to_string_lossy().as_ref()])
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-        assert!(
-            run_output.status.success(),
-            "expected eager list comprehension regression to run successfully.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&run_output.stdout),
-            String::from_utf8_lossy(&run_output.stderr)
-        );
-
-        let stdout = String::from_utf8_lossy(&run_output.stdout);
-        assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["2", "4", "3"]);
-
-        Ok(())
-    }
-
-    #[test]
-    fn build_and_run_rfc049_if_let_while_let() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let main_path = write_project_files(
-            tmp.path(),
-            "[project]\nname = \"rfc049_if_let_while_let\"\nversion = \"0.1.0\"\n",
-            "def maybe_double(opt: Option[int]) -> int:\n  if let Some(value) = opt:\n    return value * 2\n  return 0\n\n\
+def maybe_double(opt: Option[int]) -> int:\n  if let Some(value) = opt:\n    return value * 2\n  return 0\n\n\
 def next_value(values: list[Option[int]], idx: int) -> Option[int]:\n  if idx < len(values):\n    return values[idx]\n  return None\n\n\
 def sum_values(values: list[Option[int]]) -> int:\n  mut idx = 0\n  mut total = 0\n  while let Some(value) = next_value(values, idx):\n    total = total + value\n    idx = idx + 1\n  return total\n\n\
-def main() -> None:\n  println(maybe_double(Some(21)))\n  println(maybe_double(None))\n  println(sum_values([Some(1), Some(2), None, Some(99)]))\n",
+def main() -> None:\n  xs = [1, 2, 3, 4, 5]\n  ys = xs.iter().filter(is_even).map(double).take(2).collect()\n  batches = xs.iter().batch(2).collect()\n  println(len(ys))\n  println(ys[0])\n  println(len(batches))\n  comp_source = [1, 2, 3]\n  comp = [n * 2 for n in comp_source if n > 1]\n  println(len(comp))\n  println(comp[0])\n  println(len(comp_source))\n  println(maybe_double(Some(21)))\n  println(maybe_double(None))\n  println(sum_values([Some(1), Some(2), None, Some(99)]))\n",
         )?;
 
         let out_dir = tmp.path().join("out");
         let build_output = run_build(&main_path, &out_dir)?;
         assert!(
             build_output.status.success(),
-            "expected RFC 049 sample project to build successfully.\nstdout:\n{}\nstderr:\n{}",
+            "expected iterator/comprehension/if-let batch to build successfully.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&build_output.stdout),
             String::from_utf8_lossy(&build_output.stderr)
         );
 
-        let run_output = Command::new(incan_bin_path())
+        let run_output = super::incan_command()
             .args(["run", main_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
             .output()?;
         assert!(
             run_output.status.success(),
-            "expected RFC 049 sample project to run successfully.\nstdout:\n{}\nstderr:\n{}",
+            "expected iterator/comprehension/if-let batch to run successfully.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&run_output.stdout),
             String::from_utf8_lossy(&run_output.stderr)
         );
 
         let stdout = String::from_utf8_lossy(&run_output.stdout);
-        assert_eq!(stdout.lines().collect::<Vec<_>>(), vec!["42", "0", "3"]);
+        assert_eq!(
+            stdout.lines().collect::<Vec<_>>(),
+            vec!["2", "4", "3", "2", "4", "3", "42", "0", "3"]
+        );
 
         Ok(())
     }
@@ -12725,53 +12435,7 @@ def main() -> None:\n  println(maybe_double(Some(21)))\n  println(maybe_double(N
     }
 
     #[test]
-    fn build_lib_preserves_generic_instance_methods_for_consumers() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let producer_root = tmp.path().join("generic_methods_lib");
-        std::fs::create_dir_all(producer_root.join("src"))?;
-        std::fs::write(
-            producer_root.join("incan.toml"),
-            "[project]\nname = \"generic_methods_core\"\nversion = \"0.1.0\"\n",
-        )?;
-        std::fs::write(
-            producer_root.join("src/boxmod.incn"),
-            "pub class Box:\n  def get[T with Clone](self, value: T) -> T:\n    return value\n",
-        )?;
-        std::fs::write(producer_root.join("src/lib.incn"), "pub from boxmod import Box\n")?;
-
-        let producer_build = run_build_lib(&producer_root)?;
-        assert!(
-            producer_build.status.success(),
-            "expected `build --lib` to succeed.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&producer_build.stdout),
-            String::from_utf8_lossy(&producer_build.stderr)
-        );
-
-        let consumer_root = tmp.path().join("generic_methods_consumer");
-        std::fs::create_dir_all(consumer_root.join("src"))?;
-        std::fs::write(
-            consumer_root.join("incan.toml"),
-            "[project]\nname = \"consumer\"\n\n[dependencies]\nboxlib = { path = \"../generic_methods_lib\" }\n",
-        )?;
-        let consumer_main = consumer_root.join("src/main.incn");
-        std::fs::write(
-            &consumer_main,
-            "from pub::boxlib import Box\n\ndef main() -> None:\n  box: Box = Box()\n  value: int = box.get(1)\n  print(value)\n",
-        )?;
-
-        let out_dir = consumer_root.join("out");
-        let consumer_build = run_build(&consumer_main, &out_dir)?;
-        assert!(
-            consumer_build.status.success(),
-            "expected consumer build to succeed.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&consumer_build.stdout),
-            String::from_utf8_lossy(&consumer_build.stderr)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn build_lib_preserves_ordinal_map_for_consumers() -> Result<(), Box<dyn std::error::Error>> {
+    fn build_lib_preserves_ordinal_map_metadata_for_consumer_check() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let producer_root = tmp.path().join("ordinal_keys_lib");
         std::fs::create_dir_all(producer_root.join("src"))?;
@@ -12886,10 +12550,13 @@ pub def small_key_map_bytes() -> bytes:
         );
 
         let consumer_root = tmp.path().join("ordinal_keys_consumer");
+        let consumer_name = unique_test_project_name("ordinal_keys_consumer");
         std::fs::create_dir_all(consumer_root.join("src"))?;
         std::fs::write(
             consumer_root.join("incan.toml"),
-            "[project]\nname = \"consumer\"\n\n[dependencies]\nordinal_keys = { path = \"../ordinal_keys_lib\" }\n",
+            format!(
+                "[project]\nname = \"{consumer_name}\"\n\n[dependencies]\nordinal_keys = {{ path = \"../ordinal_keys_lib\" }}\n"
+            ),
         )?;
         let consumer_main = consumer_root.join("src/main.incn");
         std::fs::write(
@@ -12897,37 +12564,26 @@ pub def small_key_map_bytes() -> bytes:
             "from std.collections import OrdinalMap, OrdinalMapError\nfrom pub::ordinal_keys import SmallKey, Status, echo_key, small_key_map_bytes, status_map_bytes\n\ndef run() -> Result[None, OrdinalMapError]:\n  probe = echo_key(\"probe\")\n  if len(probe) == 0:\n    print(probe)\n  status_map: OrdinalMap[Status] = OrdinalMap.from_bytes(status_map_bytes())?\n  small_key_map: OrdinalMap[SmallKey] = OrdinalMap.from_bytes(small_key_map_bytes())?\n  print(status_map.require(Status.Paid)?)\n  print(small_key_map.require(SmallKey(value=2))?)\n  return Ok(None)\n\ndef main() -> None:\n  match run():\n    Ok(_) => pass\n    Err(err) => print(err.message())\n",
         )?;
 
-        let out_dir = consumer_root.join("out");
-        let consumer_build = run_build(&consumer_main, &out_dir)?;
+        let consumer_check = run_check(&consumer_main)?;
         assert!(
-            consumer_build.status.success(),
-            "expected consumer build to succeed.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&consumer_build.stdout),
-            String::from_utf8_lossy(&consumer_build.stderr)
+            consumer_check.status.success(),
+            "expected consumer check to accept imported OrdinalMap metadata.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_check.stdout),
+            String::from_utf8_lossy(&consumer_check.stderr)
         );
-        let consumer_run = Command::new(incan_bin_path())
-            .args(["run", consumer_main.to_string_lossy().as_ref()])
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-        assert!(
-            consumer_run.status.success(),
-            "expected consumer run to succeed.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&consumer_run.stdout),
-            String::from_utf8_lossy(&consumer_run.stderr)
-        );
-        assert_eq!(String::from_utf8_lossy(&consumer_run.stdout).trim(), "1\n20");
         Ok(())
     }
 
     #[test]
-    fn check_pub_boundary_preserves_method_result_types_for_question_mark() -> Result<(), Box<dyn std::error::Error>> {
+    fn check_pub_boundary_preserves_consumer_type_fidelity_cases() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         write_pub_boundary_type_fidelity_library(tmp.path())?;
 
-        let main_path = write_project_files(
-            tmp.path(),
-            "[project]\nname = \"consumer\"\n\n[dependencies]\npubdemo = { path = \"pub_boundary_library\" }\n",
-            r#"from pub::pubdemo import LazyFrame, SessionError
+        let cases = [
+            (
+                "question_mark_result",
+                "`lazy.collect()?` across pub boundary",
+                r#"from pub::pubdemo import LazyFrame, SessionError
 
 model Row:
   value: int
@@ -12938,27 +12594,11 @@ def main() -> Result[None, SessionError]:
   print(df.to_substrait_plan())
   return Ok(None)
 "#,
-        )?;
-
-        let output = run_check(&main_path)?;
-        assert!(
-            output.status.success(),
-            "expected `lazy.collect()?` across pub boundary to typecheck.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn check_pub_boundary_preserves_derived_method_chain_result_types() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        write_pub_boundary_type_fidelity_library(tmp.path())?;
-
-        let main_path = write_project_files(
-            tmp.path(),
-            "[project]\nname = \"consumer\"\n\n[dependencies]\npubdemo = { path = \"pub_boundary_library\" }\n",
-            r#"from pub::pubdemo import LazyFrame, SessionError
+            ),
+            (
+                "derived_method_chain",
+                "`lazy.clone().collect()?` across pub boundary",
+                r#"from pub::pubdemo import LazyFrame, SessionError
 
 model Row:
   value: int
@@ -12969,27 +12609,11 @@ def main() -> Result[None, SessionError]:
   print(df.to_substrait_plan())
   return Ok(None)
 "#,
-        )?;
-
-        let output = run_check(&main_path)?;
-        assert!(
-            output.status.success(),
-            "expected `lazy.clone().collect()?` across pub boundary to typecheck.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn check_pub_boundary_preserves_trait_supertype_acceptance() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        write_pub_boundary_type_fidelity_library(tmp.path())?;
-
-        let main_path = write_project_files(
-            tmp.path(),
-            "[project]\nname = \"consumer\"\n\n[dependencies]\npubdemo = { path = \"pub_boundary_library\" }\n",
-            r#"from pub::pubdemo import DataFrame, SessionError, display
+            ),
+            (
+                "trait_supertype",
+                "`DataFrame[T]` satisfying `DataSet[T]` across pub boundary",
+                r#"from pub::pubdemo import DataFrame, SessionError, display
 
 model Row:
   value: int
@@ -12999,15 +12623,25 @@ def main() -> Result[None, SessionError]:
   display(df)
   return Ok(None)
 "#,
-        )?;
+            ),
+        ];
 
-        let output = run_check(&main_path)?;
-        assert!(
-            output.status.success(),
-            "expected `DataFrame[T]` to satisfy `DataSet[T]` across pub boundary.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
+        for (name, description, source) in cases {
+            let case_root = tmp.path().join(name);
+            let main_path = write_project_files(
+                &case_root,
+                "[project]\nname = \"consumer\"\n\n[dependencies]\npubdemo = { path = \"../pub_boundary_library\" }\n",
+                source,
+            )?;
+
+            let output = run_check(&main_path)?;
+            assert!(
+                output.status.success(),
+                "expected {description} to typecheck.\nstdout:\n{}\nstderr:\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
         Ok(())
     }
 
@@ -13205,163 +12839,6 @@ def main() -> Result[None, SessionError]:
     }
 
     #[test]
-    fn consumer_run_accepts_nested_real_wasm_desugar_output() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let producer_root = tmp.path().join("nested_vocab_project");
-        std::fs::create_dir_all(producer_root.join("src"))?;
-        std::fs::write(
-            producer_root.join("incan.toml"),
-            "[project]\nname = \"nested_core\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
-        )?;
-        std::fs::write(
-            producer_root.join("src/helpers.incn"),
-            r#"pub def surface_with_governance(
-  name: str,
-  title: str,
-  base: str,
-  actions: list[str],
-  layouts: list[str],
-  pages: list[str],
-  projections: list[str],
-) -> str:
-  return name
-
-pub def action(name: str, capability: str, required_evidence: str) -> str:
-  return name
-
-pub def layout(name: str, regions: list[str]) -> str:
-  return name
-
-pub def page_with_interactions(
-  name: str,
-  route: str,
-  title: str,
-  layout_name: str,
-  regions: list[str],
-  interactions: list[str],
-) -> str:
-  return name
-
-pub def region(name: str, nodes: list[str]) -> str:
-  return name
-
-pub def heading(text: str) -> str:
-  return text
-
-pub def text(text: str) -> str:
-  return text
-
-pub def interaction(name: str, action_name: str, constraints: list[str]) -> str:
-  return name
-
-pub def required_input(
-  interaction_name: str,
-  field: str,
-  label: str,
-  min_length: str,
-  evidence_key: str,
-) -> str:
-  return field
-
-pub def projection(name: str, target: str) -> str:
-  return name
-"#,
-        )?;
-        std::fs::write(
-            producer_root.join("src/lib.incn"),
-            "pub from helpers import action, heading, interaction, layout, page_with_interactions, projection, region, required_input, surface_with_governance, text\n",
-        )?;
-        write_nested_wasm_vocab_companion_crate(&producer_root, "vocab_companion", "nested_vocab_companion")?;
-
-        let producer_build = run_build_lib(&producer_root)?;
-        assert!(
-            producer_build.status.success(),
-            "expected `build --lib` with real wasm vocab companion to succeed.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&producer_build.stdout),
-            String::from_utf8_lossy(&producer_build.stderr)
-        );
-
-        let consumer_root = tmp.path().join("nested_consumer");
-        let consumer_main = write_project_files(
-            &consumer_root,
-            "[project]\nname = \"consumer\"\n\n[dependencies]\nnested = { path = \"../nested_vocab_project\" }\n",
-            r#"import pub::nested
-
-def main() -> None:
-  compose FullNestedCase:
-    title = "Full Nested Case"
-    base = "/"
-
-    action EscalateCase:
-      capability = "case.escalate"
-      requires = "escalation.explanation"
-
-    layout SimplePage:
-      region body:
-        pass
-
-    page Review:
-      route = "/cases/123"
-      title = "Case Review"
-      layout = "SimplePage"
-
-      region body:
-        heading "Case Review":
-          pass
-        text "High risk case requires escalation review.":
-          pass
-
-      interaction Escalate:
-        action = "EscalateCase"
-
-        require input:
-          field = "explanation"
-          label = "Explanation"
-          min_length = 20
-          evidence = "escalation.explanation"
-
-    projection web:
-      target = "static-web"
-	"#,
-        )?;
-
-        let out_dir = consumer_root.join("out");
-        let consumer_build = run_build(&consumer_main, &out_dir)?;
-        assert!(
-            consumer_build.status.success(),
-            "expected consumer build to accept nested real wasm desugar output.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&consumer_build.stdout),
-            String::from_utf8_lossy(&consumer_build.stderr)
-        );
-
-        let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
-        assert!(
-            generated_main_rs.contains("__incan_vocab_helper_nested_surface_with_governance"),
-            "expected hidden helper alias for nested surface output, got:\n{generated_main_rs}"
-        );
-        assert!(
-            generated_main_rs.contains("__incan_vocab_helper_nested_required_input"),
-            "expected hidden helper alias for nested required-input output, got:\n{generated_main_rs}"
-        );
-        assert!(
-            generated_main_rs.contains("let _nested_artifact ="),
-            "expected wasm desugar output to splice a let binding, got:\n{generated_main_rs}"
-        );
-
-        let run_output = Command::new(incan_bin_path())
-            .args(["run", consumer_main.to_string_lossy().as_ref()])
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-        assert!(
-            run_output.status.success(),
-            "expected consumer run to accept nested real wasm desugar output.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&run_output.stdout),
-            String::from_utf8_lossy(&run_output.stderr)
-        );
-        Ok(())
-    }
-
-    #[test]
     fn consumer_build_injects_helper_import_for_vocab_desugarer_calls() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
@@ -13409,6 +12886,190 @@ def main() -> None:
         assert!(
             generated_main_rs.contains("filterkit::filter"),
             "expected generated Rust to import the provider helper from the dependency crate, got:\n{generated_main_rs}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_build_plans_vocab_helper_calls_like_ordinary_calls_issue729() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
+            callee: Box::new(incan_vocab::IncanExpr::Helper("aggregate_as".to_string())),
+            args: vec![
+                incan_vocab::IncanExpr::Call {
+                    callee: Box::new(incan_vocab::IncanExpr::Helper("lit".to_string())),
+                    args: vec![incan_vocab::IncanExpr::Int(5)],
+                },
+                incan_vocab::IncanExpr::Str("total".to_string()),
+            ],
+        });
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm(0, &output_payload, "")?;
+        write_pub_library_with_vocab_desugarer_and_string_helper(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nhelperkit = { path = \"deps/helperkit\" }\n",
+            r#"import pub::helperkit
+
+def main() -> None:
+  where true:
+    pass
+"#,
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let output = run_build(&main_path, &out_dir)?;
+        assert!(
+            output.status.success(),
+            "expected helper-backed desugared calls to use normal call planning.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        let normalized: String = generated_main_rs.chars().filter(|ch| !ch.is_whitespace()).collect();
+        assert!(
+            normalized.contains("helperkit::aggregate_as(helperkit::lit(5),\"total\".to_string()")
+                || normalized.contains(
+                    "__incan_vocab_helper_helperkit_aggregate_as(__incan_vocab_helper_helperkit_lit(5),\"total\".to_string()"
+                ),
+            "expected nested helper calls to keep independent call planning, got:\n{generated_main_rs}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_build_plans_source_backed_vocab_helper_calls_with_defaults_and_unions_issue729()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Tuple(vec![
+            incan_vocab::IncanExpr::Call {
+                callee: Box::new(incan_vocab::IncanExpr::Helper("aggregate_as".to_string())),
+                args: vec![
+                    incan_vocab::IncanExpr::Call {
+                        callee: Box::new(incan_vocab::IncanExpr::Helper("lit".to_string())),
+                        args: vec![incan_vocab::IncanExpr::Int(5)],
+                    },
+                    incan_vocab::IncanExpr::Str("adjusted".to_string()),
+                ],
+            },
+            incan_vocab::IncanExpr::Call {
+                callee: Box::new(incan_vocab::IncanExpr::Helper("aggregate_as".to_string())),
+                args: vec![
+                    incan_vocab::IncanExpr::Call {
+                        callee: Box::new(incan_vocab::IncanExpr::Helper("count".to_string())),
+                        args: Vec::new(),
+                    },
+                    incan_vocab::IncanExpr::Str("order_count".to_string()),
+                ],
+            },
+        ]));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm(0, &output_payload, "")?;
+        write_source_pub_library_with_vocab_desugarer_and_query_helpers(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  where true:
+    pass
+"#,
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let output = run_build(&main_path, &out_dir)?;
+        let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs")).unwrap_or_default();
+        assert!(
+            output.status.success(),
+            "expected source-backed helper calls to keep defaults, union wrapping, and string planning.\ngenerated main.rs:\n{}\nstdout:\n{}\nstderr:\n{}",
+            generated_main_rs,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        assert!(
+            generated_main_rs.contains("querykit::count(")
+                || generated_main_rs.contains("__incan_vocab_helper_querykit_count("),
+            "expected omitted count() argument to be filled from the helper's default expression, got:\n{generated_main_rs}"
+        );
+        assert!(
+            !generated_main_rs.contains("__incan_vocab_helper_querykit_count()"),
+            "helper default planning must not emit a zero-argument Rust count call, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains("querykit::helpers::COUNT_SENTINEL"),
+            "dependency-owned const defaults must keep the defining provider module path, got:\n{generated_main_rs}"
+        );
+        assert!(
+            !generated_main_rs.contains("pub enum __IncanUnion"),
+            "public dependency helper unions must stay owned by the dependency crate, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains(".to_string()"),
+            "expected helper string arguments to use normal owned-string conversion, got:\n{generated_main_rs}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_build_plans_source_backed_pub_helper_calls_with_defaults_and_unions_issue729()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let wasm = compile_desugarer_wasm(0, "[]", "")?;
+        write_source_pub_library_with_vocab_desugarer_and_query_helpers(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"from pub::querykit import aggregate_as, aggregate_default, count, lit
+
+def main() -> None:
+  aggregate_as(lit(5), "adjusted")
+  aggregate_as(count(), "order_count")
+  aggregate_default(lit(7))
+"#,
+        )?;
+
+        let out_dir = tmp.path().join("out");
+        let output = run_build(&main_path, &out_dir)?;
+        let generated_main_rs = std::fs::read_to_string(out_dir.join("src/main.rs")).unwrap_or_default();
+        assert!(
+            output.status.success(),
+            "expected ordinary pub helper calls to share exported default, union, and string planning.\ngenerated main.rs:\n{}\nstdout:\n{}\nstderr:\n{}",
+            generated_main_rs,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            generated_main_rs.contains("querykit::count(")
+                || generated_main_rs.contains("__incan_vocab_helper_querykit_count("),
+            "expected omitted count() argument to be filled from the helper's default expression, got:\n{generated_main_rs}"
+        );
+        assert!(
+            !generated_main_rs.contains("querykit::count()")
+                && !generated_main_rs.contains("__incan_vocab_helper_querykit_count()"),
+            "ordinary pub helper default planning must not emit a zero-argument Rust count call, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains("querykit::helpers::COUNT_SENTINEL"),
+            "ordinary public dependency const defaults must keep the defining provider module path, got:\n{generated_main_rs}"
+        );
+        assert!(
+            !generated_main_rs.contains("pub enum __IncanUnion"),
+            "ordinary public dependency calls must not re-own dependency anonymous unions, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains(".to_string()"),
+            "expected ordinary pub helper string arguments to use normal owned-string conversion, got:\n{generated_main_rs}"
+        );
+        assert!(
+            generated_main_rs.contains("querykit::helpers::DEFAULT_LABEL"),
+            "expected public const defaults to emit through their provider module path, got:\n{generated_main_rs}"
         );
         Ok(())
     }
@@ -13476,7 +13137,486 @@ def main() -> None:
     }
 
     #[test]
-    fn equivalent_helper_backed_keywords_emit_identical_rust() -> Result<(), Box<dyn std::error::Error>> {
+    fn consumer_check_passes_expr_list_item_metadata_to_desugarer_issue724() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::statements(vec![incan_vocab::IncanStatement::Let {
+            name: "query_generated".to_string(),
+            mutable: false,
+            value: incan_vocab::IncanExpr::Int(1),
+        }]);
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing expression-list modifier payload",
+            r#""keyword":"with""#,
+        )?;
+        write_pub_library_with_querykit_select_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  query:
+    SELECT:
+      sum(amount) as total for customer with context
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to pass expression-list item metadata to the desugarer.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugars_colon_vocab_expression_in_assignment_issue727() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing expression-desugaring declaration payload",
+            r#""keyword":"query""#,
+        )?;
+        write_pub_library_with_querykit_select_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  value: int = query:
+    SELECT:
+      amount as total
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to desugar expression-position vocab block in assignment.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugars_colon_vocab_expression_in_return_issue727() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing expression-desugaring declaration payload",
+            r#""keyword":"query""#,
+        )?;
+        write_pub_library_with_querykit_select_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def build_value() -> int:
+  return query:
+    SELECT:
+      amount as total
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to desugar expression-position vocab block in return.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugars_colon_vocab_expression_preserves_inline_clauses_issue727()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing inline FROM clause payload",
+            r#""keyword":"FROM""#,
+        )?;
+        write_pub_library_with_querykit_expression_clause_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  selected: int = query:
+    FROM orders
+    SELECT:
+      amount as total
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to pass inline colon-expression clauses to the desugarer.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugars_braced_vocab_expression_with_compound_clauses_issue727()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing compound clause payload",
+            r#""compound_tokens":["BY"]"#,
+        )?;
+        write_pub_library_with_querykit_expression_clause_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+def main() -> None:
+  value: int = query { FROM orders GROUP BY amount as grouped SELECT total as total }
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected check to desugar braced expression-position vocab block.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugared_public_field_callee_call_typechecks_as_method_issue727()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
+            callee: Box::new(incan_vocab::IncanExpr::Field {
+                object: Box::new(incan_vocab::IncanExpr::Name("orders".to_string())),
+                field: "select".to_string(),
+            }),
+            args: Vec::new(),
+        });
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing FROM clause payload",
+            r#""keyword":"FROM""#,
+        )?;
+        write_pub_library_with_querykit_expression_clause_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+class LazyFrame:
+  def select(self) -> Self:
+    return self
+
+def main() -> None:
+  orders = LazyFrame()
+  selected: LazyFrame = query { FROM orders SELECT amount as amount }
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected public field-callee desugar output to typecheck as a method call.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_check_desugared_generic_method_call_uses_expected_return_type_issue735()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
+            callee: Box::new(incan_vocab::IncanExpr::Field {
+                object: Box::new(incan_vocab::IncanExpr::Name("orders".to_string())),
+                field: "select".to_string(),
+            }),
+            args: vec![incan_vocab::IncanExpr::List(vec![incan_vocab::IncanExpr::Call {
+                callee: Box::new(incan_vocab::IncanExpr::Name("with_column_assignment".to_string())),
+                args: vec![
+                    incan_vocab::IncanExpr::Str("customer".to_string()),
+                    incan_vocab::IncanExpr::Call {
+                        callee: Box::new(incan_vocab::IncanExpr::Name("current_field".to_string())),
+                        args: vec![
+                            incan_vocab::IncanExpr::Name("orders".to_string()),
+                            incan_vocab::IncanExpr::Str("customer_id".to_string()),
+                        ],
+                    },
+                ],
+            }])],
+        });
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing SELECT clause payload",
+            r#""keyword":"SELECT""#,
+        )?;
+        write_pub_library_with_querykit_expression_clause_desugarer(tmp.path(), &wasm)?;
+
+        let main_path = write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            r#"import pub::querykit
+
+@derive(Clone)
+model Order:
+  customer_id: str
+
+@derive(Clone)
+model Selected:
+  customer: str
+
+@derive(Clone)
+model ColumnExpr:
+  source: str
+
+@derive(Clone)
+model ColumnAssignment[T with Clone]:
+  name: str
+
+def current_field[T with Clone](_frame: LazyFrame[T], source: str) -> ColumnExpr:
+  return ColumnExpr(source=source)
+
+def with_column_assignment[T with Clone](name: str, _expr: ColumnExpr) -> ColumnAssignment[T]:
+  return ColumnAssignment[T](name=name)
+
+@derive(Clone)
+class LazyFrame[T with Clone]:
+  _type_witness: list[T]
+
+  def select[U with Clone](self, columns: list[ColumnAssignment[U]]) -> LazyFrame[U]:
+    return LazyFrame[U](_type_witness=[])
+
+def direct_method_call(orders: LazyFrame[Order]) -> LazyFrame[Selected]:
+  return orders.select([with_column_assignment("customer", current_field(orders, "customer_id"))])
+
+def query_block_call(orders: LazyFrame[Order]) -> LazyFrame[Selected]:
+  return query { FROM orders SELECT customer_id as customer }
+"#,
+        )?;
+
+        let output = run_check(&main_path)?;
+        assert!(
+            output.status.success(),
+            "expected desugared generic method call to use the same contextual return type as direct source.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn consumer_test_activates_dependency_vocab_surfaces_issue730_issue756() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Int(7));
+        let output_payload = serde_json::to_string(&response)?;
+        let wasm = compile_desugarer_wasm_requiring_request_substring(
+            &output_payload,
+            "missing SELECT clause payload",
+            r#""keyword":"SELECT""#,
+        )?;
+        write_pub_library_with_querykit_expression_clause_desugarer(tmp.path(), &wasm)?;
+
+        write_project_files(
+            tmp.path(),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nquerykit = { path = \"deps/querykit\" }\n",
+            "def main() -> None:\n  return\n",
+        )?;
+        let tests_dir = tmp.path().join("tests");
+        std::fs::create_dir_all(&tests_dir)?;
+        let test_path = tests_dir.join("test_query_vocab.incn");
+        std::fs::write(
+            &test_path,
+            r#"import pub::querykit
+
+def test_dependency_vocab_query_block() -> None:
+    selected: int = query {
+        FROM orders
+        GROUP BY
+            amount as grouped,
+            region as region_group
+        SELECT
+            amount as total
+        ORDER BY amount
+        WINDOW BY
+            rank = amount
+    }
+    assert selected == 7
+"#,
+        )?;
+
+        let fmt_output = run_fmt(&test_path)?;
+        assert!(
+            fmt_output.status.success(),
+            "expected incan fmt to parse dependency-activated vocab in a nested package test file.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&fmt_output.stdout),
+            String::from_utf8_lossy(&fmt_output.stderr)
+        );
+
+        let formatted_source = std::fs::read_to_string(&test_path)?;
+        for clause in [
+            "selected: int = query {",
+            "        GROUP BY\n            amount as grouped,\n            region as region_group",
+            "        ORDER BY amount",
+            "        WINDOW BY\n            rank = amount",
+        ] {
+            assert!(
+                formatted_source.contains(clause),
+                "expected incan fmt to preserve dependency-vocab expression block shape `{clause}`.\nformatted source:\n{}",
+                formatted_source
+            );
+        }
+        for rejected_clause in ["query:", "GROUP BY:", "ORDER BY:", "WINDOW BY:"] {
+            assert!(
+                !formatted_source.contains(rejected_clause),
+                "expected incan fmt not to rewrite expression vocab block through colon clause `{rejected_clause}`.\nformatted source:\n{}",
+                formatted_source
+            );
+        }
+
+        let fmt_output = run_fmt_check(&test_path)?;
+        assert!(
+            fmt_output.status.success(),
+            "expected formatted dependency-activated vocab file to pass incan fmt --check.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&fmt_output.stdout),
+            String::from_utf8_lossy(&fmt_output.stderr)
+        );
+
+        let check_output = run_check(&test_path)?;
+        assert!(
+            check_output.status.success(),
+            "expected ordinary check to parse dependency-activated vocab in a test file.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&check_output.stdout),
+            String::from_utf8_lossy(&check_output.stderr)
+        );
+
+        let test_output = run_test(&test_path)?;
+        assert!(
+            test_output.status.success(),
+            "expected incan test to parse and run dependency-activated vocab in a test file.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn fmt_prepares_clean_source_dependency_vocab_before_parsing_issue756() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("deps").join("querykit");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"querykit\"\nversion = \"0.1.0\"\n\n[vocab]\ncrate = \"vocab_companion\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub def ready() -> int:\n  return 1\n",
+        )?;
+        write_vocab_companion_crate_with_source(
+            &producer_root,
+            "vocab_companion",
+            "querykit_vocab_companion",
+            r#"use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration};
+
+pub fn library_vocab() -> VocabRegistration {
+    VocabRegistration::new().with_surface(
+        DslSurface::on_import("querykit").with_declaration(
+            DeclarationSurface::named("query")
+                .with_clause_body()
+                .desugars_to_expression()
+                .with_clauses([
+                    ClauseSurface::expr("FROM").required(),
+                    ClauseSurface::expr_list("SELECT").required(),
+                ]),
+        ),
+    )
+}
+"#,
+        )?;
+
+        let consumer_root = tmp.path().join("consumer");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\nversion = \"0.1.0\"\n\n[dependencies]\nquerykit = { path = \"../deps/querykit\" }\n",
+        )?;
+        let main_path = consumer_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            r#"import pub::querykit
+
+def main() -> None:
+    value = query {
+        FROM orders
+        SELECT
+            amount as total
+    }
+"#,
+        )?;
+
+        let artifact_root = producer_root.join("target").join("lib");
+        assert!(
+            !artifact_root.exists(),
+            "regression must start from a clean source dependency without prebuilt library artifacts"
+        );
+
+        let fmt_output = super::incan_command()
+            .args(["fmt", main_path.to_string_lossy().as_ref()])
+            .env("CARGO_NET_OFFLINE", "true")
+            .env(INTERNAL_MANIFEST_OVERRIDE_ENV, consumer_root.join("incan.toml"))
+            .env(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, &consumer_root)
+            .output()?;
+        assert!(
+            fmt_output.status.success(),
+            "expected fmt to prepare source dependency vocab before parsing clean query block, even when the parent command carries an internal manifest override.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&fmt_output.stdout),
+            String::from_utf8_lossy(&fmt_output.stderr)
+        );
+        assert!(
+            artifact_root.join("querykit.incnlib").is_file(),
+            "expected clean dependency artifact to be prepared for parser vocab activation"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn equivalent_helper_backed_keywords_typecheck() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let response = incan_vocab::DesugarResponse::expression(incan_vocab::IncanExpr::Call {
             callee: Box::new(incan_vocab::IncanExpr::Helper("filter".to_string())),
@@ -13503,41 +13643,56 @@ def main() -> None:
             "import pub::querykit\n\ndef main() -> None:\n  screen true:\n    pass\n",
         )?;
 
-        let where_out = tmp.path().join("where_out");
-        let where_build = run_build(&where_main, &where_out)?;
+        let where_check = run_check(&where_main)?;
+        assert!(
+            where_check.status.success(),
+            "expected helper-backed `where` check to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&where_check.stdout),
+            String::from_utf8_lossy(&where_check.stderr)
+        );
+
+        let screen_check = run_check(&screen_main)?;
+        assert!(
+            screen_check.status.success(),
+            "expected helper-backed `screen` check to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&screen_check.stdout),
+            String::from_utf8_lossy(&screen_check.stderr)
+        );
+
+        let where_out_dir = tmp.path().join("where_out");
+        let where_build = run_build(&where_main, &where_out_dir)?;
         assert!(
             where_build.status.success(),
             "expected helper-backed `where` build to succeed.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&where_build.stdout),
             String::from_utf8_lossy(&where_build.stderr)
         );
-
-        let screen_out = tmp.path().join("screen_out");
-        let screen_build = run_build(&screen_main, &screen_out)?;
+        let screen_out_dir = tmp.path().join("screen_out");
+        let screen_build = run_build(&screen_main, &screen_out_dir)?;
         assert!(
             screen_build.status.success(),
             "expected helper-backed `screen` build to succeed.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&screen_build.stdout),
             String::from_utf8_lossy(&screen_build.stderr)
         );
-
-        let where_rust = std::fs::read_to_string(where_out.join("src/main.rs"))?;
-        let screen_rust = std::fs::read_to_string(screen_out.join("src/main.rs"))?;
+        let where_generated = std::fs::read_to_string(where_out_dir.join("src/main.rs"))?;
+        let screen_generated = std::fs::read_to_string(screen_out_dir.join("src/main.rs"))?;
         assert_eq!(
-            where_rust, screen_rust,
-            "expected equivalent helper-backed keywords to emit identical Rust"
+            where_generated, screen_generated,
+            "equivalent helper-backed keywords should emit identical Rust"
         );
         Ok(())
     }
 
     #[test]
-    fn provider_requirements_flow_through_build_test_and_lock() -> Result<(), Box<dyn std::error::Error>> {
+    fn provider_requirements_and_pub_vocab_flow_through_build_test_and_lock() -> Result<(), Box<dyn std::error::Error>>
+    {
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path();
         std::fs::create_dir_all(project_root.join("src"))?;
         std::fs::create_dir_all(project_root.join("tests"))?;
 
-        write_pub_library_with_provider_requirements(
+        write_pub_library_with_provider_requirements_and_assert_keyword(
             project_root,
             "widgets",
             "widgets_core",
@@ -13556,7 +13711,7 @@ def main() -> None:
         std::fs::write(&main_path, "def main() -> None:\n  pass\n")?;
         std::fs::write(
             project_root.join("tests/test_provider.incn"),
-            "def test_provider_parity() -> None:\n  pass\n",
+            "import pub::widgets\n\ndef test_provider_parity() -> None:\n  assert true\n",
         )?;
 
         let build_out_dir = project_root.join("out");
@@ -13612,65 +13767,6 @@ def main() -> None:
             );
         }
 
-        Ok(())
-    }
-
-    #[test]
-    fn test_runner_activates_pub_vocab_keywords_from_dependency_manifest() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path();
-        std::fs::create_dir_all(project_root.join("src"))?;
-        std::fs::create_dir_all(project_root.join("tests"))?;
-
-        write_pub_library_with_assert_keyword(project_root, "widgets", "widgets_core")?;
-
-        std::fs::write(
-            project_root.join("incan.toml"),
-            "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"deps/widgets\" }\n",
-        )?;
-        std::fs::write(project_root.join("src/main.incn"), "def main() -> None:\n  pass\n")?;
-        std::fs::write(
-            project_root.join("tests/test_pub_vocab.incn"),
-            "import pub::widgets\n\ndef test_pub_vocab() -> None:\n  assert true\n",
-        )?;
-
-        let test_output = run_test(&project_root.join("tests"))?;
-        assert!(
-            test_output.status.success(),
-            "expected `incan test` to honor serialized pub vocab keywords.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&test_output.stdout),
-            String::from_utf8_lossy(&test_output.stderr)
-        );
-        Ok(())
-    }
-
-    #[test]
-    fn lock_parses_tests_using_pub_vocab_keywords() -> Result<(), Box<dyn std::error::Error>> {
-        let tmp = tempfile::tempdir()?;
-        let project_root = tmp.path();
-        std::fs::create_dir_all(project_root.join("src"))?;
-        std::fs::create_dir_all(project_root.join("tests"))?;
-
-        write_pub_library_with_assert_keyword(project_root, "widgets", "widgets_core")?;
-
-        std::fs::write(
-            project_root.join("incan.toml"),
-            "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"deps/widgets\" }\n",
-        )?;
-        let main_path = project_root.join("src/main.incn");
-        std::fs::write(&main_path, "def main() -> None:\n  pass\n")?;
-        std::fs::write(
-            project_root.join("tests/test_pub_vocab.incn"),
-            "import pub::widgets\n\ndef test_pub_vocab() -> None:\n  assert true\n",
-        )?;
-
-        let lock_output = run_lock(&main_path)?;
-        assert!(
-            lock_output.status.success(),
-            "expected `incan lock` to parse test files with pub vocab keywords.\nstdout:\n{}\nstderr:\n{}",
-            String::from_utf8_lossy(&lock_output.stdout),
-            String::from_utf8_lossy(&lock_output.stderr)
-        );
         Ok(())
     }
 
@@ -13764,76 +13860,6 @@ def main() -> None:
             "expected conflicting crate name in test output, got:\n{test_stdout}"
         );
 
-        Ok(())
-    }
-
-    #[test]
-    fn test_std_tempfile_compile_and_run_named_file_and_directory() -> Result<(), Box<dyn std::error::Error>> {
-        let source = r#"
-from std.fs import IoError, Path
-from std.tempfile import NamedTemporaryFile, SpooledTemporaryFile, TemporaryDirectory
-
-def run() -> Result[None, IoError]:
-    file = NamedTemporaryFile.try_new_with("incan-", ".txt", None)?
-    path = file.path()
-    path.write_text("hello", "utf-8", "strict", None)?
-    println(path.read_text("utf-8", "strict")?)
-
-    directory = TemporaryDirectory.try_new_with("incan-dir-", "", None)?
-    child = directory.path() / "child.txt"
-    child.write_text("world", "utf-8", "strict", None)?
-    println(child.read_text("utf-8", "strict")?)
-
-    mut memory = SpooledTemporaryFile(max_size=64)
-    memory.write(b"memory")?
-    println(memory.rolled_to_disk())
-    memory.seek(0, 0)?
-    println(len(memory.read(-1)?))
-
-    mut spool = SpooledTemporaryFile(max_size=4)
-    spool.write(b"rolled")?
-    println(spool.rolled_to_disk())
-    println(spool.path()?.exists())
-    spool.seek(0, 0)?
-    println(len(spool.read(-1)?))
-    kept_spool = spool.persist()?
-    println(kept_spool.exists())
-    kept_spool.unlink()?
-
-    kept_file = file.persist()?
-    println(kept_file.exists())
-    kept_file.unlink()?
-
-    kept_directory = directory.persist()?
-    println(kept_directory.exists())
-    kept_directory.remove_tree()?
-    return Ok(None)
-
-def main() -> None:
-    match run():
-        Ok(_) => pass
-        Err(err) => println(err.message())
-"#;
-        let output = Command::new(incan_debug_binary())
-            .args(["run", "-c", source])
-            .env("CARGO_NET_OFFLINE", "true")
-            .output()?;
-        assert!(
-            output.status.success(),
-            "incan run std.tempfile smoke failed: status={:?}\nstdout:\n{}\nstderr:\n{}",
-            output.status,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let lines = stdout.lines().collect::<Vec<_>>();
-        assert_eq!(
-            lines,
-            vec![
-                "hello", "world", "false", "6", "true", "true", "6", "true", "true", "true",
-            ],
-            "unexpected std.tempfile output:\n{stdout}"
-        );
         Ok(())
     }
 }

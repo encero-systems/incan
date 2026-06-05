@@ -1054,7 +1054,7 @@ mod lsp_api_metadata_preview_tests {
     }
 
     #[test]
-    fn checked_api_previews_use_callable_rebound_function_signature() -> Result<(), String> {
+    fn checked_api_previews_preserve_source_signature_for_callable_rebound() -> Result<(), String> {
         let source = r#"
 pub def endpoint() -> str:
     return "raw"
@@ -1089,8 +1089,8 @@ pub def endpoint() -> str:
             .ok_or_else(|| "expected checked function preview".to_string())?;
 
         assert!(
-            preview.markdown.contains("pub def endpoint(id: int) -> bool"),
-            "expected rebound callable signature in LSP preview, got:\n{}",
+            preview.markdown.contains("pub def endpoint() -> str"),
+            "expected source declaration signature in LSP preview, got:\n{}",
             preview.markdown
         );
 
@@ -1767,6 +1767,13 @@ fn local_signature_in_statement(
             .find_map(|target| local_signature_in_expr(target, ast, source, offset))
             .or_else(|| local_signature_in_expr(&assign.value, ast, source, offset)),
         Statement::ChainedAssignment(assignment) => local_signature_in_expr(&assignment.value, ast, source, offset),
+        Statement::VocabExpressionItem(item) => {
+            local_signature_in_expr(&item.expr, ast, source, offset).or_else(|| {
+                item.modifiers
+                    .iter()
+                    .find_map(|modifier| local_signature_in_expr(&modifier.value, ast, source, offset))
+            })
+        }
         Statement::Surface(surface) => match &surface.payload {
             crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(args) => args
                 .iter()
@@ -1938,7 +1945,7 @@ fn local_signature_in_expr(
         }),
         Expr::Constructor(_, args) => local_signature_in_call_args(args, ast, source, offset),
         Expr::FString(parts) => parts.iter().find_map(|part| match part {
-            crate::frontend::ast::FStringPart::Expr(expr) => local_signature_in_expr(expr, ast, source, offset),
+            crate::frontend::ast::FStringPart::Expr { expr, .. } => local_signature_in_expr(expr, ast, source, offset),
             crate::frontend::ast::FStringPart::Literal(_) => None,
         }),
         Expr::Yield(Some(value)) => local_signature_in_expr(value, ast, source, offset),
@@ -1964,6 +1971,11 @@ fn local_signature_in_expr(
                 local_signature_in_call_args(args, ast, source, offset)
             }
         },
+        Expr::VocabBlock(block) => block
+            .header_args
+            .iter()
+            .find_map(|arg| local_signature_in_expr(arg, ast, source, offset))
+            .or_else(|| local_signature_in_statements(&block.body, ast, source, offset)),
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr => None,
     }
 }
@@ -2680,6 +2692,7 @@ fn format_type_ref(ty: &TypeRef) -> String {
                 format_type_ref(return_type)
             )
         }
+        TypeRef::TypeToken { inner } => format!("Type[{}]", format_type_ref(inner)),
         TypeRef::Tuple { elements } => {
             format!(
                 "({})",
@@ -2776,10 +2789,12 @@ fn inline_code(value: &str) -> String {
     format!("{fence} {value} {fence}")
 }
 
+/// Collect import aliases visible to LSP decorator resolution.
 fn collect_import_aliases(ast: &Program) -> HashMap<String, Vec<String>> {
     crate::frontend::decorator_resolution::collect_import_aliases(ast)
 }
 
+/// Resolve a decorator path through visible import aliases.
 fn resolve_decorator_path(
     dec: &crate::frontend::ast::Decorator,
     aliases: &HashMap<String, Vec<String>>,
@@ -3152,6 +3167,7 @@ fn unchecked_lookup_hover(source: &str, value_types: &[ValueTypeFact], ident: &s
     ))
 }
 
+/// Return the LSP source location for a stdlib import path.
 fn stdlib_location_for_path(path: &[String]) -> Option<Location> {
     let stub_rel = stdlib::stdlib_stub_path(path)?;
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -3166,6 +3182,7 @@ fn stdlib_location_for_path(path: &[String]) -> Option<Location> {
     })
 }
 
+/// Find the import path that exposes a stdlib source location.
 fn find_stdlib_import_path(ast: &Program, offset: usize) -> Option<Vec<String>> {
     for decl in &ast.declarations {
         let Declaration::Import(import) = &decl.node else {
@@ -3416,6 +3433,12 @@ fn scoped_symbol_in_statement<'a>(
         Statement::ChainedAssignment(assign) => {
             scoped_symbol_in_expr(&assign.value, ident, symbol_span, surfaces, found);
         }
+        Statement::VocabExpressionItem(item) => {
+            scoped_symbol_in_expr(&item.expr, ident, symbol_span, surfaces, found);
+            for modifier in &item.modifiers {
+                scoped_symbol_in_expr(&modifier.value, ident, symbol_span, surfaces, found);
+            }
+        }
         Statement::TupleAssign(assign) => {
             for target in &assign.targets {
                 scoped_symbol_in_expr(target, ident, symbol_span, surfaces, found);
@@ -3569,7 +3592,7 @@ fn scoped_symbol_in_expr<'a>(
         Expr::Constructor(_, args) => scoped_symbol_in_call_args(args, ident, symbol_span, surfaces, found),
         Expr::FString(parts) => {
             for part in parts {
-                if let crate::frontend::ast::FStringPart::Expr(expr) = part {
+                if let crate::frontend::ast::FStringPart::Expr { expr, .. } = part {
                     scoped_symbol_in_expr(expr, ident, symbol_span, surfaces, found);
                 }
             }
@@ -3600,6 +3623,12 @@ fn scoped_symbol_in_expr<'a>(
             }
             SurfaceExprPayload::LeadingDotPath { .. } => {}
         },
+        Expr::VocabBlock(block) => {
+            for arg in &block.header_args {
+                scoped_symbol_in_expr(arg, ident, symbol_span, surfaces, found);
+            }
+            scoped_symbol_in_statements(&block.body, ident, symbol_span, surfaces, found);
+        }
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
         Expr::Field(inner, _) => scoped_symbol_in_expr(inner, ident, symbol_span, surfaces, found),
     }
@@ -3948,6 +3977,12 @@ fn scoped_symbol_context_in_statement(stmt: &Spanned<Statement>, offset: usize, 
         Statement::CompoundAssignment(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
         Statement::TupleUnpack(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
         Statement::ChainedAssignment(assign) => scoped_symbol_context_in_expr(&assign.value, offset, context),
+        Statement::VocabExpressionItem(item) => {
+            scoped_symbol_context_in_expr(&item.expr, offset, context);
+            for modifier in &item.modifiers {
+                scoped_symbol_context_in_expr(&modifier.value, offset, context);
+            }
+        }
         Statement::TupleAssign(assign) => {
             for target in &assign.targets {
                 scoped_symbol_context_in_expr(target, offset, context);
@@ -4086,7 +4121,7 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
         Expr::Constructor(_, args) => scoped_symbol_context_in_call_args(args, offset, context),
         Expr::FString(parts) => {
             for part in parts {
-                if let crate::frontend::ast::FStringPart::Expr(expr) = part {
+                if let crate::frontend::ast::FStringPart::Expr { expr, .. } = part {
                     scoped_symbol_context_in_expr(expr, offset, context);
                 }
             }
@@ -4117,6 +4152,21 @@ fn scoped_symbol_context_in_expr(expr: &Spanned<Expr>, offset: usize, context: &
             }
             SurfaceExprPayload::LeadingDotPath { .. } => {}
         },
+        Expr::VocabBlock(block) => {
+            let previous_len = context.vocab_stack.len();
+            context.vocab_stack.push(block.keyword.clone());
+            for arg in &block.header_args {
+                scoped_symbol_context_in_expr(arg, offset, context);
+            }
+            scoped_symbol_context_in_statements(&block.body, offset, context);
+            let matched_body = block
+                .body
+                .iter()
+                .any(|stmt| stmt.span.start <= offset && offset <= stmt.span.end);
+            if !matched_body {
+                context.vocab_stack.truncate(previous_len);
+            }
+        }
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr | Expr::Yield(None) => {}
         Expr::Field(inner, _) => scoped_symbol_context_in_expr(inner, offset, context),
     }

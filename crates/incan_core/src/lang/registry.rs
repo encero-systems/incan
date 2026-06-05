@@ -190,6 +190,9 @@ pub const RFC_084: RfcId = "RFC 084";
 /// RFC 088 — iterator adapter surface.
 pub const RFC_088: RfcId = "RFC 088";
 
+/// RFC 107 — type-directed library APIs and compile-time type tokens.
+pub const RFC_107: RfcId = "RFC 107";
+
 /// Namespace-style access to RFC ids.
 ///
 /// This exists purely for ergonomics at call sites so individual registries don’t need to import
@@ -310,6 +313,8 @@ impl RFC {
     pub const _084: RfcId = RFC_084;
     /// RFC 088 — iterator adapter surface.
     pub const _088: RfcId = RFC_088;
+    /// RFC 107 — type-directed library APIs and compile-time type tokens.
+    pub const _107: RfcId = RFC_107;
 }
 
 /// Identify the language/compiler version a vocabulary item is available since.

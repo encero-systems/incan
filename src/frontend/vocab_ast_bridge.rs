@@ -11,6 +11,48 @@
 use crate::frontend::ast;
 
 const CURRENT_FIELD_SENTINEL_IDENT: &str = "__incan_vocab_current_row";
+const SYNTHETIC_SPAN_BASE: usize = 1usize << 48;
+
+/// Allocates unique spans for AST nodes synthesized from desugarer output.
+///
+/// The public vocab AST intentionally does not assign source offsets to every helper-produced expression, but later
+/// compiler phases use spans as stable keys for typechecker metadata such as call-planning decisions. Giving every
+/// generated node a distinct synthetic span avoids collapsing nested helper calls into one `Span::default()` entry.
+#[derive(Debug, Clone)]
+struct SyntheticSpanAllocator {
+    next_start: usize,
+    preserve_default: bool,
+}
+
+impl SyntheticSpanAllocator {
+    /// Create an allocator whose synthetic span range is anchored by the original vocab surface span.
+    fn new(anchor: ast::Span) -> Self {
+        if anchor == ast::Span::default() {
+            return Self {
+                next_start: 0,
+                preserve_default: true,
+            };
+        }
+        let seed = anchor
+            .start
+            .saturating_mul(257)
+            .saturating_add(anchor.end.saturating_mul(17));
+        Self {
+            next_start: SYNTHETIC_SPAN_BASE.saturating_add(seed.saturating_mul(4)),
+            preserve_default: false,
+        }
+    }
+
+    /// Return the next unique synthetic span for one internal AST node generated from public vocab output.
+    fn next(&mut self) -> ast::Span {
+        if self.preserve_default {
+            return ast::Span::default();
+        }
+        let start = self.next_start;
+        self.next_start = self.next_start.saturating_add(2);
+        ast::Span::new(start, start.saturating_add(1))
+    }
+}
 
 /// Mapping failures produced by the AST bridge.
 ///
@@ -81,6 +123,7 @@ pub fn internal_vocab_block_to_public(
 
     Ok(incan_vocab::VocabDeclaration {
         keyword: block.keyword.clone(),
+        compound_tokens: block.keyword_binding.compound_tokens.clone(),
         keyword_metadata: Some(incan_vocab::VocabKeywordMetadata {
             dependency_key: block.keyword_binding.dependency_key.clone(),
             activation_namespace: block.keyword_binding.activation_namespace.clone(),
@@ -149,10 +192,10 @@ fn internal_vocab_clause_to_public(
         .iter()
         .map(|arg| internal_expr_to_public(&arg.node))
         .collect::<Result<Vec<_>, _>>()?;
-    let body = internal_clause_body_to_public(&block.body)?;
+    let body = internal_clause_body_to_public(&block.body, block.keyword_binding.clause_body_kind)?;
     Ok(incan_vocab::VocabClause {
         keyword: block.keyword.clone(),
-        compound_tokens: Vec::new(),
+        compound_tokens: block.keyword_binding.compound_tokens.clone(),
         head,
         body,
         span: public_span(span),
@@ -172,9 +215,13 @@ fn internal_vocab_clause_to_public(
 /// Returns the first bridge failure while probing or converting the contained statements.
 fn internal_clause_body_to_public(
     statements: &[ast::Spanned<ast::Statement>],
+    declared_body_kind: Option<incan_vocab::ClauseBodyKind>,
 ) -> Result<incan_vocab::VocabClauseBody, VocabAstBridgeError> {
     if statements.is_empty() {
         return Ok(incan_vocab::VocabClauseBody::Empty);
+    }
+    if matches!(declared_body_kind, Some(incan_vocab::ClauseBodyKind::ExpressionList)) {
+        return expression_list_body_to_public(statements);
     }
     if let Some(fields) = try_internal_field_set(statements)? {
         return Ok(incan_vocab::VocabClauseBody::FieldSet(fields));
@@ -183,30 +230,36 @@ fn internal_clause_body_to_public(
     let expression_only = statements
         .iter()
         .map(|statement| match &statement.node {
-            ast::Statement::Expr(expr) => internal_expr_to_public(&expr.node).map(Some),
+            ast::Statement::Expr(expr) => Ok(Some(incan_vocab::VocabExpressionItem {
+                expr: internal_expr_to_public(&expr.node)?,
+                alias: None,
+                modifiers: Vec::new(),
+                span: public_span(statement.span),
+            })),
             _ => Ok(None),
         })
         .collect::<Result<Vec<_>, _>>()?;
     if expression_only.iter().all(Option::is_some) {
-        let expressions = expression_only
+        let expression_items = expression_only
             .into_iter()
-            .map(|expr| {
-                expr.ok_or(VocabAstBridgeError::UnsupportedInternalStatement(
+            .map(|item| {
+                item.ok_or(VocabAstBridgeError::UnsupportedInternalStatement(
                     "clause expression extraction expected expression statements",
                 ))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        return if expressions.len() == 1 {
+        return if expression_items.len() == 1 {
             Ok(incan_vocab::VocabClauseBody::Expression(
-                expressions
+                expression_items
                     .into_iter()
                     .next()
                     .ok_or(VocabAstBridgeError::UnsupportedInternalStatement(
                         "single-expression clause conversion expected one expression item",
-                    ))?,
+                    ))?
+                    .expr,
             ))
         } else {
-            Ok(incan_vocab::VocabClauseBody::ExpressionList(expressions))
+            Ok(incan_vocab::VocabClauseBody::ExpressionList(expression_items))
         };
     }
 
@@ -215,6 +268,48 @@ fn internal_clause_body_to_public(
         .map(internal_statement_to_body_item)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(incan_vocab::VocabClauseBody::Items(items))
+}
+
+/// Convert a clause body declared as `ClauseBodyKind::ExpressionList`.
+///
+/// This preserves declared trailing keyword metadata as first-class public AST rather than forcing desugarers to
+/// recover DSL item structure from ordinary statements.
+fn expression_list_body_to_public(
+    statements: &[ast::Spanned<ast::Statement>],
+) -> Result<incan_vocab::VocabClauseBody, VocabAstBridgeError> {
+    let mut items = Vec::with_capacity(statements.len());
+    for statement in statements {
+        match &statement.node {
+            ast::Statement::Expr(expr) => items.push(incan_vocab::VocabExpressionItem {
+                expr: internal_expr_to_public(&expr.node)?,
+                alias: None,
+                modifiers: Vec::new(),
+                span: public_span(statement.span),
+            }),
+            ast::Statement::VocabExpressionItem(item) => items.push(incan_vocab::VocabExpressionItem {
+                expr: internal_expr_to_public(&item.expr.node)?,
+                alias: item.alias.clone(),
+                modifiers: item
+                    .modifiers
+                    .iter()
+                    .map(|modifier| {
+                        Ok(incan_vocab::VocabExpressionItemModifier {
+                            keyword: modifier.keyword.clone(),
+                            value: internal_expr_to_public(&modifier.value.node)?,
+                            span: public_span(modifier.span),
+                        })
+                    })
+                    .collect::<Result<Vec<_>, VocabAstBridgeError>>()?,
+                span: public_span(statement.span),
+            }),
+            _ => {
+                return Err(VocabAstBridgeError::UnsupportedInternalStatement(
+                    "expression-list clause body expected expression entries",
+                ));
+            }
+        }
+    }
+    Ok(incan_vocab::VocabClauseBody::ExpressionList(items))
 }
 
 /// Detect whether a clause body is representable as a public field-set payload.
@@ -323,11 +418,28 @@ pub fn internal_statement_to_public(stmt: &ast::Statement) -> Result<incan_vocab
 pub fn public_statements_to_internal(
     stmts: &[incan_vocab::IncanStatement],
 ) -> Result<Vec<ast::Spanned<ast::Statement>>, VocabAstBridgeError> {
+    public_statements_to_internal_with_anchor(stmts, ast::Span::default())
+}
+
+/// Convert public statements into internal statements while assigning unique synthetic spans under `anchor`.
+pub fn public_statements_to_internal_with_anchor(
+    stmts: &[incan_vocab::IncanStatement],
+    anchor: ast::Span,
+) -> Result<Vec<ast::Spanned<ast::Statement>>, VocabAstBridgeError> {
+    let mut spans = SyntheticSpanAllocator::new(anchor);
+    public_statements_to_internal_with_spans(stmts, &mut spans)
+}
+
+/// Convert public statements while sharing one synthetic span allocator across the whole generated subtree.
+fn public_statements_to_internal_with_spans(
+    stmts: &[incan_vocab::IncanStatement],
+    spans: &mut SyntheticSpanAllocator,
+) -> Result<Vec<ast::Spanned<ast::Statement>>, VocabAstBridgeError> {
     stmts
         .iter()
         .map(|stmt| {
-            let internal = public_statement_to_internal(stmt)?;
-            Ok(ast::Spanned::new(internal, ast::Span::default()))
+            let internal = public_statement_to_internal_with_spans(stmt, spans)?;
+            Ok(ast::Spanned::new(internal, spans.next()))
         })
         .collect()
 }
@@ -339,23 +451,34 @@ pub fn public_statements_to_internal(
 /// Returns [`VocabAstBridgeError`] when the public statement (or any contained expression) does not
 /// currently have a supported internal mapping.
 pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Result<ast::Statement, VocabAstBridgeError> {
+    let mut spans = SyntheticSpanAllocator::new(ast::Span::default());
+    public_statement_to_internal_with_spans(stmt, &mut spans)
+}
+
+/// Convert one public statement with a caller-owned synthetic span allocator.
+fn public_statement_to_internal_with_spans(
+    stmt: &incan_vocab::IncanStatement,
+    spans: &mut SyntheticSpanAllocator,
+) -> Result<ast::Statement, VocabAstBridgeError> {
     match stmt {
         incan_vocab::IncanStatement::Pass => Ok(ast::Statement::Pass),
         incan_vocab::IncanStatement::Expr(expr) => Ok(ast::Statement::Expr(ast::Spanned::new(
-            public_expr_to_internal(expr)?,
-            ast::Span::default(),
+            public_expr_to_internal_with_spans(expr, spans)?,
+            spans.next(),
         ))),
         incan_vocab::IncanStatement::Return(value) => Ok(ast::Statement::Return(
             value
                 .as_ref()
-                .map(|expr| public_expr_to_internal(expr).map(|node| ast::Spanned::new(node, ast::Span::default())))
+                .map(|expr| {
+                    public_expr_to_internal_with_spans(expr, spans).map(|node| ast::Spanned::new(node, spans.next()))
+                })
                 .transpose()?,
         )),
         incan_vocab::IncanStatement::Assign { target, value } => Ok(ast::Statement::Assignment(ast::AssignmentStmt {
             binding: ast::BindingKind::Reassign,
             name: target.clone(),
             ty: None,
-            value: ast::Spanned::new(public_expr_to_internal(value)?, ast::Span::default()),
+            value: ast::Spanned::new(public_expr_to_internal_with_spans(value, spans)?, spans.next()),
         })),
         incan_vocab::IncanStatement::Let { name, mutable, value } => {
             Ok(ast::Statement::Assignment(ast::AssignmentStmt {
@@ -366,7 +489,7 @@ pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Resul
                 },
                 name: name.clone(),
                 ty: None,
-                value: ast::Spanned::new(public_expr_to_internal(value)?, ast::Span::default()),
+                value: ast::Spanned::new(public_expr_to_internal_with_spans(value, spans)?, spans.next()),
             }))
         }
         incan_vocab::IncanStatement::If {
@@ -375,28 +498,28 @@ pub fn public_statement_to_internal(stmt: &incan_vocab::IncanStatement) -> Resul
             else_body,
         } => Ok(ast::Statement::If(ast::IfStmt {
             condition: ast::Condition::Expr(ast::Spanned::new(
-                public_expr_to_internal(condition)?,
-                ast::Span::default(),
+                public_expr_to_internal_with_spans(condition, spans)?,
+                spans.next(),
             )),
-            then_body: public_statements_to_internal(then_body)?,
+            then_body: public_statements_to_internal_with_spans(then_body, spans)?,
             elif_branches: Vec::new(),
             else_body: if else_body.is_empty() {
                 None
             } else {
-                Some(public_statements_to_internal(else_body)?)
+                Some(public_statements_to_internal_with_spans(else_body, spans)?)
             },
         })),
         incan_vocab::IncanStatement::While { condition, body } => Ok(ast::Statement::While(ast::WhileStmt {
             condition: ast::Condition::Expr(ast::Spanned::new(
-                public_expr_to_internal(condition)?,
-                ast::Span::default(),
+                public_expr_to_internal_with_spans(condition, spans)?,
+                spans.next(),
             )),
-            body: public_statements_to_internal(body)?,
+            body: public_statements_to_internal_with_spans(body, spans)?,
         })),
         incan_vocab::IncanStatement::For { binding, iter, body } => Ok(ast::Statement::For(ast::ForStmt {
-            pattern: ast::Spanned::new(ast::Pattern::Binding(binding.clone()), ast::Span::default()),
-            iter: ast::Spanned::new(public_expr_to_internal(iter)?, ast::Span::default()),
-            body: public_statements_to_internal(body)?,
+            pattern: ast::Spanned::new(ast::Pattern::Binding(binding.clone()), spans.next()),
+            iter: ast::Spanned::new(public_expr_to_internal_with_spans(iter, spans)?, spans.next()),
+            body: public_statements_to_internal_with_spans(body, spans)?,
         })),
         _ => Err(VocabAstBridgeError::UnsupportedPublicStatement(
             "statement form is not yet supported by internal AST bridge",
@@ -414,6 +537,7 @@ pub fn public_expression_to_internal(expr: &incan_vocab::IncanExpr) -> Result<as
     public_expr_to_internal(expr)
 }
 
+/// Convert an internal vocab condition expression into the public AST form.
 fn internal_condition_expr_to_public(
     condition: &ast::Condition,
 ) -> Result<incan_vocab::IncanExpr, VocabAstBridgeError> {
@@ -661,7 +785,25 @@ fn internal_race_for_to_public(race: &ast::RaceForExpr) -> Result<incan_vocab::I
 /// # Errors
 ///
 /// Returns [`VocabAstBridgeError::UnsupportedPublicExpression`] for unsupported public expression kinds or operators.
-fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, VocabAstBridgeError> {
+pub fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, VocabAstBridgeError> {
+    let mut spans = SyntheticSpanAllocator::new(ast::Span::default());
+    public_expr_to_internal_with_spans(expr, &mut spans)
+}
+
+/// Convert one public expression into internal AST while assigning synthetic spans rooted at `anchor`.
+pub fn public_expr_to_internal_with_anchor(
+    expr: &incan_vocab::IncanExpr,
+    anchor: ast::Span,
+) -> Result<ast::Expr, VocabAstBridgeError> {
+    let mut spans = SyntheticSpanAllocator::new(anchor);
+    public_expr_to_internal_with_spans(expr, &mut spans)
+}
+
+/// Convert one public expression with a caller-owned synthetic span allocator.
+fn public_expr_to_internal_with_spans(
+    expr: &incan_vocab::IncanExpr,
+    spans: &mut SyntheticSpanAllocator,
+) -> Result<ast::Expr, VocabAstBridgeError> {
     match expr {
         incan_vocab::IncanExpr::Name(name) => Ok(ast::Expr::Ident(name.clone())),
         incan_vocab::IncanExpr::Str(value) => Ok(ast::Expr::Literal(ast::Literal::String(value.clone()))),
@@ -672,27 +814,26 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
         incan_vocab::IncanExpr::CurrentField(field) => Ok(ast::Expr::Field(
             Box::new(ast::Spanned::new(
                 ast::Expr::Ident(CURRENT_FIELD_SENTINEL_IDENT.to_string()),
-                ast::Span::default(),
+                spans.next(),
             )),
             field.clone(),
         )),
         incan_vocab::IncanExpr::RelationField { relation, field } => Ok(ast::Expr::Field(
-            Box::new(ast::Spanned::new(
-                ast::Expr::Ident(relation.clone()),
-                ast::Span::default(),
-            )),
+            Box::new(ast::Spanned::new(ast::Expr::Ident(relation.clone()), spans.next())),
             field.clone(),
         )),
         incan_vocab::IncanExpr::Tuple(values) => values
             .iter()
-            .map(|value| public_expr_to_internal(value).map(|node| ast::Spanned::new(node, ast::Span::default())))
+            .map(|value| {
+                public_expr_to_internal_with_spans(value, spans).map(|node| ast::Spanned::new(node, spans.next()))
+            })
             .collect::<Result<Vec<_>, _>>()
             .map(ast::Expr::Tuple),
         incan_vocab::IncanExpr::List(values) => values
             .iter()
             .map(|value| {
-                public_expr_to_internal(value)
-                    .map(|node| ast::ListEntry::Element(ast::Spanned::new(node, ast::Span::default())))
+                public_expr_to_internal_with_spans(value, spans)
+                    .map(|node| ast::ListEntry::Element(ast::Spanned::new(node, spans.next())))
             })
             .collect::<Result<Vec<_>, _>>()
             .map(ast::Expr::List),
@@ -700,8 +841,8 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
             let mut mapped = Vec::with_capacity(entries.len());
             for (key, value) in entries {
                 mapped.push(ast::DictEntry::Pair(
-                    ast::Spanned::new(public_expr_to_internal(key)?, ast::Span::default()),
-                    ast::Spanned::new(public_expr_to_internal(value)?, ast::Span::default()),
+                    ast::Spanned::new(public_expr_to_internal_with_spans(key, spans)?, spans.next()),
+                    ast::Spanned::new(public_expr_to_internal_with_spans(value, spans)?, spans.next()),
                 ));
             }
             Ok(ast::Expr::Dict(mapped))
@@ -717,25 +858,45 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
                     ));
                 }
             },
-            Box::new(ast::Spanned::new(public_expr_to_internal(value)?, ast::Span::default())),
+            Box::new(ast::Spanned::new(
+                public_expr_to_internal_with_spans(value, spans)?,
+                spans.next(),
+            )),
         )),
         incan_vocab::IncanExpr::Binary(left, op, right) => Ok(ast::Expr::Binary(
-            Box::new(ast::Spanned::new(public_expr_to_internal(left)?, ast::Span::default())),
+            Box::new(ast::Spanned::new(
+                public_expr_to_internal_with_spans(left, spans)?,
+                spans.next(),
+            )),
             map_public_binary_op(*op)?,
-            Box::new(ast::Spanned::new(public_expr_to_internal(right)?, ast::Span::default())),
+            Box::new(ast::Spanned::new(
+                public_expr_to_internal_with_spans(right, spans)?,
+                spans.next(),
+            )),
         )),
         incan_vocab::IncanExpr::Call { callee, args } => {
             let mapped = args
                 .iter()
                 .map(|arg| {
-                    public_expr_to_internal(arg)
-                        .map(|node| ast::CallArg::Positional(ast::Spanned::new(node, ast::Span::default())))
+                    public_expr_to_internal_with_spans(arg, spans)
+                        .map(|node| ast::CallArg::Positional(ast::Spanned::new(node, spans.next())))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
+            if let incan_vocab::IncanExpr::Field { object, field } = callee.as_ref() {
+                return Ok(ast::Expr::MethodCall(
+                    Box::new(ast::Spanned::new(
+                        public_expr_to_internal_with_spans(object, spans)?,
+                        spans.next(),
+                    )),
+                    field.clone(),
+                    Vec::new(),
+                    mapped,
+                ));
+            }
             Ok(ast::Expr::Call(
                 Box::new(ast::Spanned::new(
-                    public_expr_to_internal(callee)?,
-                    ast::Span::default(),
+                    public_expr_to_internal_with_spans(callee, spans)?,
+                    spans.next(),
                 )),
                 Vec::new(),
                 mapped,
@@ -743,14 +904,14 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
         }
         incan_vocab::IncanExpr::Field { object, field } => Ok(ast::Expr::Field(
             Box::new(ast::Spanned::new(
-                public_expr_to_internal(object)?,
-                ast::Span::default(),
+                public_expr_to_internal_with_spans(object, spans)?,
+                spans.next(),
             )),
             field.clone(),
         )),
-        incan_vocab::IncanExpr::RaceFor(race) => public_race_for_to_internal(race),
-        incan_vocab::IncanExpr::ScopedSurface(surface) => public_scoped_surface_expr_to_internal(surface),
-        incan_vocab::IncanExpr::ScopedSymbolCall(call) => public_scoped_symbol_call_to_internal(call),
+        incan_vocab::IncanExpr::RaceFor(race) => public_race_for_to_internal(race, spans),
+        incan_vocab::IncanExpr::ScopedSurface(surface) => public_scoped_surface_expr_to_internal(surface, spans),
+        incan_vocab::IncanExpr::ScopedSymbolCall(call) => public_scoped_symbol_call_to_internal(call, spans),
         _ => Err(VocabAstBridgeError::UnsupportedPublicExpression(
             "expression form is not yet supported by internal AST bridge",
         )),
@@ -758,17 +919,21 @@ fn public_expr_to_internal(expr: &incan_vocab::IncanExpr) -> Result<ast::Expr, V
 }
 
 /// Convert one public race expression back into the compiler AST.
-fn public_race_for_to_internal(race: &incan_vocab::IncanRaceForExpr) -> Result<ast::Expr, VocabAstBridgeError> {
+fn public_race_for_to_internal(
+    race: &incan_vocab::IncanRaceForExpr,
+    spans: &mut SyntheticSpanAllocator,
+) -> Result<ast::Expr, VocabAstBridgeError> {
     let arms = race
         .arms
         .iter()
         .map(|arm| {
             let body = match &arm.body {
-                incan_vocab::IncanRaceForBody::Expr(expr) => {
-                    ast::RaceForBody::Expr(ast::Spanned::new(public_expr_to_internal(expr)?, ast::Span::default()))
-                }
+                incan_vocab::IncanRaceForBody::Expr(expr) => ast::RaceForBody::Expr(ast::Spanned::new(
+                    public_expr_to_internal_with_spans(expr, spans)?,
+                    spans.next(),
+                )),
                 incan_vocab::IncanRaceForBody::Block(statements) => {
-                    ast::RaceForBody::Block(public_statements_to_internal(statements)?)
+                    ast::RaceForBody::Block(public_statements_to_internal_with_spans(statements, spans)?)
                 }
                 _ => {
                     return Err(VocabAstBridgeError::UnsupportedPublicExpression(
@@ -777,7 +942,7 @@ fn public_race_for_to_internal(race: &incan_vocab::IncanRaceForExpr) -> Result<a
                 }
             };
             Ok(ast::RaceForArm {
-                awaitable: ast::Spanned::new(public_expr_to_internal(&arm.awaitable)?, ast::Span::default()),
+                awaitable: ast::Spanned::new(public_expr_to_internal_with_spans(&arm.awaitable, spans)?, spans.next()),
                 body,
             })
         })
@@ -797,6 +962,7 @@ fn public_race_for_to_internal(race: &incan_vocab::IncanRaceForExpr) -> Result<a
 /// Convert a public scoped-surface expression back into the compiler AST.
 fn public_scoped_surface_expr_to_internal(
     surface: &incan_vocab::IncanScopedSurfaceExpr,
+    spans: &mut SyntheticSpanAllocator,
 ) -> Result<ast::Expr, VocabAstBridgeError> {
     let key = incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
         dependency_key: surface.dependency_key.clone(),
@@ -823,8 +989,14 @@ fn public_scoped_surface_expr_to_internal(
             owner,
         } => ast::SurfaceExprPayload::ScopedGlyph {
             glyph: glyph.clone(),
-            left: Box::new(ast::Spanned::new(public_expr_to_internal(left)?, ast::Span::default())),
-            right: Box::new(ast::Spanned::new(public_expr_to_internal(right)?, ast::Span::default())),
+            left: Box::new(ast::Spanned::new(
+                public_expr_to_internal_with_spans(left, spans)?,
+                spans.next(),
+            )),
+            right: Box::new(ast::Spanned::new(
+                public_expr_to_internal_with_spans(right, spans)?,
+                spans.next(),
+            )),
             owner: ast::ScopedSurfaceOwner {
                 declaration: owner.declaration.clone(),
                 clause: owner.clause.clone(),
@@ -843,6 +1015,7 @@ fn public_scoped_surface_expr_to_internal(
 /// Convert a public scoped-symbol call back into the compiler AST.
 fn public_scoped_symbol_call_to_internal(
     call: &incan_vocab::IncanScopedSymbolCall,
+    spans: &mut SyntheticSpanAllocator,
 ) -> Result<ast::Expr, VocabAstBridgeError> {
     let key = incan_semantics_core::SurfaceFeatureKey::ScopedDslSurface {
         dependency_key: call.dependency_key.clone(),
@@ -852,8 +1025,8 @@ fn public_scoped_symbol_call_to_internal(
         .args
         .iter()
         .map(|arg| {
-            public_expr_to_internal(arg)
-                .map(|node| ast::CallArg::Positional(ast::Spanned::new(node, ast::Span::default())))
+            public_expr_to_internal_with_spans(arg, spans)
+                .map(|node| ast::CallArg::Positional(ast::Spanned::new(node, spans.next())))
         })
         .collect::<Result<Vec<_>, _>>()?;
     let payload = ast::SurfaceExprPayload::ScopedSymbolCall {
@@ -880,6 +1053,12 @@ fn public_scoped_symbol_call_to_internal(
 fn public_decorator_from_internal(
     decorator: &ast::Spanned<ast::Decorator>,
 ) -> Result<incan_vocab::Decorator, VocabAstBridgeError> {
+    if !decorator.node.type_args.is_empty() {
+        return Err(VocabAstBridgeError::UnsupportedInternalExpression(
+            "typed decorator call-site arguments are not currently bridgeable",
+        ));
+    }
+
     let mut args = Vec::new();
     for arg in &decorator.node.args {
         match arg {
@@ -1021,7 +1200,18 @@ mod tests {
             dependency_key: "demo".to_string(),
             activation_namespace: "demo.dsl".to_string(),
             surface_kind,
+            compound_tokens: Vec::new(),
             placement: incan_vocab::KeywordPlacement::TopLevel,
+            clause_body_kind: None,
+        }
+    }
+
+    fn expression_list_clause_binding() -> ast::VocabKeywordBinding {
+        ast::VocabKeywordBinding {
+            surface_kind: incan_vocab::KeywordSurfaceKind::BlockContextKeyword,
+            placement: incan_vocab::KeywordPlacement::in_block(["query"]),
+            clause_body_kind: Some(incan_vocab::ClauseBodyKind::ExpressionList),
+            ..default_keyword_binding(incan_vocab::KeywordSurfaceKind::BlockContextKeyword)
         }
     }
 
@@ -1036,6 +1226,7 @@ mod tests {
                 ast::Span::default(),
             )],
             body: Vec::new(),
+            body_item_trailing_commas: Vec::new(),
         };
         let declaration_block = ast::VocabBlockStmt {
             keyword: "query".to_string(),
@@ -1046,6 +1237,7 @@ mod tests {
                 ast::Statement::VocabBlock(clause_block),
                 ast::Span::default(),
             )],
+            body_item_trailing_commas: vec![false],
         };
 
         let bridged = internal_vocab_block_to_public(&declaration_block, ast::Span::default())?;
@@ -1063,6 +1255,125 @@ mod tests {
     }
 
     #[test]
+    fn bridges_compound_declaration_tokens() -> Result<(), Box<dyn std::error::Error>> {
+        let mut keyword_binding = default_keyword_binding(incan_vocab::KeywordSurfaceKind::BlockDeclaration);
+        keyword_binding.compound_tokens = vec!["AGAINST".to_string()];
+        let block = ast::VocabBlockStmt {
+            keyword: "MATCH".to_string(),
+            keyword_binding,
+            decorators: Vec::new(),
+            header_args: Vec::new(),
+            body: Vec::new(),
+            body_item_trailing_commas: Vec::new(),
+        };
+
+        let bridged = internal_vocab_block_to_public(&block, ast::Span::default())?;
+        assert_eq!(bridged.keyword, "MATCH");
+        assert_eq!(bridged.compound_tokens, vec!["AGAINST".to_string()]);
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_public_field_callee_calls_back_to_method_calls() -> Result<(), Box<dyn std::error::Error>> {
+        let expr = incan_vocab::IncanExpr::Call {
+            callee: Box::new(incan_vocab::IncanExpr::Field {
+                object: Box::new(incan_vocab::IncanExpr::Name("orders".to_string())),
+                field: "select".to_string(),
+            }),
+            args: vec![incan_vocab::IncanExpr::Name("amount".to_string())],
+        };
+
+        let internal = public_expr_to_internal(&expr)?;
+        let ast::Expr::MethodCall(receiver, method, _, args) = internal else {
+            return Err(format!("expected public field-callee call to bridge as method call, got {internal:?}").into());
+        };
+        assert_eq!(method, "select");
+        assert!(matches!(receiver.node, ast::Expr::Ident(ref name) if name == "orders"));
+        assert_eq!(args.len(), 1);
+        Ok(())
+    }
+
+    #[test]
+    fn public_expression_anchor_assigns_distinct_spans_to_nested_calls() -> Result<(), Box<dyn std::error::Error>> {
+        let expr = incan_vocab::IncanExpr::Call {
+            callee: Box::new(incan_vocab::IncanExpr::Name("outer".to_string())),
+            args: vec![incan_vocab::IncanExpr::Call {
+                callee: Box::new(incan_vocab::IncanExpr::Name("inner".to_string())),
+                args: vec![incan_vocab::IncanExpr::Int(5)],
+            }],
+        };
+
+        let internal = public_expr_to_internal_with_anchor(&expr, ast::Span::new(10, 20))?;
+        let ast::Expr::Call(_, _, args) = internal else {
+            return Err(format!("expected outer call, got {internal:?}").into());
+        };
+        let ast::CallArg::Positional(inner) = &args[0] else {
+            return Err(format!("expected positional inner call, got {:?}", args[0]).into());
+        };
+        let ast::Expr::Call(_, _, inner_args) = &inner.node else {
+            return Err(format!("expected nested call, got {:?}", inner.node).into());
+        };
+        let ast::CallArg::Positional(value) = &inner_args[0] else {
+            return Err(format!("expected positional literal, got {:?}", inner_args[0]).into());
+        };
+
+        assert_ne!(inner.span, value.span);
+        assert_ne!(inner.span, ast::Span::default());
+        assert_ne!(value.span, ast::Span::default());
+        Ok(())
+    }
+
+    #[test]
+    fn bridges_expression_list_clause_alias_items() -> Result<(), Box<dyn std::error::Error>> {
+        let clause_block = ast::VocabBlockStmt {
+            keyword: "SELECT".to_string(),
+            keyword_binding: expression_list_clause_binding(),
+            decorators: Vec::new(),
+            header_args: Vec::new(),
+            body: vec![
+                ast::Spanned::new(
+                    ast::Statement::VocabExpressionItem(ast::VocabExpressionItemStmt {
+                        expr: ast::Spanned::new(ast::Expr::Ident("amount".to_string()), ast::Span::new(10, 16)),
+                        alias: Some("total".to_string()),
+                        modifiers: vec![ast::VocabExpressionItemModifierStmt {
+                            keyword: "for".to_string(),
+                            value: ast::Spanned::new(ast::Expr::Ident("customer".to_string()), ast::Span::new(30, 38)),
+                            span: ast::Span::new(26, 38),
+                        }],
+                    }),
+                    ast::Span::new(10, 38),
+                ),
+                ast::Spanned::new(
+                    ast::Statement::Expr(ast::Spanned::new(
+                        ast::Expr::Ident("region".to_string()),
+                        ast::Span::new(30, 36),
+                    )),
+                    ast::Span::new(30, 36),
+                ),
+            ],
+            body_item_trailing_commas: vec![false, false],
+        };
+
+        let clause = internal_vocab_clause_to_public(&clause_block, ast::Span::default())?;
+        let incan_vocab::VocabClauseBody::ExpressionList(items) = clause.body else {
+            return Err(format!("expected expression-list body, got {:?}", clause.body).into());
+        };
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0].alias.as_deref(), Some("total"));
+        assert_eq!(items[0].modifiers.len(), 1);
+        assert_eq!(items[0].modifiers[0].keyword, "for");
+        assert_eq!(
+            items[0].modifiers[0].value,
+            incan_vocab::IncanExpr::Name("customer".to_string())
+        );
+        assert_eq!(items[0].expr, incan_vocab::IncanExpr::Name("amount".to_string()));
+        assert_eq!(items[1].alias, None);
+        assert!(items[1].modifiers.is_empty());
+        assert_eq!(items[1].expr, incan_vocab::IncanExpr::Name("region".to_string()));
+        Ok(())
+    }
+
+    #[test]
     fn infers_declaration_head_name_from_first_identifier_arg() -> Result<(), Box<dyn std::error::Error>> {
         let block = ast::VocabBlockStmt {
             keyword: "workflow".to_string(),
@@ -1076,6 +1387,7 @@ mod tests {
                 ),
             ],
             body: Vec::new(),
+            body_item_trailing_commas: Vec::new(),
         };
 
         let bridged = internal_vocab_block_to_public(&block, ast::Span::default())?;

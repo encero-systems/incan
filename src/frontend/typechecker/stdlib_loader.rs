@@ -72,7 +72,7 @@ pub(crate) struct TraitMeta {
 }
 
 /// Cached stdlib module signatures keyed by dot-joined module path (e.g. `"std.testing"`).
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default)]
 pub(crate) struct StdlibAstCache {
     /// Map from module path (dot-joined) to extracted stdlib module data.
     cache: HashMap<String, StdlibModuleData>,
@@ -167,7 +167,6 @@ impl StdlibAstCache {
     }
 
     /// List public trait signatures in a stdlib module.
-    #[cfg(feature = "lsp")]
     pub fn list_traits(&mut self, module_path: &[String]) -> Vec<(String, TraitInfo)> {
         self.ensure_loaded(module_path);
         let key = module_path.join(".");
@@ -1070,6 +1069,19 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                 let method_overloads =
                     extract_method_overloads_with_rust_imports(&en.methods, &tp_names, &rust_imports, &stdlib_imports);
                 let methods = methods_from_overloads(&method_overloads);
+                let variant_fields = en
+                    .variants
+                    .iter()
+                    .map(|variant| {
+                        let fields = variant
+                            .node
+                            .fields
+                            .iter()
+                            .map(|field| ast_type_to_resolved_with_rust_imports(&field.node, &tp_names, &rust_imports))
+                            .collect();
+                        (variant.node.name.clone(), fields)
+                    })
+                    .collect();
                 types.push((
                     en.name.clone(),
                     TypeInfo::Enum(EnumInfo {
@@ -1077,6 +1089,7 @@ fn extract_type_signatures(program: &ast::Program) -> Vec<(String, TypeInfo)> {
                         traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                         trait_adoptions: trait_adoption_infos_from_bounds(&en.traits, &tp_names, &stdlib_imports),
                         variants: en.variants.iter().map(|variant| variant.node.name.clone()).collect(),
+                        variant_fields,
                         variant_aliases: en
                             .variant_aliases
                             .iter()
@@ -1359,6 +1372,7 @@ fn function_decl_to_info(func: &ast::FunctionDecl) -> FunctionInfo {
         type_params: tp_names,
         type_param_bounds: tp_bounds,
         type_param_bound_details: tp_bound_details,
+        emitted_name: None,
     }
 }
 
@@ -1421,6 +1435,7 @@ fn imported_runtime_function_info(name: &str) -> Option<FunctionInfo> {
         type_params: Vec::new(),
         type_param_bounds: HashMap::new(),
         type_param_bound_details: HashMap::new(),
+        emitted_name: None,
     })
 }
 

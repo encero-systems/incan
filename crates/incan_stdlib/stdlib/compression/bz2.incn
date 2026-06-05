@@ -5,8 +5,8 @@ This module owns the byte-oriented bzip2 surface and translates portable levels 
 """
 
 from rust::std::io import Cursor, Read
-from rust::bzip2 @ "0.6" import Compression as BzCompression
-from rust::bzip2::read @ "0.6" import BzDecoder, BzEncoder
+from rust::bzip2 import Compression as BzCompression
+from rust::bzip2::read import BzDecoder, BzEncoder
 from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default, _validate_chunk_size, _write_sink_bytes
 from std.fs import File
 from std.io import _BytesIO

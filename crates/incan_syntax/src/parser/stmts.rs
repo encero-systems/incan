@@ -10,6 +10,7 @@ impl<'a> Parser<'a> {
     // Statements
     // ========================================================================
 
+    /// Parse a statement block.
     fn block(&mut self) -> Result<Vec<Spanned<Statement>>, CompileError> {
         let mut stmts = Vec::new();
         let mut next_leading = self.consume_inter_statement_blank_prefix();
@@ -58,6 +59,7 @@ impl<'a> Parser<'a> {
         )
     }
 
+    /// Parse one statement.
     fn statement(&mut self) -> Result<Spanned<Statement>, CompileError> {
         let start = self.current_span().start;
 
@@ -173,58 +175,92 @@ impl<'a> Parser<'a> {
             ));
         };
         let spec_keyword_name = spec.keyword_name.clone();
+        let spec_compound_tokens = spec.compound_tokens.clone();
         let spec_dependency_key = spec.dependency_key.clone();
         let spec_activation_namespace = spec.activation_namespace.clone();
         let spec_surface_kind = spec.surface_kind;
         let spec_placement = spec.placement.clone();
         let spec_valid_decorators = spec.valid_decorators.clone();
+        let spec_clause_body_kind = spec.clause_body_kind;
+        let spec_expression_item_modifiers = spec.expression_item_modifiers.clone();
 
         // Avoid committing to vocab-block parsing unless a top-level header-delimiting `:` is visible ahead. This
         // preserves `assignment_or_expr_stmt` fallback for statements like `route = "/health"`, `route(args)`, and
-        // `route: str = "/health"` when `route` is an imported vocab keyword.
-        if decorators.is_empty() && !self.has_top_level_colon_before_statement_end(self.pos + 1) {
+        // `route: str = "/health"` when `route` is an imported vocab keyword. Clause keywords inside an owning vocab
+        // block may still use an inline body (`FROM orders`), but only when the registered clause body kind makes that
+        // expression payload explicit.
+        let has_header_colon = self.has_top_level_colon_before_statement_end(self.pos + 1);
+        let parses_inline_clause = decorators.is_empty()
+            && parent_keyword.is_some()
+            && matches!(
+                spec_surface_kind,
+                incan_vocab::KeywordSurfaceKind::BlockContextKeyword | incan_vocab::KeywordSurfaceKind::SubBlock
+            )
+            && matches!(
+                spec_clause_body_kind,
+                Some(incan_vocab::ClauseBodyKind::Expression | incan_vocab::ClauseBodyKind::ExpressionList)
+            );
+        if decorators.is_empty() && !has_header_colon && !parses_inline_clause {
             return Ok(None);
         }
 
         self.advance();
+        self.consume_vocab_compound_tokens(&spec_compound_tokens)?;
 
         let mut header_args = Vec::new();
-        if !self.check_punct(PunctuationId::Colon) {
-            header_args.push(self.expression()?);
-            while self.match_punct(PunctuationId::Comma) {
+        let (body, body_item_trailing_commas) = if parses_inline_clause && !has_header_colon {
+            let body = self.parse_inline_vocab_clause_body(
+                &keyword_name,
+                spec_clause_body_kind,
+                spec_expression_item_modifiers,
+            )?;
+            let body_item_trailing_commas = vec![false; body.len()];
+            (body, body_item_trailing_commas)
+        } else {
+            if !self.check_punct(PunctuationId::Colon) {
                 header_args.push(self.expression()?);
-            }
-        }
-        self.expect_punct(PunctuationId::Colon, "Expected ':' after vocab block header")?;
-        self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
-        self.expect_suite_indent("Expected indented block after vocab keyword")?;
-
-        if !spec_valid_decorators.is_empty() {
-            for decorator in &decorators {
-                let decorator_name = decorator.node.name.as_str();
-                let decorator_full_name = decorator.node.path.segments.join(".");
-                let is_valid = spec_valid_decorators.iter().any(|allowed| {
-                    let normalized = allowed.trim().trim_start_matches('@');
-                    normalized == decorator_name || normalized == decorator_full_name
-                });
-                if !is_valid {
-                    return Err(errors::expected_token_message(
-                        &format!(
-                            "Decorator `{decorator_full_name}` is not valid on vocab block `{}`",
-                            spec_keyword_name
-                        ),
-                        &format!("{:?}", decorator.node),
-                        decorator.span,
-                    ));
+                while self.match_punct(PunctuationId::Comma) {
+                    header_args.push(self.expression()?);
                 }
             }
-        }
+            self.expect_punct(PunctuationId::Colon, "Expected ':' after vocab block header")?;
+            self.expect(&TokenKind::Newline, "Expected newline after ':'")?;
+            self.expect_suite_indent("Expected indented block after vocab keyword")?;
 
-        self.vocab_block_stack.push(keyword_name.clone());
-        let body = self.block();
-        self.vocab_block_stack.pop();
-        let body = body?;
-        self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
+            if !spec_valid_decorators.is_empty() {
+                for decorator in &decorators {
+                    let decorator_name = decorator.node.name.as_str();
+                    let decorator_full_name = decorator.node.path.segments.join(".");
+                    let is_valid = spec_valid_decorators.iter().any(|allowed| {
+                        let normalized = allowed.trim().trim_start_matches('@');
+                        normalized == decorator_name || normalized == decorator_full_name
+                    });
+                    if !is_valid {
+                        return Err(errors::expected_token_message(
+                            &format!(
+                                "Decorator `{decorator_full_name}` is not valid on vocab block `{}`",
+                                spec_keyword_name
+                            ),
+                            &format!("{:?}", decorator.node),
+                            decorator.span,
+                        ));
+                    }
+                }
+            }
+
+            self.vocab_block_stack.push(keyword_name.clone());
+            self.vocab_body_kind_stack.push(spec_clause_body_kind);
+            self.vocab_expression_item_modifier_stack
+                .push(spec_expression_item_modifiers);
+            let body = self.block();
+            self.vocab_block_stack.pop();
+            self.vocab_body_kind_stack.pop();
+            self.vocab_expression_item_modifier_stack.pop();
+            let body = body?;
+            self.expect(&TokenKind::Dedent, "Expected dedent after vocab block body")?;
+            let body_item_trailing_commas = vec![false; body.len()];
+            (body, body_item_trailing_commas)
+        };
 
         Ok(Some(Statement::VocabBlock(VocabBlockStmt {
             keyword: keyword_name,
@@ -232,12 +268,65 @@ impl<'a> Parser<'a> {
                 dependency_key: spec_dependency_key,
                 activation_namespace: spec_activation_namespace,
                 surface_kind: spec_surface_kind,
+                compound_tokens: spec_compound_tokens,
                 placement: spec_placement,
+                clause_body_kind: spec_clause_body_kind,
             },
             decorators,
             header_args,
             body,
+            body_item_trailing_commas,
         })))
+    }
+
+    /// Parse an indentation-line clause with an inline expression payload, such as `FROM orders`.
+    fn parse_inline_vocab_clause_body(
+        &mut self,
+        keyword_name: &str,
+        clause_body_kind: Option<incan_vocab::ClauseBodyKind>,
+        expression_item_modifiers: Vec<incan_vocab::ExpressionItemModifierSurface>,
+    ) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        self.vocab_block_stack.push(keyword_name.to_string());
+        self.vocab_body_kind_stack.push(clause_body_kind);
+        self.vocab_expression_item_modifier_stack
+            .push(expression_item_modifiers);
+        let body = match clause_body_kind {
+            Some(incan_vocab::ClauseBodyKind::ExpressionList) => self.inline_vocab_expression_list_body(),
+            Some(incan_vocab::ClauseBodyKind::Expression) => self.inline_vocab_expression_body(),
+            _ => Ok(Vec::new()),
+        };
+        self.vocab_block_stack.pop();
+        self.vocab_body_kind_stack.pop();
+        self.vocab_expression_item_modifier_stack.pop();
+        body
+    }
+
+    /// Parse one inline expression clause body until the physical statement boundary.
+    fn inline_vocab_expression_body(&mut self) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        if self.current_ends_inline_vocab_clause() {
+            return Ok(Vec::new());
+        }
+        let start = self.current_span().start;
+        let expr = self.expression()?;
+        let end = expr.span.end;
+        Ok(vec![Spanned::new(Statement::Expr(expr), Span::new(start, end))])
+    }
+
+    /// Parse comma-separated inline expression-list items until the physical statement boundary.
+    fn inline_vocab_expression_list_body(&mut self) -> Result<Vec<Spanned<Statement>>, CompileError> {
+        let mut body = Vec::new();
+        while !self.current_ends_inline_vocab_clause() {
+            body.push(self.braced_vocab_expression_list_item()?);
+            if !self.match_punct(PunctuationId::Comma) {
+                break;
+            }
+        }
+        Ok(body)
+    }
+
+    /// Return whether the current token ends an inline clause payload.
+    fn current_ends_inline_vocab_clause(&self) -> bool {
+        matches!(self.peek().kind, TokenKind::Newline | TokenKind::Dedent | TokenKind::Eof)
     }
 
     /// Return `true` if there is a top-level block-header `:` before the current statement ends.
@@ -285,6 +374,7 @@ impl<'a> Parser<'a> {
         false
     }
 
+    /// Find the active vocab block metadata for the current keyword and parent block context.
     fn find_active_vocab_block_spec(
         &self,
         keyword_name: &str,
@@ -297,7 +387,8 @@ impl<'a> Parser<'a> {
                 incan_vocab::KeywordSurfaceKind::BlockDeclaration
                     | incan_vocab::KeywordSurfaceKind::BlockContextKeyword
                     | incan_vocab::KeywordSurfaceKind::SubBlock
-            ) && match (&spec.placement, parent_keyword) {
+            ) && self.vocab_compound_tokens_match_at(&spec.compound_tokens, self.pos + 1)
+                && match (&spec.placement, parent_keyword) {
                 (incan_vocab::KeywordPlacement::TopLevel, None) => true,
                 (incan_vocab::KeywordPlacement::TopLevel, Some(_)) => false,
                 (incan_vocab::KeywordPlacement::InBlock(allowed), Some(parent)) => {
@@ -307,6 +398,65 @@ impl<'a> Parser<'a> {
                 _ => false,
             }
         })
+    }
+
+    /// Return whether the current token starts a registered vocab block in the requested parent context.
+    fn current_starts_vocab_block_for_parent(&self, parent_keyword: Option<&str>) -> bool {
+        let Some(keyword_name) = self.current_vocab_keyword_name() else {
+            return false;
+        };
+        self.find_active_vocab_block_spec(&keyword_name, parent_keyword)
+            .is_some()
+    }
+
+    /// Return the current identifier or keyword spelling if it can name a vocab keyword.
+    fn current_vocab_keyword_name(&self) -> Option<String> {
+        match &self.peek().kind {
+            TokenKind::Ident(name) => Some(name.clone()),
+            TokenKind::Keyword(id) => Some(incan_core::lang::keywords::as_str(*id).to_string()),
+            _ => None,
+        }
+    }
+
+    /// Return true when the token stream contains the expected compound keyword tail at `start_idx`.
+    fn vocab_compound_tokens_match_at(&self, compound_tokens: &[String], start_idx: usize) -> bool {
+        compound_tokens.iter().enumerate().all(|(offset, expected)| {
+            self.tokens
+                .get(start_idx + offset)
+                .and_then(|token| Self::vocab_word_token_from_kind(&token.kind))
+                .is_some_and(|actual| actual == expected)
+        })
+    }
+
+    /// Consume a compound keyword tail already selected by metadata-driven lookahead.
+    fn consume_vocab_compound_tokens(&mut self, compound_tokens: &[String]) -> Result<(), CompileError> {
+        for expected in compound_tokens {
+            let Some(actual) = Self::vocab_word_token_from_kind(&self.peek().kind) else {
+                return Err(errors::expected_token_message(
+                    &format!("Expected compound vocab keyword token `{expected}`"),
+                    &format!("{:?}", self.peek().kind),
+                    self.current_span(),
+                ));
+            };
+            if actual != expected {
+                return Err(errors::expected_token_message(
+                    &format!("Expected compound vocab keyword token `{expected}`"),
+                    actual,
+                    self.current_span(),
+                ));
+            }
+            self.advance();
+        }
+        Ok(())
+    }
+
+    /// Return a token spelling usable for metadata-driven vocab keyword matching.
+    fn vocab_word_token_from_kind(kind: &TokenKind) -> Option<&str> {
+        match kind {
+            TokenKind::Ident(name) => Some(name.as_str()),
+            TokenKind::Keyword(id) => Some(incan_core::lang::keywords::as_str(*id)),
+            _ => None,
+        }
     }
 
     /// Parse a generic soft-keyword statement payload (`kw expr[, expr]`) and hand off to semantics.
@@ -505,6 +655,7 @@ impl<'a> Parser<'a> {
         Ok(vec![PatternArg::Positional(Spanned::new(pattern, value.span))])
     }
 
+    /// Parse a `break` statement.
     fn break_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::Break), "Expected 'break'")?;
         let value = if !self.check(&TokenKind::Newline)
@@ -634,6 +785,7 @@ impl<'a> Parser<'a> {
         Ok(Statement::While(WhileStmt { condition, body }))
     }
 
+    /// Parse a `loop` statement.
     fn loop_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::Loop), "Expected 'loop'")?;
         self.expect(
@@ -648,6 +800,7 @@ impl<'a> Parser<'a> {
         Ok(Statement::Loop(LoopStmt { body }))
     }
 
+    /// Parse a `for` statement.
     fn for_stmt(&mut self) -> Result<Statement, CompileError> {
         self.expect(&TokenKind::Keyword(KeywordId::For), "Expected 'for'")?;
         let pattern = self.for_binding_pattern()?;
@@ -798,6 +951,10 @@ impl<'a> Parser<'a> {
         // Parse the expression (could be field access like self.field or index like arr[i])
         let expr = self.expression()?;
 
+        if let Some(item) = self.vocab_expression_list_item_tail(expr.clone())? {
+            return Ok(Statement::VocabExpressionItem(item));
+        }
+
         // Check for tuple assignment: expr, expr, ... = value
         // This handles patterns like: arr[i], arr[j] = arr[j], arr[i]
         if self.match_token(&TokenKind::Punctuation(PunctuationId::Comma)) {
@@ -885,6 +1042,88 @@ impl<'a> Parser<'a> {
 
         // Otherwise it's an expression statement
         Ok(Statement::Expr(expr))
+    }
+
+    /// Return whether the current vocab body is contractually an expression list.
+    fn vocab_expression_list_items_enabled(&self) -> bool {
+        matches!(
+            self.vocab_body_kind_stack.last(),
+            Some(Some(incan_vocab::ClauseBodyKind::ExpressionList))
+        )
+    }
+
+    /// Parse declared trailing keyword payloads for one expression-list item.
+    fn vocab_expression_list_item_tail(
+        &mut self,
+        expr: Spanned<Expr>,
+    ) -> Result<Option<VocabExpressionItemStmt>, CompileError> {
+        if !self.vocab_expression_list_items_enabled() {
+            return Ok(None);
+        }
+
+        let mut alias = None;
+        let mut modifiers = Vec::new();
+        let mut saw_tail = false;
+
+        while let Some(surface) = self.current_expression_item_modifier_surface() {
+            let keyword_span = self.current_span();
+            self.advance();
+            saw_tail = true;
+            match surface.kind {
+                incan_vocab::ExpressionItemModifierKind::Alias => {
+                    if alias.is_some() {
+                        return Err(CompileError::syntax(
+                            format!("Duplicate expression-list alias modifier `{}`", surface.keyword),
+                            keyword_span,
+                        ));
+                    }
+                    alias = Some(self.identifier()?);
+                }
+                incan_vocab::ExpressionItemModifierKind::Expression => {
+                    let value = self.expression()?;
+                    let span = Span::new(keyword_span.start, value.span.end);
+                    modifiers.push(VocabExpressionItemModifierStmt {
+                        keyword: surface.keyword,
+                        value,
+                        span,
+                    });
+                }
+                _ => {
+                    return Err(CompileError::syntax(
+                        format!("Unsupported expression-list modifier kind for `{}`", surface.keyword),
+                        keyword_span,
+                    ));
+                }
+            }
+        }
+
+        if saw_tail {
+            Ok(Some(VocabExpressionItemStmt {
+                expr,
+                alias,
+                modifiers,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Return the declared expression-list item modifier matching the current token.
+    fn current_expression_item_modifier_surface(&self) -> Option<incan_vocab::ExpressionItemModifierSurface> {
+        let keyword = self.current_vocab_word_token()?;
+        self.vocab_expression_item_modifier_stack
+            .last()
+            .and_then(|modifiers| modifiers.iter().find(|modifier| modifier.keyword == keyword))
+            .cloned()
+    }
+
+    /// Return the current identifier/keyword spelling when it can start a DSL-owned item modifier.
+    fn current_vocab_word_token(&self) -> Option<&str> {
+        match &self.peek().kind {
+            TokenKind::Ident(name) => Some(name.as_str()),
+            TokenKind::Keyword(id) => Some(incan_core::lang::keywords::as_str(*id)),
+            _ => None,
+        }
     }
 
     /// Convert an assignment operator token such as `+=` or `<<=` into its AST compound operator.

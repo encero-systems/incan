@@ -175,14 +175,17 @@ fn write_feature_inventory_reference(path: &Path) {
     }
 }
 
+/// Escape generated reference text so it is safe inside a Markdown table cell.
 fn markdown_table_cell(value: &str) -> String {
     value.replace('|', "\\|").replace('\n', " ")
 }
 
+/// Wrap generated reference text in Markdown code formatting.
 fn markdown_code(value: &str) -> String {
     format!("`{}`", value.replace('`', "\\`"))
 }
 
+/// Render a comma-separated list of Markdown links for generated reference output.
 fn markdown_links(links: &[features::FeatureLink]) -> String {
     links
         .iter()
@@ -191,6 +194,7 @@ fn markdown_links(links: &[features::FeatureLink]) -> String {
         .join(", ")
 }
 
+/// Render the canonical source forms cell for a generated reference table row.
 fn canonical_forms_cell(forms: &[&str]) -> String {
     if forms.is_empty() {
         return "-".to_string();
@@ -202,6 +206,7 @@ fn canonical_forms_cell(forms: &[&str]) -> String {
         .join("<br>")
 }
 
+/// Render the compact feature summary table for the generated language reference.
 fn render_features_summary_section(out: &mut String) {
     start_section(out, "## All features");
 
@@ -226,6 +231,7 @@ fn render_features_summary_section(out: &mut String) {
     out.push('\n');
 }
 
+/// Render detailed feature entries for the generated language reference.
 fn render_features_detail_section(out: &mut String) {
     start_section(out, "## Feature details");
 
@@ -481,7 +487,7 @@ fn render_decorators_section(out: &mut String) {
     start_section(out, "## Decorators");
 
     out.push_str(
-        r#"User-defined decorators are valid on top-level `def` / `async def` declarations and instance methods. A decorator is an ordinary callable value that receives the decorated function value and returns the binding that should replace it:
+        r#"User-defined decorators are valid on top-level `def` / `async def` declarations and instance methods. A decorator is an ordinary callable value that receives the decorated function or method callable and returns the callable that should replace it:
 
 ```incan
 def parse(value: int) -> int:
@@ -499,6 +505,45 @@ def main() -> None:
 ```
 
 Stacked decorators apply bottom-up, matching Python's declaration model: the decorator closest to `def` receives the original function value first, and the outer decorators receive each previous result. Decorator factories such as `@logged("name")` are checked by first evaluating the factory expression as a callable-producing expression and then applying the produced decorator to the function value.
+
+!!! tip "Coming from Python?"
+    Python decorators can replace a function with any object. Incan user-defined function decorators are stricter: the decorator input is the decorated callable, and the result must also be callable. Python's `Callable[[A, B], R]` corresponds to Incan's `(A, B) -> R`; `=>` is only for closure expressions, not callable types. Use `(F) -> F` when a decorator preserves the original callable signature, and spell the source and replacement callable types separately when it intentionally changes the signature, such as `((str) -> R) -> ((str, str) -> R)`.
+
+Decorator factories can be generic over the decorated function type. This is the usual shape for registry, catalog, routing, telemetry, and validation decorators that record metadata but return the original function unchanged:
+
+```incan
+def registered[F](function_ref: str) -> ((F) -> F):
+    return (func) => func
+
+@registered("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+```
+
+The compiler infers `F` from the decorated function when the factory result is applied. If inference needs help, pass the decorated function type explicitly on the decorator factory call:
+
+```incan
+@registered[(str) -> ColumnExpr]("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+```
+
+The post-decoration binding keeps the concrete callable signature of the decorated function unless the decorator deliberately returns a different callable shape. Checked API metadata and imports observe that concrete signature, not the generic helper's `F`.
+
+The callable value passed into a decorator exposes `__name__` as the source callable name. Registry and catalog decorators can use this from concrete decorator helpers and from generic `(F) -> F` helpers, so a decorator can record `func.__name__` without requiring the decorated declaration to repeat its own public name in a string argument.
+
+```incan
+def capture[F](func: F) -> F:
+    registry_names.append(func.__name__)
+    return func
+
+def registered[F]() -> ((F) -> F):
+    return (func) => capture[F](func)
+
+@registered()
+pub def sample(value: int) -> int:
+    return value + 1
+```
 
 Method decorators receive an unbound callable shape with the receiver first. A decorator on `def label(self, value: int) -> str` sees `(&Box, int) -> str`; a decorator on `def bump(mut self, value: int) -> int` sees `(&mut Box, int) -> int`. The wrapper passes the actual receiver borrow through to the decorated callable, so method decorators do not require cloning the receiver.
 
@@ -1044,6 +1089,31 @@ fn render_surface_methods_section(out: &mut String) {
     out.push_str("\n### Result methods\n\n");
     out.push_str(table_header());
     for m in surface::result_methods::RESULT_METHODS {
+        let id = format!("{:?}", m.id);
+        let canonical = format!("`{}`", m.canonical);
+        let aliases = if m.aliases.is_empty() {
+            String::new()
+        } else {
+            m.aliases
+                .iter()
+                .map(|a| format!("`{}`", a))
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let desc = m.description;
+        let rfc = m.introduced_in_rfc;
+        let since = m.since;
+        let stability = format!("{:?}", m.stability);
+        out.push_str(&format!(
+            "| {id} | {canonical} | {aliases} | {desc} | {rfc} | {since} | {stability} |\n"
+        ));
+    }
+    out.push('\n');
+
+    // Iterator
+    out.push_str("\n### Iterator methods\n\n");
+    out.push_str(table_header());
+    for m in surface::iterator_methods::ITERATOR_METHODS {
         let id = format!("{:?}", m.id);
         let canonical = format!("`{}`", m.canonical);
         let aliases = if m.aliases.is_empty() {

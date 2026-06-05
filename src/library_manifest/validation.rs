@@ -15,6 +15,7 @@ use super::{
     EnumExport, EnumValueExport, EnumValueTypeExport, LIBRARY_MANIFEST_FORMAT, LibraryManifestError, ParamExport,
     ParamKindExport, PartialExport, RUST_ABI_SCHEMA_VERSION, VocabProviderManifest,
 };
+use crate::frontend::api_metadata::CHECKED_API_METADATA_SCHEMA_VERSION;
 use crate::frontend::contract_metadata::CONTRACT_METADATA_SCHEMA_VERSION;
 
 /// Validate one raw manifest payload before it is written or decoded into the semantic model.
@@ -69,6 +70,23 @@ fn validate_contract_metadata(raw: &RawLibraryManifest) -> Result<(), LibraryMan
     metadata
         .validate()
         .map_err(|error| LibraryManifestError::Invalid(error.to_string()))?;
+
+    if let Some(api) = &raw.contract_metadata.api {
+        if api.schema_version != CHECKED_API_METADATA_SCHEMA_VERSION {
+            return Err(LibraryManifestError::Invalid(format!(
+                "contract_metadata.api.schema_version {} is unsupported (expected {})",
+                api.schema_version, CHECKED_API_METADATA_SCHEMA_VERSION
+            )));
+        }
+        for module in &api.modules {
+            if module.schema_version != CHECKED_API_METADATA_SCHEMA_VERSION {
+                return Err(LibraryManifestError::Invalid(format!(
+                    "contract_metadata.api.modules schema_version {} is unsupported (expected {})",
+                    module.schema_version, CHECKED_API_METADATA_SCHEMA_VERSION
+                )));
+            }
+        }
+    }
     Ok(())
 }
 

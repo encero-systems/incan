@@ -6,6 +6,12 @@ use incan_semantics_core::SurfaceFeatureKey;
 
 use super::Formatter;
 
+struct MethodChainSegment<'a> {
+    method: &'a str,
+    type_args: &'a [Spanned<Type>],
+    args: &'a [CallArg],
+}
+
 impl Formatter {
     /// Return whether a binary operator is a logical chain breakpoint.
     fn is_logical_binary_op(op: &BinaryOp) -> bool {
@@ -17,6 +23,7 @@ impl Formatter {
         matches!(expr, Expr::Binary(_, op, _) if Self::is_logical_binary_op(op))
     }
 
+    /// Write one formatted call argument.
     fn write_call_arg(&mut self, arg: &CallArg) {
         match arg {
             CallArg::Positional(expr) => self.format_expr(&expr.node),
@@ -53,6 +60,7 @@ impl Formatter {
         }
     }
 
+    /// Format call arguments with line wrapping when needed.
     fn format_call_args_with_wrapping(&mut self, args: &[CallArg]) {
         if args.is_empty() {
             return;
@@ -120,6 +128,84 @@ impl Formatter {
         }
     }
 
+    /// Collect a nested method-call chain into its root expression plus source-ordered method segments.
+    fn collect_method_chain<'a>(expr: &'a Expr, segments: &mut Vec<MethodChainSegment<'a>>) -> &'a Expr {
+        let Expr::MethodCall(receiver, method, type_args, args) = expr else {
+            return expr;
+        };
+
+        let root = Self::collect_method_chain(&receiver.node, segments);
+        segments.push(MethodChainSegment {
+            method,
+            type_args,
+            args,
+        });
+        root
+    }
+
+    /// Return whether a fluent chain root can be printed without adding precedence-protecting parentheses.
+    fn fluent_chain_root_is_simple(expr: &Expr) -> bool {
+        matches!(
+            expr,
+            Expr::Ident(_) | Expr::SelfExpr | Expr::Call(_, _, _) | Expr::Field(_, _) | Expr::Index(_, _)
+        )
+    }
+
+    /// Try inline method-chain formatting first, then fall back to a leading-dot fluent layout when it overflows.
+    fn format_fluent_method_chain_if_needed(&mut self, expr: &Expr) -> bool {
+        let mut segments = Vec::new();
+        let root = Self::collect_method_chain(expr, &mut segments);
+        if segments.len() < 2 || !Self::fluent_chain_root_is_simple(root) {
+            return false;
+        }
+
+        let checkpoint = self.writer.checkpoint();
+        self.format_method_chain_inline(root, &segments);
+        if !self.writer.output_since_contains_newline(checkpoint) && !self.writer.line_length_exceeded() {
+            return true;
+        }
+
+        self.writer.restore(checkpoint);
+        self.format_expr(root);
+        self.writer.newline();
+        self.writer.indent();
+        for (idx, segment) in segments.iter().enumerate() {
+            if idx > 0 {
+                self.writer.newline();
+            }
+            self.format_method_chain_segment(segment);
+        }
+        self.writer.dedent();
+        true
+    }
+
+    /// Write a full method chain without inserting fluent line breaks.
+    fn format_method_chain_inline(&mut self, root: &Expr, segments: &[MethodChainSegment<'_>]) {
+        self.format_expr(root);
+        for segment in segments {
+            self.format_method_chain_segment(segment);
+        }
+    }
+
+    /// Write one `.method[...]?()` segment of a method chain.
+    fn format_method_chain_segment(&mut self, segment: &MethodChainSegment<'_>) {
+        self.writer.write(".");
+        self.writer.write(segment.method);
+        if !segment.type_args.is_empty() {
+            self.writer.write("[");
+            for (idx, arg) in segment.type_args.iter().enumerate() {
+                if idx > 0 {
+                    self.writer.write(", ");
+                }
+                self.format_type(&arg.node);
+            }
+            self.writer.write("]");
+        }
+        self.writer.write("(");
+        self.format_call_args_with_wrapping(segment.args);
+        self.writer.write(")");
+    }
+
     /// Format one expression node, preserving call/collection entry structure and surface-expression payload syntax.
     pub(super) fn format_expr(&mut self, expr: &Expr) {
         match expr {
@@ -181,22 +267,15 @@ impl Formatter {
                 self.writer.write(field);
             }
             Expr::MethodCall(receiver, method, type_args, args) => {
-                self.format_expr(&receiver.node);
-                self.writer.write(".");
-                self.writer.write(method);
-                if !type_args.is_empty() {
-                    self.writer.write("[");
-                    for (i, arg) in type_args.iter().enumerate() {
-                        if i > 0 {
-                            self.writer.write(", ");
-                        }
-                        self.format_type(&arg.node);
-                    }
-                    self.writer.write("]");
+                if !self.format_fluent_method_chain_if_needed(expr) {
+                    let segment = MethodChainSegment {
+                        method,
+                        type_args,
+                        args,
+                    };
+                    self.format_expr(&receiver.node);
+                    self.format_method_chain_segment(&segment);
                 }
-                self.writer.write("(");
-                self.format_call_args_with_wrapping(args);
-                self.writer.write(")");
             }
             Expr::Partial(partial) => {
                 self.writer.write("partial ");
@@ -251,6 +330,7 @@ impl Formatter {
                 }
                 _ => self.writer.write("<surface_expr>"),
             },
+            Expr::VocabBlock(block) => self.format_expression_vocab_block_braced(block),
             Expr::Try(inner) => {
                 self.format_expr(&inner.node);
                 self.writer.write("?");
@@ -289,7 +369,7 @@ impl Formatter {
             }
             Expr::Closure(params, body) => {
                 self.writer.write("(");
-                self.format_params(params);
+                self.format_closure_params(params);
                 self.writer.write(") => ");
                 self.format_expr(&body.node);
             }
@@ -372,9 +452,12 @@ impl Formatter {
                 for part in parts {
                     match part {
                         FStringPart::Literal(s) => self.writer.write(&escape_fstring_literal(s)),
-                        FStringPart::Expr(expr) => {
+                        FStringPart::Expr { expr, format } => {
                             self.writer.write("{");
                             self.format_expr(&expr.node);
+                            if matches!(format, FStringFormat::Debug) {
+                                self.writer.write(":?");
+                            }
                             self.writer.write("}");
                         }
                     }
@@ -452,7 +535,7 @@ impl Formatter {
             match clause {
                 ComprehensionClause::For { pattern, iter } => {
                     self.writer.write(" for ");
-                    self.format_pattern(&pattern.node);
+                    self.format_for_pattern(&pattern.node);
                     self.writer.write(" in ");
                     self.format_expr(&iter.node);
                 }
@@ -540,6 +623,17 @@ impl Formatter {
 
     // ---- Call args ----
 
+    /// Format closure parameters.
+    fn format_closure_params(&mut self, params: &[Spanned<Param>]) {
+        for (i, param) in params.iter().enumerate() {
+            if i > 0 {
+                self.writer.write(", ");
+            }
+            self.writer.write(&param.node.name);
+        }
+    }
+
+    /// Format call arguments.
     fn format_call_args(&mut self, args: &[CallArg]) {
         for (i, arg) in args.iter().enumerate() {
             if i > 0 {
@@ -563,6 +657,7 @@ impl Formatter {
         }
     }
 
+    /// Format one match arm.
     fn format_match_arm(&mut self, arm: &Spanned<MatchArm>) {
         self.writer.blank_lines(arm.leading_blank_lines as usize);
         let arm = &arm.node;
@@ -595,6 +690,7 @@ impl Formatter {
         }
     }
 
+    /// Try to format a match arm body as an inline statement.
     fn try_format_inline_match_statement(&mut self, stmts: &[Spanned<Statement>]) -> bool {
         let [stmt] = stmts else {
             return false;
@@ -616,6 +712,7 @@ impl Formatter {
         true
     }
 
+    /// Format a statement for inline expression contexts.
     fn format_statement_inline(&mut self, stmt: &Statement) -> bool {
         match stmt {
             Statement::Expr(expr) => self.format_expr(&expr.node),

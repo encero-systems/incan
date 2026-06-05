@@ -1250,6 +1250,28 @@ async def create() -> None:
     }
 
     #[test]
+    fn test_parse_decorator_factory_with_explicit_type_args() -> Result<(), Vec<CompileError>> {
+        let source = r#"
+@registered[(str) -> ColumnExpr]("inql.functions.col")
+def col(name: str) -> ColumnExpr:
+  pass
+"#;
+        let program = parse_str(source)?;
+        let func = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+        let dec = &func.decorators[0].node;
+        assert_eq!(dec.path.segments, vec!["registered"]);
+        assert_eq!(dec.name, "registered");
+        assert!(dec.is_call);
+        assert_eq!(dec.type_args.len(), 1);
+        assert!(matches!(&dec.type_args[0].node, Type::Function(_, _)));
+        assert_eq!(dec.args.len(), 1);
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_decorator_with_rust_namespace() -> Result<(), Vec<CompileError>> {
         // RFC 023: @rust.extern decorator must parse correctly (rust is a keyword)
         let source = r#"
@@ -2223,16 +2245,26 @@ def identity(
     }
 
     #[test]
-    fn test_parse_rust_import_with_features_requires_version() {
+    fn test_parse_rust_import_with_features_without_inline_version() -> Result<(), Vec<CompileError>> {
         let source = r#"import rust::tokio with ["full"]"#;
-        let Err(err) = parse_str(source) else {
-            panic!("Expected rust import features to require version");
-        };
-        assert!(
-            err[0].message.contains("features require a version"),
-            "Unexpected error: {}",
-            err[0].message
-        );
+        let program = parse_str(source)?;
+        match &program.declarations[0].node {
+            Declaration::Import(import) => match &import.kind {
+                ImportKind::RustCrate {
+                    crate_name,
+                    version,
+                    features,
+                    ..
+                } => {
+                    assert_eq!(crate_name, "tokio");
+                    assert_eq!(version, &None);
+                    assert_eq!(features, &vec!["full".to_string()]);
+                }
+                _ => panic!("Expected rust module import"),
+            },
+            _ => panic!("Expected import"),
+        }
+        Ok(())
     }
 
     #[test]
@@ -3113,14 +3145,14 @@ def main() -> int:
         };
 
         let first_expr = match &parts[1] {
-            FStringPart::Expr(expr) => expr,
+            FStringPart::Expr { expr, .. } => expr,
             _ => panic!("Expected first interpolation expression"),
         };
         assert_eq!(first_expr.span.start, first_expected_start);
         assert_eq!(first_expr.span.end, first_expected_start + "{title}".len());
 
         let second_expr = match &parts[3] {
-            FStringPart::Expr(expr) => expr,
+            FStringPart::Expr { expr, .. } => expr,
             _ => panic!("Expected second interpolation expression"),
         };
         assert_eq!(second_expr.span.start, second_expected_start);
@@ -3155,13 +3187,52 @@ def main() -> int:
         };
 
         let interpolation = match &parts[1] {
-            FStringPart::Expr(expr) => expr,
+            FStringPart::Expr { expr, .. } => expr,
             _ => panic!("Expected interpolation expression"),
         };
 
         assert_eq!(interpolation.span.start, expected_start);
         assert_eq!(interpolation.span.end, expected_start + "{x + y * z}".len());
         assert!(matches!(interpolation.node, Expr::Binary(_, _, _)));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_fstring_debug_format_marker() -> Result<(), Vec<CompileError>> {
+        let source = "def render(columns: list[str]) -> str:\n  return f\"columns: {columns:?}\"\n";
+        let program = parse_str(source)?;
+
+        let function = match &program.declarations[0].node {
+            Declaration::Function(f) => f,
+            _ => panic!("Expected function"),
+        };
+
+        let return_expr = match &function.body[0].node {
+            Statement::Return(Some(expr)) => expr,
+            _ => panic!("Expected return with expression"),
+        };
+
+        let parts = match &return_expr.node {
+            Expr::FString(parts) => parts,
+            _ => panic!("Expected f-string expression"),
+        };
+
+        let expected_start = match source.find("{columns:?}") {
+            Some(start) => start,
+            None => panic!("Could not find interpolation in source"),
+        };
+        let interpolation = match &parts[1] {
+            FStringPart::Expr { expr, format } => {
+                assert!(matches!(format, FStringFormat::Debug));
+                expr
+            }
+            _ => panic!("Expected interpolation expression"),
+        };
+
+        assert_eq!(interpolation.span.start, expected_start);
+        assert_eq!(interpolation.span.end, expected_start + "{columns:?}".len());
+        assert!(matches!(interpolation.node, Expr::Ident(ref name) if name == "columns"));
 
         Ok(())
     }
@@ -3192,7 +3263,7 @@ def main() -> int:
         };
 
         let interpolation = match &parts[1] {
-            FStringPart::Expr(expr) => expr,
+            FStringPart::Expr { expr, .. } => expr,
             _ => panic!("Expected interpolation expression"),
         };
         assert_eq!(interpolation.span.start, expected_start);
@@ -3277,6 +3348,77 @@ def main() -> int:
     }
 
     #[test]
+    fn test_parse_indented_leading_dot_fluent_method_chain() -> Result<(), Vec<CompileError>> {
+        let source = r#"def run(orders: DataFrame) -> DataFrame:
+  enriched = orders
+    .with_column("region_norm", col("region"))
+    .with_column("status_norm", col("status"))
+
+  paid = enriched.filter(eq(col("status_norm"), "paid"))
+  return paid
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let assignment = match &function.body[0].node {
+            Statement::Assignment(assign) => assign,
+            other => panic!("Expected assignment, got {other:?}"),
+        };
+
+        let Expr::MethodCall(first_call, second_method, _, second_args) = &assignment.value.node else {
+            panic!("Expected outer fluent method call, got {:?}", assignment.value.node);
+        };
+        assert_eq!(second_method, "with_column");
+        assert_eq!(second_args.len(), 2);
+
+        let Expr::MethodCall(root, first_method, _, first_args) = &first_call.node else {
+            panic!("Expected nested fluent method call, got {:?}", first_call.node);
+        };
+        assert_eq!(first_method, "with_column");
+        assert_eq!(first_args.len(), 2);
+        assert!(matches!(&root.node, Expr::Ident(name) if name == "orders"));
+
+        match &function.body[1].node {
+            Statement::Assignment(assign) => assert_eq!(assign.name, "paid"),
+            other => panic!("Expected assignment after fluent chain, got {other:?}"),
+        }
+
+        match &function.body[2].node {
+            Statement::Return(Some(expr)) => assert!(matches!(&expr.node, Expr::Ident(name) if name == "paid")),
+            other => panic!("Expected return after fluent chain, got {other:?}"),
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_parse_indented_leading_dot_fluent_method_chain_allows_comment_lines() -> Result<(), Vec<CompileError>> {
+        let source = r#"def run(orders: DataFrame) -> DataFrame:
+  enriched = orders
+    # a valid placement for a comment
+    .with_column("region_norm", col("region"))
+    .with_column("status_norm", col("status"))
+  return enriched
+"#;
+        let program = parse_str(source)?;
+        let function = require_function_decl(&program.declarations[0])?;
+        let assignment = match &function.body[0].node {
+            Statement::Assignment(assign) => assign,
+            other => panic!("Expected assignment, got {other:?}"),
+        };
+
+        let Expr::MethodCall(first_call, second_method, _, _) = &assignment.value.node else {
+            panic!("Expected outer fluent method call, got {:?}", assignment.value.node);
+        };
+        assert_eq!(second_method, "with_column");
+
+        let Expr::MethodCall(root, first_method, _, _) = &first_call.node else {
+            panic!("Expected nested fluent method call, got {:?}", first_call.node);
+        };
+        assert_eq!(first_method, "with_column");
+        assert!(matches!(&root.node, Expr::Ident(name) if name == "orders"));
+        Ok(())
+    }
+
+    #[test]
     fn test_parse_function_call_with_infer_type_arg_placeholder() -> Result<(), Vec<CompileError>> {
         let source = "def run() -> int:\n  return pair_map[int, _](1, 2)\n";
         let program = parse_str(source)?;
@@ -3353,7 +3495,7 @@ def main() -> int:
         };
 
         let interpolation = match &parts[1] {
-            FStringPart::Expr(expr) => expr,
+            FStringPart::Expr { expr, .. } => expr,
             _ => panic!("Expected interpolation expression"),
         };
         assert_eq!(interpolation.span.start, expected_start);
@@ -4422,6 +4564,202 @@ def has_name(name: str | None) -> bool:
                     crate::ast::SurfaceExprPayload::ScopedSymbolCall { symbol, args, owner }
                         if symbol == "sum" && args.len() == 1 && owner.declaration == "query"
                 )
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_expression_list_clause_accepts_declared_item_modifiers() -> Result<(), Box<dyn std::error::Error>> {
+        let source = "import pub::analytics\n\ndef configure() -> None:\n  query:\n    SELECT:\n      sum(amount) as total for customer with context\n      amount\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_surface(
+                incan_vocab::DslSurface::on_import("analytics.query").with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .with_clause(
+                            incan_vocab::ClauseSurface::expr_list("SELECT")
+                                .with_expression_item_modifiers([
+                                    incan_vocab::ExpressionItemModifierSurface::expr("for"),
+                                    incan_vocab::ExpressionItemModifierSurface::expr("with"),
+                                ])
+                                .required(),
+                        ),
+                ),
+            )
+            .metadata();
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert("analytics".to_string(), metadata.keyword_registrations);
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert("analytics".to_string(), metadata.dsl_surfaces);
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::VocabBlock(query_block) = &function.body[0].node else {
+            return Err(format!("expected query vocab block, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Statement::VocabBlock(select_block) = &query_block.body[0].node else {
+            return Err(format!("expected SELECT clause block, got {:?}", query_block.body[0].node).into());
+        };
+        assert_eq!(
+            select_block.keyword_binding.clause_body_kind,
+            Some(incan_vocab::ClauseBodyKind::ExpressionList)
+        );
+        assert!(matches!(
+            &select_block.body[0].node,
+            crate::ast::Statement::VocabExpressionItem(item)
+                if item.alias.as_deref() == Some("total")
+                    && item.modifiers.len() == 2
+                    && item.modifiers[0].keyword == "for"
+                    && matches!(&item.modifiers[0].value.node, crate::ast::Expr::Ident(name) if name == "customer")
+                    && item.modifiers[1].keyword == "with"
+                    && matches!(&item.modifiers[1].value.node, crate::ast::Expr::Ident(name) if name == "context")
+                    && matches!(&item.expr.node, crate::ast::Expr::Call(callee, _, _)
+                        if matches!(&callee.node, crate::ast::Expr::Ident(name) if name == "sum"))
+        ));
+        assert!(matches!(
+            &select_block.body[1].node,
+            crate::ast::Statement::Expr(expr)
+                if matches!(&expr.node, crate::ast::Expr::Ident(name) if name == "amount")
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_expression_desugaring_vocab_block_parses_in_assignment_value() -> Result<(), Box<dyn std::error::Error>> {
+        let source =
+            "import pub::analytics\n\ndef configure() -> None:\n  value = query:\n    FROM orders\n    SELECT:\n      amount as total\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_surface(
+                incan_vocab::DslSurface::on_import("analytics.query").with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .desugars_to_expression()
+                        .with_clause(incan_vocab::ClauseSurface::expr("FROM").required())
+                        .with_clause(incan_vocab::ClauseSurface::expr_list("SELECT").required()),
+                ),
+            )
+            .metadata();
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert("analytics".to_string(), metadata.keyword_registrations);
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert("analytics".to_string(), metadata.dsl_surfaces);
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::Assignment(assign) = &function.body[0].node else {
+            return Err(format!("expected assignment, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Expr::VocabBlock(block) = &assign.value.node else {
+            return Err(format!("expected vocab expression block, got {:?}", assign.value.node).into());
+        };
+        assert_eq!(block.keyword, "query");
+        assert!(matches!(
+            &block.body[0].node,
+            crate::ast::Statement::VocabBlock(from)
+                if from.keyword == "FROM"
+                    && matches!(
+                        &from.body[0].node,
+                        crate::ast::Statement::Expr(expr)
+                            if matches!(&expr.node, crate::ast::Expr::Ident(name) if name == "orders")
+                    )
+        ));
+        assert!(matches!(
+            &block.body[1].node,
+            crate::ast::Statement::VocabBlock(select)
+                if select.keyword == "SELECT"
+                    && matches!(
+                        &select.body[0].node,
+                        crate::ast::Statement::VocabExpressionItem(item)
+                            if item.alias.as_deref() == Some("total")
+                    )
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn test_braced_expression_vocab_block_uses_clause_metadata_boundaries()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let source =
+            "import pub::analytics\n\ndef configure() -> None:\n  value = query { FROM orders GROUP BY amount as grouped SELECT total as total }\n";
+        let tokens = crate::lexer::lex(source).map_err(|errs| format!("lex errors: {errs:?}"))?;
+
+        let metadata = incan_vocab::VocabRegistration::new()
+            .with_surface(
+                incan_vocab::DslSurface::on_import("analytics.query").with_declaration(
+                    incan_vocab::DeclarationSurface::named("query")
+                        .with_clause_body()
+                        .desugars_to_expression()
+                        .with_clauses([
+                            incan_vocab::ClauseSurface::expr("FROM").required(),
+                            incan_vocab::ClauseSurface::expr_list("GROUP BY").optional(),
+                            incan_vocab::ClauseSurface::expr_list("SELECT").required(),
+                        ]),
+                ),
+            )
+            .metadata();
+        let mut keyword_map = std::collections::HashMap::new();
+        keyword_map.insert("analytics".to_string(), metadata.keyword_registrations);
+        let mut surface_map = std::collections::HashMap::new();
+        surface_map.insert("analytics".to_string(), metadata.dsl_surfaces);
+
+        let program =
+            crate::parser::parse_with_context_and_surfaces(&tokens, None, Some(&keyword_map), Some(&surface_map))
+                .map_err(|errs| format!("parse errors: {errs:?}"))?;
+        let function = match &program.declarations[1].node {
+            crate::ast::Declaration::Function(function) => function,
+            other => return Err(format!("expected function declaration, got {other:?}").into()),
+        };
+        let crate::ast::Statement::Assignment(assign) = &function.body[0].node else {
+            return Err(format!("expected assignment, got {:?}", function.body[0].node).into());
+        };
+        let crate::ast::Expr::VocabBlock(block) = &assign.value.node else {
+            return Err(format!("expected vocab expression block, got {:?}", assign.value.node).into());
+        };
+        assert_eq!(block.body.len(), 3);
+        assert!(matches!(
+            &block.body[0].node,
+            crate::ast::Statement::VocabBlock(from)
+                if from.keyword == "FROM"
+                    && matches!(
+                        &from.body[0].node,
+                        crate::ast::Statement::Expr(expr)
+                            if matches!(&expr.node, crate::ast::Expr::Ident(name) if name == "orders")
+                    )
+        ));
+        assert!(matches!(
+            &block.body[1].node,
+            crate::ast::Statement::VocabBlock(group)
+                if group.keyword == "GROUP"
+                    && group.keyword_binding.compound_tokens == vec!["BY".to_string()]
+                    && matches!(
+                        &group.body[0].node,
+                        crate::ast::Statement::VocabExpressionItem(item)
+                            if item.alias.as_deref() == Some("grouped")
+                    )
+        ));
+        assert!(matches!(
+            &block.body[2].node,
+            crate::ast::Statement::VocabBlock(select)
+                if select.keyword == "SELECT"
+                    && matches!(
+                        &select.body[0].node,
+                        crate::ast::Statement::VocabExpressionItem(item)
+                            if item.alias.as_deref() == Some("total")
+                    )
         ));
         Ok(())
     }

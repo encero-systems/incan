@@ -4,16 +4,16 @@
 //! handling, generic inference, builtin dispatch, and Rust boundary validation to focused child modules.
 
 use crate::frontend::ast::{CallArg, Expr, Span, Spanned, Type};
-use crate::frontend::diagnostics::errors;
+use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::resolved_type_subst::substitute_resolved_type;
-use crate::frontend::symbols::{FieldInfo, ResolvedType, SymbolKind, TypeInfo};
+use crate::frontend::symbols::{FieldInfo, FunctionInfo, FunctionOverloadInfo, ResolvedType, SymbolKind, TypeInfo};
 use crate::frontend::typechecker::IdentKind;
 use incan_core::interop::{RustFieldInfo, RustItemKind, RustTypeInfo};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
 use incan_core::lang::surface::types::{self as surface_types, SurfaceTypeId};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use super::TypeChecker;
 
@@ -23,6 +23,7 @@ mod constructors;
 mod generic_bounds;
 mod rust_boundary;
 
+/// Return whether the last Rust path segment looks like a type name.
 fn rust_path_last_segment_looks_like_type(path: &str) -> bool {
     path.rsplit("::")
         .next()
@@ -48,6 +49,22 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
+        self.check_call_with_expected(callee, type_args, args, span, None)
+    }
+
+    /// Type-check a call expression with an optional expected result type.
+    ///
+    /// Contextual return hints are part of the generic call plan, not a desugaring special case. They let direct
+    /// source, vocab-produced AST, and nested call arguments all use the same inference path when a destination
+    /// type is known.
+    pub(in crate::frontend::typechecker::check_expr) fn check_call_with_expected(
+        &mut self,
+        callee: &Spanned<Expr>,
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
         if let Some(name) = Self::explicit_builtin_member_name(callee) {
             let result = self.check_explicit_builtin_call(name, args, span);
             if !type_args.is_empty() {
@@ -63,7 +80,7 @@ impl TypeChecker {
         // and the field name matches a variant, treat this as a constructor and
         // return the enum type.
         if let Expr::Field(base, member_name) = &callee.node {
-            let base_ty = self.check_expr(base);
+            let base_ty = self.check_type_receiver_expr(base);
             let base_is_enum_type_name = self.is_enum_type_name_expr_for_call(base);
             if let ResolvedType::Named(enum_name) = &base_ty
                 && let Some(TypeInfo::Enum(enum_info)) = self.lookup_type_info(enum_name)
@@ -104,7 +121,14 @@ impl TypeChecker {
             let _ = self.check_ident(module_name.as_str(), base.span);
             if let Some(func_info) = self.resolve_imported_module_function_member(&module_path, method.as_str()) {
                 let callable = format!("{module_name}.{method}");
-                return self.validate_stdlib_module_function_call(callable.as_str(), &func_info, type_args, args, span);
+                return self.validate_stdlib_module_function_call(
+                    callable.as_str(),
+                    &func_info,
+                    type_args,
+                    args,
+                    span,
+                    expected_return_ty,
+                );
             }
         }
 
@@ -237,7 +261,24 @@ impl TypeChecker {
                         return explicit_constructor_ty.unwrap_or(constructor_ty);
                     }
                     SymbolKind::Function(func_info) => {
-                        return self.validate_function_call(name, &func_info, type_args, args, span);
+                        return self.validate_function_call(
+                            name,
+                            &func_info,
+                            type_args,
+                            args,
+                            span,
+                            expected_return_ty,
+                        );
+                    }
+                    SymbolKind::FunctionOverloads(overloads) => {
+                        return self.validate_function_overload_call(
+                            name,
+                            &overloads,
+                            type_args,
+                            args,
+                            span,
+                            expected_return_ty,
+                        );
                     }
                     SymbolKind::RustItem(info) => {
                         if !type_args.is_empty() {
@@ -254,7 +295,11 @@ impl TypeChecker {
                                     if self.errors.len() == error_count_before {
                                         self.record_expr_type(
                                             callee.span,
-                                            self.resolved_function_type_from_rust_sig(sig, false),
+                                            self.resolved_function_type_from_rust_sig_for_owner_path(
+                                                sig,
+                                                false,
+                                                info.path.as_str(),
+                                            ),
                                         );
                                         self.type_info
                                             .expressions
@@ -371,6 +416,29 @@ impl TypeChecker {
             }
         }
 
+        if let Expr::Ident(name) = &callee.node
+            && !type_args.is_empty()
+            && let Some(binding) = self
+                .type_info
+                .declarations
+                .decorated_function_bindings
+                .get(name)
+                .cloned()
+            && !binding.type_params.is_empty()
+            && let ResolvedType::Function(params, ret) = binding.ty
+        {
+            let info = FunctionInfo {
+                params,
+                return_type: *ret,
+                is_async: binding.is_async,
+                type_params: binding.type_params,
+                type_param_bounds: binding.type_param_bounds,
+                type_param_bound_details: binding.type_param_bound_details,
+                emitted_name: None,
+            };
+            return self.validate_function_call(name, &info, type_args, args, span, expected_return_ty);
+        }
+
         if !type_args.is_empty() {
             self.errors
                 .push(errors::explicit_call_site_type_args_not_supported(span));
@@ -379,10 +447,22 @@ impl TypeChecker {
 
         match callee_ty {
             ResolvedType::Function(params, ret) => {
-                let arg_types = self.check_call_arg_types_for_params(args, &params);
                 let mut type_bindings = std::collections::HashMap::new();
-                self.validate_callable_arg_bindings("<callable>", &params, args, &arg_types, &mut type_bindings, span);
-                self.type_info.record_call_site_callable_params(span, &params);
+                if let Some(expected) = expected_return_ty {
+                    self.infer_type_param_bindings(&ret, expected, &mut type_bindings);
+                }
+                let resolved_params = Self::substitute_callable_params(&params, &type_bindings);
+                let arg_types = self.check_call_arg_types_for_params(args, &resolved_params);
+                self.validate_callable_arg_bindings(
+                    "<callable>",
+                    &resolved_params,
+                    args,
+                    &arg_types,
+                    &mut type_bindings,
+                    span,
+                );
+                let final_params = Self::substitute_callable_params(&resolved_params, &type_bindings);
+                self.type_info.record_call_site_callable_params(span, &final_params);
                 substitute_resolved_type(&ret, &type_bindings)
             }
             ty if self.is_user_operator_receiver(&ty)
@@ -410,6 +490,82 @@ impl TypeChecker {
         }
     }
 
+    /// Resolve a direct call to a top-level same-name overload set.
+    ///
+    /// Candidate checking runs through the ordinary function-call validator and rolls back failed candidates.
+    /// That keeps overload dispatch on the ordinary checker while preserving argument-shape metadata for lowering.
+    fn validate_function_overload_call(
+        &mut self,
+        func_name: &str,
+        overloads: &[FunctionOverloadInfo],
+        type_args: &[Spanned<Type>],
+        args: &[CallArg],
+        span: Span,
+        expected_return_ty: Option<&ResolvedType>,
+    ) -> ResolvedType {
+        let baseline_errors = self.errors.clone();
+        let baseline_warnings = self.warnings.clone();
+        let baseline_type_info = self.type_info.clone();
+        let baseline_consumed_iterator_bindings = self.consumed_iterator_bindings.clone();
+
+        let mut matches = Vec::new();
+        for overload in overloads {
+            self.errors = baseline_errors.clone();
+            self.warnings = baseline_warnings.clone();
+            self.type_info = baseline_type_info.clone();
+            self.consumed_iterator_bindings = baseline_consumed_iterator_bindings.clone();
+
+            let result =
+                self.validate_function_call(func_name, &overload.info, type_args, args, span, expected_return_ty);
+            if self.errors.len() == baseline_errors.len() {
+                matches.push((
+                    overload.info.emitted_name.clone(),
+                    result,
+                    self.errors.clone(),
+                    self.warnings.clone(),
+                    self.type_info.clone(),
+                    self.consumed_iterator_bindings.clone(),
+                ));
+            }
+        }
+
+        match matches.len() {
+            1 => {
+                let (emitted_name, result, errors, warnings, type_info, consumed_iterator_bindings) = matches.remove(0);
+                self.errors = errors;
+                self.warnings = warnings;
+                self.type_info = type_info;
+                self.consumed_iterator_bindings = consumed_iterator_bindings;
+                if let Some(emitted_name) = emitted_name {
+                    self.type_info.record_selected_function_emitted_name(span, emitted_name);
+                }
+                result
+            }
+            0 => {
+                self.errors = baseline_errors;
+                self.warnings = baseline_warnings;
+                self.type_info = baseline_type_info;
+                self.consumed_iterator_bindings = baseline_consumed_iterator_bindings;
+                if let Some(first) = overloads.first() {
+                    self.validate_function_call(func_name, &first.info, type_args, args, span, expected_return_ty)
+                } else {
+                    ResolvedType::Unknown
+                }
+            }
+            _ => {
+                self.errors = baseline_errors;
+                self.warnings = baseline_warnings;
+                self.type_info = baseline_type_info;
+                self.consumed_iterator_bindings = baseline_consumed_iterator_bindings;
+                self.errors.push(CompileError::type_error(
+                    format!("Call to overloaded function '{func_name}' is ambiguous"),
+                    span,
+                ));
+                ResolvedType::Unknown
+            }
+        }
+    }
+
     /// Type-check a call to an imported Rust named-field struct using rust-inspect field metadata.
     fn check_rust_named_field_constructor_call(
         &mut self,
@@ -418,11 +574,6 @@ impl TypeChecker {
         args: &[CallArg],
         span: Span,
     ) -> ResolvedType {
-        let fields_by_name: HashMap<&str, &RustFieldInfo> = type_info
-            .fields
-            .iter()
-            .map(|field| (field.name.as_str(), field))
-            .collect();
         let mut selected_fields = Vec::with_capacity(args.len());
         let mut provided = HashSet::new();
         let mut positional_index = 0usize;
@@ -456,7 +607,7 @@ impl TypeChecker {
                     selected_fields.push(field.name.clone());
                 }
                 CallArg::Named(field_name, expr) => {
-                    let Some(field) = fields_by_name.get(field_name.as_str()) else {
+                    let Some(field) = Self::rust_field_for_source_name(&type_info.fields, field_name.as_str()) else {
                         self.check_expr(expr);
                         self.errors.push(errors::missing_field(path, field_name, expr.span));
                         has_shape_error = true;

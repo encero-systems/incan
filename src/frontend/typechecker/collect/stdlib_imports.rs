@@ -15,12 +15,13 @@ use crate::frontend::typechecker::TypeChecker;
 use crate::frontend::typechecker::type_info::RustTraitImportInfo;
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
-    FunctionExport, LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamExport, ParamKindExport,
-    PartialExport, ReceiverExport, StaticExport, TraitExport, TypeBoundExport, TypeParamExport,
-    resolved_type_from_manifest_type_ref,
+    FunctionExport, LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamDefaultExport, ParamExport,
+    ParamKindExport, PartialExport, ReceiverExport, StaticExport, TraitExport, TypeAliasExport, TypeBoundExport,
+    TypeParamExport, resolved_type_from_manifest_type_ref,
 };
-use incan_core::interop::{RustItemKind, RustTraitAssoc, is_rust_capability_bound};
+use incan_core::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
+use incan_core::lang::surface::functions as surface_functions;
 use incan_core::lang::surface::types as surface_types;
 use incan_semantics_core::{DecoratorFeature, SurfaceFeatureKey};
 
@@ -36,7 +37,7 @@ enum ManifestExportRef<'a> {
         enum_name: &'a str,
         fields: &'a [crate::library_manifest::TypeRef],
     },
-    TypeAlias,
+    TypeAlias(&'a TypeAliasExport),
     Newtype(&'a NewtypeExport),
     Const(&'a ConstExport),
     Static(&'a StaticExport),
@@ -122,16 +123,12 @@ impl StdlibFromImportContext {
         })
     }
 
-    /// Return `true` when a surface type import is legal from this stdlib module.
-    fn allows_surface_type_import(&self, item_name: &str) -> bool {
-        let Some(id) = surface_types::from_str(item_name) else {
-            return false;
-        };
-        let Some(expected_module_path) = surface_types::stdlib_module_path(id) else {
-            return false;
-        };
+    /// Return the imported surface type when it is legal from this stdlib module.
+    fn allowed_surface_type_import(&self, item_name: &str) -> Option<surface_types::SurfaceTypeId> {
+        let id = surface_types::from_str(item_name)?;
+        let expected_module_path = surface_types::stdlib_module_path(id)?;
 
-        match expected_module_path {
+        let allowed = match expected_module_path {
             "std.web" => self.is_web_namespace,
             "std.reflection" => self.is_reflection_module,
             _ if expected_module_path.starts_with("std.async.") => {
@@ -140,7 +137,8 @@ impl StdlibFromImportContext {
                 self.is_async_namespace && (async_root_or_prelude || self.module_path_str == expected_module_path)
             }
             _ => false,
-        }
+        };
+        allowed.then_some(id)
     }
 }
 
@@ -218,7 +216,7 @@ impl TypeChecker {
         }
 
         let testing_semantics = self.load_testing_semantics_for_import(&context, span);
-        self.materialize_stdlib_stub_types(&context, span);
+        self.cache_stdlib_stub_semantics(&context);
 
         for item in items {
             if self.materialize_stdlib_from_import(&context, item, testing_semantics.as_ref(), span) {
@@ -232,6 +230,10 @@ impl TypeChecker {
                 ));
                 continue;
             }
+            if let Some(kind) = self.imported_source_dependency_symbol_kind(module, item) {
+                self.define_resolved_source_import_symbol(item, kind, span);
+                continue;
+            }
             if self.preserve_existing_from_import_symbol(item, span) {
                 continue;
             }
@@ -239,21 +241,19 @@ impl TypeChecker {
         }
     }
 
-    /// Materialize all known top-level types for a stub-backed stdlib module before collecting individual items.
-    fn materialize_stdlib_stub_types(&mut self, context: &FromImportContext<'_>, span: Span) {
+    /// Cache all known top-level types and traits for a stub-backed stdlib module without making them source-visible.
+    fn cache_stdlib_stub_semantics(&mut self, context: &FromImportContext<'_>) {
         if !context.stdlib.as_ref().is_some_and(|stdlib| stdlib.has_stub) {
             return;
         }
 
         for (type_name, type_info) in self.stdlib_cache.list_types(&context.module.segments) {
-            if self.symbols.lookup(&type_name).is_none() {
-                self.symbols.define(Symbol {
-                    name: type_name,
-                    kind: SymbolKind::Type(type_info),
-                    span,
-                    scope: 0,
-                });
-            }
+            self.transitive_stdlib_stub_types.entry(type_name).or_insert(type_info);
+        }
+        for (trait_name, trait_info) in self.stdlib_cache.list_traits(&context.module.segments) {
+            self.transitive_stdlib_stub_traits
+                .entry(trait_name)
+                .or_insert(trait_info);
         }
     }
 
@@ -384,8 +384,12 @@ impl TypeChecker {
         if self.materialize_typechecker_only_stdlib_import(context.module, item, span) {
             return true;
         }
-        if stdlib_context.allows_surface_type_import(&item.name) {
-            self.define_from_import_symbol(item, SymbolKind::Type(TypeInfo::Builtin), span);
+        if let Some(surface_type) = stdlib_context.allowed_surface_type_import(&item.name) {
+            let local_name = Self::import_item_local_name(item);
+            let symbol_id =
+                self.define_named_import_symbol(local_name.clone(), SymbolKind::Type(TypeInfo::Builtin), span);
+            self.surface_type_import_bindings
+                .insert(local_name, (surface_type, symbol_id));
             return true;
         }
         if self.materialize_stdlib_submodule_import(context.module, item, span) {
@@ -451,8 +455,13 @@ impl TypeChecker {
     ) -> bool {
         if let Some(info) = self.stdlib_cache.lookup_function(&context.module.segments, &item.name) {
             let local_name = Self::import_item_local_name(item);
+            let surface_function = surface_functions::from_str(&item.name);
             self.record_testing_marker_import(context, item, &local_name, testing_semantics);
-            self.define_named_import_symbol(local_name, SymbolKind::Function(info), span);
+            let symbol_id = self.define_named_import_symbol(local_name.clone(), SymbolKind::Function(info), span);
+            if let Some(surface_function) = surface_function {
+                self.surface_function_import_bindings
+                    .insert(local_name, (surface_function, symbol_id));
+            }
             return true;
         }
 
@@ -564,15 +573,36 @@ impl TypeChecker {
         self.define_named_import_symbol(local_name, kind, span);
     }
 
+    /// Return the exact source dependency member targeted by a `from module import item` declaration.
+    fn imported_source_dependency_symbol_kind(&self, module: &ImportPath, item: &ImportItem) -> Option<SymbolKind> {
+        self.dependency_member_symbol_for_path(module, &item.name)
+    }
+
+    /// Define a source-imported dependency symbol under its local import name.
+    fn define_resolved_source_import_symbol(&mut self, item: &ImportItem, mut kind: SymbolKind, span: Span) {
+        let local_name = Self::import_item_local_name(item);
+        if let SymbolKind::FunctionOverloads(overloads) = &kind {
+            self.record_function_overload_binding(&local_name, overloads, true);
+        }
+        if let SymbolKind::Static(info) = &mut kind {
+            info.is_imported = true;
+            self.type_info.declarations.static_bindings.insert(
+                local_name.clone(),
+                crate::frontend::typechecker::StaticBindingInfo { is_imported: true },
+            );
+        }
+        self.define_named_import_symbol(local_name, kind, span);
+    }
+
     /// Define one already named imported symbol after root namespace validation.
-    fn define_named_import_symbol(&mut self, name: Ident, kind: SymbolKind, span: Span) {
+    fn define_named_import_symbol(&mut self, name: Ident, kind: SymbolKind, span: Span) -> SymbolId {
         self.validate_root_namespace(&name, span);
         self.symbols.define(Symbol {
             name,
             kind,
             span,
             scope: 0,
-        });
+        })
     }
 
     fn validate_pub_library_entry(&mut self, library: &str, span: Span) {
@@ -618,6 +648,30 @@ impl TypeChecker {
         }
 
         for item in items {
+            let local_name = item.alias.clone().unwrap_or_else(|| item.name.clone());
+            if let Some(mut kind) = self.pub_library_function_symbol(&manifest, &item.name) {
+                self.validate_root_namespace(&local_name, span);
+                if let Some(existing_kind) = self.existing_local_symbol_kind(&local_name) {
+                    self.errors.push(errors::pub_library_import_name_collision(
+                        &local_name,
+                        existing_kind,
+                        span,
+                    ));
+                    continue;
+                }
+                self.remap_symbol_kind_with_import_aliases(&mut kind, &imported_type_aliases);
+                if let SymbolKind::FunctionOverloads(overloads) = &kind {
+                    self.record_function_overload_binding(&local_name, overloads, true);
+                }
+                self.symbols.define(Symbol {
+                    name: local_name,
+                    kind,
+                    span,
+                    scope: 0,
+                });
+                continue;
+            }
+
             let Some(export) = Self::find_manifest_export(&manifest, &item.name) else {
                 self.errors.push(errors::pub_library_symbol_not_exported(
                     &item.name,
@@ -658,6 +712,29 @@ impl TypeChecker {
         }
         let export = manifest.exports.partials.iter().find(|item| item.name == member)?;
         Some(self.partial_info_from_manifest(export))
+    }
+
+    /// Resolve one exported function name from a public manifest into a local symbol kind.
+    fn pub_library_function_symbol(&self, manifest: &LibraryManifest, member: &str) -> Option<SymbolKind> {
+        let functions = manifest
+            .exports
+            .functions
+            .iter()
+            .filter(|item| item.name == member)
+            .collect::<Vec<_>>();
+        match functions.as_slice() {
+            [] => None,
+            [function] => Some(SymbolKind::Function(self.function_info_from_manifest(function))),
+            _ => Some(SymbolKind::FunctionOverloads(
+                functions
+                    .into_iter()
+                    .map(|function| FunctionOverloadInfo {
+                        info: self.function_info_from_manifest(function),
+                        span: Span::default(),
+                    })
+                    .collect(),
+            )),
+        }
     }
 
     /// Resolve one exported const/static value type from a loaded `pub::` library manifest.
@@ -701,6 +778,9 @@ impl TypeChecker {
         let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
             return None;
         };
+        if let Some(kind) = self.pub_library_function_symbol(manifest, member) {
+            return Some(kind);
+        }
         let export = Self::find_manifest_export(manifest, member)?;
         Some(match export {
             ManifestExportRef::Model(export) => {
@@ -713,7 +793,7 @@ impl TypeChecker {
             ManifestExportRef::Partial(export) => SymbolKind::Function(self.partial_info_from_manifest(export)),
             ManifestExportRef::Trait(export) => SymbolKind::Trait(self.trait_info_from_manifest(export)),
             ManifestExportRef::Enum(export) => SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))),
-            ManifestExportRef::TypeAlias => SymbolKind::Type(TypeInfo::TypeAlias),
+            ManifestExportRef::TypeAlias(_) => SymbolKind::Type(TypeInfo::TypeAlias),
             ManifestExportRef::Newtype(export) => {
                 SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))
             }
@@ -733,7 +813,13 @@ impl TypeChecker {
                 fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
             }),
             ManifestExportRef::Alias(export) => {
+                if let Some(function) = &export.projected_function {
+                    return Some(SymbolKind::Function(self.function_info_from_manifest(function)));
+                }
                 let target_name = export.target_path.last()?;
+                if let Some(kind) = self.pub_library_function_symbol(manifest, target_name) {
+                    return Some(kind);
+                }
                 return self.lookup_pub_library_symbol_member(library, target_name);
             }
         })
@@ -904,8 +990,8 @@ impl TypeChecker {
                 });
             }
         }
-        if manifest.exports.type_aliases.iter().any(|item| item.name == name) {
-            return Some(ManifestExportRef::TypeAlias);
+        if let Some(item) = manifest.exports.type_aliases.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::TypeAlias(item));
         }
         if let Some(item) = manifest.exports.newtypes.iter().find(|item| item.name == name) {
             return Some(ManifestExportRef::Newtype(item));
@@ -919,6 +1005,7 @@ impl TypeChecker {
         None
     }
 
+    /// Return whether a manifest export introduces a type-like name into the importing module.
     fn manifest_export_is_type(export: &ManifestExportRef<'_>) -> bool {
         matches!(
             export,
@@ -926,7 +1013,7 @@ impl TypeChecker {
                 | ManifestExportRef::Class(_)
                 | ManifestExportRef::Trait(_)
                 | ManifestExportRef::Enum(_)
-                | ManifestExportRef::TypeAlias
+                | ManifestExportRef::TypeAlias(_)
                 | ManifestExportRef::Newtype(_)
         )
     }
@@ -938,7 +1025,7 @@ impl TypeChecker {
         let kind = match &symbol.kind {
             SymbolKind::Variable(_) => "const/variable",
             SymbolKind::Static(_) => "static",
-            SymbolKind::Function(_) => "function",
+            SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_) => "function",
             SymbolKind::Type(_) => "type",
             SymbolKind::Trait(_) => "trait",
             SymbolKind::Module(_) => "imported module",
@@ -974,7 +1061,18 @@ impl TypeChecker {
                 enum_name: enum_name.to_string(),
                 fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
             }),
-            ManifestExportRef::TypeAlias => SymbolKind::Type(TypeInfo::TypeAlias),
+            ManifestExportRef::TypeAlias(export) => {
+                let mut target = resolved_type_from_manifest_type_ref(&export.target);
+                Self::remap_resolved_type_with_import_aliases(&mut target, imported_type_aliases);
+                self.type_aliases.insert(
+                    local_name.clone(),
+                    crate::frontend::typechecker::TypeAliasTarget {
+                        type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
+                        target,
+                    },
+                );
+                SymbolKind::Type(TypeInfo::TypeAlias)
+            }
             ManifestExportRef::Newtype(export) => {
                 SymbolKind::Type(TypeInfo::Newtype(self.newtype_info_from_manifest(export)))
             }
@@ -990,16 +1088,34 @@ impl TypeChecker {
                 is_used: false,
             }),
             ManifestExportRef::Alias(export) => {
-                let Some(target_name) = export.target_path.last() else {
-                    return;
-                };
-                let Some(target_export) = Self::find_manifest_export(manifest, target_name) else {
-                    return;
-                };
-                return self.define_pub_import_symbol(manifest, local_name, target_export, imported_type_aliases, span);
+                if let Some(function) = &export.projected_function {
+                    SymbolKind::Function(self.function_info_from_manifest(function))
+                } else {
+                    let Some(target_name) = export.target_path.last() else {
+                        return;
+                    };
+                    if let Some(kind) = self.pub_library_function_symbol(manifest, target_name) {
+                        kind
+                    } else {
+                        let Some(target_export) = Self::find_manifest_export(manifest, target_name) else {
+                            return;
+                        };
+                        return self.define_pub_import_symbol(
+                            manifest,
+                            local_name,
+                            target_export,
+                            imported_type_aliases,
+                            span,
+                        );
+                    }
+                }
             }
         };
         self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
+
+        if let SymbolKind::FunctionOverloads(overloads) = &kind {
+            self.record_function_overload_binding(&local_name, overloads, true);
+        }
 
         if matches!(kind, SymbolKind::Static(_)) {
             self.type_info.declarations.static_bindings.insert(
@@ -1038,6 +1154,17 @@ impl TypeChecker {
                     Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
                 }
                 Self::remap_resolved_type_with_import_aliases(&mut info.return_type, imported_type_aliases);
+            }
+            SymbolKind::FunctionOverloads(overloads) => {
+                for overload in overloads {
+                    for param in &mut overload.info.params {
+                        Self::remap_resolved_type_with_import_aliases(&mut param.ty, imported_type_aliases);
+                    }
+                    Self::remap_resolved_type_with_import_aliases(
+                        &mut overload.info.return_type,
+                        imported_type_aliases,
+                    );
+                }
             }
             SymbolKind::Type(ty_info) => match ty_info {
                 TypeInfo::Class(info) => {
@@ -1136,7 +1263,8 @@ impl TypeChecker {
             ResolvedType::FrozenList(inner)
             | ResolvedType::FrozenSet(inner)
             | ResolvedType::Ref(inner)
-            | ResolvedType::RefMut(inner) => {
+            | ResolvedType::RefMut(inner)
+            | ResolvedType::TypeToken(inner) => {
                 Self::remap_resolved_type_with_import_aliases(inner, imported_type_aliases);
             }
             ResolvedType::FrozenDict(key, value) => {
@@ -1169,6 +1297,7 @@ impl TypeChecker {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             type_param_bounds: self.type_param_bounds_from_manifest(&export.type_params),
             type_param_bound_details: self.type_param_bound_details_from_manifest(&export.type_params),
+            emitted_name: export.emitted_name.clone(),
         }
     }
 
@@ -1181,6 +1310,7 @@ impl TypeChecker {
             type_params: export.type_params.iter().map(|param| param.name.clone()).collect(),
             type_param_bounds: self.type_param_bounds_from_manifest(&export.type_params),
             type_param_bound_details: self.type_param_bound_details_from_manifest(&export.type_params),
+            emitted_name: None,
         }
     }
 
@@ -1310,6 +1440,20 @@ impl TypeChecker {
             traits: export.traits.clone(),
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             variants: export.variants.iter().map(|variant| variant.name.clone()).collect(),
+            variant_fields: export
+                .variants
+                .iter()
+                .map(|variant| {
+                    (
+                        variant.name.clone(),
+                        variant
+                            .fields
+                            .iter()
+                            .map(resolved_type_from_manifest_type_ref)
+                            .collect(),
+                    )
+                })
+                .collect(),
             variant_aliases: export
                 .variant_aliases
                 .iter()
@@ -1473,6 +1617,7 @@ impl TypeChecker {
         }
     }
 
+    /// Convert manifest parameters into checked callable parameters.
     fn params_from_manifest(&self, params: &[ParamExport]) -> Vec<CallableParam> {
         params
             .iter()
@@ -1481,7 +1626,10 @@ impl TypeChecker {
                     param.name.clone(),
                     resolved_type_from_manifest_type_ref(&param.ty),
                     param_kind_from_manifest(param.kind),
-                    param.has_default,
+                    param
+                        .default
+                        .as_ref()
+                        .map_or(param.has_default, ParamDefaultExport::is_materializable),
                 )
             })
             .collect()
@@ -1527,7 +1675,9 @@ impl TypeChecker {
         let exported_list: Vec<String> = exported_names.iter().cloned().collect();
 
         for item in items {
-            if !exported_names.contains(&item.name) {
+            if !exported_names.contains(&item.name)
+                && self.dependency_member_symbol_for_path(module, &item.name).is_none()
+            {
                 self.errors.push(errors::import_not_exported(
                     &item.name,
                     &module.to_rust_path(),
@@ -1579,7 +1729,7 @@ impl TypeChecker {
         }
         if trait_methods.is_empty() {
             trait_methods.extend(
-                Self::known_rust_trait_methods(info.path.as_str())
+                fallback_rust_trait_methods(info.path.as_str())
                     .iter()
                     .map(|method| (*method).to_string()),
             );
@@ -1599,71 +1749,6 @@ impl TypeChecker {
             );
         }
         self.define_rust_import_symbol(name, info, span);
-    }
-
-    /// Return fallback trait method names for Rust traits when rustdoc metadata is unavailable.
-    fn known_rust_trait_methods(path: &str) -> &'static [&'static str] {
-        match path {
-            "std::io::Read" => &[
-                "read",
-                "read_to_end",
-                "read_to_string",
-                "read_exact",
-                "read_buf",
-                "read_buf_exact",
-                "bytes",
-                "chain",
-                "take",
-            ],
-            "std::io::Write" => &["write", "write_all", "write_fmt", "flush"],
-            "std::io::Seek" => &["seek", "rewind", "stream_position", "seek_relative"],
-            "byteorder::ReadBytesExt" => &[
-                "read_u8",
-                "read_i8",
-                "read_u16",
-                "read_i16",
-                "read_u32",
-                "read_i32",
-                "read_u64",
-                "read_i64",
-                "read_u128",
-                "read_i128",
-                "read_f32",
-                "read_f64",
-            ],
-            "byteorder::WriteBytesExt" => &[
-                "write_u8",
-                "write_i8",
-                "write_u16",
-                "write_i16",
-                "write_u32",
-                "write_i32",
-                "write_u64",
-                "write_i64",
-                "write_u128",
-                "write_i128",
-                "write_f32",
-                "write_f64",
-            ],
-            "sha2::Digest" | "sha3::Digest" | "blake2::Digest" | "md5::Digest" | "sha1::Digest" => &[
-                "new",
-                "new_with_prefix",
-                "update",
-                "chain_update",
-                "finalize",
-                "finalize_into",
-                "finalize_reset",
-                "reset",
-                "output_size",
-                "digest",
-            ],
-            "blake2::digest::XofReader" | "sha3::digest::XofReader" => &["read"],
-            "std::os::unix::fs::MetadataExt" => &[
-                "dev", "ino", "mode", "nlink", "uid", "gid", "rdev", "size", "atime", "mtime", "ctime", "blksize",
-                "blocks",
-            ],
-            _ => &[],
-        }
     }
 
     /// Define a symbol for a Rust crate import.
@@ -1698,8 +1783,7 @@ impl TypeChecker {
     fn existing_from_import_symbol_kind(&self, name: &str) -> Option<SymbolKind> {
         let id = self.symbols.lookup(name)?;
         let sym = self.symbols.get(id)?;
-        let is_implicit_builtin = sym.scope == 0 && sym.span == Span::default();
-        if is_implicit_builtin {
+        if Self::is_implicit_builtin_symbol(sym) {
             return None;
         }
         Some(sym.kind.clone())
@@ -1745,6 +1829,7 @@ impl TypeChecker {
     }
 }
 
+/// Convert a manifest parameter kind into a checked parameter kind.
 fn param_kind_from_manifest(kind: ParamKindExport) -> ParamKind {
     match kind {
         ParamKindExport::Normal => ParamKind::Normal,

@@ -25,6 +25,59 @@ struct Config {
     #[expect(dead_code, reason = "retained for Incan private field semantics")]
     debug: bool,
 }
+impl incan_stdlib::reflection::HasClassName for Config {
+    fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Config {
+    fn __class_name__() -> &'static str {
+        "Config"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Config {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Config {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("host"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("host"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("port"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("port"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("debug"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("debug"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl json::Serialize for Config {
     fn to_json(&self) -> String {
         incan_stdlib::json::__private::stringify_or_raise(self, stringify!(Config))

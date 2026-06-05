@@ -45,6 +45,7 @@ mod calls;
 mod comprehensions;
 mod format;
 mod indexing;
+mod interop_coercions;
 mod lvalue;
 mod methods;
 mod structs_enums;
@@ -59,7 +60,7 @@ use super::super::expr::{
 };
 use super::super::types::IrType;
 use super::{EmitError, IrEmitter};
-use crate::backend::ir::ownership::{ValueUseSite, plan_value_use};
+use crate::backend::ir::ownership::{ValueUseSite, plan_value_use, value_use_site_target_ty};
 use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 #[derive(Debug, Clone)]
@@ -91,31 +92,6 @@ pub(in crate::backend::ir::emit) fn method_kind_uses_mutable_receiver(kind: &Met
 }
 
 impl<'a> IrEmitter<'a> {
-    /// Convert a direct `Vec<T>` argument into `Vec<U>` at external Rust call boundaries.
-    ///
-    /// The Incan typechecker does not prove Rust `From<T>` relationships. At an external Rust boundary, Rust's own
-    /// trait checker is the source of truth, so this emits an element-level `.into()` map only when metadata says the
-    /// parameter expects a different direct list element type.
-    pub(super) fn external_list_arg_element_coercion(
-        &self,
-        arg: &TypedExpr,
-        target_ty: Option<&IrType>,
-        emitted: TokenStream,
-    ) -> Option<TokenStream> {
-        let Some(IrType::List(target_elem)) = target_ty else {
-            return None;
-        };
-        let IrType::List(source_elem) = &arg.ty else {
-            return None;
-        };
-        if source_elem == target_elem || Self::is_unresolved_call_seed_type(target_elem) {
-            return None;
-        }
-        Some(quote! {
-            (#emitted).into_iter().map(|__incan_item| ::std::convert::Into::into(__incan_item)).collect::<Vec<_>>()
-        })
-    }
-
     /// Build a typed tuple-field read for compiler-expanded tuple unpacking.
     pub(super) fn tuple_field_expr(expr: &TypedExpr, idx: usize, ty: IrType) -> TypedExpr {
         TypedExpr::new(
@@ -128,6 +104,73 @@ impl<'a> IrEmitter<'a> {
         .with_span(expr.span)
     }
 
+    /// Emit explicit callable-name metadata for a concrete function pointer.
+    fn emit_register_callable_name(&self, callable: &TypedExpr, source_name: &str) -> Result<TokenStream, EmitError> {
+        let IrType::Function { params, ret } = &callable.ty else {
+            return Ok(quote! { () });
+        };
+        let Some(signature_key) = Self::callable_name_signature_key(params, ret) else {
+            return Ok(quote! { () });
+        };
+        let register = Self::callable_name_register_ident(&signature_key);
+        let fn_ty = self.emit_callable_fn_type(params, ret);
+        let callable = self.emit_expr(callable)?;
+        let source_name = Literal::string(source_name);
+        Ok(quote! {{
+            let __incan_callable: #fn_ty = #callable;
+            #register(__incan_callable, #source_name);
+        }})
+    }
+
+    /// Emit a cached wrapper for a generic decorated function.
+    fn emit_cache_generic_decorated_function(
+        &self,
+        cache_name: &str,
+        type_param_names: &[String],
+        value: &TypedExpr,
+    ) -> Result<TokenStream, EmitError> {
+        if !matches!(value.ty, IrType::Function { .. }) {
+            return Err(EmitError::Unsupported(
+                "generic decorated function cache requires a function pointer type".to_string(),
+            ));
+        }
+        let cache_ident = Self::rust_static_ident(&format!("__incan_generic_decorated_{cache_name}"));
+        let fn_ty = self.emit_type(&value.ty);
+        let value_tokens = self.emit_expr(value)?;
+        let type_key_parts = type_param_names
+            .iter()
+            .map(|name| {
+                let ident = Self::rust_ident(name);
+                quote! { std::any::type_name::<#ident>() }
+            })
+            .collect::<Vec<_>>();
+        let type_key = if type_key_parts.is_empty() {
+            quote! { String::new() }
+        } else {
+            quote! { [#(#type_key_parts),*].join("\u{1f}") }
+        };
+
+        Ok(quote! {{
+            static #cache_ident: std::sync::OnceLock<std::sync::Mutex<Vec<(String, #fn_ty)>>> =
+                std::sync::OnceLock::new();
+            let __incan_type_key = #type_key;
+            let mut __incan_entries = #cache_ident
+                .get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                .lock()
+                .unwrap_or_else(|__incan_poisoned| __incan_poisoned.into_inner());
+            if let Some((_, __incan_cached)) = __incan_entries
+                .iter()
+                .find(|(__incan_key, _)| __incan_key == &__incan_type_key)
+            {
+                *__incan_cached
+            } else {
+                let __incan_decorated = #value_tokens;
+                __incan_entries.push((__incan_type_key, __incan_decorated));
+                __incan_decorated
+            }
+        }})
+    }
+
     /// Emit one list-literal element, materializing owned sink semantics at the literal boundary.
     ///
     /// Incan `list[str]` literals should store owned Rust `String` elements up front, but ordinary Incan-to-Incan
@@ -138,12 +181,14 @@ impl<'a> IrEmitter<'a> {
         &self,
         item: &TypedExpr,
         item_target_ty: Option<&IrType>,
+        target_union_qualifier: Option<&[String]>,
     ) -> Result<TokenStream, EmitError> {
-        self.emit_expr_for_use(
+        self.emit_expr_for_use_with_union_qualifier(
             item,
             ValueUseSite::CollectionElement {
                 target_ty: item_target_ty,
             },
+            target_union_qualifier,
         )
     }
 
@@ -152,12 +197,15 @@ impl<'a> IrEmitter<'a> {
         &self,
         items: &[IrListEntry],
         item_target_ty: Option<&IrType>,
+        target_union_qualifier: Option<&[String]>,
     ) -> Result<TokenStream, EmitError> {
         if items.iter().all(|entry| matches!(entry, IrListEntry::Element(_))) {
             let item_tokens: Vec<TokenStream> = items
                 .iter()
                 .map(|entry| match entry {
-                    IrListEntry::Element(item) => self.emit_list_literal_item(item, item_target_ty),
+                    IrListEntry::Element(item) => {
+                        self.emit_list_literal_item(item, item_target_ty, target_union_qualifier)
+                    }
                     IrListEntry::Spread(_) => Err(EmitError::Unsupported(
                         "internal error: unexpected list spread in direct-only literal emission".to_string(),
                     )),
@@ -170,7 +218,7 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .map(|entry| match entry {
                 IrListEntry::Element(item) => {
-                    let item_tokens = self.emit_list_literal_item(item, item_target_ty)?;
+                    let item_tokens = self.emit_list_literal_item(item, item_target_ty, target_union_qualifier)?;
                     Ok(quote! { __incan_list.push(#item_tokens); })
                 }
                 IrListEntry::Spread(value) => {
@@ -178,7 +226,8 @@ impl<'a> IrEmitter<'a> {
                         let mut pushes = Vec::with_capacity(items.len());
                         for (idx, item_ty) in items.iter().enumerate() {
                             let item = Self::tuple_field_expr(value, idx, item_ty.clone());
-                            let item_tokens = self.emit_list_literal_item(&item, item_target_ty)?;
+                            let item_tokens =
+                                self.emit_list_literal_item(&item, item_target_ty, target_union_qualifier)?;
                             pushes.push(quote! { __incan_list.push(#item_tokens); });
                         }
                         Ok(quote! { #(#pushes)* })
@@ -203,6 +252,7 @@ impl<'a> IrEmitter<'a> {
         pairs: &[IrDictEntry],
         key_target_ty: Option<&IrType>,
         value_target_ty: Option<&IrType>,
+        target_union_qualifier: Option<&[String]>,
     ) -> Result<TokenStream, EmitError> {
         if pairs.is_empty() {
             return Ok(quote! { std::collections::HashMap::new() });
@@ -213,17 +263,19 @@ impl<'a> IrEmitter<'a> {
                 .iter()
                 .map(|entry| match entry {
                     IrDictEntry::Pair(key, value) => {
-                        let key_tokens = self.emit_expr_for_use(
+                        let key_tokens = self.emit_expr_for_use_with_union_qualifier(
                             key,
                             ValueUseSite::CollectionElement {
                                 target_ty: key_target_ty,
                             },
+                            target_union_qualifier,
                         )?;
-                        let value_tokens = self.emit_expr_for_use(
+                        let value_tokens = self.emit_expr_for_use_with_union_qualifier(
                             value,
                             ValueUseSite::CollectionElement {
                                 target_ty: value_target_ty,
                             },
+                            target_union_qualifier,
                         )?;
                         Ok(quote! { (#key_tokens, #value_tokens) })
                     }
@@ -239,17 +291,19 @@ impl<'a> IrEmitter<'a> {
             .iter()
             .map(|entry| match entry {
                 IrDictEntry::Pair(key, value) => {
-                    let key_tokens = self.emit_expr_for_use(
+                    let key_tokens = self.emit_expr_for_use_with_union_qualifier(
                         key,
                         ValueUseSite::CollectionElement {
                             target_ty: key_target_ty,
                         },
+                        target_union_qualifier,
                     )?;
-                    let value_tokens = self.emit_expr_for_use(
+                    let value_tokens = self.emit_expr_for_use_with_union_qualifier(
                         value,
                         ValueUseSite::CollectionElement {
                             target_ty: value_target_ty,
                         },
+                        target_union_qualifier,
                     )?;
                     Ok(quote! { __incan_dict.insert(#key_tokens, #value_tokens); })
                 }
@@ -273,16 +327,7 @@ impl<'a> IrEmitter<'a> {
 
     /// Return the target type carried by a value-use site, if the site has one.
     fn use_site_target_ty<'b>(site: ValueUseSite<'b>) -> Option<&'b IrType> {
-        match site {
-            ValueUseSite::IncanCallArg { target_ty, .. }
-            | ValueUseSite::ExternalCallArg { target_ty }
-            | ValueUseSite::StructField { target_ty }
-            | ValueUseSite::CollectionElement { target_ty }
-            | ValueUseSite::Assignment { target_ty }
-            | ValueUseSite::ReturnValue { target_ty }
-            | ValueUseSite::MatchScrutinee { target_ty } => target_ty,
-            ValueUseSite::MethodArg => None,
-        }
+        value_use_site_target_ty(site)
     }
 
     /// Prefer the call-site target type for aggregate literal elements.
@@ -322,6 +367,121 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Return the semantic list type and owner qualifier that should drive element-level union widening.
+    ///
+    /// Imported public calls can carry dependency-owned generated union wrappers inside a list. This mirrors scalar
+    /// union widening source discovery so non-literal list arguments do not fall back to a caller-owned wrapper shape.
+    pub(in super::super) fn list_element_widening_source_for_expr(
+        &self,
+        expr: &TypedExpr,
+    ) -> (IrType, Option<Vec<String>>) {
+        match &expr.kind {
+            IrExprKind::Call {
+                callable_signature: Some(signature),
+                canonical_path,
+                ..
+            } if self
+                .list_element_union_type(&signature.return_type)
+                .is_some_and(|elem| elem.union_members().is_some()) =>
+            {
+                (
+                    signature.return_type.clone(),
+                    Self::pub_library_union_qualifier(canonical_path.as_deref()),
+                )
+            }
+            IrExprKind::MethodCall {
+                callable_signature: Some(signature),
+                ..
+            } if self
+                .list_element_union_type(&signature.return_type)
+                .is_some_and(|elem| elem.union_members().is_some()) =>
+            {
+                (signature.return_type.clone(), None)
+            }
+            _ => (expr.ty.clone(), None),
+        }
+    }
+
+    /// Return the resolved element type for a list shape.
+    fn list_element_union_type(&self, ty: &IrType) -> Option<IrType> {
+        match self.resolve_type_aliases_for_emit(ty) {
+            IrType::List(elem) => Some(*elem),
+            _ => None,
+        }
+    }
+
+    /// Return whether `List[S]` needs an element-wise union conversion to satisfy `List[T]`.
+    pub(in super::super) fn list_element_widening_needed(&self, source_ty: &IrType, target_ty: &IrType) -> bool {
+        let source_ty = self.resolve_type_aliases_for_emit(source_ty);
+        let target_ty = self.resolve_type_aliases_for_emit(target_ty);
+        let (IrType::List(source_elem), IrType::List(target_elem)) = (&source_ty, &target_ty) else {
+            return false;
+        };
+        if source_elem == target_elem {
+            return false;
+        }
+        target_elem.union_variant_index_for_member(source_elem).is_some()
+            || self.union_widening_needed(source_elem, target_elem)
+    }
+
+    /// Emit an element-wise conversion from `List[S]` to `List[Union[...S...]]` or a wider union list.
+    fn emit_list_element_widening_value(
+        &self,
+        source_ty: &IrType,
+        target_ty: &IrType,
+        source_tokens: TokenStream,
+        source_qualifier: Option<&[String]>,
+        target_qualifier: Option<&[String]>,
+    ) -> Result<Option<TokenStream>, EmitError> {
+        let source_ty = self.resolve_type_aliases_for_emit(source_ty);
+        let target_ty = self.resolve_type_aliases_for_emit(target_ty);
+        let (IrType::List(source_elem), IrType::List(target_elem)) = (&source_ty, &target_ty) else {
+            return Ok(None);
+        };
+        if source_elem == target_elem {
+            return Ok(None);
+        }
+
+        if let Some(converted_item) = self.emit_union_widening_value(
+            source_elem,
+            target_elem,
+            quote! { __incan_item },
+            source_qualifier,
+            target_qualifier,
+        )? {
+            return Ok(Some(quote! {
+                (#source_tokens).into_iter().map(|__incan_item| #converted_item).collect::<Vec<_>>()
+            }));
+        }
+
+        let Some(variant_index) = target_elem.union_variant_index_for_member(source_elem) else {
+            return Ok(None);
+        };
+        let Some(members) = target_elem.union_members() else {
+            return Ok(None);
+        };
+        let Some(member_ty) = members.get(variant_index) else {
+            return Ok(None);
+        };
+        let item_tokens = if matches!(member_ty, IrType::String)
+            && matches!(
+                source_elem.as_ref(),
+                IrType::StaticStr | IrType::StrRef | IrType::FrozenStr
+            ) {
+            quote! { __incan_item.to_string() }
+        } else {
+            quote! { __incan_item }
+        };
+        let variant_ident = quote::format_ident!("{}", IrType::union_variant_name(variant_index));
+        let union_path = self.emit_union_type_path_with_qualifier(target_elem, target_qualifier);
+        Ok(Some(quote! {
+            (#source_tokens)
+                .into_iter()
+                .map(|__incan_item| #union_path :: #variant_ident(#item_tokens))
+                .collect::<Vec<_>>()
+        }))
+    }
+
     /// Return the `Result[output, error]` target type for the inner expression of `output?`.
     fn try_inner_target_type(&self, output_ty: &IrType, inner: &TypedExpr) -> Option<IrType> {
         if matches!(output_ty, IrType::Unknown) {
@@ -350,11 +510,40 @@ impl<'a> IrEmitter<'a> {
     /// expression is emitted. Non-aggregate expressions are emitted normally, then the planned conversion is applied to
     /// the resulting token stream.
     pub(super) fn emit_expr_for_use(&self, expr: &TypedExpr, site: ValueUseSite<'_>) -> Result<TokenStream, EmitError> {
-        if matches!(site, ValueUseSite::CollectionElement { .. })
-            && let Some(target_ty) = Self::use_site_target_ty(site)
-            && let Some(wrapped) = self.emit_inference_seeded_literal_arg(expr, target_ty)?
-        {
-            return Ok(wrapped);
+        self.emit_expr_for_use_with_union_qualifier(expr, site, None)
+    }
+
+    /// Emit an expression for a value-use site while preserving the owner of generated anonymous union wrappers.
+    ///
+    /// Public dependency calls use provider-owned wrapper types. Passing the qualifier through target-aware aggregate
+    /// and union-widening emission keeps nested generated wrapper paths rooted in the dependency instead of
+    /// accidentally re-owning them in the consuming crate.
+    pub(super) fn emit_expr_for_use_with_union_qualifier(
+        &self,
+        expr: &TypedExpr,
+        site: ValueUseSite<'_>,
+        target_union_qualifier: Option<&[String]>,
+    ) -> Result<TokenStream, EmitError> {
+        let resolved_target_ty = Self::use_site_target_ty(site).map(|ty| self.resolve_type_aliases_for_emit(ty));
+        let target_type_union_qualifier = resolved_target_ty
+            .as_ref()
+            .and_then(Self::external_union_qualifier_for_type);
+        let target_union_qualifier = target_type_union_qualifier.as_deref().or(target_union_qualifier);
+        if let Some(target_ty) = resolved_target_ty.as_ref() {
+            if let Some(wrapped) =
+                self.emit_union_payload_arg_for_site(expr, target_ty, target_union_qualifier, site)?
+            {
+                return Ok(wrapped);
+            }
+            if matches!(site, ValueUseSite::CollectionElement { .. })
+                && let Some(wrapped) = self.emit_inference_seeded_literal_arg_with_union_qualifier(
+                    expr,
+                    target_ty,
+                    target_union_qualifier,
+                )?
+            {
+                return Ok(wrapped);
+            }
         }
 
         match &expr.kind {
@@ -365,16 +554,16 @@ impl<'a> IrEmitter<'a> {
                         IrExprKind::List(_) | IrExprKind::Dict(_) | IrExprKind::Set(_) | IrExprKind::Tuple(_)
                     ) =>
             {
-                return self.emit_expr_for_use(inner, site);
+                return self.emit_expr_for_use_with_union_qualifier(inner, site, target_union_qualifier);
             }
             IrExprKind::InteropCoerce { expr: inner, .. }
                 if Self::use_site_target_ty(site).is_some()
                     && matches!(inner.kind, IrExprKind::Call { .. } | IrExprKind::MethodCall { .. }) =>
             {
-                return self.emit_expr_for_use(inner, site);
+                return self.emit_expr_for_use_with_union_qualifier(inner, site, target_union_qualifier);
             }
             IrExprKind::List(items) => {
-                let site_item_ty = match Self::use_site_target_ty(site) {
+                let site_item_ty = match resolved_target_ty.as_ref() {
                     Some(IrType::List(elem)) => Some(elem.as_ref()),
                     _ => None,
                 };
@@ -383,10 +572,10 @@ impl<'a> IrEmitter<'a> {
                     _ => None,
                 };
                 let item_target_ty = Self::concrete_literal_target(site_item_ty, inferred_item_ty);
-                return self.emit_list_literal_entries(items, item_target_ty);
+                return self.emit_list_literal_entries(items, item_target_ty, target_union_qualifier);
             }
             IrExprKind::Dict(pairs) => {
-                let (site_key_ty, site_value_ty) = match Self::use_site_target_ty(site) {
+                let (site_key_ty, site_value_ty) = match resolved_target_ty.as_ref() {
                     Some(IrType::Dict(key, value)) => (Some(key.as_ref()), Some(value.as_ref())),
                     _ => (None, None),
                 };
@@ -396,13 +585,13 @@ impl<'a> IrEmitter<'a> {
                 };
                 let key_target_ty = Self::concrete_literal_target(site_key_ty, inferred_key_ty);
                 let value_target_ty = Self::concrete_literal_target(site_value_ty, inferred_value_ty);
-                return self.emit_dict_literal_entries(pairs, key_target_ty, value_target_ty);
+                return self.emit_dict_literal_entries(pairs, key_target_ty, value_target_ty, target_union_qualifier);
             }
             IrExprKind::Set(items) => {
                 if items.is_empty() {
                     return Ok(quote! { std::collections::HashSet::new() });
                 }
-                let site_item_ty = match Self::use_site_target_ty(site) {
+                let site_item_ty = match resolved_target_ty.as_ref() {
                     Some(IrType::Set(elem)) => Some(elem.as_ref()),
                     _ => None,
                 };
@@ -414,18 +603,19 @@ impl<'a> IrEmitter<'a> {
                 let item_tokens: Vec<TokenStream> = items
                     .iter()
                     .map(|item| {
-                        self.emit_expr_for_use(
+                        self.emit_expr_for_use_with_union_qualifier(
                             item,
                             ValueUseSite::CollectionElement {
                                 target_ty: item_target_ty,
                             },
+                            target_union_qualifier,
                         )
                     })
                     .collect::<Result<_, _>>()?;
                 return Ok(quote! { [#(#item_tokens),*].into_iter().collect::<std::collections::HashSet<_>>() });
             }
             IrExprKind::Tuple(items) => {
-                let site_tuple_items = match Self::use_site_target_ty(site) {
+                let site_tuple_items = match resolved_target_ty.as_ref() {
                     Some(IrType::Tuple(items)) => Some(items.as_slice()),
                     _ => None,
                 };
@@ -440,7 +630,11 @@ impl<'a> IrEmitter<'a> {
                         let site_item_ty = site_tuple_items.and_then(|items| items.get(idx));
                         let inferred_item_ty = inferred_tuple_items.and_then(|items| items.get(idx));
                         let item_target_ty = Self::concrete_literal_target(site_item_ty, inferred_item_ty);
-                        self.emit_expr_for_use(item, Self::tuple_item_use_site(site, item_target_ty))
+                        self.emit_expr_for_use_with_union_qualifier(
+                            item,
+                            Self::tuple_item_use_site(site, item_target_ty),
+                            target_union_qualifier,
+                        )
                     })
                     .collect::<Result<_, _>>()?;
                 return Ok(quote! { (#(#item_tokens),*) });
@@ -450,7 +644,11 @@ impl<'a> IrEmitter<'a> {
                 let inner_tokens = if let Some(inner_target_ty) =
                     site_target_ty.and_then(|target_ty| self.try_inner_target_type(target_ty, inner))
                 {
-                    self.emit_expr_for_use(inner, Self::retarget_value_use_site(site, Some(&inner_target_ty)))?
+                    self.emit_expr_for_use_with_union_qualifier(
+                        inner,
+                        Self::retarget_value_use_site(site, Some(&inner_target_ty)),
+                        target_union_qualifier,
+                    )?
                 } else {
                     self.emit_expr(inner)?
                 };
@@ -465,7 +663,7 @@ impl<'a> IrEmitter<'a> {
                 callable_signature,
                 arg_policy,
             } => {
-                return self.emit_method_call_expr_for_use(
+                let emitted = self.emit_method_call_expr_for_use(
                     receiver,
                     method,
                     dispatch.as_ref(),
@@ -474,7 +672,30 @@ impl<'a> IrEmitter<'a> {
                     callable_signature.as_ref(),
                     *arg_policy,
                     site,
-                );
+                )?;
+                if let Some(target_ty) = resolved_target_ty.as_ref() {
+                    let (source_ty, source_qualifier) = self.list_element_widening_source_for_expr(expr);
+                    if let Some(converted) = self.emit_list_element_widening_value(
+                        &source_ty,
+                        target_ty,
+                        emitted.clone(),
+                        source_qualifier.as_deref(),
+                        target_union_qualifier,
+                    )? {
+                        return Ok(converted);
+                    }
+                    let (source_ty, source_qualifier) = self.union_widening_source_for_expr(expr);
+                    if let Some(converted) = self.emit_union_widening_value(
+                        &source_ty,
+                        target_ty,
+                        emitted.clone(),
+                        source_qualifier.as_deref(),
+                        target_union_qualifier,
+                    )? {
+                        return Ok(converted);
+                    }
+                }
+                return Ok(emitted);
             }
             IrExprKind::Call {
                 func,
@@ -483,21 +704,96 @@ impl<'a> IrEmitter<'a> {
                 callable_signature,
                 canonical_path,
             } => {
-                return self.emit_call_expr_for_use(
+                let target_site = if let Some(target_ty) = resolved_target_ty.as_ref() {
+                    Self::retarget_value_use_site(site, Some(target_ty))
+                } else {
+                    site
+                };
+                let emitted = self.emit_call_expr_for_use(
                     func,
                     type_args,
                     args,
                     callable_signature.as_ref(),
                     canonical_path.as_deref(),
-                    site,
-                );
+                    target_site,
+                )?;
+                if let Some(target_ty) = resolved_target_ty.as_ref() {
+                    let (source_ty, source_qualifier) = self.list_element_widening_source_for_expr(expr);
+                    if let Some(converted) = self.emit_list_element_widening_value(
+                        &source_ty,
+                        target_ty,
+                        emitted.clone(),
+                        source_qualifier.as_deref(),
+                        target_union_qualifier,
+                    )? {
+                        return Ok(converted);
+                    }
+                    let (source_ty, source_qualifier) = self.union_widening_source_for_expr(expr);
+                    if let Some(converted) = self.emit_union_widening_value(
+                        &source_ty,
+                        target_ty,
+                        emitted.clone(),
+                        source_qualifier.as_deref(),
+                        target_union_qualifier,
+                    )? {
+                        return Ok(converted);
+                    }
+                }
+                return Ok(emitted);
             }
             _ => {}
         }
 
         let emitted = self.emit_expr(expr)?;
         let plan = plan_value_use(expr, site);
-        Ok(plan.apply(emitted))
+        let emitted = plan.apply(emitted);
+        if let Some(target_ty) = resolved_target_ty.as_ref() {
+            let (source_ty, source_qualifier) = self.list_element_widening_source_for_expr(expr);
+            if let Some(converted) = self.emit_list_element_widening_value(
+                &source_ty,
+                target_ty,
+                emitted.clone(),
+                source_qualifier.as_deref(),
+                target_union_qualifier,
+            )? {
+                return Ok(converted);
+            }
+            let (source_ty, source_qualifier) = self.union_widening_source_for_expr(expr);
+            if let Some(converted) = self.emit_union_widening_value(
+                &source_ty,
+                target_ty,
+                emitted.clone(),
+                source_qualifier.as_deref(),
+                target_union_qualifier,
+            )? {
+                return Ok(converted);
+            }
+        }
+        Ok(emitted)
+    }
+
+    /// Return the dependency qualifier carried by an external anonymous union target type.
+    fn external_union_qualifier_for_type(ty: &IrType) -> Option<Vec<String>> {
+        match ty {
+            IrType::ExternalUnion { library, .. } => Some(vec![library.clone()]),
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner)
+            | IrType::TypeToken(inner) => Self::external_union_qualifier_for_type(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                Self::external_union_qualifier_for_type(key).or_else(|| Self::external_union_qualifier_for_type(value))
+            }
+            IrType::Tuple(items) | IrType::NamedGeneric(_, items) => {
+                items.iter().find_map(Self::external_union_qualifier_for_type)
+            }
+            IrType::Function { params, ret } => params
+                .iter()
+                .find_map(Self::external_union_qualifier_for_type)
+                .or_else(|| Self::external_union_qualifier_for_type(ret)),
+            _ => None,
+        }
     }
 
     /// Return whether match scrutinee emission should preserve a `Result` value without extra ownership shaping.
@@ -511,6 +807,7 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit the scrutinee expression for a match statement.
     pub(super) fn emit_match_scrutinee(&self, scrutinee: &TypedExpr) -> Result<TokenStream, EmitError> {
         if matches!(scrutinee.ty, IrType::Unknown) || Self::type_is_result_like(&scrutinee.ty) {
             return self.emit_expr(scrutinee);
@@ -555,15 +852,31 @@ impl<'a> IrEmitter<'a> {
         Self::expr_storage_root(expr).is_some()
     }
 
+    /// Rewrite a static/storage binding root to the local borrowed value used inside `with_ref`.
     pub(super) fn rewrite_storage_root_expr(expr: &TypedExpr, local_name: &str) -> TypedExpr {
+        Self::rewrite_storage_root_expr_inner(expr, local_name, false)
+    }
+
+    /// Rewrite a static/storage binding root to the local mutable borrow used inside `with_mut`.
+    pub(super) fn rewrite_storage_root_expr_for_mut(expr: &TypedExpr, local_name: &str) -> TypedExpr {
+        Self::rewrite_storage_root_expr_inner(expr, local_name, true)
+    }
+
+    /// Rewrite the root of a storage-backed path while preserving the original field/index chain.
+    fn rewrite_storage_root_expr_inner(expr: &TypedExpr, local_name: &str, mutable_root: bool) -> TypedExpr {
         let replacement = || {
+            let ty = if mutable_root {
+                IrType::RefMut(Box::new(expr.ty.clone()))
+            } else {
+                expr.ty.clone()
+            };
             TypedExpr::new(
                 IrExprKind::Var {
                     name: local_name.to_string(),
                     access: super::super::expr::VarAccess::Read,
                     ref_kind: VarRefKind::Value,
                 },
-                expr.ty.clone(),
+                ty,
             )
         };
 
@@ -575,14 +888,14 @@ impl<'a> IrEmitter<'a> {
             } => replacement(),
             IrExprKind::Field { object, field } => TypedExpr::new(
                 IrExprKind::Field {
-                    object: Box::new(Self::rewrite_storage_root_expr(object, local_name)),
+                    object: Box::new(Self::rewrite_storage_root_expr_inner(object, local_name, mutable_root)),
                     field: field.clone(),
                 },
                 expr.ty.clone(),
             ),
             IrExprKind::Index { object, index } => TypedExpr::new(
                 IrExprKind::Index {
-                    object: Box::new(Self::rewrite_storage_root_expr(object, local_name)),
+                    object: Box::new(Self::rewrite_storage_root_expr_inner(object, local_name, mutable_root)),
                     index: index.clone(),
                 },
                 expr.ty.clone(),
@@ -594,12 +907,13 @@ impl<'a> IrEmitter<'a> {
         rewritten
     }
 
+    /// Emit storage access while preserving a shared reference.
     pub(super) fn emit_storage_with_ref(&self, expr: &TypedExpr, body: TokenStream) -> Result<TokenStream, EmitError> {
         let local_name = format_ident!("__incan_static_value");
         match Self::expr_storage_root(expr) {
             Some(StorageRoot::Static(name)) => {
                 let ident = Self::rust_static_ident(&name);
-                let init_call = self.emit_module_static_init_call();
+                let init_call = self.emit_static_init_call_for_static(&name);
                 Ok(quote! {{
                     #init_call
                     #ident.with_ref(|#local_name| { #body })
@@ -613,12 +927,13 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit storage access while preserving a mutable reference.
     pub(super) fn emit_storage_with_mut(&self, expr: &TypedExpr, body: TokenStream) -> Result<TokenStream, EmitError> {
         let local_name = format_ident!("__incan_static_value");
         match Self::expr_storage_root(expr) {
             Some(StorageRoot::Static(name)) => {
                 let ident = Self::rust_static_ident(&name);
-                let init_call = self.emit_module_static_init_call();
+                let init_call = self.emit_static_init_call_for_static(&name);
                 Ok(quote! {{
                     #init_call
                     #ident.with_mut(|#local_name| { #body })
@@ -695,16 +1010,25 @@ impl<'a> IrEmitter<'a> {
                 Ok(quote! { #n.get() })
             }
             IrExprKind::Var { name, access: _, .. } => {
+                if *self.qualify_internal_canonical_paths.borrow()
+                    && let Some(path) = self.emit_dependency_value_path(name)
+                {
+                    return Ok(path);
+                }
                 let n = Self::rust_ident(name);
                 Ok(quote! { #n })
+            }
+            IrExprKind::TypeToken { ty } => {
+                let token_ty = self.emit_type(ty);
+                Ok(quote! { incan_stdlib::reflection::TypeToken::<#token_ty>::new() })
             }
 
             IrExprKind::StaticRead { name } => {
                 let n = Self::rust_static_ident(name);
-                if *self.in_static_initializer.borrow() {
+                if *self.in_static_initializer.borrow() && !self.static_needs_imported_init_call(name) {
                     Ok(quote! { #n.get() })
                 } else {
-                    let init_call = self.emit_module_static_init_call();
+                    let init_call = self.emit_static_init_call_for_static(name);
                     Ok(quote! {{
                         #init_call
                         #n.get()
@@ -714,10 +1038,10 @@ impl<'a> IrEmitter<'a> {
 
             IrExprKind::StaticBinding { name } => {
                 let n = Self::rust_static_ident(name);
-                if *self.in_static_initializer.borrow() {
+                if *self.in_static_initializer.borrow() && !self.static_needs_imported_init_call(name) {
                     Ok(quote! { incan_stdlib::storage::StaticBinding::from_static(&#n) })
                 } else {
-                    let init_call = self.emit_module_static_init_call();
+                    let init_call = self.emit_static_init_call_for_static(name);
                     Ok(quote! {{
                         #init_call
                         incan_stdlib::storage::StaticBinding::from_static(&#n)
@@ -729,10 +1053,35 @@ impl<'a> IrEmitter<'a> {
                 type_name,
                 function_name,
             } => {
-                let type_ident = Self::rust_ident(type_name);
+                let type_ident = self
+                    .associated_function_receiver_type_path(type_name, &expr.ty)
+                    .unwrap_or_else(|| {
+                        let ident = Self::rust_ident(type_name);
+                        quote! { #ident }
+                    });
                 let function_ident = Self::rust_ident(function_name);
                 Ok(quote! { #type_ident :: #function_ident })
             }
+
+            IrExprKind::FunctionItem { name, type_args } => {
+                let ident = Self::rust_ident(name);
+                if type_args.is_empty() {
+                    Ok(quote! { #ident })
+                } else {
+                    let args: Vec<_> = type_args.iter().map(|ty| self.emit_type(ty)).collect();
+                    Ok(quote! { #ident :: < #(#args),* > })
+                }
+            }
+
+            IrExprKind::RegisterCallableName { callable, source_name } => {
+                self.emit_register_callable_name(callable, source_name)
+            }
+
+            IrExprKind::CacheGenericDecoratedFunction {
+                cache_name,
+                type_param_names,
+                value,
+            } => self.emit_cache_generic_decorated_function(cache_name, type_param_names, value),
 
             IrExprKind::BinOp { op, left, right } => self.emit_binop_expr(op, left, right),
 
@@ -809,7 +1158,7 @@ impl<'a> IrEmitter<'a> {
                     IrType::List(elem) => Some(elem.as_ref()),
                     _ => None,
                 };
-                self.emit_list_literal_entries(items, item_target_ty)
+                self.emit_list_literal_entries(items, item_target_ty, None)
             }
 
             IrExprKind::Dict(pairs) => {
@@ -817,7 +1166,7 @@ impl<'a> IrEmitter<'a> {
                     IrType::Dict(key, value) => (Some(key.as_ref()), Some(value.as_ref())),
                     _ => (None, None),
                 };
-                self.emit_dict_literal_entries(pairs, key_target_ty, value_target_ty)
+                self.emit_dict_literal_entries(pairs, key_target_ty, value_target_ty, None)
             }
 
             IrExprKind::Set(items) => {
@@ -887,16 +1236,8 @@ impl<'a> IrEmitter<'a> {
                     .iter()
                     .map(|arm| {
                         let (pat, pattern_guard) = self.emit_pattern_for_scrutinee(&arm.pattern, &scrutinee.ty);
-                        let body = self.emit_expr(&arm.body)?;
-                        let guard = match (&pattern_guard, &arm.guard) {
-                            (Some(pattern_guard), Some(arm_guard)) => {
-                                let arm_guard = self.emit_expr(arm_guard)?;
-                                Some(quote! { (#pattern_guard) && (#arm_guard) })
-                            }
-                            (Some(pattern_guard), None) => Some(pattern_guard.clone()),
-                            (None, Some(arm_guard)) => Some(self.emit_expr(arm_guard)?),
-                            (None, None) => None,
-                        };
+                        let body = self.emit_match_arm_body(arm)?;
+                        let guard = self.emit_match_arm_guard(arm, pattern_guard)?;
                         if let Some(guard) = guard {
                             Ok(quote! { #pat if #guard => #body })
                         } else {
@@ -918,9 +1259,14 @@ impl<'a> IrEmitter<'a> {
             } => {
                 let param_tokens: Vec<TokenStream> = params
                     .iter()
-                    .map(|(pname, _pty)| {
+                    .map(|(pname, pty)| {
                         let n = Self::rust_ident(pname);
-                        quote! { #n }
+                        if matches!(pty, IrType::RustDisplay(_)) {
+                            let ty = self.emit_type(pty);
+                            quote! { #n: #ty }
+                        } else {
+                            quote! { #n }
+                        }
                     })
                     .collect();
                 let b = self.emit_expr(body)?;
@@ -1017,58 +1363,47 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::InteropCoerce {
                 expr: inner,
                 from_ty: _,
-                to_ty: _,
+                to_ty,
                 kind,
             } => {
-                let inner = self.emit_expr(inner)?;
+                let inner_tokens = self.emit_expr(inner)?;
                 match kind {
                     IrInteropCoercionKind::Builtin { policy, rust_target } => {
-                        let rust_target = rust_target.replace(' ', "");
                         let emitted = match policy {
-                            incan_core::interop::CoercionPolicy::Exact => match rust_target.as_str() {
-                                "String" | "std::string::String" => {
-                                    quote! { (#inner).to_string() }
-                                }
-                                "Vec<u8>" | "std::vec::Vec<u8>" => {
-                                    quote! { (#inner).to_vec() }
-                                }
-                                _ => quote! { #inner },
+                            incan_core::interop::CoercionPolicy::Exact => match to_ty {
+                                IrType::String => quote! { (#inner_tokens).to_string() },
+                                IrType::Bytes => quote! { (#inner_tokens).to_vec() },
+                                _ => quote! { #inner_tokens },
                             },
                             incan_core::interop::CoercionPolicy::Lossless => {
-                                let target = syn::parse_str::<syn::Type>(rust_target.as_str()).map_err(|err| {
+                                let target = self.emit_type(to_ty);
+                                let _: syn::Type = syn::parse2(target.clone()).map_err(|err| {
                                     EmitError::SynParse(format!(
                                         "invalid Rust boundary cast target `{rust_target}`: {err}"
                                     ))
                                 })?;
-                                quote! { (#inner) as #target }
+                                quote! { (#inner_tokens) as #target }
                             }
-                            incan_core::interop::CoercionPolicy::Borrow => match rust_target.as_str() {
-                                "&str" | "&[u8]" => quote! { &#inner },
-                                "&String" | "&std::string::String" | "&alloc::string::String" => {
-                                    quote! { &(#inner).to_string() }
-                                }
-                                "&Vec<u8>" | "&std::vec::Vec<u8>" | "&alloc::vec::Vec<u8>" => {
-                                    quote! { &(#inner).to_vec() }
-                                }
-                                _ => quote! { &#inner },
-                            },
+                            incan_core::interop::CoercionPolicy::Borrow => {
+                                interop_coercions::emit_builtin_borrow_coercion(inner, inner_tokens, to_ty)
+                            }
                             incan_core::interop::CoercionPolicy::Lossy => match rust_target.as_str() {
-                                "f32" => quote! { (#inner) as f32 },
-                                _ => quote! { #inner },
+                                "f32" => quote! { (#inner_tokens) as f32 },
+                                _ => quote! { #inner_tokens },
                             },
                         };
                         Ok(emitted)
                     }
                     IrInteropCoercionKind::AdapterCall { adapter, adapter_kind } => {
                         let adapter = self.emit_expr(adapter)?;
-                        let call = quote! { #adapter(#inner) };
+                        let call = quote! { #adapter(#inner_tokens) };
                         let emitted = match adapter_kind {
                             IrInteropAdapterKind::Via => call,
                             IrInteropAdapterKind::Try => quote! { #call? },
                         };
                         Ok(emitted)
                     }
-                    IrInteropCoercionKind::RustTypeUnwrap => Ok(quote! { #inner }),
+                    IrInteropCoercionKind::RustTypeUnwrap => Ok(quote! { #inner_tokens }),
                 }
             }
 
@@ -1092,6 +1427,18 @@ impl<'a> IrEmitter<'a> {
             }
         }
     }
+
+    /// Emit the receiver type path for compiler-generated associated constructors when the IR already carries the
+    /// concrete receiver type in the function item signature.
+    fn associated_function_receiver_type_path(&self, type_name: &str, expr_ty: &IrType) -> Option<TokenStream> {
+        let IrType::Function { ret, .. } = expr_ty else {
+            return None;
+        };
+        if ret.union_type_name().as_deref() == Some(type_name) {
+            return Some(self.emit_type(ret));
+        }
+        None
+    }
 }
 
 #[cfg(test)]
@@ -1103,6 +1450,20 @@ mod tests {
     };
     use crate::backend::ir::{FunctionParam, FunctionRegistry, FunctionSignature, Mutability};
     use incan_core::lang::traits::{self as core_traits, TraitId};
+
+    fn prost_decode_signature(return_type: IrType) -> FunctionSignature {
+        FunctionSignature {
+            params: vec![FunctionParam {
+                name: "buf".to_string(),
+                ty: IrType::Generic("Buf".to_string()),
+                mutability: Mutability::Immutable,
+                is_self: false,
+                kind: crate::frontend::ast::ParamKind::Normal,
+                default: None,
+            }],
+            return_type,
+        }
+    }
 
     #[test]
     fn type_name_associated_call_does_not_borrow_string_arguments() -> Result<(), String> {
@@ -1295,6 +1656,355 @@ mod tests {
     }
 
     #[test]
+    fn external_decode_metadata_keeps_explicit_slice_argument_shape() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let descriptor_set = IrType::Struct("prost_types::FileDescriptorSet".to_string());
+        let result_ty = IrType::Result(
+            Box::new(descriptor_set.clone()),
+            Box::new(IrType::Struct("prost::DecodeError".to_string())),
+        );
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "FileDescriptorSet".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    descriptor_set.clone(),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: "data".to_string(),
+                                    access: VarAccess::Read,
+                                    ref_kind: VarRefKind::Value,
+                                },
+                                IrType::Bytes,
+                            )),
+                            method: "as_slice".to_string(),
+                            dispatch: None,
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: None,
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        IrType::Bytes,
+                    ),
+                }],
+                callable_signature: Some(prost_decode_signature(result_ty.clone())),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            result_ty,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("FileDescriptorSet :: decode (data . as_slice ())"),
+            "explicit slice arguments should be passed through, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("FileDescriptorSet :: decode (& data . as_slice ())"),
+            "decode metadata must not add a fallback borrow to explicit slice arguments, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_decode_metadata_keeps_explicit_rust_vec_slice_argument_shape() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let descriptor_set = IrType::Struct("prost_types::FileDescriptorSet".to_string());
+        let result_ty = IrType::Result(
+            Box::new(descriptor_set.clone()),
+            Box::new(IrType::Struct("prost::DecodeError".to_string())),
+        );
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "FileDescriptorSet".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    descriptor_set.clone(),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::MethodCall {
+                            receiver: Box::new(TypedExpr::new(
+                                IrExprKind::Var {
+                                    name: "encoded".to_string(),
+                                    access: VarAccess::Read,
+                                    ref_kind: VarRefKind::Value,
+                                },
+                                IrType::Struct("alloc::vec::Vec<u8>".to_string()),
+                            )),
+                            method: "as_slice".to_string(),
+                            dispatch: None,
+                            type_args: Vec::new(),
+                            args: Vec::new(),
+                            callable_signature: None,
+                            arg_policy: MethodCallArgPolicy::Default,
+                        },
+                        IrType::Bytes,
+                    ),
+                }],
+                callable_signature: Some(prost_decode_signature(result_ty.clone())),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            result_ty,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("FileDescriptorSet :: decode (encoded . as_slice ())"),
+            "explicit Rust Vec slice arguments should be passed through, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("FileDescriptorSet :: decode (& encoded . as_slice ())"),
+            "decode metadata must not add a fallback borrow to explicit Rust Vec slice arguments, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn external_decode_fallback_still_borrows_owned_bytes_argument() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let descriptor_set = IrType::Struct("prost_types::FileDescriptorSet".to_string());
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "FileDescriptorSet".to_string(),
+                        access: VarAccess::Copy,
+                        ref_kind: VarRefKind::ExternalRustName,
+                    },
+                    descriptor_set.clone(),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "data".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Bytes,
+                    ),
+                }],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Result(
+                Box::new(descriptor_set),
+                Box::new(IrType::Struct("prost::DecodeError".to_string())),
+            ),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("FileDescriptorSet :: decode (& data)"),
+            "owned bytes should still use the decode fallback borrow, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn encoding_decode_compatibility_policy_overrides_incomplete_by_value_signature() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "enc".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("encoding_rs::Encoding".to_string()),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "data".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Bytes,
+                    ),
+                }],
+                callable_signature: Some(FunctionSignature {
+                    params: vec![FunctionParam {
+                        name: "bytes".to_string(),
+                        ty: IrType::Bytes,
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: crate::frontend::ast::ParamKind::Normal,
+                        default: None,
+                    }],
+                    return_type: IrType::Unknown,
+                }),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("enc . decode (& data)"),
+            "encoding_rs decode should borrow bytes even when the recovered signature is incomplete, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unregistered_decode_method_with_by_value_metadata_preserves_argument_shape() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "decoder".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("ExternalDecoder".to_string()),
+                )),
+                method: "decode".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "data".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Bytes,
+                    ),
+                }],
+                callable_signature: Some(FunctionSignature {
+                    params: vec![FunctionParam {
+                        name: "data".to_string(),
+                        ty: IrType::Bytes,
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: crate::frontend::ast::ParamKind::Normal,
+                        default: None,
+                    }],
+                    return_type: IrType::Unknown,
+                }),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("decoder . decode (data)"),
+            "explicit by-value metadata must preserve argument shape, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("decoder . decode (& data)") && !rendered.contains("decoder.decode(&data)"),
+            "explicit by-value metadata must not use the metadata-free byte borrow default, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn metadata_free_read_to_string_fallback_requires_string_buffer() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "reader".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("ExternalReader".to_string()),
+                )),
+                method: "read_to_string".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "count".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Int,
+                    ),
+                }],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unknown,
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("reader . read_to_string (count)"),
+            "read_to_string fallback should preserve non-string argument shape, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("reader . read_to_string (& mut count)")
+                && !rendered.contains("reader.read_to_string(&mut count)"),
+            "read_to_string fallback must not mutably borrow non-string arguments, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn interop_try_adapter_emits_question_mark() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let emitter = IrEmitter::new(&registry);
@@ -1347,13 +2057,13 @@ mod tests {
                     IrType::String,
                 )),
                 from_ty: IrType::String,
-                to_ty: IrType::Ref(Box::new(IrType::String)),
+                to_ty: IrType::Ref(Box::new(IrType::Struct("String".to_string()))),
                 kind: IrInteropCoercionKind::Builtin {
                     policy: incan_core::interop::CoercionPolicy::Borrow,
-                    rust_target: "&String".to_string(),
+                    rust_target: "&str".to_string(),
                 },
             },
-            IrType::Ref(Box::new(IrType::String)),
+            IrType::Ref(Box::new(IrType::Struct("String".to_string()))),
         );
 
         let emitted = emitter
@@ -1367,6 +2077,88 @@ mod tests {
         assert!(
             rendered.starts_with("&"),
             "expected borrowed String interop coercion to emit a borrow, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn interop_borrowed_string_coercion_borrows_owned_string_without_materializing() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "text".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::String,
+                )),
+                from_ty: IrType::String,
+                to_ty: IrType::Ref(Box::new(IrType::Struct("String".to_string()))),
+                kind: IrInteropCoercionKind::Builtin {
+                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    rust_target: "&str".to_string(),
+                },
+            },
+            IrType::Ref(Box::new(IrType::Struct("String".to_string()))),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered == "& text" || rendered == "&text",
+            "expected borrowed owned String interop coercion to borrow directly, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("to_string"),
+            "owned String borrow coercions must not clone through `.to_string()`, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn interop_structural_list_borrow_coercion_projects_str_items() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "items".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::List(Box::new(IrType::String)),
+                )),
+                from_ty: IrType::List(Box::new(IrType::String)),
+                to_ty: IrType::List(Box::new(IrType::StrRef)),
+                kind: IrInteropCoercionKind::Builtin {
+                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    rust_target: "Vec<&str>".to_string(),
+                },
+            },
+            IrType::List(Box::new(IrType::StrRef)),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("items . iter ()"),
+            "expected structural borrow coercion to iterate source list, got `{rendered}`"
+        );
+        assert!(
+            rendered.contains("as_str ()"),
+            "expected structural borrow coercion to project string items as &str, got `{rendered}`"
+        );
+        assert!(
+            rendered.contains("collect :: < Vec < _ >> ()"),
+            "expected structural borrow coercion to collect a Rust Vec, got `{rendered}`"
         );
         Ok(())
     }
@@ -1420,6 +2212,45 @@ mod tests {
         assert!(
             rendered.contains(some_constructor) && rendered.contains("__IncanUnion"),
             "expected target union wrapping to survive interop aggregate wrapper, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn nested_external_union_target_overrides_parent_qualifier() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let provider_union = IrType::NamedGeneric(
+            crate::backend::ir::types::IR_UNION_TYPE_NAME.to_string(),
+            vec![IrType::Struct("ProviderColumn".to_string()), IrType::Int],
+        );
+        let target_ty = IrType::List(Box::new(IrType::ExternalUnion {
+            library: "right_provider".to_string(),
+            union: Box::new(provider_union.clone()),
+        }));
+        let expr = TypedExpr::new(
+            IrExprKind::List(vec![IrListEntry::Element(TypedExpr::new(
+                IrExprKind::Int(7),
+                IrType::Int,
+            ))]),
+            IrType::List(Box::new(provider_union)),
+        );
+
+        let emitted = emitter
+            .emit_expr_for_use_with_union_qualifier(
+                &expr,
+                ValueUseSite::IncanCallArg {
+                    target_ty: Some(&target_ty),
+                    callee_param: None,
+                    in_return: false,
+                },
+                Some(&["wrong_provider".to_string()]),
+            )
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains("right_provider :: __IncanUnion") && !rendered.contains("wrong_provider"),
+            "expected nested target type to own union qualifier, got `{rendered}`"
         );
         Ok(())
     }
@@ -1497,6 +2328,38 @@ mod tests {
         assert!(
             rendered.contains("data"),
             "expected borrowed bytes coercion to preserve the source expression, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn interop_borrowed_vec_bytes_coercion_materializes_owned_bytes_before_borrow() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(
+            IrExprKind::InteropCoerce {
+                expr: Box::new(TypedExpr::new(IrExprKind::Bytes(b"abc".to_vec()), IrType::StaticBytes)),
+                from_ty: IrType::StaticBytes,
+                to_ty: IrType::Ref(Box::new(IrType::Struct("Vec<u8>".to_string()))),
+                kind: IrInteropCoercionKind::Builtin {
+                    policy: incan_core::interop::CoercionPolicy::Borrow,
+                    rust_target: "&[u8]".to_string(),
+                },
+            },
+            IrType::Ref(Box::new(IrType::Struct("Vec<u8>".to_string()))),
+        );
+
+        let emitted = emitter
+            .emit_expr(&expr)
+            .map_err(|err| format!("expected successful expression emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert!(
+            rendered.contains(". to_vec ()"),
+            "expected borrowed Vec<u8> interop coercion to materialize owned bytes, got `{rendered}`"
+        );
+        assert!(
+            rendered.starts_with("&"),
+            "expected borrowed Vec<u8> interop coercion to emit a borrow, got `{rendered}`"
         );
         Ok(())
     }
@@ -2306,7 +3169,7 @@ mod tests {
     }
 
     #[test]
-    fn qualified_rusttype_receiver_method_uses_incan_string_conversion() -> Result<(), String> {
+    fn qualified_rusttype_receiver_method_uses_rust_signature_borrowing() -> Result<(), String> {
         let registry = FunctionRegistry::new();
         let mut emitter = IrEmitter::new(&registry);
         emitter.rusttype_alias_names.insert("_RawRegex".to_string());
@@ -2345,7 +3208,17 @@ mod tests {
                         IrType::String,
                     ),
                 }],
-                callable_signature: None,
+                callable_signature: Some(FunctionSignature {
+                    params: vec![FunctionParam {
+                        name: "text".to_string(),
+                        ty: IrType::Ref(Box::new(IrType::String)),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: crate::frontend::ast::ParamKind::Normal,
+                        default: None,
+                    }],
+                    return_type: IrType::Struct("_RawMatchIterator".to_string()),
+                }),
                 arg_policy: MethodCallArgPolicy::Default,
             },
             IrType::Struct("_RawMatchIterator".to_string()),
@@ -2360,8 +3233,12 @@ mod tests {
             "expected regular method-call emission on qualified rusttype receiver, got `{rendered}`"
         );
         assert!(
-            !rendered.contains("& text") && !rendered.contains("&text"),
-            "qualified rusttype receiver methods must use Incan arg rules for owned string args, got `{rendered}`"
+            rendered.contains("find_iter (& text)") || rendered.contains("find_iter (&text)"),
+            "metadata-resolved rusttype receiver methods should borrow owned strings for Rust &str params, got `{rendered}`"
+        );
+        assert!(
+            !rendered.contains("to_string"),
+            "metadata-resolved rusttype receiver methods should not clone strings before borrowing, got `{rendered}`"
         );
         Ok(())
     }

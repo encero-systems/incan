@@ -10,7 +10,7 @@
 //! - `indexing.rs`: shared negative-index handling logic
 
 use proc_macro2::TokenStream;
-use quote::{format_ident, quote};
+use quote::quote;
 
 use super::super::super::expr::{IrExprKind, TypedExpr};
 use super::super::super::stmt::AssignTarget;
@@ -84,7 +84,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Field { object, field } => {
                 let o = self.emit_lvalue_expr(object)?;
-                let f = format_ident!("{}", field);
+                let f = Self::rust_ident(field);
                 // Only parenthesize when needed.
                 //
                 // `emit_lvalue_expr` may emit a leading `*` for list indexing (`*list_get_mut(..)`).
@@ -128,7 +128,7 @@ impl<'a> IrEmitter<'a> {
             }
             AssignTarget::Field { object, field } => {
                 let o = self.emit_lvalue_expr(object)?;
-                let f = format_ident!("{}", field);
+                let f = Self::rust_ident(field);
                 // Same precedence rule as in `emit_lvalue_expr`: only parenthesize when the receiver may start with a
                 // unary `*` (e.g. list index lvalues).
                 if matches!(object.kind, IrExprKind::Index { .. }) {

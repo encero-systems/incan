@@ -10,7 +10,7 @@ use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::freeze_const_type;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 
-use super::TypeChecker;
+use super::{FunctionBindingInfo, TypeChecker};
 
 mod decl_helpers;
 pub(super) mod decorators;
@@ -159,6 +159,10 @@ impl TypeChecker {
 
         let kind = match kind {
             SymbolKind::Function(info) => SymbolKind::Function(info),
+            SymbolKind::FunctionOverloads(overloads) => {
+                self.record_function_overload_binding(&alias.name, &overloads, false);
+                SymbolKind::FunctionOverloads(overloads)
+            }
             SymbolKind::Type(info) => SymbolKind::Type(info),
             SymbolKind::Trait(info) => SymbolKind::Trait(info),
             other => {
@@ -177,6 +181,30 @@ impl TypeChecker {
             span,
             scope: 0,
         });
+    }
+
+    /// Record the common metadata for any source binding that resolves to an overload set.
+    ///
+    /// Imports additionally need provider emitted names so IR import lowering imports the concrete Rust functions
+    /// rather than the overloaded source name, which usually does not exist in generated Rust.
+    pub(in crate::frontend::typechecker) fn record_function_overload_binding(
+        &mut self,
+        local_name: &str,
+        overloads: &[FunctionOverloadInfo],
+        record_imported_emitted_names: bool,
+    ) {
+        if record_imported_emitted_names {
+            let emitted_names = overloads
+                .iter()
+                .filter_map(|overload| overload.info.emitted_name.clone())
+                .collect::<Vec<_>>();
+            if !emitted_names.is_empty() {
+                self.type_info
+                    .record_imported_function_emitted_names(local_name.to_string(), emitted_names);
+            }
+        }
+        self.type_info
+            .record_function_overloads(local_name.to_string(), overloads.to_vec());
     }
 
     /// Resolve an alias target path to the semantic symbol kind it projects.
@@ -255,6 +283,7 @@ impl TypeChecker {
                 type_params,
                 type_param_bounds,
                 type_param_bound_details,
+                emitted_name: None,
             }),
             span,
             scope: 0,
@@ -1107,6 +1136,19 @@ impl TypeChecker {
     /// Register an enum declaration and define symbols for each variant.
     fn collect_enum(&mut self, en: &EnumDecl, span: Span) {
         let variants: Vec<_> = en.variants.iter().map(|v| v.node.name.clone()).collect();
+        let variant_fields: HashMap<_, _> = en
+            .variants
+            .iter()
+            .map(|variant| {
+                let fields = variant
+                    .node
+                    .fields
+                    .iter()
+                    .map(|field| self.resolve_type_checked(field))
+                    .collect();
+                (variant.node.name.clone(), fields)
+            })
+            .collect();
         let variant_aliases: HashMap<_, _> = en
             .variant_aliases
             .iter()
@@ -1137,6 +1179,7 @@ impl TypeChecker {
                 traits: en.traits.iter().map(|t| t.node.name.clone()).collect(),
                 trait_adoptions,
                 variants: variants.clone(),
+                variant_fields: variant_fields.clone(),
                 variant_aliases: variant_aliases.clone(),
                 value_enum,
                 derives,
@@ -1159,12 +1202,7 @@ impl TypeChecker {
 
         // Also define each variant as a symbol
         for variant in &en.variants {
-            let fields: Vec<_> = variant
-                .node
-                .fields
-                .iter()
-                .map(|f| self.resolve_type_checked(f))
-                .collect();
+            let fields = variant_fields.get(&variant.node.name).cloned().unwrap_or_default();
             self.symbols.define_preserving_existing_binding(Symbol {
                 name: variant.node.name.clone(),
                 kind: SymbolKind::Variant(VariantInfo {
@@ -1204,6 +1242,7 @@ impl TypeChecker {
     fn collect_function(&mut self, func: &FunctionDecl, span: Span) {
         // Local declaration shadows any imported marker binding with the same name.
         self.testing_marker_import_bindings.remove(&func.name);
+        let existing_module_function_id = self.current_module_function_symbols.get(&func.name).copied();
         self.local_function_decls.insert(func.name.clone(), func.clone());
         let type_params: Vec<String> = func.type_params.iter().map(|tp| tp.name.clone()).collect();
         let type_param_bounds: HashMap<String, Vec<String>> = func
@@ -1255,21 +1294,97 @@ impl TypeChecker {
             })
             .collect();
         let return_type = self.resolve_type_checked(&func.return_type);
+        let binding = FunctionBindingInfo {
+            params: params.clone(),
+            return_type: return_type.clone(),
+        };
+        self.type_info
+            .declarations
+            .function_bindings
+            .insert(func.name.clone(), binding.clone());
+        self.type_info
+            .declarations
+            .function_bindings_by_span
+            .insert((span.start, span.end), binding);
 
-        self.symbols.define(Symbol {
+        let mut info = FunctionInfo {
+            params,
+            return_type,
+            is_async: func.is_async(),
+            type_params,
+            type_param_bounds,
+            type_param_bound_details,
+            emitted_name: None,
+        };
+
+        if let Some(existing_id) = existing_module_function_id
+            && let Some(existing_symbol) = self.symbols.get_mut(existing_id)
+        {
+            let emitted_name = Self::overloaded_function_emitted_name(&func.name, &info);
+            info.emitted_name = Some(emitted_name.clone());
+            self.type_info.record_function_emitted_name(span, emitted_name);
+            match &mut existing_symbol.kind {
+                SymbolKind::Function(existing_info) => {
+                    let existing_emitted_name = Self::overloaded_function_emitted_name(&func.name, existing_info);
+                    existing_info.emitted_name = Some(existing_emitted_name.clone());
+                    self.type_info
+                        .record_function_emitted_name(existing_symbol.span, existing_emitted_name);
+                    let overloads = vec![
+                        FunctionOverloadInfo {
+                            info: existing_info.clone(),
+                            span: existing_symbol.span,
+                        },
+                        FunctionOverloadInfo { info, span },
+                    ];
+                    self.type_info
+                        .record_function_overloads(func.name.clone(), overloads.clone());
+                    existing_symbol.kind = SymbolKind::FunctionOverloads(overloads);
+                    return;
+                }
+                SymbolKind::FunctionOverloads(overloads) => {
+                    overloads.push(FunctionOverloadInfo { info, span });
+                    self.type_info
+                        .record_function_overloads(func.name.clone(), overloads.clone());
+                    return;
+                }
+                _ => {}
+            }
+        }
+
+        let symbol_id = self.symbols.define(Symbol {
             name: func.name.clone(),
-            kind: SymbolKind::Function(FunctionInfo {
-                params,
-                return_type,
-                is_async: func.is_async(),
-                type_params,
-                type_param_bounds,
-                type_param_bound_details,
-            }),
+            kind: SymbolKind::Function(info),
             span,
             scope: 0,
         });
+        self.current_module_function_symbols
+            .insert(func.name.clone(), symbol_id);
     }
+
+    /// Build the deterministic Rust symbol name used for one same-name source overload.
+    fn overloaded_function_emitted_name(name: &str, info: &FunctionInfo) -> String {
+        let mut signature = String::new();
+        signature.push_str(name);
+        signature.push('(');
+        for param in &info.params {
+            signature.push_str(&param.ty.to_string());
+            signature.push(';');
+        }
+        signature.push_str(")->");
+        signature.push_str(&info.return_type.to_string());
+        let hash = stable_fnv1a(signature.as_bytes());
+        crate::frontend::symbols::overload_emitted_name(name, hash)
+    }
+}
+
+/// Hash bytes with the FNV-1a variant used for deterministic generated symbol suffixes.
+fn stable_fnv1a(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
 }
 
 /// Returns one simple cycle (trait names), if the directed supertrait graph has a cycle.

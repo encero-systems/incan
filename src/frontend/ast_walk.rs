@@ -183,6 +183,13 @@ where
         }
         Statement::Return(Some(expr)) => expr_has(&expr.node, pred),
         Statement::Expr(expr) => expr_has(&expr.node, pred),
+        Statement::VocabExpressionItem(item) => {
+            expr_has(&item.expr.node, pred)
+                || item
+                    .modifiers
+                    .iter()
+                    .any(|modifier| expr_has(&modifier.value.node, pred))
+        }
         Statement::CompoundAssignment(a) => expr_has(&a.value.node, pred),
         Statement::TupleUnpack(u) => expr_has(&u.value.node, pred),
         Statement::TupleAssign(a) => {
@@ -225,6 +232,7 @@ where
     }
 }
 
+/// Return whether an assert pattern contains an expression.
 fn assert_has_expr<F>(assert_stmt: &crate::frontend::ast::AssertStmt, pred: &mut F) -> bool
 where
     F: FnMut(&Expr) -> bool,
@@ -241,6 +249,7 @@ where
             .is_some_and(|message| expr_has(&message.node, pred))
 }
 
+/// Return whether a condition pattern contains an expression.
 fn condition_has_expr<F>(condition: &Condition, pred: &mut F) -> bool
 where
     F: FnMut(&Expr) -> bool,
@@ -376,9 +385,12 @@ where
         }),
         Expr::FString(parts) => parts.iter().any(|part| match part {
             crate::frontend::ast::FStringPart::Literal(_) => false,
-            crate::frontend::ast::FStringPart::Expr(expr) => expr_has(&expr.node, pred),
+            crate::frontend::ast::FStringPart::Expr { expr, .. } => expr_has(&expr.node, pred),
         }),
         Expr::Yield(Some(expr)) => expr_has(&expr.node, pred),
+        Expr::VocabBlock(block) => {
+            block.header_args.iter().any(|arg| expr_has(&arg.node, pred)) || any_expr_in_body_impl(&block.body, pred)
+        }
         Expr::Yield(None) | Expr::Partial(_) => false,
     }
 }

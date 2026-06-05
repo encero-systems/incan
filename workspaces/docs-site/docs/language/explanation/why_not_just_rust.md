@@ -34,6 +34,4 @@ See also:
 
 - [Why Incan?](why_incan.md)
 - [Rust Interop](../how-to/rust_interop.md)
-- [RFC 013: Rust crate dependencies][RFC 013]
-
---8<-- "_snippets/rfcs_refs.md"
+- [Managing dependencies](../../tooling/how-to/dependencies.md)

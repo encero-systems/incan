@@ -12,7 +12,7 @@ This page documents callable types in Incan.
 | `Callable[A, R]`      | `(A) -> R`    |
 | `Callable[(A, B), R]` | `(A, B) -> R` |
 
-Both forms are interchangeable in type annotations. Named `def` functions and closures are both accepted wherever a function type is expected. See [RFC 035] for the full specification.
+Both forms are interchangeable in type annotations. Named `def` functions and closures are both accepted wherever a function type is expected.
 
 ## Rest-Aware Function Values
 

@@ -150,6 +150,7 @@ impl<T> GeneratorYield<T> {
 impl<T> Iterator for Generator<T> {
     type Item = T;
 
+    /// Return the next item from this iterator bridge.
     #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         self.iter.next()

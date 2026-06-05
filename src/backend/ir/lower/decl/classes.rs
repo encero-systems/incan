@@ -52,13 +52,13 @@ impl AstLowering {
         if !derives.iter().any(|d| d == clone) {
             derives.push(clone.to_string());
         }
-        // Classes always get FieldInfo for reflection
-        if !derives.contains(&"FieldInfo".to_string()) {
-            derives.push("FieldInfo".to_string());
+        // Classes always get FieldInfo for reflection.
+        if !derives.iter().any(|d| d == derives::FIELD_INFO_DERIVE_NAME) {
+            derives.push(derives::FIELD_INFO_DERIVE_NAME.to_string());
         }
-        // Classes always get IncanClass for __class__() and __fields__() methods
-        if !derives.contains(&"IncanClass".to_string()) {
-            derives.push("IncanClass".to_string());
+        // Classes always get IncanClass for __class_name__() and __fields__() methods.
+        if !derives.iter().any(|d| d == derives::INCAN_CLASS_DERIVE_NAME) {
+            derives.push(derives::INCAN_CLASS_DERIVE_NAME.to_string());
         }
 
         Ok(IrStruct {

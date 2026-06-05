@@ -25,7 +25,30 @@ description: Drafts a GitHub issue title and body using the target repository's 
 
 6. **Produce the draft** — See [Output format](#output-format). For YAML `body` block semantics (markdown vs textarea vs dropdown vs checkboxes), use [reference.md](reference.md).
 
-7. **Optional: related PR or branch** — If the issue tracks follow-up work, mention the branch or PR link in the body where the template has a freeform section.
+7. **Run the public text safety gate** — Before showing the draft to the user or calling any GitHub issue creation/update tool, inspect the exact title and body that will be published. Public issue text must not contain local absolute paths, personal workspace paths, usernames from local paths, machine-specific temporary directories, shell prompts, or environment details that are not needed to reproduce the issue. Replace them with repo-relative paths, generic commands, or neutral placeholders.
+
+8. **Optional: related PR or branch** — If the issue tracks follow-up work, mention the branch or PR link in the body where the template has a freeform section.
+
+## Public Text Safety Gate
+
+GitHub issues are public by default and edits may remain visible in history. Treat the first publication as permanent.
+
+Before creating or updating an issue, manually scan the title and body for these banned patterns:
+
+- local absolute paths, including `/Users/...`, `/home/...`, `/private/...`, `/tmp/...`, and `C:\Users\...`
+- personal workspace segments copied from a local checkout path
+- commands that invoke a binary through an absolute local path
+- local machine usernames, hostnames, shell prompts, or editor-specific transient paths
+- private notes, agent state paths, scratch files, or temporary repro directories
+
+Use these replacements instead:
+
+- repo-relative paths such as `examples/session_read_transform_write_csv.incn`
+- generic commands such as `incan run examples/session_read_transform_write_csv.incn`
+- neutral environment descriptions such as `macOS`, `Linux`, `release/v0.3`, or `Incan 0.3.0-rc6`
+- short repro files embedded directly in the issue body when possible
+
+If the only known command uses an absolute local path, rewrite it before publication. Do not publish first and clean it up afterward.
 
 ## Fallbacks
 
@@ -88,3 +111,4 @@ Actual: Compiler panics with ...
 - [ ] Dropdown and checkbox options match **that file’s** YAML, not another project’s.
 - [ ] Required sections are filled or explicitly flagged as missing.
 - [ ] Title prefix and labels match the YAML when present.
+- [ ] Public text safety gate passed on the exact issue title/body before publishing.

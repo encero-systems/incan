@@ -16,7 +16,9 @@ Import with:
 from std.reflection import FieldInfo
 ```
 
-You only need to import `FieldInfo` when you want to spell the type explicitly in an annotation. Calling `obj.__fields__()` and inspecting the returned records does not require an explicit import.
+You only need to import `FieldInfo` when you want to spell the type explicitly in an annotation. Calling `obj.__fields__()` or generic type-level reflection such as `T.__fields__()` and inspecting the returned records does not require an explicit import.
+
+Primitive type-argument names such as `T.__class_name__()` for `T=int`, `T=float`, `T=str`, or `T=bool` are compiler-backed and also do not require a `std.reflection` import. Type-token parameters such as `Type[int]` are part of the language reflection surface rather than the `std.reflection` import surface; use the language reference when designing type-directed overload APIs.
 
 ## Types
 

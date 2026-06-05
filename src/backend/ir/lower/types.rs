@@ -10,10 +10,13 @@
 
 use super::super::expr::BinOp;
 use super::super::types::{IR_UNION_TYPE_NAME, IrType};
-use super::AstLowering;
 use super::errors::LoweringError;
+use super::{AstLowering, FunctionSignature};
 use crate::frontend::ast;
+use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
+use crate::frontend::resolved_type_subst::{substitute_resolved_type, type_param_subst_map};
 use crate::frontend::symbols::ResolvedType;
+use crate::library_manifest::resolved_type_from_manifest_type_ref;
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ast};
 use incan_core::lang::conventions;
 use incan_core::lang::types::collections::{self, CollectionTypeId};
@@ -75,7 +78,7 @@ fn ast_decimal_type_arg_u8(ty: &ast::Type) -> Option<u8> {
 }
 
 /// Construct the canonical IR shape for an anonymous union.
-fn union_ir_type(members: Vec<IrType>) -> IrType {
+pub(super) fn union_ir_type(members: Vec<IrType>) -> IrType {
     let mut has_none = false;
     let mut flattened = Vec::new();
 
@@ -109,6 +112,310 @@ fn union_ir_type(members: Vec<IrType>) -> IrType {
 }
 
 impl AstLowering {
+    /// Preserve dependency ownership for public anonymous union aliases while retaining their semantic member list.
+    pub(super) fn pub_external_type(&self, library: &str, ty: IrType) -> IrType {
+        if matches!(ty, IrType::ExternalUnion { .. }) {
+            return ty;
+        }
+        if ty.union_type_name().is_some() {
+            return IrType::ExternalUnion {
+                library: library.to_string(),
+                union: Box::new(ty),
+            };
+        }
+        match ty {
+            IrType::List(inner) => IrType::List(Box::new(self.pub_external_type(library, *inner))),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(self.pub_external_type(library, *key)),
+                Box::new(self.pub_external_type(library, *value)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(self.pub_external_type(library, *inner))),
+            IrType::Tuple(items) => IrType::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| self.pub_external_type(library, item))
+                    .collect(),
+            ),
+            IrType::Option(inner) => IrType::Option(Box::new(self.pub_external_type(library, *inner))),
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(self.pub_external_type(library, *ok)),
+                Box::new(self.pub_external_type(library, *err)),
+            ),
+            IrType::Function { params, ret } => IrType::Function {
+                params: params
+                    .into_iter()
+                    .map(|param| self.pub_external_type(library, param))
+                    .collect(),
+                ret: Box::new(self.pub_external_type(library, *ret)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(self.pub_external_type(library, *inner))),
+            IrType::RefMut(inner) => IrType::RefMut(Box::new(self.pub_external_type(library, *inner))),
+            IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
+                name,
+                args.into_iter()
+                    .map(|arg| self.pub_external_type(library, arg))
+                    .collect(),
+            ),
+            IrType::TypeToken(inner) => IrType::TypeToken(Box::new(self.pub_external_type(library, *inner))),
+            other => other,
+        }
+    }
+
+    /// Lower one public manifest type in the context of its owning library.
+    ///
+    /// Manifest type references are provider-local metadata. Consumers may call public helpers without importing the
+    /// type aliases mentioned by those helpers, so alias expansion cannot rely on the consumer's import scope. This
+    /// path expands provider-local aliases first, then marks anonymous union wrappers as owned by the provider crate.
+    pub(super) fn lower_pub_manifest_type(&self, library: &str, ty: &ResolvedType) -> IrType {
+        let mut expanding = std::collections::HashSet::new();
+        let expanded = self.expand_pub_manifest_type_aliases(library, ty.clone(), &mut expanding);
+        self.pub_external_type(library, self.lower_resolved_type(&expanded))
+    }
+
+    /// Lower one public manifest type reference in the context of its owning library.
+    pub(super) fn lower_pub_manifest_type_ref(&self, library: &str, ty: &crate::library_manifest::TypeRef) -> IrType {
+        self.lower_pub_manifest_type(library, &resolved_type_from_manifest_type_ref(ty))
+    }
+
+    /// Mark every type in a callable signature that belongs to a public dependency as dependency-owned.
+    pub(super) fn pub_external_signature(&self, library: &str, signature: FunctionSignature) -> FunctionSignature {
+        FunctionSignature {
+            params: signature
+                .params
+                .into_iter()
+                .map(|mut param| {
+                    let ty = self.expand_pub_manifest_ir_type_aliases(
+                        library,
+                        param.ty,
+                        &mut std::collections::HashSet::new(),
+                    );
+                    param.ty = self.pub_external_type(library, ty);
+                    param
+                })
+                .collect(),
+            return_type: {
+                let ty = self.expand_pub_manifest_ir_type_aliases(
+                    library,
+                    signature.return_type,
+                    &mut std::collections::HashSet::new(),
+                );
+                self.pub_external_type(library, ty)
+            },
+        }
+    }
+
+    /// Expand provider-local type aliases inside already-lowered IR signature metadata.
+    fn expand_pub_manifest_ir_type_aliases(
+        &self,
+        library: &str,
+        ty: IrType,
+        expanding: &mut std::collections::HashSet<String>,
+    ) -> IrType {
+        match ty {
+            IrType::Struct(name) => self
+                .expand_pub_manifest_ir_named_alias(library, name.clone(), expanding)
+                .unwrap_or(IrType::Struct(name)),
+            IrType::List(inner) => IrType::List(Box::new(
+                self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
+            )),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(self.expand_pub_manifest_ir_type_aliases(library, *key, expanding)),
+                Box::new(self.expand_pub_manifest_ir_type_aliases(library, *value, expanding)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(
+                self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
+            )),
+            IrType::Tuple(items) => IrType::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| self.expand_pub_manifest_ir_type_aliases(library, item, expanding))
+                    .collect(),
+            ),
+            IrType::Option(inner) => IrType::Option(Box::new(
+                self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
+            )),
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(self.expand_pub_manifest_ir_type_aliases(library, *ok, expanding)),
+                Box::new(self.expand_pub_manifest_ir_type_aliases(library, *err, expanding)),
+            ),
+            IrType::Function { params, ret } => IrType::Function {
+                params: params
+                    .into_iter()
+                    .map(|param| self.expand_pub_manifest_ir_type_aliases(library, param, expanding))
+                    .collect(),
+                ret: Box::new(self.expand_pub_manifest_ir_type_aliases(library, *ret, expanding)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(
+                self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
+            )),
+            IrType::RefMut(inner) => IrType::RefMut(Box::new(
+                self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
+            )),
+            IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
+                name,
+                args.into_iter()
+                    .map(|arg| self.expand_pub_manifest_ir_type_aliases(library, arg, expanding))
+                    .collect(),
+            ),
+            IrType::TypeToken(inner) => IrType::TypeToken(Box::new(
+                self.expand_pub_manifest_ir_type_aliases(library, *inner, expanding),
+            )),
+            IrType::ExternalUnion { library: owner, union } => {
+                let owner_for_union = owner.clone();
+                IrType::ExternalUnion {
+                    library: owner,
+                    union: Box::new(self.expand_pub_manifest_ir_type_aliases(&owner_for_union, *union, expanding)),
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// Expand one provider-local IR alias name by consulting the provider manifest.
+    fn expand_pub_manifest_ir_named_alias(
+        &self,
+        library: &str,
+        name: String,
+        expanding: &mut std::collections::HashSet<String>,
+    ) -> Option<IrType> {
+        let manifest_index = self.library_manifest_index.as_ref()?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
+            return None;
+        };
+        let alias = manifest
+            .exports
+            .type_aliases
+            .iter()
+            .find(|alias| alias.name == name && alias.type_params.is_empty())?;
+        if !expanding.insert(name.clone()) {
+            return None;
+        }
+        let expanded = self.lower_pub_manifest_type_ref(library, &alias.target);
+        expanding.remove(&name);
+        Some(expanded)
+    }
+
+    /// Expand provider-local type aliases inside public manifest metadata.
+    fn expand_pub_manifest_type_aliases(
+        &self,
+        library: &str,
+        ty: ResolvedType,
+        expanding: &mut std::collections::HashSet<String>,
+    ) -> ResolvedType {
+        match ty {
+            ResolvedType::Named(name) => self
+                .expand_pub_manifest_named_alias(library, name.clone(), Vec::new(), expanding)
+                .unwrap_or(ResolvedType::Named(name)),
+            ResolvedType::Generic(name, args) => {
+                let expanded_args = args
+                    .into_iter()
+                    .map(|arg| self.expand_pub_manifest_type_aliases(library, arg, expanding))
+                    .collect::<Vec<_>>();
+                self.expand_pub_manifest_named_alias(library, name.clone(), expanded_args.clone(), expanding)
+                    .unwrap_or(ResolvedType::Generic(name, expanded_args))
+            }
+            ResolvedType::Function(params, ret) => ResolvedType::Function(
+                params
+                    .into_iter()
+                    .map(|param| crate::frontend::symbols::CallableParam {
+                        name: param.name,
+                        ty: self.expand_pub_manifest_type_aliases(library, param.ty, expanding),
+                        kind: param.kind,
+                        has_default: param.has_default,
+                    })
+                    .collect(),
+                Box::new(self.expand_pub_manifest_type_aliases(library, *ret, expanding)),
+            ),
+            ResolvedType::Tuple(items) => ResolvedType::Tuple(
+                items
+                    .into_iter()
+                    .map(|item| self.expand_pub_manifest_type_aliases(library, item, expanding))
+                    .collect(),
+            ),
+            ResolvedType::FrozenList(inner) => ResolvedType::FrozenList(Box::new(
+                self.expand_pub_manifest_type_aliases(library, *inner, expanding),
+            )),
+            ResolvedType::FrozenDict(key, value) => ResolvedType::FrozenDict(
+                Box::new(self.expand_pub_manifest_type_aliases(library, *key, expanding)),
+                Box::new(self.expand_pub_manifest_type_aliases(library, *value, expanding)),
+            ),
+            ResolvedType::FrozenSet(inner) => ResolvedType::FrozenSet(Box::new(
+                self.expand_pub_manifest_type_aliases(library, *inner, expanding),
+            )),
+            ResolvedType::Ref(inner) => ResolvedType::Ref(Box::new(
+                self.expand_pub_manifest_type_aliases(library, *inner, expanding),
+            )),
+            ResolvedType::RefMut(inner) => ResolvedType::RefMut(Box::new(
+                self.expand_pub_manifest_type_aliases(library, *inner, expanding),
+            )),
+            ResolvedType::TypeToken(inner) => ResolvedType::TypeToken(Box::new(
+                self.expand_pub_manifest_type_aliases(library, *inner, expanding),
+            )),
+            other => other,
+        }
+    }
+
+    /// Expand one provider-local named alias, applying generic arguments and stopping on alias cycles.
+    fn expand_pub_manifest_named_alias(
+        &self,
+        library: &str,
+        name: String,
+        args: Vec<ResolvedType>,
+        expanding: &mut std::collections::HashSet<String>,
+    ) -> Option<ResolvedType> {
+        let manifest_index = self.library_manifest_index.as_ref()?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
+            return None;
+        };
+        let alias = manifest.exports.type_aliases.iter().find(|alias| alias.name == name)?;
+        if alias.type_params.len() != args.len() || !expanding.insert(name.clone()) {
+            return None;
+        }
+        let target = resolved_type_from_manifest_type_ref(&alias.target);
+        let substituted = if alias.type_params.is_empty() {
+            target
+        } else {
+            let params = alias
+                .type_params
+                .iter()
+                .map(|param| param.name.clone())
+                .collect::<Vec<_>>();
+            let subst = type_param_subst_map(&params, &args);
+            substitute_resolved_type(&target, &subst)
+        };
+        let expanded = self.expand_pub_manifest_type_aliases(library, substituted, expanding);
+        expanding.remove(&name);
+        Some(expanded)
+    }
+
+    /// Lower a simple imported public type alias from manifest metadata instead of trusting the raw source name.
+    ///
+    /// Consumer modules only import the generated Rust alias item. The manifest target is the semantic source of truth
+    /// for conversion planning, especially when the alias is an anonymous union wrapper owned by the dependency crate.
+    fn lower_pub_imported_type_alias(&self, name: &str) -> Option<IrType> {
+        let path = self.import_aliases.get(name)?;
+        let [root, library, member] = path.as_slice() else {
+            return None;
+        };
+        if root != "pub" {
+            return None;
+        }
+        let manifest_index = self.library_manifest_index.as_ref()?;
+        let entry = manifest_index.get(library)?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = entry else {
+            return None;
+        };
+        let alias = manifest
+            .exports
+            .type_aliases
+            .iter()
+            .find(|alias| alias.name == *member)?;
+        if !alias.type_params.is_empty() {
+            return None;
+        }
+        Some(self.lower_pub_manifest_type_ref(library, &alias.target))
+    }
+
     /// Merge a typechecker-derived IR type with an already-lowered IR type without erasing in-scope generic
     /// placeholders that the typechecker may have normalized to nominal names.
     pub(super) fn merge_inferred_ir_type(existing: &IrType, inferred: IrType) -> IrType {
@@ -116,6 +423,8 @@ impl AstLowering {
             (IrType::Generic(existing_name), IrType::Struct(inferred_name)) if existing_name == &inferred_name => {
                 existing.clone()
             }
+            (IrType::RustDisplay(_), _) => existing.clone(),
+            (IrType::ExternalUnion { .. }, _) => existing.clone(),
             (IrType::Ref(existing_inner), IrType::Ref(inferred_inner)) => {
                 IrType::Ref(Box::new(Self::merge_inferred_ir_type(existing_inner, *inferred_inner)))
             }
@@ -252,6 +561,9 @@ impl AstLowering {
                     .iter()
                     .map(|p| self.lower_const_annotation_type(&p.node))
                     .collect();
+                if base == "Type" {
+                    return IrType::TypeToken(Box::new(lowered_generic_arg_or_unknown(&params_lowered, 0)));
+                }
                 match classify_generic_base(base.as_str()) {
                     GenericBaseKind::Collection(CollectionTypeId::List) => IrType::NamedGeneric(
                         collections::as_str(CollectionTypeId::FrozenList).to_string(),
@@ -395,6 +707,7 @@ impl AstLowering {
                 params: params.iter().map(|p| self.lower_resolved_type(&p.ty)).collect(),
                 ret: Box::new(self.lower_resolved_type(ret)),
             },
+            ResolvedType::TypeToken(inner) => IrType::TypeToken(Box::new(self.lower_resolved_type(inner))),
             ResolvedType::Tuple(items) => IrType::Tuple(items.iter().map(|t| self.lower_resolved_type(t)).collect()),
             ResolvedType::TypeVar(name) => IrType::Generic(name.clone()),
             ResolvedType::SelfType => IrType::SelfType,
@@ -417,6 +730,10 @@ impl AstLowering {
 
                 if type_param_names.is_some_and(|params| params.contains(n)) {
                     return IrType::Generic(name.clone());
+                }
+
+                if let Some(imported_alias) = self.lower_pub_imported_type_alias(n) {
+                    return imported_alias;
                 }
 
                 if n == conventions::NONE_TYPE_NAME || n == conventions::UNIT_TYPE_NAME {
@@ -462,6 +779,9 @@ impl AstLowering {
                     .iter()
                     .map(|p| self.lower_type_with_type_params(&p.node, type_param_names))
                     .collect();
+                if base == "Type" {
+                    return IrType::TypeToken(Box::new(lowered_generic_arg_or_unknown(&lowered_params, 0)));
+                }
                 match classify_generic_base(base.as_str()) {
                     GenericBaseKind::Collection(CollectionTypeId::List) => {
                         IrType::List(Box::new(lowered_generic_arg_or_unknown(&lowered_params, 0)))
@@ -736,6 +1056,25 @@ mod tests {
                     vec![IrType::Generic("T".to_string())]
                 )]
             )
+        );
+    }
+
+    #[test]
+    fn merge_inferred_ir_type_preserves_exact_rust_display_types() {
+        let merged = AstLowering::merge_inferred_ir_type(
+            &IrType::RustDisplay("querykit::__IncanUniond6a8fda7c78e7109".to_string()),
+            IrType::NamedGeneric(
+                crate::backend::ir::types::IR_UNION_TYPE_NAME.to_string(),
+                vec![
+                    IrType::Struct("IntLiteralExpr".to_string()),
+                    IrType::Struct("StringLiteralExpr".to_string()),
+                ],
+            ),
+        );
+
+        assert_eq!(
+            merged,
+            IrType::RustDisplay("querykit::__IncanUniond6a8fda7c78e7109".to_string())
         );
     }
 }

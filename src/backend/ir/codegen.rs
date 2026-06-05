@@ -27,725 +27,35 @@
 //! The `generate*` methods are convenience wrappers that return error comments
 //! on failure (useful for debugging but not recommended for production).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::env;
 #[cfg(feature = "rust_inspect")]
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::frontend::ast::{self, Declaration, Expr, ImportKind, ImportPath, Program};
-use crate::frontend::decorator_resolution;
+use crate::frontend::ast::{Declaration, ImportKind, Program};
 use crate::frontend::diagnostics::CompileError;
 use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::stdlib_loader::StdlibAstCache;
-use crate::library_manifest::{EnumValueExport, EnumValueTypeExport};
-use incan_core::lang::decorators::{self, DecoratorId};
-use incan_core::lang::traits::{self as core_traits, TraitId};
-use incan_core::lang::{stdlib, trait_capabilities};
 
-use super::emit::{ExternalOrdinalCustomKey, ExternalOrdinalValueEnum};
+use super::emit::CallableNameResolution;
 use super::scanners::{
     check_for_this_import as scan_check_for_this_import, collect_rust_crates as scan_collect_rust_crates,
     detect_serde_usage,
 };
-use super::{AstLowering, EmitError, EmitService, IrEmitter, LoweringErrors};
+use super::{AstLowering, EmitError, EmitService, FunctionRegistry, IrEmitter, IrProgram, LoweringErrors};
 
-const SERDE_SERIALIZE_DERIVE: &str = "serde::Serialize";
-const SERDE_DESERIALIZE_DERIVE: &str = "serde::Deserialize";
+mod dependency_metadata;
+mod ordinal_bridge;
+mod serde_activation;
 
-fn collect_model_field_aliases(main: &Program, deps: &[(&str, &Program)]) -> HashMap<String, HashMap<String, String>> {
-    use crate::frontend::ast::Declaration;
-
-    let mut out: HashMap<String, HashMap<String, String>> = HashMap::new();
-
-    let mut visit = |p: &Program| {
-        for decl in &p.declarations {
-            let Declaration::Model(m) = &decl.node else {
-                continue;
-            };
-
-            let mut map: HashMap<String, String> = HashMap::new();
-            for f in &m.fields {
-                if let Some(alias) = &f.node.metadata.alias {
-                    map.insert(alias.clone(), f.node.name.clone());
-                }
-            }
-
-            if !map.is_empty() {
-                out.entry(m.name.clone()).or_default().extend(map);
-            }
-        }
-    };
-
-    visit(main);
-    for (_, dep) in deps {
-        visit(dep);
-    }
-
-    out
-}
-
-/// Resolve a source import path to the generated Rust module path used for dependency emission.
-fn generated_module_path_for_source_import(path: &ImportPath, current_module_path: &[String]) -> Option<Vec<String>> {
-    let resolved_segments = if path.parent_levels > 0 {
-        let keep = current_module_path.len().checked_sub(path.parent_levels)?;
-        let mut resolved = current_module_path[..keep].to_vec();
-        resolved.extend(path.segments.clone());
-        resolved
-    } else {
-        path.segments.clone()
-    };
-    let mut segments = canonicalize_source_module_segments(&resolved_segments);
-
-    if segments.first().map(String::as_str) == Some(stdlib::STDLIB_ROOT) {
-        segments[0] = stdlib::INCAN_STD_NAMESPACE.to_string();
-    }
-
-    Some(segments)
-}
-
-/// True when a dependency module should keep its public API even if the main module does not import every item.
-fn should_preserve_dependency_public_items(module_path: &[String], preserve_non_stdlib_public_items: bool) -> bool {
-    if matches!(
-        module_path.first().map(String::as_str),
-        Some(stdlib::STDLIB_ROOT | stdlib::INCAN_STD_NAMESPACE)
-    ) {
-        return true;
-    }
-    preserve_non_stdlib_public_items
-}
-
-/// Return whether a function carries the stdlib-backed web route decorator that lowers to a Rust proc-macro attribute.
-///
-/// Binary-style dependency emission prunes otherwise-unreferenced private items. Route handlers are different because
-/// their Rust attribute expands into inventory registration after IR emission, so the function itself is a generated
-/// entrypoint even when no Incan expression calls it directly.
-fn has_web_route_passthrough_decorator(
-    func: &ast::FunctionDecl,
-    aliases: &HashMap<String, Vec<String>>,
-    stdlib_cache: &mut StdlibAstCache,
-) -> bool {
-    func.decorators.iter().any(|decorator| {
-        let resolved = decorator_resolution::resolve_decorator_path(&decorator.node, aliases);
-        if resolved.len() < 2 {
-            return false;
-        }
-        let module_segments = &resolved[..resolved.len() - 1];
-        let name = &resolved[resolved.len() - 1];
-        if name != "route" {
-            return false;
-        }
-        let Some(meta) = stdlib_cache.lookup_function_meta(module_segments, name) else {
-            return false;
-        };
-        meta.is_rust_extern && meta.rust_module_path.as_deref() == Some("incan_web_macros")
-    })
-}
-
-/// Collect dependency-module declarations that are referenced through imports.
-fn collect_externally_reachable_items_by_module(
-    main: &Program,
-    dependency_modules: &[(&str, &Program, Option<Vec<String>>)],
-) -> HashMap<Vec<String>, HashSet<String>> {
-    let module_paths: HashSet<Vec<String>> = dependency_modules
-        .iter()
-        .map(|(name, _, path_segments)| path_segments.clone().unwrap_or_else(|| vec![(*name).to_string()]))
-        .collect();
-
-    /// Record imported item names against the generated dependency module that owns them.
-    fn record_imports(
-        reachable: &mut HashMap<Vec<String>, HashSet<String>>,
-        program: &Program,
-        current_module_path: &[String],
-        module_paths: &HashSet<Vec<String>>,
-    ) {
-        if crate::frontend::surface_semantics::uses_ambient_log_surface(program) {
-            reachable
-                .entry(vec!["std".to_string(), "logging".to_string()])
-                .or_default()
-                .insert("get_logger".to_string());
-        }
-        let mut module_import_bindings: HashMap<String, Vec<String>> = HashMap::new();
-        for decl in &program.declarations {
-            let Declaration::Import(import) = &decl.node else {
-                continue;
-            };
-            match &import.kind {
-                ImportKind::From { module, items } => {
-                    let Some(module_path) = generated_module_path_for_source_import(module, current_module_path) else {
-                        continue;
-                    };
-                    let reachable_items = reachable.entry(module_path).or_default();
-                    for item in items {
-                        reachable_items.insert(item.name.clone());
-                    }
-                }
-                ImportKind::Module(path) => {
-                    let Some(segments) = generated_module_path_for_source_import(path, current_module_path) else {
-                        continue;
-                    };
-                    if module_paths.contains(&segments) {
-                        if let Some(binding) = import.alias.clone().or_else(|| path.segments.last().cloned()) {
-                            module_import_bindings.insert(binding, segments);
-                        }
-                        continue;
-                    }
-                    let Some(item_name) = segments.last() else {
-                        continue;
-                    };
-                    for module_path in module_paths {
-                        if segments.len() == module_path.len() + 1 && segments.starts_with(module_path) {
-                            reachable
-                                .entry(module_path.clone())
-                                .or_default()
-                                .insert(item_name.clone());
-                            break;
-                        }
-                    }
-                }
-                ImportKind::PubLibrary { .. }
-                | ImportKind::PubFrom { .. }
-                | ImportKind::RustCrate { .. }
-                | ImportKind::RustFrom { .. }
-                | ImportKind::Python(_) => {}
-            }
-        }
-        if !module_import_bindings.is_empty() {
-            let _ = crate::frontend::ast_walk::any_expr_in_program(program, |expr| {
-                if let Expr::Field(object, field) = expr
-                    && let Expr::Ident(binding) = &object.node
-                    && let Some(module_path) = module_import_bindings.get(binding)
-                {
-                    reachable.entry(module_path.clone()).or_default().insert(field.clone());
-                }
-                if let Expr::MethodCall(object, method, _, _) = expr
-                    && let Expr::Ident(binding) = &object.node
-                    && let Some(module_path) = module_import_bindings.get(binding)
-                {
-                    reachable.entry(module_path.clone()).or_default().insert(method.clone());
-                }
-                false
-            });
-        }
-        if module_paths.contains(current_module_path) {
-            let aliases = decorator_resolution::collect_import_aliases(program);
-            let mut stdlib_cache = StdlibAstCache::new();
-            for decl in &program.declarations {
-                let Declaration::Function(func) = &decl.node else {
-                    continue;
-                };
-                if has_web_route_passthrough_decorator(func, &aliases, &mut stdlib_cache) {
-                    reachable
-                        .entry(current_module_path.to_vec())
-                        .or_default()
-                        .insert(func.name.clone());
-                }
-            }
-        }
-    }
-
-    let mut reachable = HashMap::new();
-    record_imports(&mut reachable, main, &[String::from("main")], &module_paths);
-    for (name, program, path_segments) in dependency_modules {
-        let module_path = path_segments.clone().unwrap_or_else(|| vec![(*name).to_string()]);
-        record_imports(&mut reachable, program, &module_path, &module_paths);
-    }
-    reachable
-}
-
-/// Dependency type facts gathered during codegen setup and reused by module emission.
-///
-/// Multi-file consumers only carry short nominal type names after typechecking/lowering, so emission cannot infer
-/// imported-enum ownership rules from local IR alone. This metadata keeps a single codegen-owned source of truth for:
-/// - dependency module qualification (`module_paths`)
-/// - short-name collisions that must not be auto-qualified (`ambiguous_type_names`)
-/// - imported enum names that are safe to treat as enum loop elements (`enum_type_names`)
-/// - imported stdlib error types whose trait methods require Rust trait imports (`error_trait_type_names`)
-#[derive(Debug, Clone, Default)]
-struct DependencyTypeMetadata {
-    module_paths: HashMap<String, Vec<String>>,
-    ambiguous_type_names: HashSet<String>,
-    enum_type_names: HashSet<String>,
-    error_trait_type_names: HashSet<String>,
-}
-
-/// Collect dependency type metadata needed by IR emission for cross-module nominal types.
-///
-/// Enum loop ownership is the subtle case: imported enums lower to nominal `Struct(name)` references in consumer
-/// modules, so the emitter cannot rely on local enum declarations when deciding whether `list[T]` loops should emit
-/// `.iter().cloned()`. This helper records enum names from dependency modules while excluding ambiguous short names and
-/// short names that are also used by non-enum dependency types.
-fn collect_dependency_type_metadata(deps: &[(&str, &Program, Option<Vec<String>>)]) -> DependencyTypeMetadata {
-    let mut paths: HashMap<String, Vec<String>> = HashMap::new();
-    let mut ambiguous: HashSet<String> = HashSet::new();
-    let mut enum_type_names: HashSet<String> = HashSet::new();
-    let mut non_enum_type_names: HashSet<String> = HashSet::new();
-    let mut error_trait_type_names: HashSet<String> = HashSet::new();
-    let error_trait_name = core_traits::as_str(TraitId::Error);
-
-    for (_name, program, path_segments) in deps {
-        for decl in &program.declarations {
-            let type_name = match &decl.node {
-                Declaration::Model(m) => {
-                    if m.traits.iter().any(|bound| bound.node.name == error_trait_name) {
-                        error_trait_type_names.insert(m.name.clone());
-                    }
-                    Some((&m.name, false))
-                }
-                Declaration::Class(c) => {
-                    if c.traits.iter().any(|bound| bound.node.name == error_trait_name) {
-                        error_trait_type_names.insert(c.name.clone());
-                    }
-                    Some((&c.name, false))
-                }
-                Declaration::Enum(e) => Some((&e.name, true)),
-                Declaration::TypeAlias(a) => Some((&a.name, false)),
-                Declaration::Newtype(n) => Some((&n.name, false)),
-                _ => None,
-            };
-            let Some((name, is_enum)) = type_name else {
-                continue;
-            };
-
-            if is_enum {
-                enum_type_names.insert(name.clone());
-            } else {
-                non_enum_type_names.insert(name.clone());
-            }
-
-            let Some(segs) = path_segments.as_ref() else {
-                continue;
-            };
-
-            if let Some(existing) = paths.get(name) {
-                if existing != segs {
-                    ambiguous.insert(name.clone());
-                }
-            } else {
-                paths.insert(name.clone(), segs.clone());
-            }
-        }
-    }
-
-    for name in &ambiguous {
-        paths.remove(name);
-    }
-    enum_type_names.retain(|name| !ambiguous.contains(name) && !non_enum_type_names.contains(name));
-
-    DependencyTypeMetadata {
-        module_paths: paths,
-        ambiguous_type_names: ambiguous,
-        enum_type_names,
-        error_trait_type_names,
-    }
-}
-
-/// Return whether a program imports the stdlib ordinal-map contract.
-fn imports_std_ordinal_contract(program: &Program) -> bool {
-    let capability = trait_capabilities::stable_ordinal_key();
-    program.declarations.iter().any(|decl| {
-        let Declaration::Import(import) = &decl.node else {
-            return false;
-        };
-        match &import.kind {
-            ImportKind::Module(_) => false,
-            ImportKind::From { module, items } if import_path_matches_capability(module, capability) => items
-                .iter()
-                .any(|item| trait_capabilities::import_triggers_capability(capability, item.name.as_str())),
-            _ => false,
-        }
-    })
-}
-
-/// Return whether an import path names the module that owns a temporary capability contract.
-fn import_path_matches_capability(path: &ImportPath, capability: &trait_capabilities::TraitCapabilityInfo) -> bool {
-    trait_capabilities::module_path_matches(capability, &path.segments)
-}
-
-/// Return whether any module in the current compilation needs value-enum `OrdinalKey` impls.
-fn compilation_imports_std_ordinal_contract(main: &Program, deps: &[(&str, &Program, Option<Vec<String>>)]) -> bool {
-    imports_std_ordinal_contract(main) || deps.iter().any(|(_, program, _)| imports_std_ordinal_contract(program))
-}
-
-/// Collect public scalar value enums from loaded `.incnlib` dependencies.
-fn external_ordinal_value_enums(index: Option<&Arc<LibraryManifestIndex>>) -> Vec<ExternalOrdinalValueEnum> {
-    let Some(index) = index else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for dependency_key in index.known_libraries() {
-        let Some(crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, metadata }) =
-            index.get(&dependency_key)
-        else {
-            continue;
-        };
-        for enum_export in &manifest.exports.enums {
-            let Some(value_type) = enum_export.value_type else {
-                continue;
-            };
-            let value_type = match value_type {
-                EnumValueTypeExport::Str => super::decl::IrEnumValueType::String,
-                EnumValueTypeExport::Int => super::decl::IrEnumValueType::Int,
-            };
-            let mut values = Vec::new();
-            let mut complete = true;
-            for variant in &enum_export.variants {
-                let Some(value) = &variant.value else {
-                    complete = false;
-                    break;
-                };
-                values.push(match value {
-                    EnumValueExport::Str(value) => super::decl::IrEnumValue::String(value.clone()),
-                    EnumValueExport::Int(value) => super::decl::IrEnumValue::Int(*value),
-                });
-            }
-            if !complete {
-                continue;
-            }
-            out.push(ExternalOrdinalValueEnum {
-                dependency_key: dependency_key.clone(),
-                name: enum_export.name.clone(),
-                type_identity: enum_export
-                    .ordinal_type_identity
-                    .clone()
-                    .unwrap_or_else(|| format!("{}.{}", metadata.manifest_name, enum_export.name)),
-                value_type,
-                values,
-            });
-        }
-    }
-    out
-}
-
-/// Return whether a serialized trait bound names the std `OrdinalKey` capability.
-fn type_bound_matches_ordinal_key(bound: &crate::library_manifest::TypeBoundExport) -> bool {
-    let capability = trait_capabilities::stable_ordinal_key();
-    let trait_name = bound
-        .source_name
-        .as_deref()
-        .unwrap_or_else(|| bound.name.rsplit('.').next().unwrap_or(bound.name.as_str()));
-    if trait_name != capability.trait_name {
-        return false;
-    }
-    let Some(module_path) = &bound.module_path else {
-        return false;
-    };
-    trait_capabilities::module_path_matches(capability, module_path)
-}
-
-/// Return whether any exported trait adoption satisfies the std `OrdinalKey` contract.
-fn export_adopts_ordinal_key(
-    trait_adoptions: &[crate::library_manifest::TypeBoundExport],
-    traits: &HashMap<String, &crate::library_manifest::TraitExport>,
-) -> bool {
-    trait_adoptions
-        .iter()
-        .any(|bound| type_bound_matches_ordinal_key(bound) || trait_bound_extends_ordinal_key(bound, traits))
-}
-
-/// Return whether a serialized trait bound resolves transitively to std `OrdinalKey`.
-fn trait_bound_extends_ordinal_key(
-    bound: &crate::library_manifest::TypeBoundExport,
-    traits: &HashMap<String, &crate::library_manifest::TraitExport>,
-) -> bool {
-    let mut seen = HashSet::new();
-    let mut work = vec![bound.name.as_str()];
-    while let Some(name) = work.pop() {
-        if !seen.insert(name.to_string()) {
-            continue;
-        }
-        let Some(trait_export) = traits.get(name) else {
-            continue;
-        };
-        for supertrait in &trait_export.supertraits {
-            if type_bound_matches_ordinal_key(supertrait) {
-                return true;
-            }
-            work.push(supertrait.name.as_str());
-        }
-    }
-    false
-}
-
-/// Return lookup keys for a manifest trait export, including its original source name when reexported under an alias.
-fn trait_export_lookup_keys(trait_export: &crate::library_manifest::TraitExport) -> Vec<String> {
-    let mut keys = vec![trait_export.name.clone()];
-    if let Some(source_name) = &trait_export.source_name
-        && source_name != &trait_export.name
-    {
-        keys.push(source_name.clone());
-    }
-    keys
-}
-
-/// Return whether a manifest method set exposes a source method or its generated alias.
-fn export_methods_include(methods: &[crate::library_manifest::MethodExport], name: &str) -> bool {
-    methods
-        .iter()
-        .any(|method| method.name == name || method.alias_of.as_deref() == Some(name))
-}
-
-/// Build custom-key bridge metadata for one exported concrete type when it adopts `OrdinalKey`.
-fn external_ordinal_custom_key(
-    dependency_key: &str,
-    name: &str,
-    type_params: &[crate::library_manifest::TypeParamExport],
-    trait_adoptions: &[crate::library_manifest::TypeBoundExport],
-    methods: &[crate::library_manifest::MethodExport],
-    traits: &HashMap<String, &crate::library_manifest::TraitExport>,
-) -> Option<ExternalOrdinalCustomKey> {
-    if !type_params.is_empty() || !export_adopts_ordinal_key(trait_adoptions, traits) {
-        return None;
-    }
-    let hooks = trait_capabilities::stable_ordinal_key().bridge_hooks?;
-    Some(ExternalOrdinalCustomKey {
-        dependency_key: dependency_key.to_string(),
-        name: name.to_string(),
-        has_ordinal_hash: export_methods_include(methods, hooks.hash_method),
-        has_ordinal_bytes_equal: export_methods_include(methods, hooks.bytes_equal_method),
-    })
-}
-
-/// Collect public user-authored `OrdinalKey` adopters from loaded `.incnlib` dependencies.
-fn external_ordinal_custom_keys(index: Option<&Arc<LibraryManifestIndex>>) -> Vec<ExternalOrdinalCustomKey> {
-    let Some(index) = index else {
-        return Vec::new();
-    };
-    let mut out = Vec::new();
-    for dependency_key in index.known_libraries() {
-        let Some(crate::frontend::library_manifest_index::LibraryManifestIndexEntry::Loaded { manifest, .. }) =
-            index.get(&dependency_key)
-        else {
-            continue;
-        };
-        let traits = manifest
-            .exports
-            .traits
-            .iter()
-            .flat_map(|trait_export| {
-                trait_export_lookup_keys(trait_export)
-                    .into_iter()
-                    .map(move |key| (key, trait_export))
-            })
-            .collect::<HashMap<_, _>>();
-        for model in &manifest.exports.models {
-            if let Some(key) = external_ordinal_custom_key(
-                &dependency_key,
-                &model.name,
-                &model.type_params,
-                &model.trait_adoptions,
-                &model.methods,
-                &traits,
-            ) {
-                out.push(key);
-            }
-        }
-        for class in &manifest.exports.classes {
-            if let Some(key) = external_ordinal_custom_key(
-                &dependency_key,
-                &class.name,
-                &class.type_params,
-                &class.trait_adoptions,
-                &class.methods,
-                &traits,
-            ) {
-                out.push(key);
-            }
-        }
-        for newtype in &manifest.exports.newtypes {
-            if let Some(key) = external_ordinal_custom_key(
-                &dependency_key,
-                &newtype.name,
-                &newtype.type_params,
-                &newtype.trait_adoptions,
-                &newtype.methods,
-                &traits,
-            ) {
-                out.push(key);
-            }
-        }
-        for enum_export in &manifest.exports.enums {
-            if enum_export.value_type.is_some() {
-                continue;
-            }
-            if let Some(key) = external_ordinal_custom_key(
-                &dependency_key,
-                &enum_export.name,
-                &enum_export.type_params,
-                &enum_export.trait_adoptions,
-                &enum_export.methods,
-                &traits,
-            ) {
-                out.push(key);
-            }
-        }
-    }
-    out
-}
-
-#[derive(Debug, Clone)]
-struct OrdinalBridgeConfig {
-    emit_std_ordinal_value_enum_impls: bool,
-    external_value_enums: Vec<ExternalOrdinalValueEnum>,
-    external_custom_keys: Vec<ExternalOrdinalCustomKey>,
-}
-
-impl OrdinalBridgeConfig {
-    /// Build a bridge configuration for generated internal modules.
-    fn for_internal_module(uses_std_ordinal_contract: bool) -> Self {
-        Self {
-            emit_std_ordinal_value_enum_impls: uses_std_ordinal_contract,
-            external_value_enums: Vec::new(),
-            external_custom_keys: Vec::new(),
-        }
-    }
-
-    /// Build a bridge configuration for crate-root emission where dependency adapters live.
-    fn for_crate_root(uses_std_ordinal_contract: bool, index: Option<&Arc<LibraryManifestIndex>>) -> Self {
-        if !uses_std_ordinal_contract {
-            return Self::for_internal_module(false);
-        }
-        Self {
-            emit_std_ordinal_value_enum_impls: true,
-            external_value_enums: external_ordinal_value_enums(index),
-            external_custom_keys: external_ordinal_custom_keys(index),
-        }
-    }
-}
-
-/// Return whether any loaded module derives serde serialize or deserialize through resolved JSON derive imports.
-fn collect_serde_derives(main: &Program, deps: &[(&str, &Program)]) -> (bool, bool) {
-    let mut has_serialize = false;
-    let mut has_deserialize = false;
-
-    let mut visit = |program: &Program| {
-        let import_aliases = decorator_resolution::collect_import_aliases(program);
-        for decl in &program.declarations {
-            let decorators = match &decl.node {
-                Declaration::Model(m) => Some(&m.decorators),
-                Declaration::Class(c) => Some(&c.decorators),
-                Declaration::Enum(e) => Some(&e.decorators),
-                _ => None,
-            };
-            let Some(decorators) = decorators else {
-                continue;
-            };
-            for dec in decorators {
-                if decorators::from_str(dec.node.name.as_str()) != Some(DecoratorId::Derive) {
-                    continue;
-                }
-                for arg in &dec.node.args {
-                    let crate::frontend::ast::DecoratorArg::Positional(expr) = arg else {
-                        continue;
-                    };
-                    let crate::frontend::ast::Expr::Ident(name) = &expr.node else {
-                        continue;
-                    };
-                    let resolved = import_aliases
-                        .get(name)
-                        .cloned()
-                        .unwrap_or_else(|| vec![name.to_string()]);
-                    match resolved.as_slice() {
-                        [std, serde, json] if std == "std" && serde == "serde" && json == "json" => {
-                            has_serialize = true;
-                            has_deserialize = true;
-                        }
-                        [std, serde, json, trait_name]
-                            if std == "std" && serde == "serde" && json == "json" && trait_name == "Serialize" =>
-                        {
-                            has_serialize = true;
-                        }
-                        [std, serde, json, trait_name]
-                            if std == "std" && serde == "serde" && json == "json" && trait_name == "Deserialize" =>
-                        {
-                            has_deserialize = true;
-                        }
-                        [serde, trait_name] if serde == "serde" && trait_name == "Serialize" => {
-                            has_serialize = true;
-                        }
-                        [serde, trait_name] if serde == "serde" && trait_name == "Deserialize" => {
-                            has_deserialize = true;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-    };
-
-    visit(main);
-    for (_, dep) in deps {
-        visit(dep);
-    }
-
-    // Fallback: if no explicit serde derive was found but serde usage is detected (e.g. `json_stringify()` builtin), we
-    // conservatively enable Serialize only.
-    // Deserialize is NOT enabled here because implicit serde usage (like `json_stringify`)
-    // only needs serialization, not deserialization.
-    if !has_serialize && !has_deserialize {
-        let serde_used = super::scanners::detect_serde_usage(main)
-            || deps
-                .iter()
-                .any(|(_, program)| super::scanners::detect_serde_usage(program));
-        if serde_used {
-            has_serialize = true;
-        }
-    }
-
-    (has_serialize, has_deserialize)
-}
-
-/// Add serde derives to generated newtypes when the current program needs serde support.
-fn add_serde_to_newtypes(ir_program: &mut super::IrProgram, add_serialize: bool, add_deserialize: bool) {
-    use super::decl::IrDeclKind;
-    use super::types::IrType;
-
-    /// Return whether a newtype inner type can safely receive derived serde support.
-    fn is_conservative_serde_safe_newtype_inner(ty: &IrType) -> bool {
-        match ty {
-            IrType::Unit
-            | IrType::Bool
-            | IrType::Int
-            | IrType::Float
-            | IrType::String
-            | IrType::Bytes
-            | IrType::StaticStr
-            | IrType::StaticBytes
-            | IrType::FrozenStr
-            | IrType::FrozenBytes
-            | IrType::StrRef => true,
-            IrType::List(inner) | IrType::Set(inner) | IrType::Option(inner) => {
-                is_conservative_serde_safe_newtype_inner(inner)
-            }
-            IrType::Dict(key, value) | IrType::Result(key, value) => {
-                is_conservative_serde_safe_newtype_inner(key) && is_conservative_serde_safe_newtype_inner(value)
-            }
-            IrType::Tuple(items) => items.iter().all(is_conservative_serde_safe_newtype_inner),
-            _ => false,
-        }
-    }
-
-    for decl in &mut ir_program.declarations {
-        if let IrDeclKind::Struct(s) = &mut decl.kind
-            && s.fields.len() == 1
-            && s.fields[0].name == "0"
-        {
-            if !s.type_params.is_empty() {
-                continue;
-            }
-            if !is_conservative_serde_safe_newtype_inner(&s.fields[0].ty) {
-                continue;
-            }
-            if add_serialize && !s.derives.iter().any(|d| d == SERDE_SERIALIZE_DERIVE) {
-                s.derives.push(SERDE_SERIALIZE_DERIVE.to_string());
-            }
-            if add_deserialize && !s.derives.iter().any(|d| d == SERDE_DESERIALIZE_DERIVE) {
-                s.derives.push(SERDE_DESERIALIZE_DERIVE.to_string());
-            }
-        }
-    }
-}
+use dependency_metadata::{
+    DependencySymbolMetadata, collect_dependency_symbol_metadata, collect_externally_reachable_items_by_module,
+    collect_model_field_aliases, should_preserve_dependency_public_items,
+};
+use ordinal_bridge::{OrdinalBridgeConfig, compilation_imports_std_ordinal_contract, imports_std_ordinal_contract};
+use serde_activation::{add_serde_to_newtypes, collect_serde_derives};
 
 /// Error during Rust code generation.
 ///
@@ -858,10 +168,17 @@ pub struct IrCodegen<'a> {
     strict_generated_lints: bool,
     /// Private IR items called by generated code that is appended outside normal IR emission.
     externally_reachable_items: HashSet<String>,
+    /// Private dependency-module IR items called by generated code appended inside that module.
+    externally_reachable_items_by_module: HashMap<Vec<String>, HashSet<String>>,
     /// Public serialized value-enum identities for library builds, keyed by source identity (`module.Type`).
     public_ordinal_type_identities: HashMap<String, String>,
     /// Whether non-stdlib dependency modules keep public items that are not otherwise reachable.
     preserve_dependency_public_items: bool,
+    /// Dependency module paths that should typecheck with source-visible public import rules.
+    public_typecheck_module_paths: HashSet<Vec<String>>,
+    /// Shared stdlib source metadata cache reused across the repeated internal typecheck/lowering passes that codegen
+    /// performs for multi-module builds.
+    stdlib_cache: StdlibAstCache,
     /// Manifest/workspace root for rust-inspect-backed typechecking during IR generation.
     #[cfg(feature = "rust_inspect")]
     rust_inspect_manifest_dir: Option<PathBuf>,
@@ -882,11 +199,176 @@ impl<'a> IrCodegen<'a> {
             library_manifest_index: None,
             strict_generated_lints: false,
             externally_reachable_items: HashSet::new(),
+            externally_reachable_items_by_module: HashMap::new(),
             public_ordinal_type_identities: HashMap::new(),
             preserve_dependency_public_items: true,
+            public_typecheck_module_paths: HashSet::new(),
+            stdlib_cache: StdlibAstCache::new(),
             #[cfg(feature = "rust_inspect")]
             rust_inspect_manifest_dir: None,
         }
+    }
+
+    /// Return the stable module key used by source imports and CLI collection for one dependency module.
+    fn dependency_module_key(name: &str, path_segments: &Option<Vec<String>>) -> String {
+        path_segments
+            .as_deref()
+            .map(canonicalize_source_module_segments)
+            .map(|segments| segments.join("_"))
+            .unwrap_or_else(|| name.to_string())
+    }
+
+    /// Return the transitive local source dependency subset needed to typecheck one program.
+    ///
+    /// Codegen typechecking must mirror the CLI checker: a module should see its declared local imports and their
+    /// transitive signature dependencies, not every module collected for the output project. Importing the whole
+    /// dependency universe lets same-name public helpers from unrelated modules collide before `from ... import ... as
+    /// ...` collection, which changes behavior between `--check` and `--emit-rust`.
+    fn imported_dependency_modules_for_program(
+        program: &Program,
+        dependencies: &[(&'a str, &'a Program, Option<Vec<String>>)],
+        self_key: Option<&str>,
+    ) -> Vec<(&'a str, &'a Program)> {
+        let mut module_idx_by_key = HashMap::new();
+        for (idx, (name, _, path_segments)) in dependencies.iter().enumerate() {
+            module_idx_by_key.insert(Self::dependency_module_key(name, path_segments), idx);
+        }
+
+        let mut selected = BTreeSet::new();
+        let mut pending = Self::direct_imported_dependency_indexes(program, &module_idx_by_key, self_key);
+        while let Some(idx) = pending.pop() {
+            let (name, ast, path_segments) = &dependencies[idx];
+            let dep_key = Self::dependency_module_key(name, path_segments);
+            if self_key == Some(dep_key.as_str()) || !selected.insert(idx) {
+                continue;
+            }
+            pending.extend(Self::direct_imported_dependency_indexes(
+                ast,
+                &module_idx_by_key,
+                Some(dep_key.as_str()),
+            ));
+        }
+
+        selected
+            .into_iter()
+            .map(|idx| {
+                let (name, ast, _) = dependencies[idx];
+                (name, ast)
+            })
+            .collect()
+    }
+
+    /// Return direct dependency-module indexes named by source imports in one program.
+    fn direct_imported_dependency_indexes(
+        program: &Program,
+        module_idx_by_key: &HashMap<String, usize>,
+        self_key: Option<&str>,
+    ) -> Vec<usize> {
+        let mut dep_indexes = BTreeSet::new();
+        for decl in &program.declarations {
+            let Declaration::Import(import) = &decl.node else {
+                continue;
+            };
+            match &import.kind {
+                ImportKind::From { module, .. } => {
+                    if module.parent_levels > 0 || module.segments.is_empty() {
+                        continue;
+                    }
+                    let key = canonicalize_source_module_segments(&module.segments).join("_");
+                    if self_key != Some(key.as_str())
+                        && let Some(dep_idx) = module_idx_by_key.get(&key).copied()
+                    {
+                        dep_indexes.insert(dep_idx);
+                    }
+                }
+                ImportKind::Module(path) => {
+                    if path.parent_levels > 0 || path.segments.is_empty() {
+                        continue;
+                    }
+                    let full_key = canonicalize_source_module_segments(&path.segments).join("_");
+                    if self_key != Some(full_key.as_str())
+                        && let Some(dep_idx) = module_idx_by_key.get(&full_key).copied()
+                    {
+                        dep_indexes.insert(dep_idx);
+                    }
+                    if path.segments.len() > 1 {
+                        let parent_key =
+                            canonicalize_source_module_segments(&path.segments[..path.segments.len() - 1]).join("_");
+                        if self_key != Some(parent_key.as_str())
+                            && let Some(dep_idx) = module_idx_by_key.get(&parent_key).copied()
+                        {
+                            dep_indexes.insert(dep_idx);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        dep_indexes.into_iter().collect()
+    }
+
+    /// Build a registry for explicit canonical cross-module calls.
+    fn canonical_registry_for_programs<'program>(
+        programs: impl IntoIterator<Item = (&'program [String], &'program IrProgram)>,
+    ) -> FunctionRegistry {
+        let programs: Vec<_> = programs.into_iter().collect();
+        let mut registry = FunctionRegistry::new();
+        for (module_path, program) in &programs {
+            for (name, signature) in program.function_registry.iter() {
+                let mut canonical_path = (*module_path).to_vec();
+                canonical_path.push(name.clone());
+                registry.register_canonical_path(
+                    &canonical_path,
+                    signature.params.clone(),
+                    signature.return_type.clone(),
+                );
+            }
+        }
+
+        let mut pending_reexports = Vec::new();
+        for (module_path, program) in &programs {
+            for reexport in &program.function_reexports {
+                let mut alias_path = (*module_path).to_vec();
+                alias_path.push(reexport.name.clone());
+                pending_reexports.push((alias_path, reexport.target_path.clone()));
+            }
+        }
+        while !pending_reexports.is_empty() {
+            let mut unresolved = Vec::new();
+            let mut made_progress = false;
+            for (alias_path, target_path) in pending_reexports {
+                if registry.get_canonical_path(&alias_path).is_some() {
+                    made_progress = true;
+                    continue;
+                }
+                if let Some(signature) = registry.get_canonical_path(&target_path).cloned() {
+                    registry.register_canonical_path(
+                        &alias_path,
+                        signature.params.clone(),
+                        signature.return_type.clone(),
+                    );
+                    made_progress = true;
+                } else {
+                    unresolved.push((alias_path, target_path));
+                }
+            }
+            if !made_progress {
+                break;
+            }
+            pending_reexports = unresolved;
+        }
+        registry
+    }
+
+    /// Apply dependency symbol metadata to generated Rust codegen state.
+    fn apply_dependency_symbol_metadata(emitter: &mut IrEmitter<'_>, metadata: &DependencySymbolMetadata) {
+        emitter.set_type_module_paths(metadata.module_paths.clone(), metadata.ambiguous_type_names.clone());
+        emitter.set_value_module_paths(
+            metadata.value_module_paths.clone(),
+            metadata.ambiguous_value_names.clone(),
+        );
+        emitter.set_dependency_enum_types(metadata.enum_type_names.clone());
+        emitter.set_external_error_trait_types(metadata.error_trait_type_names.clone());
     }
 
     /// Enable strict generated Rust lint validation for `--emit-rust --strict`.
@@ -897,6 +379,11 @@ impl<'a> IrCodegen<'a> {
     /// Set private generated Rust entrypoints called by code injected after IR emission.
     pub fn set_externally_reachable_items(&mut self, names: HashSet<String>) {
         self.externally_reachable_items = names;
+    }
+
+    /// Set private generated Rust entrypoints called by code injected into dependency modules.
+    pub fn set_externally_reachable_items_by_module(&mut self, names: HashMap<Vec<String>, HashSet<String>>) {
+        self.externally_reachable_items_by_module = names;
     }
 
     /// Set public serialized value-enum identities for library emission.
@@ -923,6 +410,20 @@ impl<'a> IrCodegen<'a> {
     /// Binary and test harness builds can disable it so unused dependency declarations are pruned instead of warning.
     pub fn set_preserve_dependency_public_items(&mut self, enabled: bool) {
         self.preserve_dependency_public_items = enabled;
+    }
+
+    /// Set dependency module paths that should typecheck with public source import rules.
+    ///
+    /// CLI test batches can emit individual test files as generated dependency modules so each file keeps its own Rust
+    /// module scope. Those test files are still user source and must typecheck like focused `incan test file.incn`
+    /// runs, not like compiler-internal source dependencies that may inspect private module items.
+    pub fn set_public_typecheck_module_paths(&mut self, paths: HashSet<Vec<String>>) {
+        self.public_typecheck_module_paths = paths;
+    }
+
+    /// Seed codegen with stdlib metadata already collected by an earlier typecheck phase.
+    pub(crate) fn set_stdlib_cache(&mut self, cache: StdlibAstCache) {
+        self.stdlib_cache = cache;
     }
 
     /// Set declared Rust crate names from `incan.toml [rust-dependencies]`. (RFC 031)
@@ -959,7 +460,9 @@ impl<'a> IrCodegen<'a> {
         self.needs_serde
     }
 
+    /// Apply codegen's shared project context to an internal typechecker pass.
     fn configure_typechecker(&self, tc: &mut crate::frontend::typechecker::TypeChecker) {
+        tc.stdlib_cache = self.stdlib_cache.clone();
         if let Some(names) = self.declared_crate_names.clone() {
             tc.set_declared_crate_names(names);
         }
@@ -970,6 +473,25 @@ impl<'a> IrCodegen<'a> {
         if let Some(dir) = self.rust_inspect_manifest_dir.clone() {
             tc.set_rust_inspect_manifest_dir(dir);
         }
+    }
+
+    /// Prefix internal codegen typecheck diagnostics with the module being lowered.
+    fn typecheck_errors_for_module(module: &str, mut errors: Vec<CompileError>) -> GenerationError {
+        for error in &mut errors {
+            error.message = format!("in module `{module}`: {}", error.message);
+        }
+        GenerationError::TypeCheck(errors)
+    }
+
+    /// Preserve stdlib metadata warmed by an internal typechecker pass for later codegen passes.
+    fn capture_typechecker_stdlib_cache(&mut self, tc: &crate::frontend::typechecker::TypeChecker) {
+        self.stdlib_cache = tc.stdlib_cache.clone();
+    }
+
+    /// Apply codegen's shared metadata context to one AST lowering pass.
+    fn configure_lowering(&self, lowering: &mut AstLowering) {
+        lowering.set_stdlib_cache(self.stdlib_cache.clone());
+        lowering.set_library_manifest_index(self.library_manifest_index.clone());
     }
 
     /// Add a dependency module (for multi-file compilation)
@@ -1140,32 +662,31 @@ impl<'a> IrCodegen<'a> {
 
     /// Generate code via the IR pipeline (fallible version)
     fn try_generate_via_ir(
-        &self,
+        &mut self,
         program: &Program,
         internal_module_roots: &HashSet<String>,
     ) -> Result<String, GenerationError> {
-        self.try_generate_via_ir_with_union_config(program, internal_module_roots, HashMap::new(), false)
+        self.try_generate_via_ir_with_union_config(program, internal_module_roots, HashMap::new(), false, None, None)
     }
 
     /// Generate code via the IR pipeline with optional crate-root union sharing for multi-file source modules.
     fn try_generate_via_ir_with_union_config(
-        &self,
+        &mut self,
         program: &Program,
         internal_module_roots: &HashSet<String>,
         generated_union_types: HashMap<String, super::types::IrType>,
         qualify_union_types_from_crate: bool,
+        mut callable_name_resolutions: Option<&mut HashMap<String, CallableNameResolution>>,
+        mut callable_name_used_signature_keys: Option<&mut HashSet<String>>,
     ) -> Result<String, GenerationError> {
-        let deps: Vec<(&str, &Program)> = self
-            .dependency_modules
-            .iter()
-            .map(|(name, ast, _)| (*name, *ast))
-            .collect();
+        let dependency_modules = self.dependency_modules.clone();
+        let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
 
         // RFC 021: Make alias-aware lowering work across module boundaries by seeding alias maps
         // for models declared in dependency modules as well.
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
-        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &self.dependency_modules);
+        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
+        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
         let ordinal_bridge = self.ordinal_bridge_config(uses_std_ordinal_contract);
         let (needs_serialize, needs_deserialize) = collect_serde_derives(program, &deps);
 
@@ -1176,21 +697,25 @@ impl<'a> IrCodegen<'a> {
             use crate::frontend::typechecker::TypeChecker;
             let mut tc = TypeChecker::new();
             self.configure_typechecker(&mut tc);
-            match tc.check_with_imports(program, &deps) {
+            let typecheck_deps = Self::imported_dependency_modules_for_program(program, &dependency_modules, None);
+            let result = match tc.check_with_imports(program, &typecheck_deps) {
                 Ok(()) => tc.type_info().clone(),
                 Err(errs) => return Err(GenerationError::TypeCheck(errs)),
-            }
+            };
+            self.capture_typechecker_stdlib_cache(&tc);
+            result
         };
 
         // Lower AST to IR using typechecker output when available
         let mut lowering = AstLowering::new_with_type_info(type_info_opt);
+        self.configure_lowering(&mut lowering);
         lowering.set_current_source_module_name(
             program
                 .source_path
                 .as_deref()
                 .and_then(crate::frontend::module::logical_module_name_from_source_path),
         );
-        lowering.seed_dependency_trait_decls(&self.dependency_modules);
+        lowering.seed_dependency_trait_decls(&dependency_modules);
         lowering.seed_struct_field_aliases(global_aliases.clone());
         let mut ir_program = lowering.lower_program(program)?;
         if self.needs_serde {
@@ -1199,25 +724,79 @@ impl<'a> IrCodegen<'a> {
 
         // RFC 023: Infer trait bounds for generic functions.
         super::trait_bound_inference::infer_trait_bounds(&mut ir_program);
-
-        // Build unified function registry including imported module functions
-        let mut unified_registry = ir_program.function_registry.clone();
-        let mut dependency_ir_programs = Vec::new();
-        for (_, dep_ast, _) in &self.dependency_modules {
-            // For dependencies, use best-effort lowering without type info to
-            // preserve prior behavior and avoid redundant typechecking.
-            let mut dep_lowering = AstLowering::new();
-            dep_lowering.set_current_source_module_name(
-                dep_ast
-                    .source_path
-                    .as_deref()
-                    .and_then(crate::frontend::module::logical_module_name_from_source_path),
-            );
-            dep_lowering.seed_struct_field_aliases(global_aliases.clone());
-            let dep_ir = dep_lowering.lower_program(dep_ast)?;
-            unified_registry.merge(&dep_ir.function_registry);
-            dependency_ir_programs.push(dep_ir);
+        let callable_name_use_facts = IrEmitter::callable_name_use_facts_for_program(
+            &ir_program,
+            &self.externally_reachable_items,
+            true,
+            &dependency_symbol_metadata.error_trait_type_names,
+        );
+        if let Some(used_keys) = callable_name_used_signature_keys.as_deref_mut() {
+            used_keys.extend(callable_name_use_facts.signature_keys.iter().cloned());
+            if callable_name_use_facts.generic_trait_used {
+                used_keys.extend(callable_name_use_facts.function_arg_signature_keys.iter().cloned());
+            }
         }
+        if let Some(resolutions) = callable_name_resolutions.as_deref_mut() {
+            IrEmitter::add_callable_name_resolutions_for_program(resolutions, Vec::new(), &ir_program);
+        }
+        let callable_name_resolutions_for_emit = callable_name_resolutions
+            .as_ref()
+            .map(|resolutions| (**resolutions).clone())
+            .unwrap_or_default();
+        let mut callable_name_used_signature_keys_for_emit = callable_name_used_signature_keys
+            .as_ref()
+            .map(|used_keys| (**used_keys).clone())
+            .unwrap_or_default();
+        if callable_name_use_facts.generic_trait_used {
+            callable_name_used_signature_keys_for_emit.extend(callable_name_use_facts.function_arg_signature_keys);
+        }
+
+        let mut dependency_ir_programs = Vec::new();
+        for (dep_name, dep_ast, dep_path_segments) in dependency_modules.clone() {
+            let dep_type_info = {
+                use crate::frontend::typechecker::TypeChecker;
+                let mut tc = TypeChecker::new();
+                self.configure_typechecker(&mut tc);
+                let dep_key = Self::dependency_module_key(dep_name, &dep_path_segments);
+                let typecheck_deps =
+                    Self::imported_dependency_modules_for_program(dep_ast, &dependency_modules, Some(&dep_key));
+                let result = match tc.check_with_imports_allow_private(dep_ast, &typecheck_deps) {
+                    Ok(()) => tc.type_info().clone(),
+                    Err(errs) => return Err(Self::typecheck_errors_for_module(&dep_key, errs)),
+                };
+                self.capture_typechecker_stdlib_cache(&tc);
+                result
+            };
+            let mut dep_lowering = AstLowering::new_with_type_info(dep_type_info);
+            self.configure_lowering(&mut dep_lowering);
+            dep_lowering.set_current_source_module_name(
+                dep_path_segments
+                    .clone()
+                    .map(|segments| segments.join("."))
+                    .or_else(|| {
+                        dep_ast
+                            .source_path
+                            .as_deref()
+                            .and_then(crate::frontend::module::logical_module_name_from_source_path)
+                    }),
+            );
+            dep_lowering.seed_dependency_trait_decls(&dependency_modules);
+            dep_lowering.seed_struct_field_aliases(global_aliases.clone());
+            let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
+            super::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
+            let module_path = dep_path_segments.clone().unwrap_or_else(|| vec![dep_name.to_string()]);
+            dependency_ir_programs.push((module_path, dep_ir));
+        }
+        let dependency_programs = dependency_ir_programs
+            .iter()
+            .map(|(_, dep_ir)| dep_ir)
+            .collect::<Vec<_>>();
+        super::trait_bound_inference::propagate_trait_bounds_from_programs(&mut ir_program, &dependency_programs);
+        let canonical_registry = Self::canonical_registry_for_programs(
+            dependency_ir_programs
+                .iter()
+                .map(|(module_path, dep_ir)| (module_path.as_slice(), dep_ir)),
+        );
 
         // Emit IR to Rust code
         let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
@@ -1229,12 +808,7 @@ impl<'a> IrCodegen<'a> {
             if self.emit_zen_in_main {
                 inner.set_emit_zen(true);
             }
-            inner.set_type_module_paths(
-                dependency_type_metadata.module_paths.clone(),
-                dependency_type_metadata.ambiguous_type_names.clone(),
-            );
-            inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-            inner.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
+            Self::apply_dependency_symbol_metadata(inner, &dependency_symbol_metadata);
             inner.set_needs_serde(self.needs_serde);
             inner.set_external_rust_functions(self.external_rust_functions.clone());
             inner.set_strict_generated_lints(self.strict_generated_lints);
@@ -1242,22 +816,22 @@ impl<'a> IrCodegen<'a> {
             self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
             inner.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
             inner.set_generated_union_types(generated_union_types);
-            for dep_ir in &dependency_ir_programs {
+            inner.set_canonical_function_registry(canonical_registry.clone());
+            inner.set_callable_name_current_module_path(Vec::new());
+            inner.set_callable_name_resolutions(callable_name_resolutions_for_emit);
+            inner.set_callable_name_used_signature_keys(callable_name_used_signature_keys_for_emit);
+            inner.set_callable_name_local_registry(ir_program.function_registry.clone());
+            for (_, dep_ir) in &dependency_ir_programs {
                 inner.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
             Ok(svc.emit_program(&ir_program)?)
         } else {
-            let mut emitter = IrEmitter::new(&unified_registry);
+            let mut emitter = IrEmitter::new(&ir_program.function_registry);
             emitter.set_internal_module_roots(internal_module_roots.clone());
             if self.emit_zen_in_main {
                 emitter.set_emit_zen(true);
             }
-            emitter.set_type_module_paths(
-                dependency_type_metadata.module_paths.clone(),
-                dependency_type_metadata.ambiguous_type_names.clone(),
-            );
-            emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-            emitter.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
+            Self::apply_dependency_symbol_metadata(&mut emitter, &dependency_symbol_metadata);
             emitter.set_needs_serde(self.needs_serde);
             emitter.set_external_rust_functions(self.external_rust_functions.clone());
             emitter.set_strict_generated_lints(self.strict_generated_lints);
@@ -1265,7 +839,12 @@ impl<'a> IrCodegen<'a> {
             self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
             emitter.set_qualify_union_types_from_crate(qualify_union_types_from_crate);
             emitter.set_generated_union_types(generated_union_types);
-            for dep_ir in &dependency_ir_programs {
+            emitter.set_canonical_function_registry(canonical_registry.clone());
+            emitter.set_callable_name_current_module_path(Vec::new());
+            emitter.set_callable_name_resolutions(callable_name_resolutions_for_emit);
+            emitter.set_callable_name_used_signature_keys(callable_name_used_signature_keys_for_emit);
+            emitter.set_callable_name_local_registry(ir_program.function_registry.clone());
+            for (_, dep_ir) in &dependency_ir_programs {
                 emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
             }
             Ok(emitter.emit_program(&ir_program)?)
@@ -1289,19 +868,47 @@ impl<'a> IrCodegen<'a> {
     ///
     /// Returns `GenerationError::Lowering` if AST lowering fails, or
     /// `GenerationError::Emission` if IR emission fails.
-    pub fn try_generate_module(&mut self, _module_name: &str, program: &Program) -> Result<String, GenerationError> {
+    pub fn try_generate_module(&mut self, module_name: &str, program: &Program) -> Result<String, GenerationError> {
+        let dependency_modules = self.dependency_modules.clone();
         // Use the IR pipeline for module generation too
         let mut lowering = AstLowering::new();
+        self.configure_lowering(&mut lowering);
         lowering.set_current_source_module_name(
             program
                 .source_path
                 .as_deref()
                 .and_then(crate::frontend::module::logical_module_name_from_source_path),
         );
+        lowering.seed_dependency_trait_decls(&dependency_modules);
         let mut ir_program = lowering.lower_program(program)?;
 
         // RFC 023: Infer trait bounds for generic functions.
         super::trait_bound_inference::infer_trait_bounds(&mut ir_program);
+        let mut dependency_ir_programs = Vec::new();
+        for (dep_name, dep_ast, dep_path_segments) in dependency_modules.clone() {
+            if dep_name == module_name {
+                continue;
+            }
+            let mut dep_lowering = AstLowering::new();
+            self.configure_lowering(&mut dep_lowering);
+            dep_lowering.set_current_source_module_name(
+                dep_path_segments
+                    .clone()
+                    .map(|segments| segments.join("."))
+                    .or_else(|| {
+                        dep_ast
+                            .source_path
+                            .as_deref()
+                            .and_then(crate::frontend::module::logical_module_name_from_source_path)
+                    }),
+            );
+            dep_lowering.seed_dependency_trait_decls(&dependency_modules);
+            let mut dep_ir = dep_lowering.lower_program(dep_ast)?;
+            super::trait_bound_inference::infer_trait_bounds(&mut dep_ir);
+            dependency_ir_programs.push(dep_ir);
+        }
+        let dependency_programs = dependency_ir_programs.iter().collect::<Vec<_>>();
+        super::trait_bound_inference::propagate_trait_bounds_from_programs(&mut ir_program, &dependency_programs);
 
         // Best-effort: treat registered dependency module names as internal roots.
         // (This is most relevant for the non-nested multi-file API.)
@@ -1384,41 +991,43 @@ impl<'a> IrCodegen<'a> {
 
         let internal_roots: HashSet<String> = module_names.iter().map(|s| (*s).to_string()).collect();
 
-        let deps: Vec<(&str, &Program)> = self
-            .dependency_modules
-            .iter()
-            .map(|(name, ast, _)| (*name, *ast))
-            .collect();
+        let dependency_modules = self.dependency_modules.clone();
+        let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
-        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &self.dependency_modules);
+        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
+        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
         let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(uses_std_ordinal_contract);
-        let dependency_reachable_items =
-            collect_externally_reachable_items_by_module(program, &self.dependency_modules);
+        let dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
 
         // Generate module files
         let mut lowered_modules = Vec::new();
-        for (name, ast, path_segments) in &self.dependency_modules {
-            if !module_names.contains(name) {
+        for (name, ast, path_segments) in dependency_modules.clone() {
+            if !module_names.contains(&name) {
                 continue;
             }
             let module_type_info = {
                 use crate::frontend::typechecker::TypeChecker;
                 let mut tc = TypeChecker::new();
                 self.configure_typechecker(&mut tc);
-                match tc.check_with_imports_allow_private(ast, &deps) {
+                let module_key = Self::dependency_module_key(name, &path_segments);
+                let typecheck_deps =
+                    Self::imported_dependency_modules_for_program(ast, &dependency_modules, Some(&module_key));
+                let result = match tc.check_with_imports_allow_private(ast, &typecheck_deps) {
                     Ok(()) => tc.type_info().clone(),
-                    Err(errs) => return Err(GenerationError::TypeCheck(errs)),
-                }
+                    Err(errs) => return Err(Self::typecheck_errors_for_module(&module_key, errs)),
+                };
+                self.capture_typechecker_stdlib_cache(&tc);
+                result
             };
             let mut lowering = AstLowering::new_with_type_info(module_type_info);
+            self.configure_lowering(&mut lowering);
             lowering.set_current_source_module_name(Some(
                 path_segments
                     .clone()
                     .unwrap_or_else(|| vec![name.to_string()])
                     .join("."),
             ));
-            lowering.seed_dependency_trait_decls(&self.dependency_modules);
+            lowering.seed_dependency_trait_decls(&dependency_modules);
             lowering.seed_struct_field_aliases(global_aliases.clone());
             let mut ir = lowering.lower_program(ast)?;
             // Do not auto-add serde derives to dependency modules.
@@ -1443,18 +1052,62 @@ impl<'a> IrCodegen<'a> {
                 .collect();
             super::trait_bound_inference::propagate_trait_bounds_from_programs(current_ir, &external_programs);
         }
+        let all_module_canonical_registry = Self::canonical_registry_for_programs(
+            lowered_modules
+                .iter()
+                .map(|(_, module_path, ir)| (module_path.as_slice(), ir)),
+        );
         let mut shared_union_types = HashMap::new();
         for (_, _, ir) in &lowered_modules {
             shared_union_types.extend(IrEmitter::collect_union_types_from_program(ir));
         }
 
         // Generate main file after dependency lowering so it can own shared crate-root union wrappers.
-        let main_code =
-            self.try_generate_via_ir_with_union_config(program, &internal_roots, shared_union_types, true)?;
+        let mut callable_name_resolutions = HashMap::new();
+        let mut callable_name_used_signature_keys = HashSet::new();
+        let mut callable_name_function_arg_signature_keys = HashSet::new();
+        let mut generic_callable_name_trait_used = false;
+        for (_, module_path, ir) in &lowered_modules {
+            IrEmitter::add_callable_name_resolutions_for_program(
+                &mut callable_name_resolutions,
+                module_path.clone(),
+                ir,
+            );
+            let mut reachable_items = dependency_reachable_items.get(module_path).cloned().unwrap_or_default();
+            if let Some(injected_items) = self.externally_reachable_items_by_module.get(module_path) {
+                reachable_items.extend(injected_items.iter().cloned());
+            }
+            let preserve_public_items =
+                should_preserve_dependency_public_items(module_path, self.preserve_dependency_public_items);
+            let callable_name_use_facts = IrEmitter::callable_name_use_facts_for_program(
+                ir,
+                &reachable_items,
+                preserve_public_items,
+                &dependency_symbol_metadata.error_trait_type_names,
+            );
+            callable_name_used_signature_keys.extend(callable_name_use_facts.signature_keys);
+            callable_name_function_arg_signature_keys.extend(callable_name_use_facts.function_arg_signature_keys);
+            generic_callable_name_trait_used |= callable_name_use_facts.generic_trait_used;
+        }
+        if generic_callable_name_trait_used {
+            callable_name_used_signature_keys.extend(callable_name_function_arg_signature_keys);
+        }
+
+        let main_code = self.try_generate_via_ir_with_union_config(
+            program,
+            &internal_roots,
+            shared_union_types,
+            true,
+            Some(&mut callable_name_resolutions),
+            Some(&mut callable_name_used_signature_keys),
+        )?;
 
         let mut modules = HashMap::new();
         for (name, module_path, ir) in &lowered_modules {
-            let reachable_items = dependency_reachable_items.get(module_path).cloned().unwrap_or_default();
+            let mut reachable_items = dependency_reachable_items.get(module_path).cloned().unwrap_or_default();
+            if let Some(injected_items) = self.externally_reachable_items_by_module.get(module_path) {
+                reachable_items.extend(injected_items.iter().cloned());
+            }
             let preserve_public_items =
                 should_preserve_dependency_public_items(module_path, self.preserve_dependency_public_items);
             let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
@@ -1464,15 +1117,14 @@ impl<'a> IrCodegen<'a> {
                 inner.set_internal_module_roots(internal_roots.clone());
                 inner.set_preserve_public_items(preserve_public_items);
                 inner.set_externally_reachable_items(reachable_items.clone());
-                inner.set_type_module_paths(
-                    dependency_type_metadata.module_paths.clone(),
-                    dependency_type_metadata.ambiguous_type_names.clone(),
-                );
-                inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                inner.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
+                Self::apply_dependency_symbol_metadata(inner, &dependency_symbol_metadata);
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
+                inner.set_canonical_function_registry(all_module_canonical_registry.clone());
+                inner.set_callable_name_current_module_path(module_path.clone());
+                inner.set_callable_name_resolutions(callable_name_resolutions.clone());
+                inner.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
                 self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
                 for (_, _, dep_ir) in &lowered_modules {
                     inner.seed_dependency_nominal_metadata_from_program(dep_ir);
@@ -1483,15 +1135,14 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_internal_module_roots(internal_roots.clone());
                 emitter.set_preserve_public_items(preserve_public_items);
                 emitter.set_externally_reachable_items(reachable_items);
-                emitter.set_type_module_paths(
-                    dependency_type_metadata.module_paths.clone(),
-                    dependency_type_metadata.ambiguous_type_names.clone(),
-                );
-                emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                emitter.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
+                Self::apply_dependency_symbol_metadata(&mut emitter, &dependency_symbol_metadata);
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
+                emitter.set_canonical_function_registry(all_module_canonical_registry.clone());
+                emitter.set_callable_name_current_module_path(module_path.clone());
+                emitter.set_callable_name_resolutions(callable_name_resolutions.clone());
+                emitter.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
                 self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
                 for (_, _, dep_ir) in &lowered_modules {
                     emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
@@ -1572,40 +1223,50 @@ impl<'a> IrCodegen<'a> {
 
         let internal_roots: HashSet<String> = module_paths.iter().filter_map(|p| p.first().cloned()).collect();
 
-        let deps: Vec<(&str, &Program)> = self
-            .dependency_modules
-            .iter()
-            .map(|(name, ast, _)| (*name, *ast))
-            .collect();
+        let dependency_modules = self.dependency_modules.clone();
+        let deps: Vec<(&str, &Program)> = dependency_modules.iter().map(|(name, ast, _)| (*name, *ast)).collect();
         let global_aliases = collect_model_field_aliases(program, &deps);
-        let dependency_type_metadata = collect_dependency_type_metadata(&self.dependency_modules);
-        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &self.dependency_modules);
+        let dependency_symbol_metadata = collect_dependency_symbol_metadata(&dependency_modules);
+        let uses_std_ordinal_contract = compilation_imports_std_ordinal_contract(program, &dependency_modules);
         let ordinal_bridge = OrdinalBridgeConfig::for_internal_module(uses_std_ordinal_contract);
-        let dependency_reachable_items =
-            collect_externally_reachable_items_by_module(program, &self.dependency_modules);
+        let dependency_reachable_items = collect_externally_reachable_items_by_module(program, &dependency_modules);
 
         // Generate module files by path
         let mut lowered_modules = Vec::new();
-        for (name, ast, _) in &self.dependency_modules {
-            // Find matching path by comparing joined segments with module name
-            // Module name is path segments joined with "_" (e.g., "db_models")
-            for path in module_paths {
-                let path_name = path.join("_");
-                if path_name != *name {
-                    continue;
-                }
+        for (name, ast, stored_path_segments) in dependency_modules.clone() {
+            let matching_path = if let Some(stored_path_segments) = &stored_path_segments {
+                module_paths.iter().find(|path| *path == stored_path_segments)
+            } else {
+                // Legacy callers may still register only a flat module name. Prefer explicit path segments when they
+                // exist because distinct paths such as `a_b` and `a/b` share the same underscore-joined fallback.
+                module_paths.iter().find(|path| path.join("_") == *name)
+            };
+            if let Some(path) = matching_path {
                 let module_type_info = {
                     use crate::frontend::typechecker::TypeChecker;
                     let mut tc = TypeChecker::new();
                     self.configure_typechecker(&mut tc);
-                    match tc.check_with_imports_allow_private(ast, &deps) {
+                    let self_key = canonicalize_source_module_segments(path).join("_");
+                    let typecheck_deps =
+                        Self::imported_dependency_modules_for_program(ast, &dependency_modules, Some(&self_key));
+                    let result = if self.public_typecheck_module_paths.contains(path) {
+                        tc.check_with_imports(ast, &typecheck_deps)
+                    } else {
+                        tc.check_with_imports_allow_private(ast, &typecheck_deps)
+                    };
+                    let result = match result {
                         Ok(()) => tc.type_info().clone(),
-                        Err(errs) => return Err(GenerationError::TypeCheck(errs)),
-                    }
+                        Err(errs) => {
+                            return Err(Self::typecheck_errors_for_module(&path.join("."), errs));
+                        }
+                    };
+                    self.capture_typechecker_stdlib_cache(&tc);
+                    result
                 };
                 let mut lowering = AstLowering::new_with_type_info(module_type_info);
+                self.configure_lowering(&mut lowering);
                 lowering.set_current_source_module_name(Some(path.join(".")));
-                lowering.seed_dependency_trait_decls(&self.dependency_modules);
+                lowering.seed_dependency_trait_decls(&dependency_modules);
                 lowering.seed_struct_field_aliases(global_aliases.clone());
                 let mut ir = lowering.lower_program(ast)?;
                 // Do not auto-add serde derives to dependency modules.
@@ -1613,7 +1274,6 @@ impl<'a> IrCodegen<'a> {
                 // newtypes (e.g., stdlib wrapper types like std.web.request.Query/Path).
                 super::trait_bound_inference::infer_trait_bounds(&mut ir);
                 lowered_modules.push((path.clone(), ir));
-                break;
             }
         }
         for idx in 0..lowered_modules.len() {
@@ -1631,18 +1291,55 @@ impl<'a> IrCodegen<'a> {
                 .collect();
             super::trait_bound_inference::propagate_trait_bounds_from_programs(current_ir, &external_programs);
         }
+        let all_module_canonical_registry =
+            Self::canonical_registry_for_programs(lowered_modules.iter().map(|(path, ir)| (path.as_slice(), ir)));
         let mut shared_union_types = HashMap::new();
         for (_, ir) in &lowered_modules {
             shared_union_types.extend(IrEmitter::collect_union_types_from_program(ir));
         }
 
         // Generate main file after dependency lowering so it can own shared crate-root union wrappers.
-        let main_code =
-            self.try_generate_via_ir_with_union_config(program, &internal_roots, shared_union_types, true)?;
+        let mut callable_name_resolutions = HashMap::new();
+        let mut callable_name_used_signature_keys = HashSet::new();
+        let mut callable_name_function_arg_signature_keys = HashSet::new();
+        let mut generic_callable_name_trait_used = false;
+        for (path, ir) in &lowered_modules {
+            IrEmitter::add_callable_name_resolutions_for_program(&mut callable_name_resolutions, path.clone(), ir);
+            let mut reachable_items = dependency_reachable_items.get(path).cloned().unwrap_or_default();
+            if let Some(injected_items) = self.externally_reachable_items_by_module.get(path) {
+                reachable_items.extend(injected_items.iter().cloned());
+            }
+            let preserve_public_items =
+                should_preserve_dependency_public_items(path, self.preserve_dependency_public_items);
+            let callable_name_use_facts = IrEmitter::callable_name_use_facts_for_program(
+                ir,
+                &reachable_items,
+                preserve_public_items,
+                &dependency_symbol_metadata.error_trait_type_names,
+            );
+            callable_name_used_signature_keys.extend(callable_name_use_facts.signature_keys);
+            callable_name_function_arg_signature_keys.extend(callable_name_use_facts.function_arg_signature_keys);
+            generic_callable_name_trait_used |= callable_name_use_facts.generic_trait_used;
+        }
+        if generic_callable_name_trait_used {
+            callable_name_used_signature_keys.extend(callable_name_function_arg_signature_keys);
+        }
+
+        let main_code = self.try_generate_via_ir_with_union_config(
+            program,
+            &internal_roots,
+            shared_union_types,
+            true,
+            Some(&mut callable_name_resolutions),
+            Some(&mut callable_name_used_signature_keys),
+        )?;
 
         let mut modules = HashMap::new();
         for (path, ir) in &lowered_modules {
-            let reachable_items = dependency_reachable_items.get(path).cloned().unwrap_or_default();
+            let mut reachable_items = dependency_reachable_items.get(path).cloned().unwrap_or_default();
+            if let Some(injected_items) = self.externally_reachable_items_by_module.get(path) {
+                reachable_items.extend(injected_items.iter().cloned());
+            }
             let preserve_public_items =
                 should_preserve_dependency_public_items(path, self.preserve_dependency_public_items);
             let use_emit_service = env::var("INCAN_EMIT_SERVICE").ok().as_deref() == Some("1");
@@ -1652,15 +1349,14 @@ impl<'a> IrCodegen<'a> {
                 inner.set_internal_module_roots(internal_roots.clone());
                 inner.set_preserve_public_items(preserve_public_items);
                 inner.set_externally_reachable_items(reachable_items.clone());
-                inner.set_type_module_paths(
-                    dependency_type_metadata.module_paths.clone(),
-                    dependency_type_metadata.ambiguous_type_names.clone(),
-                );
-                inner.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                inner.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
+                Self::apply_dependency_symbol_metadata(inner, &dependency_symbol_metadata);
                 inner.set_external_rust_functions(self.external_rust_functions.clone());
                 inner.set_qualify_union_types_from_crate(true);
                 inner.set_emit_generated_union_definitions(false);
+                inner.set_canonical_function_registry(all_module_canonical_registry.clone());
+                inner.set_callable_name_current_module_path(path.clone());
+                inner.set_callable_name_resolutions(callable_name_resolutions.clone());
+                inner.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
                 self.apply_ordinal_bridge_config(inner, &ordinal_bridge);
                 for (_, dep_ir) in &lowered_modules {
                     inner.seed_dependency_nominal_metadata_from_program(dep_ir);
@@ -1671,15 +1367,14 @@ impl<'a> IrCodegen<'a> {
                 emitter.set_internal_module_roots(internal_roots.clone());
                 emitter.set_preserve_public_items(preserve_public_items);
                 emitter.set_externally_reachable_items(reachable_items);
-                emitter.set_type_module_paths(
-                    dependency_type_metadata.module_paths.clone(),
-                    dependency_type_metadata.ambiguous_type_names.clone(),
-                );
-                emitter.set_dependency_enum_types(dependency_type_metadata.enum_type_names.clone());
-                emitter.set_external_error_trait_types(dependency_type_metadata.error_trait_type_names.clone());
+                Self::apply_dependency_symbol_metadata(&mut emitter, &dependency_symbol_metadata);
                 emitter.set_external_rust_functions(self.external_rust_functions.clone());
                 emitter.set_qualify_union_types_from_crate(true);
                 emitter.set_emit_generated_union_definitions(false);
+                emitter.set_canonical_function_registry(all_module_canonical_registry.clone());
+                emitter.set_callable_name_current_module_path(path.clone());
+                emitter.set_callable_name_resolutions(callable_name_resolutions.clone());
+                emitter.set_callable_name_used_signature_keys(callable_name_used_signature_keys.clone());
                 self.apply_ordinal_bridge_config(&mut emitter, &ordinal_bridge);
                 for (_, dep_ir) in &lowered_modules {
                     emitter.seed_dependency_nominal_metadata_from_program(dep_ir);
@@ -1877,6 +1572,38 @@ def main() -> int:
         assert!(code.contains("pub use avg as average;"), "{code}");
         assert!(code.contains("return avg(10);"), "{code}");
         assert!(!code.contains("fn mean"), "{code}");
+    }
+
+    #[test]
+    fn top_level_keyword_named_callable_alias_uses_raw_identifier_reexport() {
+        let code = generate(
+            r#"
+pub def modulo_value(value: int) -> int:
+  return value
+
+pub mod = alias modulo_value
+
+def main() -> int:
+  return mod(10)
+"#,
+        );
+        assert!(code.contains("pub fn modulo_value(value: i64) -> i64"), "{code}");
+        assert!(code.contains("pub use modulo_value as r#mod;"), "{code}");
+        assert!(code.contains("return modulo_value(10);"), "{code}");
+    }
+
+    #[test]
+    fn top_level_alias_to_keyword_named_callable_uses_raw_identifier_target_path() {
+        let code = generate(
+            r#"
+pub def mod(value: int) -> int:
+  return value
+
+pub modulo = alias mod
+"#,
+        );
+        assert!(code.contains("pub fn r#mod(value: i64) -> i64"), "{code}");
+        assert!(code.contains("pub use r#mod as modulo;"), "{code}");
     }
 
     #[test]
@@ -2119,6 +1846,8 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Rng"),
                     alias: None,
+                    is_static: false,
+                    force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
                         trait_path: String::from("rand::Rng"),
                         definition_path: None,
@@ -2128,6 +1857,8 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("thread_rng"),
                     alias: None,
+                    is_static: false,
+                    force_reexport: false,
                     rust_trait_import: None,
                 },
             ],
@@ -2232,6 +1963,8 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("AlphaRender"),
                     alias: None,
+                    is_static: false,
+                    force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
                         trait_path: String::from("demo::AlphaRender"),
                         definition_path: None,
@@ -2241,6 +1974,8 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("BetaRender"),
                     alias: None,
+                    is_static: false,
+                    force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
                         trait_path: String::from("demo::BetaRender"),
                         definition_path: None,
@@ -2337,11 +2072,15 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Rng"),
                     alias: None,
+                    is_static: false,
+                    force_reexport: false,
                     rust_trait_import: None,
                 },
                 IrImportItem {
                     name: String::from("thread_rng"),
                     alias: None,
+                    is_static: false,
+                    force_reexport: false,
                     rust_trait_import: None,
                 },
             ],
@@ -2447,6 +2186,8 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Digest"),
                     alias: None,
+                    is_static: false,
+                    force_reexport: false,
                     rust_trait_import: Some(IrRustTraitImport {
                         trait_path: String::from("sha2::Digest"),
                         definition_path: Some(String::from("digest::digest::Digest")),
@@ -2456,6 +2197,8 @@ def main() -> None:
                 IrImportItem {
                     name: String::from("Sha256"),
                     alias: None,
+                    is_static: false,
+                    force_reexport: false,
                     rust_trait_import: None,
                 },
             ],
@@ -2786,6 +2529,7 @@ def main() -> None:
         });
         manifest.exports.functions.push(FunctionExport {
             name: "make_widget".to_string(),
+            emitted_name: None,
             type_params: Vec::new(),
             params: vec![ParamExport {
                 name: "name".to_string(),
@@ -2794,6 +2538,7 @@ def main() -> None:
                 },
                 kind: ParamKindExport::Normal,
                 has_default: false,
+                default: None,
             }],
             return_type: TypeRef::Named {
                 name: "Widget".to_string(),
@@ -2844,6 +2589,90 @@ def main() -> None:
         let (_main_code, modules) = must_ok(codegen.try_generate_multi_file(&main_module, &[db_module_name, "store"]));
 
         must_some(modules.get("store"), "missing generated non-nested store module").to_string()
+    }
+
+    fn nested_module_code(modules: &[(&str, &str, Vec<&str>)], target_path: &[&str]) -> String {
+        let main_module = main_module_program();
+        let mut codegen = IrCodegen::new();
+        let parsed_modules = modules
+            .iter()
+            .map(|(flat_name, source, path)| {
+                (
+                    (*flat_name).to_string(),
+                    parse_program(source),
+                    path.iter().map(|segment| (*segment).to_string()).collect::<Vec<_>>(),
+                )
+            })
+            .collect::<Vec<_>>();
+        for (flat_name, program, _) in &parsed_modules {
+            codegen.add_module(flat_name, program);
+        }
+        let paths = parsed_modules
+            .iter()
+            .map(|(_, _, path)| path.clone())
+            .collect::<Vec<_>>();
+
+        let (_main_code, rust_modules) = must_ok(codegen.try_generate_multi_file_nested(&main_module, &paths));
+        let target = target_path
+            .iter()
+            .map(|segment| (*segment).to_string())
+            .collect::<Vec<_>>();
+        must_some(rust_modules.get(&target), "missing generated nested target module").to_string()
+    }
+
+    #[test]
+    fn nested_decorated_generic_original_inherits_imported_reflection_bounds() {
+        let code = nested_module_code(
+            &[
+                (
+                    "substrait_schema",
+                    r#"
+def requires_clone[T with Clone]() -> str:
+  return "clone"
+
+pub def reflected_schema_marker[T]() -> str:
+  return f"{T.__class_name__()}:{len(T.__fields__())}:{requires_clone[T]()}"
+"#,
+                    vec!["substrait", "schema"],
+                ),
+                (
+                    "functions_csv_from_csv",
+                    r#"
+from substrait.schema import reflected_schema_marker
+
+def registered_application(parts: list[str]) -> str:
+  return parts[0]
+
+def register[F]() -> ((F) -> F):
+  return (func) => remember[F](func)
+
+def remember[F](func: F) -> F:
+  if func.__name__ == "":
+    return func
+  return func
+
+@register()
+pub def from_csv[T]() -> str:
+  return registered_application([reflected_schema_marker[T]()])
+"#,
+                    vec!["functions", "csv", "from_csv"],
+                ),
+            ],
+            &["functions", "csv", "from_csv"],
+        );
+
+        assert!(
+            code.contains("fn __incan_original_from_csv<\n    T: incan_stdlib::reflection::HasTypeClassName")
+                || code
+                    .contains("fn __incan_original_from_csv<\n    T: incan_stdlib::reflection::HasTypeFieldMetadata"),
+            "{code}"
+        );
+        assert!(
+            code.contains("incan_stdlib::reflection::HasTypeClassName")
+                && code.contains("incan_stdlib::reflection::HasTypeFieldMetadata")
+                && code.contains("+ Clone"),
+            "{code}"
+        );
     }
 
     #[test]
@@ -3353,7 +3182,7 @@ def main() -> None:
         codegen.set_library_manifest_index(library_index_with_widgets_exports());
         let code = must_ok(codegen.try_generate(&ast));
         assert!(
-            code.contains("let _w: Widget = make_widget(DEFAULT_NAME);"),
+            code.contains("let _w: Widget = widgets::make_widget(DEFAULT_NAME.to_string());"),
             "Generated code did not match expected. Code was:\n{code}"
         );
     }
@@ -3469,6 +3298,7 @@ pub def make_pair() -> Pair:
                     definition_path: Some("demo::Pair".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
+                        alias_target: None,
                         methods: Vec::new(),
                         implemented_traits: Vec::new(),
                         fields: vec![
@@ -3507,6 +3337,91 @@ pub def make_pair() -> Pair:
         assert!(
             !code.contains("Pair(1, 2)"),
             "imported named-field Rust structs must not emit tuple-style constructors; got:\n{code}"
+        );
+        Ok(())
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn test_codegen_emits_raw_rust_field_names_for_keyword_fields_issue725() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::frontend::typechecker::TypeChecker;
+        use incan_core::interop::{
+            RustFieldInfo, RustItemKind, RustItemMetadata, RustTypeInfo, RustTypeShape, RustVisibility,
+        };
+
+        let source = r#"
+from rust::demo import JoinRel
+
+pub def get_type(join: JoinRel) -> int:
+  return join.type + join.match + join.type_
+
+pub def rebuild(join: JoinRel) -> JoinRel:
+  return JoinRel(type=join.type, match=join.match, type_=join.type_)
+"#;
+        let tokens = must_ok(lexer::lex(source));
+        let ast = must_ok(parser::parse(&tokens));
+
+        let tmp = seeded_rust_inspect_workspace()?;
+        let manifest_dir = tmp.path().to_path_buf();
+        let mut tc = TypeChecker::new();
+        tc.set_rust_inspect_manifest_dir(manifest_dir.clone());
+        tc.rust_inspect_cache
+            .insert_test_item(
+                &manifest_dir,
+                RustItemMetadata {
+                    canonical_path: "demo::JoinRel".to_string(),
+                    definition_path: Some("demo::JoinRel".to_string()),
+                    visibility: RustVisibility::Public,
+                    kind: RustItemKind::Type(RustTypeInfo {
+                        alias_target: None,
+                        methods: Vec::new(),
+                        implemented_traits: Vec::new(),
+                        fields: vec![
+                            RustFieldInfo {
+                                name: "type".to_string(),
+                                type_display: "i64".to_string(),
+                                type_shape: RustTypeShape::Int,
+                            },
+                            RustFieldInfo {
+                                name: "match".to_string(),
+                                type_display: "i64".to_string(),
+                                type_shape: RustTypeShape::Int,
+                            },
+                            RustFieldInfo {
+                                name: "type_".to_string(),
+                                type_display: "i64".to_string(),
+                                type_shape: RustTypeShape::Int,
+                            },
+                        ],
+                        variants: Vec::new(),
+                    }),
+                },
+            )
+            .map_err(|e| std::io::Error::other(format!("seed rust-inspect type: {e}")))?;
+        tc.check_program(&ast)
+            .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+
+        let mut lowering = AstLowering::new_with_type_info(tc.type_info().clone());
+        let ir_program = lowering
+            .lower_program(&ast)
+            .map_err(|err| std::io::Error::other(format!("lowering failed: {err:?}")))?;
+        let mut emitter = IrEmitter::new(&ir_program.function_registry);
+        let code = emitter
+            .emit_program(&ir_program)
+            .map_err(|err| std::io::Error::other(format!("emit failed: {err:?}")))?;
+
+        assert!(
+            code.contains("join.r#type")
+                && code.contains("join.r#match")
+                && code.contains("join.type_")
+                && code.contains("r#type: join.r#type")
+                && code.contains("r#match: join.r#match")
+                && code.contains("type_: join.type_"),
+            "expected keyword fields to emit raw Rust identifiers while ordinary trailing-underscore fields stay unchanged; got:\n{code}"
+        );
+        assert!(
+            !code.contains("r#type: join.type_") && !code.contains("type_: join.r#type"),
+            "Rust keyword fields and ordinary trailing-underscore fields must not be cross-wired; got:\n{code}"
         );
         Ok(())
     }
@@ -3583,6 +3498,7 @@ pub def forward(payload: Payload) -> int:
                     definition_path: Some("demo::Builder".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
+                        alias_target: None,
                         methods: vec![
                             RustMethodSig {
                                 name: "new".to_string(),
@@ -3845,6 +3761,7 @@ pub async def register_csv() -> None:
                     definition_path: Some("demo::SessionContext".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
+                        alias_target: None,
                         methods: vec![
                             RustMethodSig {
                                 name: "new".to_string(),
@@ -3897,6 +3814,7 @@ pub async def register_csv() -> None:
                     definition_path: Some("demo::CsvReadOptions".to_string()),
                     visibility: RustVisibility::Public,
                     kind: RustItemKind::Type(RustTypeInfo {
+                        alias_target: None,
                         methods: vec![RustMethodSig {
                             name: "new".to_string(),
                             signature: RustFunctionSig {

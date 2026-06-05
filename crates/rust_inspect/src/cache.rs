@@ -14,6 +14,10 @@ use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 use incan_core::interop::RustItemMetadata;
+use ra_ap_syntax::{
+    AstNode, Edition, SourceFile, SyntaxKind, T,
+    ast::{self, HasModuleItem, HasName},
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -22,8 +26,6 @@ use crate::cache_timing::{CallTrace, log_timing_stage, rust_inspect_timing_enabl
 use crate::error::RustMetadataError;
 use crate::extractor::extract_rust_item;
 use crate::loader::RustWorkspace;
-
-const INSPECTOR_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Cache for [`RustWorkspace`] instances and extracted [`RustItemMetadata`].
 ///
@@ -43,6 +45,10 @@ pub struct RustMetadataCache {
 struct CacheInner {
     workspaces: HashMap<(PathBuf, bool), RustWorkspace>,
     items: HashMap<(PathBuf, String), Arc<RustItemMetadata>>,
+    definition_aliases: HashMap<(PathBuf, String), String>,
+    dependency_manifest_dirs: HashMap<(PathBuf, String), Option<PathBuf>>,
+    root_crate_names: HashMap<PathBuf, Vec<String>>,
+    crate_reexport_aliases: HashMap<PathBuf, HashMap<String, String>>,
     failed_items: HashMap<(PathBuf, String), NegativeLookup>,
     disk_cache_state: HashMap<PathBuf, DiskCacheState>,
 }
@@ -91,7 +97,7 @@ struct DiskCacheEnvelope {
 }
 
 // Bump when extracted metadata semantics change in a way that makes previously persisted items unsafe to reuse.
-const DISK_CACHE_FORMAT: u32 = 6;
+const DISK_CACHE_FORMAT: u32 = 7;
 const DISK_CACHE_FILE: &str = ".incan_rust_inspect_cache.json";
 // Backward-compatibility read path for caches written before the crate/module rename.
 const LEGACY_DISK_CACHE_FILE: &str = ".incan_rust_metadata_cache.json";
@@ -110,14 +116,41 @@ fn legacy_disk_cache_path(root: &Path) -> PathBuf {
 fn workspace_fingerprint(root: &Path) -> Result<String, RustMetadataError> {
     let mut hasher = Sha256::new();
     hasher.update(format!("cache_format:{DISK_CACHE_FORMAT}\n").as_bytes());
-    hasher.update(format!("inspector_version:{INSPECTOR_VERSION}\n").as_bytes());
+    hash_workspace_fingerprint_inputs(&mut hasher, root)?;
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Historical fingerprint used before cache compatibility was decoupled from the package version.
+fn legacy_versioned_workspace_fingerprint(root: &Path, inspector_version: &str) -> Result<String, RustMetadataError> {
+    let mut hasher = Sha256::new();
+    hasher.update(format!("cache_format:{DISK_CACHE_FORMAT}\n").as_bytes());
+    hasher.update(format!("inspector_version:{inspector_version}\n").as_bytes());
+    hash_workspace_fingerprint_inputs(&mut hasher, root)?;
+    Ok(hex::encode(hasher.finalize()))
+}
+
+/// Hash the workspace files that affect rust-inspect extraction results for this generated Cargo workspace.
+fn hash_workspace_fingerprint_inputs(hasher: &mut Sha256, root: &Path) -> Result<(), RustMetadataError> {
     hasher.update(fs::read(root.join("Cargo.toml"))?);
     match fs::read(root.join("Cargo.lock")) {
         Ok(lock) => hasher.update(lock),
         Err(err) if err.kind() == ErrorKind::NotFound => {}
         Err(err) => return Err(err.into()),
     }
-    Ok(hex::encode(hasher.finalize()))
+    Ok(())
+}
+
+/// Accept either the current cache-format fingerprint or the legacy version-labeled fingerprint for one cache file.
+fn disk_cache_fingerprint_matches(
+    root: &Path,
+    envelope: &DiskCacheEnvelope,
+    current_fingerprint: &str,
+) -> Result<bool, RustMetadataError> {
+    if envelope.workspace_fingerprint == current_fingerprint {
+        return Ok(true);
+    }
+    let legacy_fingerprint = legacy_versioned_workspace_fingerprint(root, envelope.inspector_version.as_str())?;
+    Ok(envelope.workspace_fingerprint == legacy_fingerprint)
 }
 
 fn read_json_cache(path: &Path) -> Result<Option<DiskCacheEnvelope>, RustMetadataError> {
@@ -182,15 +215,14 @@ fn load_disk_cache_into_memory(inner: &mut CacheInner, root: &Path) -> Result<Op
         return Ok(Some(fingerprint));
     };
     if envelope.cache_format != DISK_CACHE_FORMAT
-        || envelope.inspector_version != INSPECTOR_VERSION
-        || envelope.workspace_fingerprint != fingerprint
+        || !disk_cache_fingerprint_matches(root, &envelope, fingerprint.as_str())?
     {
         return Ok(Some(fingerprint));
     }
     for (canonical_path, metadata) in envelope.items {
-        inner
-            .items
-            .insert((root.to_path_buf(), canonical_path), Arc::new(metadata));
+        let mut metadata = metadata;
+        metadata.canonical_path = canonical_path;
+        insert_cached_item(inner, root, Arc::new(metadata));
     }
     for (canonical_path, miss) in envelope.misses {
         inner.failed_items.insert((root.to_path_buf(), canonical_path), miss);
@@ -210,12 +242,8 @@ fn ensure_disk_cache_loaded(inner: &mut CacheInner, root: &Path) -> Result<(), R
     Ok(())
 }
 
-/// Persist one extracted/canonicalized item into the workspace-local disk cache snapshot.
-fn persist_item_to_disk_cache(
-    inner: &CacheInner,
-    root: &Path,
-    metadata: &RustItemMetadata,
-) -> Result<(), RustMetadataError> {
+/// Build the current workspace-local disk cache snapshot.
+fn disk_cache_envelope(inner: &CacheInner, root: &Path) -> Result<DiskCacheEnvelope, RustMetadataError> {
     let fingerprint = inner
         .disk_cache_state
         .get(root)
@@ -233,50 +261,29 @@ fn persist_item_to_disk_cache(
             misses.insert(canonical_path.clone(), miss.clone());
         }
     }
-    items.insert(metadata.canonical_path.clone(), metadata.clone());
-    let envelope = DiskCacheEnvelope {
+    Ok(DiskCacheEnvelope {
         cache_format: DISK_CACHE_FORMAT,
-        inspector_version: INSPECTOR_VERSION.to_string(),
+        inspector_version: format!("cache-format-{DISK_CACHE_FORMAT}"),
         workspace_fingerprint: fingerprint,
         items,
         misses,
-    };
+    })
+}
+
+/// Persist the complete workspace-local disk cache snapshot.
+fn persist_manifest_dir_to_disk_cache(inner: &CacheInner, root: &Path) -> Result<(), RustMetadataError> {
+    let envelope = disk_cache_envelope(inner, root)?;
     write_disk_cache(root, &envelope)
 }
 
-/// Persist one stable miss into workspace-local disk cache.
-fn persist_negative_to_disk_cache(
-    inner: &CacheInner,
-    root: &Path,
-    canonical_path: &str,
-    negative: &NegativeLookup,
-) -> Result<(), RustMetadataError> {
-    let fingerprint = inner
-        .disk_cache_state
-        .get(root)
-        .and_then(|state| state.workspace_fingerprint.clone())
-        .unwrap_or(workspace_fingerprint(root)?);
-    let mut items = HashMap::new();
-    let mut misses = HashMap::new();
-    for ((item_root, path), cached) in &inner.items {
-        if item_root == root {
-            items.insert(path.clone(), (*cached.as_ref()).clone());
-        }
-    }
-    for ((item_root, path), miss) in &inner.failed_items {
-        if item_root == root {
-            misses.insert(path.clone(), miss.clone());
-        }
-    }
-    misses.insert(canonical_path.to_owned(), negative.clone());
-    let envelope = DiskCacheEnvelope {
-        cache_format: DISK_CACHE_FORMAT,
-        inspector_version: INSPECTOR_VERSION.to_string(),
-        workspace_fingerprint: fingerprint,
-        items,
-        misses,
-    };
-    write_disk_cache(root, &envelope)
+/// Persist the workspace-local disk cache snapshot after an item update.
+fn persist_item_to_disk_cache(inner: &CacheInner, root: &Path) -> Result<(), RustMetadataError> {
+    persist_manifest_dir_to_disk_cache(inner, root)
+}
+
+/// Persist the workspace-local disk cache snapshot after a stable miss.
+fn persist_negative_to_disk_cache(inner: &CacheInner, root: &Path) -> Result<(), RustMetadataError> {
+    persist_manifest_dir_to_disk_cache(inner, root)
 }
 
 #[derive(Debug, Clone)]
@@ -341,7 +348,256 @@ fn canonical_path_candidates(canonical_path: &str) -> Vec<String> {
     }
 }
 
-/// Attempt extraction through primary workspace, out-dirs workspace, then resolved dependency workspace.
+/// Remove definition-path aliases owned by the currently cached item at `canonical_path`.
+fn remove_cached_item_definition_aliases(inner: &mut CacheInner, root: &Path, canonical_path: &str) {
+    let key_item = (root.to_path_buf(), canonical_path.to_owned());
+    let Some(existing) = inner.items.get(&key_item) else {
+        return;
+    };
+    let Some(definition_path) = existing.definition_path.as_deref() else {
+        return;
+    };
+    for candidate in canonical_path_candidates(definition_path) {
+        let key = (root.to_path_buf(), candidate);
+        if inner
+            .definition_aliases
+            .get(&key)
+            .is_some_and(|indexed_path| indexed_path == canonical_path)
+        {
+            inner.definition_aliases.remove(&key);
+        }
+    }
+}
+
+/// Index one cached item by its resolved Rust definition path and supported spelling aliases.
+fn index_cached_item_definition_aliases(inner: &mut CacheInner, root: &Path, metadata: &RustItemMetadata) {
+    let Some(definition_path) = metadata.definition_path.as_deref() else {
+        return;
+    };
+    for candidate in canonical_path_candidates(definition_path) {
+        inner
+            .definition_aliases
+            .insert((root.to_path_buf(), candidate), metadata.canonical_path.clone());
+    }
+}
+
+/// Insert or replace cached metadata while keeping the definition-path alias index in sync.
+fn insert_cached_item(inner: &mut CacheInner, root: &Path, metadata: Arc<RustItemMetadata>) {
+    remove_cached_item_definition_aliases(inner, root, metadata.canonical_path.as_str());
+    index_cached_item_definition_aliases(inner, root, metadata.as_ref());
+    inner
+        .items
+        .insert((root.to_path_buf(), metadata.canonical_path.clone()), metadata);
+}
+
+/// Re-key a cached item for a query path while preserving the extracted Rust metadata.
+fn insert_aliased_item(
+    inner: &mut CacheInner,
+    root: &Path,
+    canonical_path: &str,
+    hit: &Arc<RustItemMetadata>,
+) -> Arc<RustItemMetadata> {
+    let mut aliased = (*hit.as_ref()).clone();
+    aliased.canonical_path = canonical_path.to_owned();
+    let arc = Arc::new(aliased);
+    let key_item = (root.to_path_buf(), canonical_path.to_owned());
+    inner.failed_items.remove(&key_item);
+    insert_cached_item(inner, root, Arc::clone(&arc));
+    arc
+}
+
+/// Look up cached public aliases whose recorded definition path matches the requested path.
+fn cached_definition_alias(inner: &CacheInner, root: &Path, canonical_path: &str) -> Option<Arc<RustItemMetadata>> {
+    for candidate in canonical_path_candidates(canonical_path) {
+        let alias_key = (root.to_path_buf(), candidate);
+        if let Some(canonical_path) = inner.definition_aliases.get(&alias_key) {
+            let item_key = (root.to_path_buf(), canonical_path.clone());
+            if let Some(cached) = inner.items.get(&item_key) {
+                return Some(Arc::clone(cached));
+            }
+        }
+    }
+    None
+}
+
+/// Normalize Cargo package and Rust crate spellings to the cache key used for dependency-route lookups.
+fn normalized_crate_cache_key(crate_name: &str) -> String {
+    crate_name.replace('-', "_")
+}
+
+/// Resolve a dependency manifest directory once per generated lock workspace and crate spelling.
+fn resolve_dependency_manifest_dir(
+    inner: &mut CacheInner,
+    root: &Path,
+    crate_name: &str,
+    registry_src_roots: Option<&[PathBuf]>,
+) -> Option<PathBuf> {
+    let key = (root.to_path_buf(), normalized_crate_cache_key(crate_name));
+    if let Some(cached) = inner.dependency_manifest_dirs.get(&key) {
+        return cached.clone();
+    }
+    let resolved = dependency_manifest_dir_for_crate(root, crate_name, registry_src_roots);
+    inner.dependency_manifest_dirs.insert(key, resolved.clone());
+    resolved
+}
+
+/// Read and normalize a string field from a Cargo manifest table.
+fn manifest_string_field(value: &toml::Value, table: &str, key: &str) -> Option<String> {
+    value
+        .get(table)
+        .and_then(|section| section.get(key))
+        .and_then(toml::Value::as_str)
+        .map(normalized_crate_cache_key)
+}
+
+/// Load the crate names declared by the generated root workspace so root out-dir extraction only runs for root items.
+fn load_root_crate_names(root: &Path) -> Vec<String> {
+    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
+        return Vec::new();
+    };
+    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    if let Some(name) = manifest_string_field(&manifest, "package", "name") {
+        names.push(name);
+    }
+    if let Some(name) = manifest_string_field(&manifest, "lib", "name") {
+        names.push(name);
+    }
+    if let Some(bins) = manifest.get("bin").and_then(toml::Value::as_array) {
+        for bin in bins {
+            if let Some(name) = bin.get("name").and_then(toml::Value::as_str) {
+                names.push(normalized_crate_cache_key(name));
+            }
+        }
+    }
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Resolve the root crate's library source path from `Cargo.toml`, defaulting to `src/lib.rs`.
+fn manifest_lib_source_path(root: &Path, manifest: &toml::Value) -> PathBuf {
+    manifest
+        .get("lib")
+        .and_then(|section| section.get("path"))
+        .and_then(toml::Value::as_str)
+        .map_or_else(|| root.join("src").join("lib.rs"), |path| root.join(path))
+}
+
+/// Convert a rust-analyzer syntax path into ordered textual path segments.
+fn rust_path_segments(path: &ast::Path) -> Vec<String> {
+    let mut segments = Vec::new();
+    let mut current = Some(path.clone());
+    while let Some(path) = current {
+        if let Some(segment) = path.segment().and_then(|segment| segment.name_ref()) {
+            segments.push(segment.to_string());
+        }
+        current = path.qualifier();
+    }
+    segments.reverse();
+    segments
+}
+
+/// Extract a plain `pub use crate_name` or `pub use crate_name as alias` mapping from one use tree.
+fn crate_reexport_alias_from_use_tree(tree: &ast::UseTree) -> Option<(String, String)> {
+    if tree.star_token().is_some() || tree.use_tree_list().is_some() {
+        return None;
+    }
+    let segments = rust_path_segments(&tree.path()?);
+    if segments.len() != 1 {
+        return None;
+    }
+    let target = normalized_crate_cache_key(segments[0].trim_start_matches("r#"));
+    let alias = tree
+        .rename()
+        .and_then(|rename| rename.name())
+        .map(|name| normalized_crate_cache_key(name.to_string().trim_start_matches("r#")))
+        .unwrap_or_else(|| target.clone());
+    Some((alias, target))
+}
+
+/// Return whether a use item is exactly public at crate level, excluding restricted visibility such as `pub(crate)`.
+fn use_item_is_plain_public(use_item: &ast::Use) -> bool {
+    let mut significant = use_item
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .filter(|token| !matches!(token.kind(), SyntaxKind::COMMENT | SyntaxKind::WHITESPACE));
+    matches!(significant.next().map(|token| token.kind()), Some(T![pub]))
+        && matches!(significant.next().map(|token| token.kind()), Some(T![use]))
+}
+
+/// Load root-level public crate re-export aliases from a dependency crate's library source.
+fn load_crate_reexport_aliases(root: &Path) -> HashMap<String, String> {
+    let Ok(payload) = fs::read_to_string(root.join("Cargo.toml")) else {
+        return HashMap::new();
+    };
+    let Ok(manifest) = toml::from_str::<toml::Value>(payload.as_str()) else {
+        return HashMap::new();
+    };
+    let source_path = manifest_lib_source_path(root, &manifest);
+    let Ok(source) = fs::read_to_string(source_path) else {
+        return HashMap::new();
+    };
+    let parsed = SourceFile::parse(source.as_str(), Edition::CURRENT).tree();
+    let mut aliases = HashMap::new();
+    for item in parsed.items() {
+        let ast::Item::Use(use_item) = item else {
+            continue;
+        };
+        if !use_item_is_plain_public(&use_item) {
+            continue;
+        }
+        let Some(tree) = use_item.use_tree() else {
+            continue;
+        };
+        if let Some((alias, target)) = crate_reexport_alias_from_use_tree(&tree) {
+            aliases.insert(alias, target);
+        }
+    }
+    aliases
+}
+
+/// Return the canonical target path for a dependency-owned item addressed through a public crate re-export.
+fn dependency_reexport_alias_candidate(
+    inner: &mut CacheInner,
+    dep_root: &Path,
+    canonical_path: &str,
+) -> Option<String> {
+    let mut segments = canonical_path.split("::").collect::<Vec<_>>();
+    if segments.len() < 3 {
+        return None;
+    }
+    let reexport_alias = normalized_crate_cache_key(segments[1].trim_start_matches("r#"));
+    let aliases = inner
+        .crate_reexport_aliases
+        .entry(dep_root.to_path_buf())
+        .or_insert_with(|| load_crate_reexport_aliases(dep_root));
+    let target = aliases.get(&reexport_alias)?;
+    segments[1] = target.as_str();
+    let candidate = segments[1..].join("::");
+    if candidate == canonical_path {
+        None
+    } else {
+        Some(candidate)
+    }
+}
+
+/// Return whether the generated root workspace itself declares the crate segment used by a query path.
+fn root_workspace_declares_crate(inner: &mut CacheInner, root: &Path, crate_name: &str) -> bool {
+    let names = inner
+        .root_crate_names
+        .entry(root.to_path_buf())
+        .or_insert_with(|| load_root_crate_names(root));
+    names
+        .iter()
+        .any(|name| name == normalized_crate_cache_key(crate_name).as_str())
+}
+
+/// Attempt extraction through one planned route: primary workspace, dependency workspace, then root out-dir workspace
+/// only for root-package items.
 fn extract_in_workspace_set(
     inner: &mut CacheInner,
     root: &Path,
@@ -431,6 +687,97 @@ fn extract_in_workspace_set(
         }
     }
 
+    let crate_name = crate_name_for_path(canonical_path);
+    let dep_resolve_started = Instant::now();
+    let dep_root = resolve_dependency_manifest_dir(inner, root, crate_name, registry_src_roots);
+    log_timing_stage(
+        timing_enabled,
+        root,
+        canonical_path,
+        "dependency.resolve_manifest_dir",
+        dep_resolve_started.elapsed(),
+        crate_name,
+    );
+    if let Some(dep_root) = dep_root {
+        if let Some(reexported_path) = dependency_reexport_alias_candidate(inner, &dep_root, canonical_path) {
+            let alias_started = Instant::now();
+            match extract_in_workspace_set(
+                inner,
+                root,
+                reexported_path.as_str(),
+                registry_src_roots,
+                progress,
+                timing_enabled,
+            ) {
+                Ok(meta) => {
+                    log_timing_stage(
+                        timing_enabled,
+                        root,
+                        canonical_path,
+                        "extract.dependency.reexport_alias",
+                        alias_started.elapsed(),
+                        reexported_path.as_str(),
+                    );
+                    return Ok(meta);
+                }
+                Err(
+                    err @ (RustMetadataError::CrateNotFound(_)
+                    | RustMetadataError::PathNotResolved(_)
+                    | RustMetadataError::UnsupportedMacro(_)),
+                ) => {
+                    log_timing_stage(
+                        timing_enabled,
+                        root,
+                        canonical_path,
+                        "extract.dependency.reexport_alias",
+                        alias_started.elapsed(),
+                        "status=miss short_circuit=true",
+                    );
+                    // A public crate re-export is an identity path. If the target crate misses, extracting
+                    // the wrapper dependency cannot discover a different item for the same path; it only
+                    // repeats the expensive semantic lookup through another surface.
+                    return Err(err);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+        let dep_root_display = dep_root.display().to_string();
+        let dep_workspace = match inner.workspaces.entry((dep_root.clone(), true)) {
+            Entry::Occupied(o) => o.into_mut(),
+            Entry::Vacant(v) => {
+                let load_started = Instant::now();
+                let workspace = RustWorkspace::load_with_options(&dep_root, progress, true)?;
+                log_timing_stage(
+                    timing_enabled,
+                    root,
+                    canonical_path,
+                    "workspace.load.dependency.out_dirs",
+                    load_started.elapsed(),
+                    dep_root_display.as_str(),
+                );
+                v.insert(workspace)
+            }
+        };
+        let extract_started = Instant::now();
+        let meta = extract_rust_item(dep_workspace, canonical_path);
+        log_timing_stage(
+            timing_enabled,
+            root,
+            canonical_path,
+            "extract.workspace.dependency",
+            extract_started.elapsed(),
+            dep_root_display.as_str(),
+        );
+        return meta;
+    }
+
+    if !root_workspace_declares_crate(inner, root, crate_name) {
+        if let Some(err) = deferred_load_error {
+            return Err(err);
+        }
+        return Err(RustMetadataError::CrateNotFound(crate_name.to_string()));
+    }
+
     match inner.workspaces.entry((root.to_path_buf(), true)) {
         Entry::Occupied(o) => {
             let started = Instant::now();
@@ -512,48 +859,6 @@ fn extract_in_workspace_set(
         }
     }
 
-    let crate_name = crate_name_for_path(canonical_path);
-    let dep_resolve_started = Instant::now();
-    let dep_root = dependency_manifest_dir_for_crate(root, crate_name, registry_src_roots);
-    log_timing_stage(
-        timing_enabled,
-        root,
-        canonical_path,
-        "dependency.resolve_manifest_dir",
-        dep_resolve_started.elapsed(),
-        crate_name,
-    );
-    if let Some(dep_root) = dep_root {
-        let dep_root_display = dep_root.display().to_string();
-        let dep_workspace = match inner.workspaces.entry((dep_root.clone(), true)) {
-            Entry::Occupied(o) => o.into_mut(),
-            Entry::Vacant(v) => {
-                let load_started = Instant::now();
-                let workspace = RustWorkspace::load_with_options(&dep_root, progress, true)?;
-                log_timing_stage(
-                    timing_enabled,
-                    root,
-                    canonical_path,
-                    "workspace.load.dependency.out_dirs",
-                    load_started.elapsed(),
-                    dep_root_display.as_str(),
-                );
-                v.insert(workspace)
-            }
-        };
-        let extract_started = Instant::now();
-        let meta = extract_rust_item(dep_workspace, canonical_path);
-        log_timing_stage(
-            timing_enabled,
-            root,
-            canonical_path,
-            "extract.workspace.dependency",
-            extract_started.elapsed(),
-            dep_root_display.as_str(),
-        );
-        return meta;
-    }
-
     if let Some(err) = deferred_load_error {
         return Err(err);
     }
@@ -584,7 +889,7 @@ impl RustMetadataCache {
     /// Return metadata for `canonical_path`, loading/extracting on cache miss.
     ///
     /// Lookup order is:
-    /// 1. in-memory exact/alias hits
+    /// 1. in-memory exact, definition-path, and spelling-alias hits
     /// 2. workspace extraction using canonical-path candidates
     /// 3. dependency-workspace extraction fallback
     /// 4. persisted disk-cache update for future sessions
@@ -594,6 +899,7 @@ impl RustMetadataCache {
         canonical_path: &str,
         registry_src_roots: Option<&[PathBuf]>,
         progress: &(dyn Fn(String) + Sync),
+        persist_immediately: bool,
     ) -> Result<Arc<RustItemMetadata>, RustMetadataError> {
         let root = manifest_dir.canonicalize()?;
         let timing_enabled = rust_inspect_timing_enabled();
@@ -620,6 +926,30 @@ impl RustMetadataCache {
             trace.set_outcome("hit.memory.exact");
             return Ok(Arc::clone(hit));
         }
+        if let Some(hit) = cached_definition_alias(&inner, &root, canonical_path) {
+            let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
+            let persist_started = Instant::now();
+            if persist_immediately
+                && let Err(err) = persist_item_to_disk_cache(&inner, &root)
+                && timing_enabled
+            {
+                eprintln!(
+                    "[rust-inspect-timing] root={} query={} stage=disk_cache.persist.definition_alias_hit status=error err={err}",
+                    root.display(),
+                    canonical_path
+                );
+            }
+            log_timing_stage(
+                timing_enabled,
+                &root,
+                canonical_path,
+                "disk_cache.persist.definition_alias_hit",
+                persist_started.elapsed(),
+                if persist_immediately { "" } else { "deferred=true" },
+            );
+            trace.set_outcome("hit.memory.definition_alias");
+            return Ok(arc);
+        }
         if let Some(miss) = inner.failed_items.get(&key_item) {
             trace.set_outcome("hit.memory.negative");
             return Err(miss.to_error());
@@ -629,13 +959,11 @@ impl RustMetadataCache {
         let mut meta = None;
         for candidate in canonical_path_candidates(canonical_path) {
             let candidate_key = (root.clone(), candidate.clone());
-            if let Some(hit) = inner.items.get(&candidate_key) {
-                let mut aliased = (*hit.as_ref()).clone();
-                aliased.canonical_path = canonical_path.to_owned();
-                let arc = Arc::new(aliased);
-                inner.items.insert(key_item.clone(), Arc::clone(&arc));
+            if let Some(hit) = inner.items.get(&candidate_key).cloned() {
+                let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
                 let persist_started = Instant::now();
-                if let Err(err) = persist_item_to_disk_cache(&inner, &root, arc.as_ref())
+                if persist_immediately
+                    && let Err(err) = persist_item_to_disk_cache(&inner, &root)
                     && timing_enabled
                 {
                     eprintln!(
@@ -650,7 +978,7 @@ impl RustMetadataCache {
                     canonical_path,
                     "disk_cache.persist.alias_hit",
                     persist_started.elapsed(),
-                    "",
+                    if persist_immediately { "" } else { "deferred=true" },
                 );
                 trace.set_outcome("hit.memory.alias");
                 return Ok(arc);
@@ -689,7 +1017,8 @@ impl RustMetadataCache {
                     inner
                         .failed_items
                         .insert((root.clone(), canonical_path.to_owned()), negative.clone());
-                    if let Err(persist_err) = persist_negative_to_disk_cache(&inner, &root, canonical_path, &negative)
+                    if persist_immediately
+                        && let Err(persist_err) = persist_negative_to_disk_cache(&inner, &root)
                         && timing_enabled
                     {
                         eprintln!(
@@ -706,9 +1035,10 @@ impl RustMetadataCache {
         inner.failed_items.remove(&(root.clone(), canonical_path.to_owned()));
         meta.canonical_path = canonical_path.to_owned();
         let arc = Arc::new(meta);
-        inner.items.insert(key_item, Arc::clone(&arc));
+        insert_cached_item(&mut inner, &root, Arc::clone(&arc));
         let persist_started = Instant::now();
-        if let Err(err) = persist_item_to_disk_cache(&inner, &root, arc.as_ref())
+        if persist_immediately
+            && let Err(err) = persist_item_to_disk_cache(&inner, &root)
             && timing_enabled
         {
             eprintln!(
@@ -723,19 +1053,45 @@ impl RustMetadataCache {
             canonical_path,
             "disk_cache.persist.extracted",
             persist_started.elapsed(),
-            "",
+            if persist_immediately { "" } else { "deferred=true" },
         );
         trace.set_outcome("hit.extracted");
         Ok(arc)
     }
 
+    /// Return metadata for a canonical Rust path, extracting from the workspace and persisting cache misses.
     pub fn get_or_extract(
         &self,
         manifest_dir: &Path,
         canonical_path: &str,
         progress: &(dyn Fn(String) + Sync),
     ) -> Result<Arc<RustItemMetadata>, RustMetadataError> {
-        self.get_or_extract_inner(manifest_dir, canonical_path, None, progress)
+        self.get_or_extract_inner(manifest_dir, canonical_path, None, progress, true)
+    }
+
+    /// Return metadata for a canonical Rust path while deferring disk-cache persistence to the caller.
+    ///
+    /// Prewarm batches extract many items and flush the manifest cache once instead of rewriting it after every item.
+    pub(crate) fn get_or_extract_deferred_persist(
+        &self,
+        manifest_dir: &Path,
+        canonical_path: &str,
+        progress: &(dyn Fn(String) + Sync),
+    ) -> Result<Arc<RustItemMetadata>, RustMetadataError> {
+        self.get_or_extract_inner(manifest_dir, canonical_path, None, progress, false)
+    }
+
+    /// Persist the in-memory cache snapshot for one manifest root.
+    ///
+    /// Prewarm uses deferred extraction so callers can batch writes until every requested item has been visited.
+    pub(crate) fn persist_manifest_dir(&self, manifest_dir: &Path) -> Result<(), RustMetadataError> {
+        let root = manifest_dir.canonicalize()?;
+        let mut inner = self.inner.lock().map_err(|e| RustMetadataError::LoadWorkspace {
+            path: root.clone(),
+            message: format!("metadata cache lock poisoned: {e}"),
+        })?;
+        ensure_disk_cache_loaded(&mut inner, &root)?;
+        persist_manifest_dir_to_disk_cache(&inner, &root)
     }
 
     /// Return metadata from memory/disk cache only.
@@ -761,14 +1117,34 @@ impl RustMetadataCache {
             }));
         }
 
+        if let Some(hit) = cached_definition_alias(&inner, &root, canonical_path) {
+            let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
+            if let Err(err) = persist_item_to_disk_cache(&inner, &root) {
+                tracing::warn!(
+                    root = %root.display(),
+                    query = %canonical_path,
+                    error = %err,
+                    "failed to persist rust-inspect disk cache after definition alias hit"
+                );
+                if rust_inspect_timing_enabled() {
+                    eprintln!(
+                        "[rust-inspect-timing] root={} query={} stage=disk_cache.persist.cached_definition_alias status=error err={err}",
+                        root.display(),
+                        canonical_path
+                    );
+                }
+            }
+            return Ok(Some(CacheLookupHit {
+                metadata: arc,
+                alias_used: true,
+            }));
+        }
+
         for candidate in canonical_path_candidates(canonical_path) {
             let candidate_key = (root.clone(), candidate.clone());
-            if let Some(hit) = inner.items.get(&candidate_key) {
-                let mut aliased = (*hit.as_ref()).clone();
-                aliased.canonical_path = canonical_path.to_owned();
-                let arc = Arc::new(aliased);
-                inner.items.insert(key_item.clone(), Arc::clone(&arc));
-                if let Err(err) = persist_item_to_disk_cache(&inner, &root, arc.as_ref()) {
+            if let Some(hit) = inner.items.get(&candidate_key).cloned() {
+                let arc = insert_aliased_item(&mut inner, &root, canonical_path, &hit);
+                if let Err(err) = persist_item_to_disk_cache(&inner, &root) {
                     tracing::warn!(
                         root = %root.display(),
                         query = %canonical_path,
@@ -792,6 +1168,9 @@ impl RustMetadataCache {
         Ok(None)
     }
 
+    /// Drop all in-memory and disk-cache bookkeeping for one manifest root.
+    ///
+    /// Use this after filesystem or dependency changes so the next lookup rebuilds fresh alias indexes.
     pub fn invalidate_manifest_dir(&self, manifest_dir: &Path) -> Result<(), RustMetadataError> {
         let root = manifest_dir.canonicalize()?;
         let mut inner = self.inner.lock().map_err(|e| RustMetadataError::LoadWorkspace {
@@ -803,12 +1182,27 @@ impl RustMetadataCache {
             .retain(|(workspace_root, _), _| workspace_root != &root);
         inner.items.retain(|(workspace_root, _), _| workspace_root != &root);
         inner
+            .definition_aliases
+            .retain(|(workspace_root, _), _| workspace_root != &root);
+        inner
+            .dependency_manifest_dirs
+            .retain(|(workspace_root, _), _| workspace_root != &root);
+        inner
+            .root_crate_names
+            .retain(|workspace_root, _| workspace_root != &root);
+        inner
+            .crate_reexport_aliases
+            .retain(|workspace_root, _| workspace_root != &root);
+        inner
             .failed_items
             .retain(|(workspace_root, _), _| workspace_root != &root);
         inner.disk_cache_state.remove(&root);
         Ok(())
     }
 
+    /// Return metadata for tests that need custom registry source roots.
+    ///
+    /// Production callers should use `get_or_extract`; this hook lets tests use synthetic cargo registry directories.
     #[doc(hidden)]
     pub fn get_or_extract_with_registry_src_roots(
         &self,
@@ -817,14 +1211,13 @@ impl RustMetadataCache {
         registry_src_roots: &[PathBuf],
         progress: &(dyn Fn(String) + Sync),
     ) -> Result<Arc<RustItemMetadata>, RustMetadataError> {
-        self.get_or_extract_inner(manifest_dir, canonical_path, Some(registry_src_roots), progress)
+        self.get_or_extract_inner(manifest_dir, canonical_path, Some(registry_src_roots), progress, true)
     }
 
     /// Seed metadata directly for tests without invoking rust-analyzer extraction.
     #[doc(hidden)]
     pub fn insert_test_item(&self, manifest_dir: &Path, metadata: RustItemMetadata) -> Result<(), RustMetadataError> {
         let root = manifest_dir.canonicalize()?;
-        let key_item = (root.clone(), metadata.canonical_path.clone());
         let mut inner = self.inner.lock().map_err(|e| RustMetadataError::LoadWorkspace {
             path: manifest_dir.to_path_buf(),
             message: format!("metadata cache lock poisoned: {e}"),
@@ -832,7 +1225,7 @@ impl RustMetadataCache {
         inner
             .failed_items
             .remove(&(root.clone(), metadata.canonical_path.clone()));
-        inner.items.insert(key_item, Arc::new(metadata));
+        insert_cached_item(&mut inner, &root, Arc::new(metadata));
         Ok(())
     }
 }

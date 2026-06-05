@@ -33,15 +33,91 @@ pub const STDLIB_RUST: &str = "rust";
 pub const STDLIB_BUILTINS: &str = "builtins";
 /// `std.json` module name.
 pub const STDLIB_JSON: &str = "json";
+/// `std.serde` module name.
+pub const STDLIB_SERDE: &str = "serde";
 /// Dynamic JSON value type exported by `std.json`.
 pub const JSON_VALUE_TYPE_NAME: &str = "JsonValue";
 /// Runtime Rust path carried by `std.json.JsonValue`.
 pub const JSON_VALUE_RUST_PATH: &str = "incan_stdlib::json::JsonValue";
 
+/// Stable ids for compiler-known stdlib JSON protocol traits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StdlibJsonTraitId {
+    Serialize,
+    Deserialize,
+}
+
+const STDLIB_JSON_SERIALIZE_TRAIT_NAMES: &[&str] = &[
+    "Serialize",
+    "JsonSerialize",
+    "json.Serialize",
+    "std.serde.json.Serialize",
+];
+
+const STDLIB_JSON_DESERIALIZE_TRAIT_NAMES: &[&str] = &[
+    "Deserialize",
+    "JsonDeserialize",
+    "json.Deserialize",
+    "std.serde.json.Deserialize",
+];
+
 /// Return whether `name` is the canonical dynamic JSON value type.
 #[must_use]
 pub fn is_json_value_type_name(name: &str) -> bool {
     name == JSON_VALUE_TYPE_NAME
+}
+
+/// Return the stdlib JSON trait id for a source, alias, or qualified trait spelling.
+#[must_use]
+pub fn stdlib_json_trait_id(name: &str) -> Option<StdlibJsonTraitId> {
+    if STDLIB_JSON_SERIALIZE_TRAIT_NAMES.contains(&name) {
+        Some(StdlibJsonTraitId::Serialize)
+    } else if STDLIB_JSON_DESERIALIZE_TRAIT_NAMES.contains(&name) {
+        Some(StdlibJsonTraitId::Deserialize)
+    } else {
+        None
+    }
+}
+
+/// Return whether `segments` names the `std.serde.json` trait module.
+#[must_use]
+pub fn is_stdlib_json_trait_module_path(segments: &[String]) -> bool {
+    matches!(
+        segments,
+        [std, serde, json]
+            if std == STDLIB_ROOT && serde == STDLIB_SERDE && json == STDLIB_JSON
+    )
+}
+
+/// Return the stdlib JSON trait id for a resolved source import path.
+#[must_use]
+pub fn stdlib_json_trait_id_from_path(segments: &[String]) -> Option<StdlibJsonTraitId> {
+    if is_stdlib_json_trait_module_path(segments) {
+        return None;
+    }
+    stdlib_json_trait_id(&segments.join("."))
+}
+
+/// Return the stdlib JSON trait id when generated Rust must import the trait module for method resolution.
+#[must_use]
+pub fn stdlib_json_trait_scope_import_id(name: &str) -> Option<StdlibJsonTraitId> {
+    match name {
+        "json.Serialize" | "std.serde.json.Serialize" => Some(StdlibJsonTraitId::Serialize),
+        "json.Deserialize" | "std.serde.json.Deserialize" => Some(StdlibJsonTraitId::Deserialize),
+        _ => None,
+    }
+}
+
+/// Return whether `name` refers to the stdlib JSON serialization trait.
+#[must_use]
+pub fn is_stdlib_json_serialize_trait_name(name: &str) -> bool {
+    stdlib_json_trait_id(name) == Some(StdlibJsonTraitId::Serialize)
+}
+
+/// Return whether `name` refers to the stdlib JSON deserialization trait.
+#[must_use]
+pub fn is_stdlib_json_deserialize_trait_name(name: &str) -> bool {
+    stdlib_json_trait_id(name) == Some(StdlibJsonTraitId::Deserialize)
 }
 
 const STDLIB_GRAPH_CONSTRUCTOR_TYPES: &[&str] = &["DiGraph", "Dag", "MultiDiGraph"];
@@ -96,6 +172,8 @@ pub struct StdlibExtraCrateDep {
     pub crate_name: &'static str,
     /// Dependency source and version/path metadata.
     pub source: StdlibExtraCrateSource,
+    /// Cargo features enabled for this stdlib-managed dependency.
+    pub features: &'static [&'static str],
 }
 
 /// Source descriptor for a namespace-provided extra crate dependency.
@@ -204,14 +282,17 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
             StdlibExtraCrateDep {
                 crate_name: "incan_web_macros",
                 source: StdlibExtraCrateSource::Path("crates/incan_web_macros"),
+                features: &[],
             },
             StdlibExtraCrateDep {
                 crate_name: "inventory",
                 source: StdlibExtraCrateSource::Version("0.3"),
+                features: &[],
             },
             StdlibExtraCrateDep {
                 crate_name: "axum",
                 source: StdlibExtraCrateSource::Version("0.8"),
+                features: &[],
             },
         ],
         submodules: &["app", "routing", "request", "response", "macros", "prelude"],
@@ -248,14 +329,22 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
         name: "serde",
         feature: Some("json"),
-        extra_crate_deps: &[],
+        extra_crate_deps: &[StdlibExtraCrateDep {
+            crate_name: "serde",
+            source: StdlibExtraCrateSource::Version("1.0"),
+            features: &["derive"],
+        }],
         submodules: &["json"],
         typechecker_only: false,
     },
     StdlibNamespace {
         name: STDLIB_JSON,
         feature: Some("json"),
-        extra_crate_deps: &[],
+        extra_crate_deps: &[StdlibExtraCrateDep {
+            crate_name: "serde",
+            source: StdlibExtraCrateSource::Version("1.0"),
+            features: &["derive"],
+        }],
         submodules: &[],
         typechecker_only: false,
     },
@@ -293,6 +382,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "libm",
             source: StdlibExtraCrateSource::Version("0.2"),
+            features: &[],
         }],
         submodules: &[],
         typechecker_only: false,
@@ -332,6 +422,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "rand",
             source: StdlibExtraCrateSource::Version("0.8"),
+            features: &[],
         }],
         submodules: &[],
         typechecker_only: false,
@@ -342,6 +433,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "regex",
             source: StdlibExtraCrateSource::Version("1.0"),
+            features: &[],
         }],
         submodules: &["_core", "_replacement", "types", "prelude"],
         typechecker_only: false,
@@ -359,6 +451,7 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
         extra_crate_deps: &[StdlibExtraCrateDep {
             crate_name: "byteorder",
             source: StdlibExtraCrateSource::Version("1"),
+            features: &[],
         }],
         submodules: &[],
         typechecker_only: false,
@@ -375,7 +468,43 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
     StdlibNamespace {
         name: "hash",
         feature: None,
-        extra_crate_deps: &[],
+        extra_crate_deps: &[
+            StdlibExtraCrateDep {
+                crate_name: "blake2",
+                source: StdlibExtraCrateSource::Version("0.10"),
+                features: &[],
+            },
+            StdlibExtraCrateDep {
+                crate_name: "blake3",
+                source: StdlibExtraCrateSource::Version("1"),
+                features: &[],
+            },
+            StdlibExtraCrateDep {
+                crate_name: "md5",
+                source: StdlibExtraCrateSource::Version("0.10"),
+                features: &[],
+            },
+            StdlibExtraCrateDep {
+                crate_name: "sha1",
+                source: StdlibExtraCrateSource::Version("0.10"),
+                features: &[],
+            },
+            StdlibExtraCrateDep {
+                crate_name: "sha2",
+                source: StdlibExtraCrateSource::Version("0.10"),
+                features: &[],
+            },
+            StdlibExtraCrateDep {
+                crate_name: "sha3",
+                source: StdlibExtraCrateSource::Version("0.10"),
+                features: &[],
+            },
+            StdlibExtraCrateDep {
+                crate_name: "xxhash_rust",
+                source: StdlibExtraCrateSource::Version("0.8"),
+                features: &["xxh3", "xxh32", "xxh64"],
+            },
+        ],
         submodules: &["_core", "_streaming", "prelude"],
         typechecker_only: false,
     },
@@ -386,22 +515,27 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
             StdlibExtraCrateDep {
                 crate_name: "flate2",
                 source: StdlibExtraCrateSource::Version("1"),
+                features: &[],
             },
             StdlibExtraCrateDep {
                 crate_name: "zstd",
                 source: StdlibExtraCrateSource::Version("0.13"),
+                features: &[],
             },
             StdlibExtraCrateDep {
                 crate_name: "bzip2",
                 source: StdlibExtraCrateSource::Version("0.6"),
+                features: &[],
             },
             StdlibExtraCrateDep {
                 crate_name: "xz2",
                 source: StdlibExtraCrateSource::Version("0.1"),
+                features: &[],
             },
             StdlibExtraCrateDep {
                 crate_name: "snap",
                 source: StdlibExtraCrateSource::Version("1"),
+                features: &[],
             },
         ],
         submodules: &[
@@ -448,6 +582,39 @@ pub const STDLIB_NAMESPACES: &[StdlibNamespace] = &[
 /// Look up a top-level stdlib namespace by name.
 pub fn find_namespace(name: &str) -> Option<&'static StdlibNamespace> {
     STDLIB_NAMESPACES.iter().find(|ns| ns.name == name)
+}
+
+/// Look up an extra Cargo crate dependency declared by any registered stdlib namespace.
+///
+/// This is the registry boundary for compiler subsystems that need stdlib-managed dependency metadata without
+/// duplicating namespace traversal or crate version knowledge.
+#[must_use]
+pub fn find_extra_crate_dep(crate_name: &str) -> Option<&'static StdlibExtraCrateDep> {
+    extra_crate_deps().find(|dep| dep.crate_name == crate_name)
+}
+
+/// Return whether a crate is supplied by the workspace as a stdlib-managed path dependency.
+#[must_use]
+pub fn is_path_extra_crate_dep(crate_name: &str) -> bool {
+    find_extra_crate_dep(crate_name).is_some_and(|dep| matches!(dep.source, StdlibExtraCrateSource::Path(_)))
+}
+
+/// Return the published Cargo package name when a stdlib-managed Rust crate imports under a different crate key.
+#[must_use]
+pub fn extra_crate_package_alias(crate_name: &str) -> Option<&'static str> {
+    match crate_name {
+        "md5" => Some("md-5"),
+        "xxhash_rust" => Some("xxhash-rust"),
+        _ => None,
+    }
+}
+
+/// Iterate over every extra Cargo crate dependency declared by registered stdlib namespaces.
+///
+/// Consumers that need to filter by dependency source can use this iterator while keeping namespace traversal
+/// centralized in the stdlib registry.
+pub fn extra_crate_deps() -> impl Iterator<Item = &'static StdlibExtraCrateDep> {
+    STDLIB_NAMESPACES.iter().flat_map(|ns| ns.extra_crate_deps)
 }
 
 /// Return the stdlib module path that owns fallback method signatures for a builtin trait name.
@@ -830,6 +997,66 @@ mod tests {
     }
 
     #[test]
+    fn stdlib_json_trait_lookup_covers_aliases_and_qualified_names() {
+        for name in [
+            "Serialize",
+            "JsonSerialize",
+            "json.Serialize",
+            "std.serde.json.Serialize",
+        ] {
+            assert_eq!(stdlib_json_trait_id(name), Some(StdlibJsonTraitId::Serialize));
+            assert!(is_stdlib_json_serialize_trait_name(name));
+        }
+
+        for name in [
+            "Deserialize",
+            "JsonDeserialize",
+            "json.Deserialize",
+            "std.serde.json.Deserialize",
+        ] {
+            assert_eq!(stdlib_json_trait_id(name), Some(StdlibJsonTraitId::Deserialize));
+            assert!(is_stdlib_json_deserialize_trait_name(name));
+        }
+
+        assert_eq!(stdlib_json_trait_id("yaml.Serialize"), None);
+        assert_eq!(stdlib_json_trait_scope_import_id("Serialize"), None);
+        assert_eq!(stdlib_json_trait_scope_import_id("JsonSerialize"), None);
+        assert_eq!(
+            stdlib_json_trait_scope_import_id("json.Serialize"),
+            Some(StdlibJsonTraitId::Serialize)
+        );
+        let json_trait_module = vec!["std".to_string(), "serde".to_string(), "json".to_string()];
+        assert!(is_stdlib_json_trait_module_path(&json_trait_module));
+        let serialize_path = vec![
+            "std".to_string(),
+            "serde".to_string(),
+            "json".to_string(),
+            "Serialize".to_string(),
+        ];
+        assert_eq!(
+            stdlib_json_trait_id_from_path(&serialize_path),
+            Some(StdlibJsonTraitId::Serialize)
+        );
+    }
+
+    #[test]
+    fn extra_crate_dependency_lookup_is_registry_driven() {
+        let axum = find_extra_crate_dep("axum");
+        assert_eq!(axum.map(|dep| dep.crate_name), Some("axum"));
+        assert_eq!(axum.map(|dep| dep.source), Some(StdlibExtraCrateSource::Version("0.8")));
+
+        let macros = find_extra_crate_dep("incan_web_macros");
+        assert_eq!(
+            macros.map(|dep| dep.source),
+            Some(StdlibExtraCrateSource::Path("crates/incan_web_macros"))
+        );
+        assert!(is_path_extra_crate_dep("incan_web_macros"));
+        assert!(!is_path_extra_crate_dep("axum"));
+
+        assert!(find_extra_crate_dep("not_a_stdlib_dependency").is_none());
+    }
+
+    #[test]
     fn stdlib_registry_keeps_phase_023_metadata() {
         let async_ns = find_namespace("async");
         let reflection_ns = find_namespace("reflection");
@@ -839,6 +1066,8 @@ mod tests {
         let math_ns = find_namespace("math");
         let graph_ns = find_namespace("graph");
         let uuid_ns = find_namespace("uuid");
+        let serde_ns = find_namespace("serde");
+        let json_ns = find_namespace(STDLIB_JSON);
         let hash_ns = find_namespace("hash");
         let datetime_ns = find_namespace("datetime");
         let collections_ns = find_namespace("collections");
@@ -866,6 +1095,20 @@ mod tests {
         );
         assert_eq!(uuid_ns.map(|ns| ns.submodules.is_empty()), Some(true));
         assert_eq!(uuid_ns.map(|ns| ns.typechecker_only), Some(false));
+        assert_eq!(
+            serde_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
+            Some(vec!["serde"])
+        );
+        assert_eq!(
+            serde_ns
+                .and_then(|ns| ns.extra_crate_deps.first())
+                .map(|dep| dep.features),
+            Some(&["derive"][..])
+        );
+        assert_eq!(
+            json_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
+            Some(vec!["serde"])
+        );
         assert_eq!(collections_ns.map(|ns| ns.feature), Some(None));
         assert_eq!(collections_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
         assert_eq!(collections_ns.map(|ns| ns.submodules.is_empty()), Some(true));
@@ -877,7 +1120,10 @@ mod tests {
             Some("byteorder")
         );
         assert_eq!(hash_ns.map(|ns| ns.feature), Some(None));
-        assert_eq!(hash_ns.map(|ns| ns.extra_crate_deps.is_empty()), Some(true));
+        assert_eq!(
+            hash_ns.map(|ns| ns.extra_crate_deps.iter().map(|dep| dep.crate_name).collect::<Vec<_>>()),
+            Some(vec!["blake2", "blake3", "md5", "sha1", "sha2", "sha3", "xxhash_rust",])
+        );
         assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"prelude")), Some(true));
         assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_core")), Some(true));
         assert_eq!(hash_ns.map(|ns| ns.submodules.contains(&"_streaming")), Some(true));

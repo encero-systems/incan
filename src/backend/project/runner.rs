@@ -46,16 +46,14 @@ impl ProjectGenerator {
     /// tests, and benchmark checks. Sharing a parent-scoped target dir lets those generated crates reuse compiled
     /// dependencies.
     fn cargo_target_dir(&self) -> PathBuf {
+        if let Some(target_dir) = Self::generated_cargo_target_dir_override() {
+            return target_dir;
+        }
+
         let base_dir = self.output_dir.parent().unwrap_or(self.output_dir.as_path());
         let target_dir = base_dir.join(".cargo-target");
 
-        if target_dir.is_absolute() {
-            target_dir
-        } else if let Ok(cwd) = std::env::current_dir() {
-            cwd.join(target_dir)
-        } else {
-            target_dir
-        }
+        Self::resolve_target_dir(target_dir)
     }
 
     /// Build the project using cargo.
@@ -167,14 +165,14 @@ impl ProjectGenerator {
 
     /// Get the path to the built binary.
     pub fn binary_path(&self) -> PathBuf {
-        self.cargo_target_dir().join("release").join(&self.name)
+        self.cargo_target_dir().join("release").join(self.cargo_target_name())
     }
 
     /// Get the path to the binary produced for `incan run`.
     pub fn run_binary_path(&self) -> PathBuf {
         self.cargo_target_dir()
             .join(self.run_profile_binary_dir())
-            .join(&self.name)
+            .join(self.cargo_target_name())
     }
 }
 
@@ -256,6 +254,30 @@ mod tests {
             generator.should_build_before_run(true),
             "changed generated inputs must rebuild even with an existing binary"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn shared_target_safe_name_distinguishes_same_project_name_by_output_dir() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        let first = ProjectGenerator::shared_target_safe_name("demo-app", &tmp.path().join("one"));
+        let second = ProjectGenerator::shared_target_safe_name("demo-app", &tmp.path().join("two"));
+
+        assert_ne!(first, second);
+        assert!(first.starts_with("demo_app_"), "unexpected target name: {first}");
+        assert!(
+            first.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '_'),
+            "target name should be Rust-identifier safe: {first}"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn relative_target_dirs_resolve_against_current_working_dir() -> Result<(), Box<dyn std::error::Error>> {
+        let cwd = std::env::current_dir()?;
+        let target_dir = ProjectGenerator::resolve_target_dir(PathBuf::from("target/shared-generated"));
+        assert_eq!(target_dir, cwd.join("target/shared-generated"));
         Ok(())
     }
 }

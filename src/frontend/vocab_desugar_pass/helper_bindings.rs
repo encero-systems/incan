@@ -182,7 +182,7 @@ fn resolve_helper_bindings_in_statement(
 }
 
 /// Resolve helper references recursively inside one desugared public expression.
-fn resolve_helper_bindings_in_expr(
+pub(super) fn resolve_helper_bindings_in_expr(
     expr: &mut incan_vocab::IncanExpr,
     keyword_metadata: Option<&incan_vocab::VocabKeywordMetadata>,
     keyword: &str,

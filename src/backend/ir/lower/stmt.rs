@@ -683,6 +683,7 @@ impl AstLowering {
                 variant,
                 fields: vec![IrPattern::Var(pattern_binding)],
             },
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(IrExprKind::Block { stmts, value: None }, IrType::Unit),
         })
@@ -730,6 +731,7 @@ impl AstLowering {
 
         Ok(MatchArm {
             pattern,
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(IrExprKind::Block { stmts, value: None }, IrType::Unit),
         })
@@ -768,6 +770,7 @@ impl AstLowering {
                     variant,
                     fields: vec![IrPattern::Var(test.binding.clone())],
                 },
+                bindings: Vec::new(),
                 guard: None,
                 body: TypedExpr::new(
                     IrExprKind::Block {
@@ -805,6 +808,7 @@ impl AstLowering {
             };
             let mut arms = vec![MatchArm {
                 pattern: test.true_pattern,
+                bindings: Vec::new(),
                 guard: None,
                 body: TypedExpr::new(
                     IrExprKind::Block {
@@ -893,11 +897,13 @@ impl AstLowering {
                 arms: vec![
                     MatchArm {
                         pattern: then_pattern,
+                        bindings: Vec::new(),
                         guard: None,
                         body: then_body,
                     },
                     MatchArm {
                         pattern: else_pattern,
+                        bindings: Vec::new(),
                         guard: None,
                         body: else_body,
                     },
@@ -1067,7 +1073,12 @@ impl AstLowering {
             ast::Statement::FieldAssignment(fa) => IrStmtKind::Assign {
                 target: AssignTarget::Field {
                     object: Box::new(self.lower_expr_spanned(&fa.object)?),
-                    field: fa.field.clone(),
+                    field: self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.rust_field_access_name(fa.target_span))
+                        .unwrap_or(fa.field.as_str())
+                        .to_string(),
                 },
                 value: self.lower_expr_spanned(&fa.value)?,
             },
@@ -1147,11 +1158,13 @@ impl AstLowering {
                                 arms: vec![
                                     MatchArm {
                                         pattern: self.lower_pattern(&pattern.node),
+                                        bindings: Vec::new(),
                                         guard: None,
                                         body: then_body,
                                     },
                                     MatchArm {
                                         pattern: IrPattern::Wildcard,
+                                        bindings: Vec::new(),
                                         guard: None,
                                         body: fallback_body,
                                     },
@@ -1203,11 +1216,13 @@ impl AstLowering {
                                     arms: vec![
                                         MatchArm {
                                             pattern: self.lower_pattern(&pattern.node),
+                                            bindings: Vec::new(),
                                             guard: None,
                                             body: body_expr,
                                         },
                                         MatchArm {
                                             pattern: IrPattern::Wildcard,
+                                            bindings: Vec::new(),
                                             guard: None,
                                             body: break_expr,
                                         },
@@ -1319,6 +1334,7 @@ impl AstLowering {
                                 arms: vec![
                                     MatchArm {
                                         pattern: some_pattern,
+                                        bindings: Vec::new(),
                                         guard: None,
                                         body: TypedExpr::new(
                                             IrExprKind::Block {
@@ -1330,6 +1346,7 @@ impl AstLowering {
                                     },
                                     MatchArm {
                                         pattern: none_pattern,
+                                        bindings: Vec::new(),
                                         guard: None,
                                         body: TypedExpr::new(
                                             IrExprKind::Block {
@@ -1357,6 +1374,12 @@ impl AstLowering {
             }
 
             ast::Statement::Surface(surface_stmt) => self.lower_surface_statement(surface_stmt)?,
+            ast::Statement::VocabExpressionItem(_item) => {
+                return Err(LoweringError {
+                    message: "raw vocab expression-list item reached lowering before desugaring".to_string(),
+                    span: IrSpan::default(),
+                });
+            }
             ast::Statement::VocabBlock(vocab_block) => {
                 return Err(LoweringError {
                     message: format!(
@@ -1635,6 +1658,7 @@ impl AstLowering {
         self.lower_assert_condition_expr(condition, message)
     }
 
+    /// Lower an `assert` statement into IR.
     fn lower_assert_stmt(&mut self, assert_stmt: &ast::AssertStmt) -> Result<IrStmtKind, LoweringError> {
         match &assert_stmt.kind {
             ast::AssertKind::Condition(condition) => {
@@ -1661,6 +1685,7 @@ impl AstLowering {
         }
     }
 
+    /// Lower an assertion condition into IR.
     fn lower_assert_condition_expr(
         &mut self,
         condition: TypedExpr,
@@ -1698,6 +1723,7 @@ impl AstLowering {
         Ok(IrStmtKind::Expr(call))
     }
 
+    /// Lower an `assert_raises` statement into IR.
     fn lower_assert_raises_stmt(
         &mut self,
         call: &Spanned<ast::Expr>,
@@ -1814,6 +1840,7 @@ impl AstLowering {
         Ok(IrStmtKind::Expr(call))
     }
 
+    /// Build an assertion pattern from an expression.
     fn assert_is_pattern_from_expr(expr: &Spanned<ast::Expr>) -> Option<AssertIsPattern<'_>> {
         let ast::Expr::Binary(scrutinee, ast::BinaryOp::Is, pattern_expr) = &expr.node else {
             return None;
@@ -1857,6 +1884,7 @@ impl AstLowering {
         }
     }
 
+    /// Build an assertion pattern from a parsed pattern.
     fn assert_is_pattern_from_pattern<'a>(
         scrutinee: &'a Spanned<ast::Expr>,
         pattern: &Spanned<ast::Pattern>,
@@ -2007,6 +2035,12 @@ impl AstLowering {
                 }
             }
             ast::Statement::Expr(expr) => self.count_expr_ident_reads(&expr.node, counts),
+            ast::Statement::VocabExpressionItem(item) => {
+                self.count_expr_ident_reads(&item.expr.node, counts);
+                for modifier in &item.modifiers {
+                    self.count_expr_ident_reads(&modifier.value.node, counts);
+                }
+            }
             ast::Statement::Break(Some(expr)) => self.count_expr_ident_reads(&expr.node, counts),
             ast::Statement::Pass | ast::Statement::Break(None) | ast::Statement::Continue => {}
             ast::Statement::CompoundAssignment(ca) => {
@@ -2024,6 +2058,7 @@ impl AstLowering {
         }
     }
 
+    /// Count reads of an identifier inside a condition expression.
     fn count_condition_ident_reads(&self, condition: &ast::Condition, counts: &mut HashMap<String, usize>) {
         match condition {
             ast::Condition::Expr(expr) => self.count_expr_ident_reads(&expr.node, counts),
@@ -2188,7 +2223,7 @@ impl AstLowering {
             ast::Expr::Constructor(_, args) => self.count_call_args_ident_reads(args, counts),
             ast::Expr::FString(parts) => {
                 for part in parts {
-                    if let ast::FStringPart::Expr(expr) = part {
+                    if let ast::FStringPart::Expr { expr, .. } = part {
                         self.count_expr_ident_reads(&expr.node, counts);
                     }
                 }
@@ -2201,6 +2236,14 @@ impl AstLowering {
             ast::Expr::Range { start, end, .. } => {
                 self.count_expr_ident_reads(&start.node, counts);
                 self.count_expr_ident_reads(&end.node, counts);
+            }
+            ast::Expr::VocabBlock(block) => {
+                for arg in &block.header_args {
+                    self.count_expr_ident_reads(&arg.node, counts);
+                }
+                for stmt in &block.body {
+                    self.count_statement_ident_reads(&stmt.node, counts);
+                }
             }
         }
     }

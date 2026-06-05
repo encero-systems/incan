@@ -19,6 +19,7 @@ pub(in crate::format) struct NormalizedLineBuffer {
 }
 
 impl NormalizedLineBuffer {
+    /// Create an empty line buffer with no active string state.
     pub(in crate::format) fn new() -> Self {
         Self {
             lines: Vec::new(),
@@ -63,6 +64,7 @@ impl NormalizedLineBuffer {
         }
     }
 
+    /// Return whether the comment buffer ends with a nonblank line.
     pub(in crate::format) fn ends_with_nonblank_line(&self) -> bool {
         self.lines.last().is_some_and(|line| !line.is_empty())
     }

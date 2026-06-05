@@ -62,7 +62,43 @@ impl TypeChecker {
                     ResolvedType::Function(info.params.clone(), Box::new(info.return_type.clone())),
                 )
             }
-            SymbolKind::Type(_) => (IdentKind::TypeName, ResolvedType::Named(name.to_string())),
+            SymbolKind::FunctionOverloads(_) => {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Cannot use overloaded function '{name}' as a value; call it directly so an overload can be selected"
+                    ),
+                    span,
+                ));
+                return ResolvedType::Unknown;
+            }
+            SymbolKind::Type(info) => {
+                if !self.is_type_receiver_span(span) {
+                    if !self.is_type_token_value_span(span) {
+                        self.errors.push(errors::type_name_used_as_value(name, span));
+                        self.type_info
+                            .expressions
+                            .ident_kinds
+                            .insert((span.start, span.end), IdentKind::TypeName);
+                        return ResolvedType::Unknown;
+                    }
+                    let ty = if matches!(info, TypeInfo::Builtin) && sym.scope > 0 {
+                        ResolvedType::TypeVar(name.to_string())
+                    } else {
+                        resolve_type(&Type::Simple(name.to_string()), &self.symbols)
+                    };
+                    self.type_info
+                        .expressions
+                        .ident_kinds
+                        .insert((span.start, span.end), IdentKind::Value);
+                    return ResolvedType::TypeToken(Box::new(ty));
+                }
+                let ty = if matches!(info, TypeInfo::Builtin) && sym.scope > 0 {
+                    ResolvedType::TypeVar(name.to_string())
+                } else {
+                    ResolvedType::Named(name.to_string())
+                };
+                (IdentKind::TypeName, ty)
+            }
             SymbolKind::Variant(info) => (IdentKind::Variant, ResolvedType::Named(info.enum_name.clone())),
             SymbolKind::Field(info) => (IdentKind::Value, info.ty.clone()),
             SymbolKind::Property(info) => (IdentKind::Value, info.return_type.clone()),
@@ -76,7 +112,17 @@ impl TypeChecker {
                     (IdentKind::Module, ResolvedType::Named(name.to_string()))
                 }
             }
-            SymbolKind::Trait(_) => (IdentKind::Trait, ResolvedType::Named(name.to_string())),
+            SymbolKind::Trait(_) => {
+                if !self.is_type_receiver_span(span) {
+                    self.errors.push(errors::type_name_used_as_value(name, span));
+                    self.type_info
+                        .expressions
+                        .ident_kinds
+                        .insert((span.start, span.end), IdentKind::Trait);
+                    return ResolvedType::Unknown;
+                }
+                (IdentKind::Trait, ResolvedType::Named(name.to_string()))
+            }
             SymbolKind::RustItem(info) => {
                 if let Some(meta) = &info.metadata
                     && meta.visibility == incan_core::interop::RustVisibility::Restricted
@@ -100,17 +146,7 @@ impl TypeChecker {
                 let resolved = match &info.metadata {
                     Some(meta) => match &meta.kind {
                         incan_core::interop::RustItemKind::Function(sig) => {
-                            let params = sig
-                                .params
-                                .iter()
-                                .map(|p| {
-                                    CallableParam::positional(
-                                        self.resolved_param_type_from_rust_display(p.type_display.as_str()),
-                                    )
-                                })
-                                .collect();
-                            let ret = self.resolved_type_from_rust_display(sig.return_type.as_str());
-                            ResolvedType::Function(params, Box::new(ret))
+                            self.resolved_function_type_from_rust_sig_for_owner_path(sig, false, info.path.as_str())
                         }
                         incan_core::interop::RustItemKind::Constant { type_display } => {
                             self.resolved_type_from_rust_display(type_display.as_str())

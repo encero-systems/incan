@@ -66,8 +66,21 @@ impl AstLowering {
         // Convert AST import items to IR import items
         let ir_items: Vec<super::super::super::decl::IrImportItem> = ast_items
             .iter()
-            .map(|item| {
+            .flat_map(|item| {
                 let binding_name = item.alias.as_ref().unwrap_or(&item.name);
+                let force_reexport = self.overload_alias_reexport_targets.contains(binding_name);
+                if let Some(emitted_names) = self.emitted_overload_import_names(binding_name) {
+                    return emitted_names
+                        .iter()
+                        .map(|emitted_name| super::super::super::decl::IrImportItem {
+                            name: emitted_name.clone(),
+                            alias: None,
+                            is_static: false,
+                            force_reexport,
+                            rust_trait_import: None,
+                        })
+                        .collect::<Vec<_>>();
+                }
                 let rust_trait_import = self
                     .type_info
                     .as_ref()
@@ -81,13 +94,32 @@ impl AstLowering {
                             methods,
                         }
                     });
-                super::super::super::decl::IrImportItem {
+                vec![super::super::super::decl::IrImportItem {
                     name: item.name.clone(),
                     alias: item.alias.clone(),
+                    is_static: self
+                        .type_info
+                        .as_ref()
+                        .is_some_and(|info| info.static_binding(binding_name).is_some()),
+                    force_reexport: false,
                     rust_trait_import,
-                }
+                }]
             })
             .collect();
+        let mut deduped_items: Vec<super::super::super::decl::IrImportItem> = Vec::new();
+        for item in ir_items {
+            if let Some(existing) = deduped_items.iter_mut().find(|existing| {
+                existing.name == item.name && existing.alias == item.alias && existing.is_static == item.is_static
+            }) {
+                existing.force_reexport |= item.force_reexport;
+                if existing.rust_trait_import.is_none() {
+                    existing.rust_trait_import = item.rust_trait_import;
+                }
+            } else {
+                deduped_items.push(item);
+            }
+        }
+        let ir_items = deduped_items;
 
         IrDeclKind::Import {
             visibility: Self::map_visibility(i.visibility),
@@ -97,5 +129,19 @@ impl AstLowering {
             alias: i.alias.clone(),
             items: ir_items,
         }
+    }
+
+    /// Return concrete Rust function names needed to import one overload binding.
+    fn emitted_overload_import_names(&self, binding_name: &str) -> Option<Vec<String>> {
+        let info = self.type_info.as_ref()?;
+        if let Some(names) = info.imported_function_emitted_names(binding_name) {
+            return Some(names.to_vec());
+        }
+        let names = info
+            .function_overloads(binding_name)?
+            .iter()
+            .filter_map(|overload| overload.info.emitted_name.clone())
+            .collect::<Vec<_>>();
+        (!names.is_empty()).then_some(names)
     }
 }

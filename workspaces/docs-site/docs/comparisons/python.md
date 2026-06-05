@@ -39,4 +39,3 @@ The better question is, "Would this new tool or service be safer and easier to s
 
 - Stack Overflow's 2025 Developer Survey says Python adoption "accelerated significantly" and ties it to AI, data science, and backend work: [Technology | 2025 Stack Overflow Developer Survey](https://survey.stackoverflow.co/2025/technology/).
 - Meta's typed Python survey reports that 88% of respondents often or always use types in Python code, while also naming usability, latency, and library typing gaps as pain points: [Typed Python in 2024](https://engineering.fb.com/2024/12/09/developer-tools/typed-python-2024-survey-meta/).
-

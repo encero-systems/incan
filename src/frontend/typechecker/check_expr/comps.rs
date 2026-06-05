@@ -4,6 +4,7 @@
 //! and type-checking the generated element/value expressions in a nested scope.
 
 use crate::frontend::ast::*;
+use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::{dict_ty, generator_ty, list_ty};
 
@@ -94,6 +95,7 @@ impl TypeChecker {
 
         let prev_in_async_body = self.in_async_body;
         self.in_async_body = false;
+        let prev_return_error_type = self.current_return_error_type.take();
 
         let param_types: Vec<_> = params
             .iter()
@@ -114,9 +116,70 @@ impl TypeChecker {
             .collect();
 
         let return_ty = self.check_expr(body);
+        self.current_return_error_type = prev_return_error_type;
         self.in_async_body = prev_in_async_body;
         self.symbols.exit_scope();
 
         ResolvedType::Function(param_types, Box::new(return_ty))
+    }
+
+    /// Type-check a closure expression against an expected function shape.
+    pub(in crate::frontend::typechecker::check_expr) fn check_closure_with_expected(
+        &mut self,
+        params: &[Spanned<Param>],
+        body: &Spanned<Expr>,
+        expected_params: &[CallableParam],
+        expected_ret: &ResolvedType,
+        span: Span,
+    ) -> ResolvedType {
+        if params.len() != expected_params.len() {
+            self.errors.push(errors::builtin_arity(
+                "closure",
+                expected_params.len(),
+                params.len(),
+                span,
+            ));
+            return ResolvedType::Unknown;
+        }
+
+        self.symbols.enter_scope(ScopeKind::Function);
+
+        let prev_in_async_body = self.in_async_body;
+        self.in_async_body = false;
+        let prev_return_error_type = self.current_return_error_type.take();
+
+        let param_types: Vec<_> = params
+            .iter()
+            .zip(expected_params.iter())
+            .map(|(param, expected)| {
+                let ty = expected.ty.clone();
+                self.symbols.define(Symbol {
+                    name: param.node.name.clone(),
+                    kind: SymbolKind::Variable(VariableInfo {
+                        ty: ty.clone(),
+                        is_mutable: false,
+                        is_used: false,
+                    }),
+                    span: param.span,
+                    scope: 0,
+                });
+                CallableParam::named(param.node.name.clone(), ty, param.node.kind)
+            })
+            .collect();
+
+        let return_ty = self.check_expr_with_expected(body, Some(expected_ret));
+        if !matches!(return_ty, ResolvedType::Unknown) && !self.types_compatible(&return_ty, expected_ret) {
+            self.errors.push(errors::type_mismatch(
+                &expected_ret.to_string(),
+                &return_ty.to_string(),
+                body.span,
+            ));
+        }
+
+        self.current_return_error_type = prev_return_error_type;
+        self.in_async_body = prev_in_async_body;
+        self.symbols.exit_scope();
+
+        ResolvedType::Function(param_types, Box::new(expected_ret.clone()))
     }
 }

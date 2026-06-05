@@ -3,7 +3,7 @@
 
 [incan]
 format = 1
-incan-version = "0.3.0-dev.51"
+incan-version = "0.3.0-rc6"
 deps-fingerprint = "sha256:d66866eca21aa7a29b265ef932049fe5b6da692cbe734cd4f7d300ce7163b359"
 cargo-features = []
 cargo-no-default-features = false
@@ -17,14 +17,14 @@ version = 4
 
 [[package]]
 name = "incan_core"
-version = "0.3.0-dev.51"
+version = "0.3.0-rc6"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "incan_derive"
-version = "0.3.0-dev.51"
+version = "0.3.0-rc6"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "incan_stdlib"
-version = "0.3.0-dev.51"
+version = "0.3.0-rc6"
 dependencies = [
  "incan_core",
  "incan_derive",
@@ -50,7 +50,7 @@ dependencies = [
 
 [[package]]
 name = "querykit_consumer"
-version = "0.3.0-dev.51"
+version = "0.3.0-rc6"
 dependencies = [
  "incan_derive",
  "incan_stdlib",
@@ -59,7 +59,7 @@ dependencies = [
 
 [[package]]
 name = "querykit_core"
-version = "0.3.0-dev.51"
+version = "0.3.0-rc6"
 dependencies = [
  "incan_derive",
  "incan_stdlib",

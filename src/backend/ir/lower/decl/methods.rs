@@ -6,7 +6,7 @@ use super::super::super::decl::{FunctionParam, IrAssociatedType, IrDecl, IrDeclK
 use super::super::super::expr::{IrCallArg, IrCallArgKind, IrExprKind, VarAccess, VarRefKind};
 use super::super::super::stmt::{IrStmt, IrStmtKind};
 use super::super::super::types::IrType;
-use super::super::super::{IrSpan, Mutability, TypedExpr};
+use super::super::super::{FunctionSignature, IrSpan, Mutability, TypedExpr};
 use super::super::AstLowering;
 use super::super::TraitImplLoweringInput;
 use super::super::errors::LoweringError;
@@ -73,15 +73,19 @@ impl AstLowering {
                         is_absolute: decorator.node.path.is_absolute,
                         segments: path[..path.len() - 1].to_vec(),
                     };
-                    let base = Self::decorator_path_expr_from_import_path(&base_path, decorator.span);
+                    let base =
+                        Self::decorator_path_expr_from_import_path(&base_path, Self::decorator_synthetic_callee_span());
                     let method_name = path.last().cloned().unwrap_or_default();
                     Spanned::new(
-                        ast::Expr::MethodCall(Box::new(base), method_name, Vec::new(), args),
+                        ast::Expr::MethodCall(Box::new(base), method_name, decorator.node.type_args.clone(), args),
                         decorator.span,
                     )
                 } else {
-                    let callee = Self::decorator_path_expr(&decorator.node, decorator.span);
-                    Spanned::new(ast::Expr::Call(Box::new(callee), Vec::new(), args), decorator.span)
+                    let callee = Self::decorator_path_expr(&decorator.node, Self::decorator_synthetic_callee_span());
+                    Spanned::new(
+                        ast::Expr::Call(Box::new(callee), decorator.node.type_args.clone(), args),
+                        decorator.span,
+                    )
                 }
             } else {
                 Self::decorator_path_expr(&decorator.node, decorator.span)
@@ -93,7 +97,7 @@ impl AstLowering {
             };
             current = Spanned::new(
                 ast::Expr::Call(Box::new(callable), Vec::new(), vec![ast::CallArg::Positional(arg)]),
-                decorator.span,
+                Self::decorator_synthetic_callee_span(),
             );
         }
         Ok(current)
@@ -314,10 +318,7 @@ impl AstLowering {
                 continue;
             };
             let static_name = Self::decorator_method_static_binding_name(type_name, &method.node.name);
-            let decorated_ty = IrType::Function {
-                params: params.iter().map(|param| self.lower_resolved_type(&param.ty)).collect(),
-                ret: Box::new(self.lower_resolved_type(&ret)),
-            };
+            let decorated_ty = self.function_type_from_callable_surface(&params, &ret);
             let application = self.decorator_method_application_expr(type_name, &method.node)?;
             let mut value = self.lower_expr_spanned(&application)?;
             value.ty = decorated_ty.clone();
@@ -350,7 +351,7 @@ impl AstLowering {
                 type_param_names,
             )?;
             let adapter = self.decorated_method_original_adapter(owner, method)?;
-            let wrapper = self.lower_decorated_method_wrapper(owner, method)?;
+            let wrapper = self.lower_decorated_method_wrapper(owner, method, type_param_names)?;
             Ok(vec![original, adapter, wrapper])
         } else {
             Ok(vec![self.lower_method_with_type_params(method, type_param_names)?])
@@ -362,6 +363,7 @@ impl AstLowering {
         &mut self,
         owner: &str,
         method: &ast::MethodDecl,
+        owner_type_param_names: Option<&HashSet<&str>>,
     ) -> Result<IrFunction, LoweringError> {
         let Some(binding) = self.type_info.as_ref().and_then(|info| {
             info.declarations
@@ -369,15 +371,23 @@ impl AstLowering {
                 .get(&(owner.to_string(), method.name.clone()))
                 .cloned()
         }) else {
-            return self.lower_method_with_type_params(method, None);
+            return self.lower_method_with_type_params(method, owner_type_param_names);
         };
         let crate::frontend::symbols::ResolvedType::Function(params, ret) = binding.unbound_ty else {
-            return self.lower_method_with_type_params(method, None);
+            return self.lower_method_with_type_params(method, owner_type_param_names);
         };
         let Some((receiver_param, surface_params)) = params.split_first() else {
-            return self.lower_method_with_type_params(method, None);
+            return self.lower_method_with_type_params(method, owner_type_param_names);
         };
         let receiver_ty = self.lower_resolved_type(&receiver_param.ty);
+        let original_surface_params = match binding.original_unbound_ty {
+            crate::frontend::symbols::ResolvedType::Function(original_params, _) => {
+                original_params.into_iter().skip(1).collect::<Vec<_>>()
+            }
+            _ => Vec::new(),
+        };
+        let defaults =
+            self.decorated_param_defaults_for_surface(surface_params, &original_surface_params, &method.params);
         let mut wrapper_params = Vec::with_capacity(surface_params.len() + 1);
         let receiver = method.receiver.unwrap_or(ast::Receiver::Immutable);
         wrapper_params.push(FunctionParam {
@@ -400,15 +410,16 @@ impl AstLowering {
                 mutability: Mutability::Immutable,
                 is_self: false,
                 kind: param.kind,
-                default: None,
+                default: defaults.get(idx).cloned().flatten(),
             }
         }));
         let return_type = self.lower_resolved_type(&ret);
         let static_name = Self::decorator_method_static_binding_name(owner, &method.name);
+        let callable_signature = self.function_signature_from_callable_surface(&params, &ret);
         let static_func = TypedExpr::new(
             IrExprKind::StaticRead { name: static_name },
             IrType::Function {
-                params: params.iter().map(|param| self.lower_resolved_type(&param.ty)).collect(),
+                params: callable_signature.params.iter().map(|param| param.ty.clone()).collect(),
                 ret: Box::new(return_type.clone()),
             },
         );
@@ -425,24 +436,13 @@ impl AstLowering {
                 receiver_ty,
             ),
         });
-        args.extend(wrapper_params.iter().skip(1).map(|param| IrCallArg {
-            name: None,
-            kind: IrCallArgKind::Positional,
-            expr: TypedExpr::new(
-                IrExprKind::Var {
-                    name: param.name.clone(),
-                    access: VarAccess::Read,
-                    ref_kind: VarRefKind::Value,
-                },
-                param.ty.clone(),
-            ),
-        }));
+        args.extend(Self::forwarding_args_from_params(&wrapper_params[1..]));
         let call = TypedExpr::new(
             IrExprKind::Call {
                 func: Box::new(static_func),
                 type_args: Vec::new(),
                 args,
-                callable_signature: None,
+                callable_signature: Some(callable_signature),
                 canonical_path: None,
             },
             return_type.clone(),
@@ -512,22 +512,7 @@ impl AstLowering {
             },
             receiver_ty,
         );
-        let args = adapter_params
-            .iter()
-            .skip(1)
-            .map(|param| IrCallArg {
-                name: None,
-                kind: IrCallArgKind::Positional,
-                expr: TypedExpr::new(
-                    IrExprKind::Var {
-                        name: param.name.clone(),
-                        access: VarAccess::Read,
-                        ref_kind: VarRefKind::Value,
-                    },
-                    param.ty.clone(),
-                ),
-            })
-            .collect();
+        let args = Self::forwarding_args_from_params(&adapter_params[1..]);
         let call = TypedExpr::new(
             IrExprKind::MethodCall {
                 receiver: Box::new(receiver),
@@ -535,7 +520,10 @@ impl AstLowering {
                 dispatch: None,
                 type_args: Vec::new(),
                 args,
-                callable_signature: None,
+                callable_signature: Some(FunctionSignature {
+                    params: adapter_params.iter().skip(1).cloned().collect(),
+                    return_type: return_type.clone(),
+                }),
                 arg_policy: super::super::super::expr::MethodCallArgPolicy::Default,
             },
             return_type.clone(),
@@ -680,11 +668,16 @@ impl AstLowering {
         if let Some(trait_id) = core_traits::from_str(short_name) {
             return core_traits::method_names(trait_id);
         }
-        match short_name {
-            "Callable0" | "Callable1" | "Callable2" => &["__call__"],
-            "Serialize" | "JsonSerialize" => &["to_json"],
-            "Deserialize" | "JsonDeserialize" => &["from_json"],
-            _ => &[],
+        if matches!(short_name, "Callable0" | "Callable1" | "Callable2") {
+            &["__call__"]
+        } else {
+            match incan_core::lang::stdlib::stdlib_json_trait_id(trait_name)
+                .or_else(|| incan_core::lang::stdlib::stdlib_json_trait_id(short_name))
+            {
+                Some(incan_core::lang::stdlib::StdlibJsonTraitId::Serialize) => &["to_json"],
+                Some(incan_core::lang::stdlib::StdlibJsonTraitId::Deserialize) => &["from_json"],
+                None => &[],
+            }
         }
     }
 
@@ -698,13 +691,13 @@ impl AstLowering {
             .rsplit(['.', ':'])
             .find(|segment| !segment.is_empty())
             .unwrap_or(trait_name);
-        matches!(
-            (short_name, method_name),
-            ("Serialize", "to_json")
-                | ("JsonSerialize", "to_json")
-                | ("Deserialize", "from_json")
-                | ("JsonDeserialize", "from_json")
-        )
+        match incan_core::lang::stdlib::stdlib_json_trait_id(trait_name)
+            .or_else(|| incan_core::lang::stdlib::stdlib_json_trait_id(short_name))
+        {
+            Some(incan_core::lang::stdlib::StdlibJsonTraitId::Serialize) => method_name == "to_json",
+            Some(incan_core::lang::stdlib::StdlibJsonTraitId::Deserialize) => method_name == "from_json",
+            None => false,
+        }
     }
 
     /// Return whether a method is safe to emit into an imported trait impl when the trait declaration is missing.

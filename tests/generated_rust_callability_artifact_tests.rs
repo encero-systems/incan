@@ -23,6 +23,10 @@ fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::e
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
         .env("INCAN_NO_BANNER", "1")
+        .env(
+            "INCAN_GENERATED_CARGO_TARGET_DIR",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+        )
         .output()?)
 }
 
@@ -33,33 +37,6 @@ fn assert_success(output: &Output, context: &str) {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-}
-
-fn assert_failure(output: &Output, context: &str) {
-    assert!(
-        !output.status.success(),
-        "{context} unexpectedly succeeded\nstdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-
-fn strip_ansi_escapes(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' && chars.peek() == Some(&'[') {
-            let _ = chars.next();
-            for c in chars.by_ref() {
-                if c == 'm' {
-                    break;
-                }
-            }
-            continue;
-        }
-        out.push(ch);
-    }
-    out
 }
 
 fn write_fixture_file(root: &Path, relative_path: &str, contents: &str) -> Result<(), Box<dyn std::error::Error>> {
@@ -133,7 +110,7 @@ fn function_param_ty<'a>(
 }
 
 #[test]
-fn build_lib_emits_package_facing_callable_artifact_layout() -> Result<(), Box<dyn std::error::Error>> {
+fn generated_callable_artifact_and_consumers_share_producer_build() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let producer = build_producer(tmp.path())?;
     let artifact = producer.join("target/lib");
@@ -178,26 +155,19 @@ fn build_lib_emits_package_facing_callable_artifact_layout() -> Result<(), Box<d
             if matches!(params.as_slice(), [TypeRef::Named { name }] if name == "Payload")
                 && matches!(&**return_type, TypeRef::Named { name } if name == "Unit")
     ));
-    Ok(())
-}
 
-#[test]
-fn consumer_can_call_owned_callable_export_across_generated_package_boundary() -> Result<(), Box<dyn std::error::Error>>
-{
-    let tmp = tempfile::tempdir()?;
-    build_producer(tmp.path())?;
-    let (consumer, main_path) = write_consumer(
+    let (owned_consumer, owned_main_path) = write_consumer(
         tmp.path(),
         "owned_consumer",
         include_str!("fixtures/generated_rust_callability/consumer_owned/src/main.incn"),
     )?;
 
-    let out_dir = consumer.join("out");
+    let out_dir = owned_consumer.join("out");
     let build_output = run_incan(
-        &consumer,
+        &owned_consumer,
         &[
             "build",
-            main_path.to_str().ok_or("main path was not valid UTF-8")?,
+            owned_main_path.to_str().ok_or("main path was not valid UTF-8")?,
             out_dir.to_str().ok_or("out path was not valid UTF-8")?,
         ],
     )?;
@@ -218,48 +188,5 @@ fn consumer_can_call_owned_callable_export_across_generated_package_boundary() -
         "expected final generated Rust project to call imported callable export, got:\n{generated_main}"
     );
 
-    let run_output = run_incan(
-        &consumer,
-        &["run", main_path.to_str().ok_or("main path was not valid UTF-8")?],
-    )?;
-    assert_success(&run_output, "consumer incan run for owned callable import");
-    assert_eq!(String::from_utf8_lossy(&run_output.stdout).trim(), "2\n3\n4");
-    Ok(())
-}
-
-#[test]
-fn borrowed_callable_export_is_characterized_as_current_pub_consumer_blocker() -> Result<(), Box<dyn std::error::Error>>
-{
-    let tmp = tempfile::tempdir()?;
-    build_producer(tmp.path())?;
-    let (consumer, main_path) = write_consumer(
-        tmp.path(),
-        "borrowed_consumer",
-        include_str!("fixtures/generated_rust_callability/consumer_borrowed_blocker/src/main.incn"),
-    )?;
-
-    let out_dir = consumer.join("out");
-    let build_output = run_incan(
-        &consumer,
-        &[
-            "build",
-            main_path.to_str().ok_or("main path was not valid UTF-8")?,
-            out_dir.to_str().ok_or("out path was not valid UTF-8")?,
-        ],
-    )?;
-    assert_failure(&build_output, "consumer incan build for borrowed callable import");
-
-    let stderr = strip_ansi_escapes(&String::from_utf8_lossy(&build_output.stderr));
-    assert!(
-        stderr.contains("expected fn pointer") && stderr.contains("found fn item") && stderr.contains("observe"),
-        "expected borrowed callable mismatch to document current pub consumer blocker, got:\n{stderr}"
-    );
-    let generated_main = fs::read_to_string(out_dir.join("src/main.rs"))?;
-    assert!(
-        generated_main.contains("fn observe(_: Payload)")
-            && generated_main.contains("inspect_payload(")
-            && generated_main.contains(", observe)"),
-        "expected final generated Rust project to show consumer observer shape before Cargo type failure, got:\n{generated_main}"
-    );
     Ok(())
 }

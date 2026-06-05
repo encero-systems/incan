@@ -1,7 +1,7 @@
 //! RFC 023: Trait bound inference for generic functions.
 //!
 //! This module scans IR function bodies to infer which Rust trait bounds are required on each type parameter based on
-//! how the parameter is used (e.g., `==` requires `PartialEq`, f-string interpolation requires `Display`).
+//! how the parameter is used (e.g., `==` requires `PartialEq`, display f-string interpolation requires `Display`).
 //!
 //! ## Inference rules (from RFC 023)
 //!
@@ -9,7 +9,8 @@
 //! | --------------------------- | ------------------------------ |
 //! | `==`, `!=`                  | `PartialEq`                    |
 //! | `<`, `<=`, `>`, `>=`        | `PartialOrd`                   |
-//! | f-string interpolation      | `std::fmt::Display`            |
+//! | f-string `{value}`          | `std::fmt::Display`            |
+//! | f-string `{value:?}`        | `std::fmt::Debug`              |
 //! | `+`                         | `std::ops::Add<Output = T>`    |
 //! | `-`                         | `std::ops::Sub<Output = T>`    |
 //! | `*`                         | `std::ops::Mul<Output = T>`    |
@@ -26,15 +27,18 @@
 
 use std::collections::{HashMap, HashSet};
 
-use incan_core::lang::trait_bounds::rust as tb;
+use incan_core::lang::{magic_methods, trait_bounds::rust as tb};
 
 use super::IrProgram;
 use super::decl::{FunctionParam, IrDeclKind, IrFunction, IrTraitBound, IrTypeParam};
 use super::expr::{
     BinOp, FormatPart, IrCallArg, IrDictEntry, IrExpr, IrExprKind, IrGeneratorClause, IrListEntry, MethodCallArgPolicy,
-    VarAccess, VarRefKind,
+    VarRefKind,
 };
-use super::ownership::{ValueUseSite, plan_value_use};
+use super::ownership::{
+    RegularMethodArgumentContext, ValueUseSite, regular_method_argument_use_site, value_use_requires_clone_bound,
+    value_use_site_target_ty,
+};
 use super::stmt::{IrStmt, IrStmtKind};
 use super::types::IrType;
 
@@ -61,6 +65,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
                 collect_inferred_bounds_for_callable(
                     &func.name,
                     func,
+                    &func.type_params,
                     &trait_decls,
                     &mut function_bounds,
                     &mut function_params,
@@ -72,6 +77,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
                     collect_inferred_bounds_for_callable(
                         &key,
                         method,
+                        &method.type_params,
                         &trait_decls,
                         &mut function_bounds,
                         &mut function_params,
@@ -80,6 +86,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
             }
             IrDeclKind::Impl(impl_block) => {
                 for (index, method) in impl_block.methods.iter().enumerate() {
+                    let type_params = callable_inference_type_params(method, Some(&impl_block.type_params));
                     let key = format!(
                         "impl:{}:{}:{}:{}",
                         impl_block.target_type,
@@ -90,6 +97,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
                     collect_inferred_bounds_for_callable(
                         &key,
                         method,
+                        &type_params,
                         &trait_decls,
                         &mut function_bounds,
                         &mut function_params,
@@ -114,6 +122,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
                     propagate_bounds_for_callable(
                         &func.name,
                         func,
+                        &func.type_params,
                         &snapshot,
                         &function_params,
                         &mut function_bounds,
@@ -126,6 +135,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
                         propagate_bounds_for_callable(
                             &key,
                             method,
+                            &method.type_params,
                             &snapshot,
                             &function_params,
                             &mut function_bounds,
@@ -135,6 +145,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
                 }
                 IrDeclKind::Impl(impl_block) => {
                     for (index, method) in impl_block.methods.iter().enumerate() {
+                        let type_params = callable_inference_type_params(method, Some(&impl_block.type_params));
                         let key = format!(
                             "impl:{}:{}:{}:{}",
                             impl_block.target_type,
@@ -145,6 +156,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
                         propagate_bounds_for_callable(
                             &key,
                             method,
+                            &type_params,
                             &snapshot,
                             &function_params,
                             &mut function_bounds,
@@ -162,38 +174,7 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
     }
 
     // ---- Pass 3: write inferred bounds back into the IR ----
-    for decl in &mut program.declarations {
-        match &mut decl.kind {
-            IrDeclKind::Function(func) => {
-                if let Some(inferred) = function_bounds.remove(&func.name) {
-                    func.type_params = inferred;
-                }
-            }
-            IrDeclKind::Trait(trait_decl) => {
-                for (index, method) in trait_decl.methods.iter_mut().enumerate() {
-                    let key = format!("trait:{}:{}:{}", trait_decl.name, index, method.name);
-                    if let Some(inferred) = function_bounds.remove(&key) {
-                        method.type_params = inferred;
-                    }
-                }
-            }
-            IrDeclKind::Impl(impl_block) => {
-                for (index, method) in impl_block.methods.iter_mut().enumerate() {
-                    let key = format!(
-                        "impl:{}:{}:{}:{}",
-                        impl_block.target_type,
-                        impl_block.trait_name.as_deref().unwrap_or("<inherent>"),
-                        index,
-                        method.name
-                    );
-                    if let Some(inferred) = function_bounds.remove(&key) {
-                        method.type_params = inferred;
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
+    write_back_callable_bounds(program, &mut function_bounds);
 
     // ---- Pass 4: backend-synthesized clone bounds ----
     //
@@ -211,12 +192,16 @@ pub fn infer_trait_bounds(program: &mut IrProgram) {
 /// boundaries.
 fn infer_backend_clone_bounds(program: &mut IrProgram) {
     let clone_derived_self_params = collect_clone_derived_self_params(program);
+    let clone_context = BackendCloneInferenceContext::from_program(program);
 
     for decl in &mut program.declarations {
         match &mut decl.kind {
-            IrDeclKind::Function(func) => {
-                augment_callable_type_params_for_backend_return_clones(&mut func.type_params, &func.body, None)
-            }
+            IrDeclKind::Function(func) => augment_callable_type_params_for_backend_return_clones(
+                &mut func.type_params,
+                &func.body,
+                None,
+                &clone_context,
+            ),
             IrDeclKind::Impl(impl_block) => {
                 let self_clone_params = clone_derived_self_params.get(&impl_block.target_type);
                 for method in &impl_block.methods {
@@ -224,12 +209,24 @@ fn infer_backend_clone_bounds(program: &mut IrProgram) {
                         &mut impl_block.type_params,
                         &method.body,
                         self_clone_params,
+                        &clone_context,
                     );
                 }
             }
             _ => {}
         }
     }
+}
+
+/// Return type parameters visible to callable-bound inference.
+fn callable_inference_type_params(func: &IrFunction, owner_type_params: Option<&[IrTypeParam]>) -> Vec<IrTypeParam> {
+    let mut type_params = owner_type_params.map_or_else(Vec::new, |params| params.to_vec());
+    for type_param in &func.type_params {
+        if !type_params.iter().any(|existing| existing.name == type_param.name) {
+            type_params.push(type_param.clone());
+        }
+    }
+    type_params
 }
 
 /// Propagate bounds into one program using already-inferred callable signatures from external programs.
@@ -283,6 +280,7 @@ fn propagate_trait_bounds_from_signature_maps(
                     propagate_bounds_for_callable(
                         &func.name,
                         func,
+                        &func.type_params,
                         &snapshot,
                         &function_params,
                         &mut function_bounds,
@@ -295,6 +293,7 @@ fn propagate_trait_bounds_from_signature_maps(
                         propagate_bounds_for_callable(
                             &key,
                             method,
+                            &method.type_params,
                             &snapshot,
                             &function_params,
                             &mut function_bounds,
@@ -304,6 +303,7 @@ fn propagate_trait_bounds_from_signature_maps(
                 }
                 IrDeclKind::Impl(impl_block) => {
                     for (index, method) in impl_block.methods.iter().enumerate() {
+                        let type_params = callable_inference_type_params(method, Some(&impl_block.type_params));
                         let key = format!(
                             "impl:{}:{}:{}:{}",
                             impl_block.target_type,
@@ -314,6 +314,7 @@ fn propagate_trait_bounds_from_signature_maps(
                         propagate_bounds_for_callable(
                             &key,
                             method,
+                            &type_params,
                             &snapshot,
                             &function_params,
                             &mut function_bounds,
@@ -500,10 +501,92 @@ fn collect_clone_derived_self_params(program: &IrProgram) -> HashMap<String, Has
     result
 }
 
+/// Receiver ownership facts used to mirror method-call argument planning during clone-bound inference.
+struct BackendCloneInferenceContext {
+    incan_nominal_names: HashSet<String>,
+    rusttype_alias_names: HashSet<String>,
+}
+
+#[derive(Clone, Copy)]
+struct BackendCallCloneContext<'a> {
+    callable_signature: Option<&'a super::FunctionSignature>,
+    in_return: bool,
+}
+
+impl BackendCloneInferenceContext {
+    /// Build clone-bound inference context from an IR program.
+    fn from_program(program: &IrProgram) -> Self {
+        let mut incan_nominal_names = HashSet::new();
+        let mut rusttype_alias_names = HashSet::new();
+        for decl in &program.declarations {
+            match &decl.kind {
+                IrDeclKind::Struct(s) => {
+                    incan_nominal_names.insert(s.name.clone());
+                }
+                IrDeclKind::Enum(e) => {
+                    incan_nominal_names.insert(e.name.clone());
+                }
+                IrDeclKind::Trait(trait_decl) => {
+                    incan_nominal_names.insert(trait_decl.name.clone());
+                }
+                IrDeclKind::TypeAlias {
+                    name,
+                    is_rusttype: true,
+                    ..
+                } => {
+                    incan_nominal_names.insert(name.clone());
+                    rusttype_alias_names.insert(name.clone());
+                }
+                _ => {}
+            }
+        }
+        Self {
+            incan_nominal_names,
+            rusttype_alias_names,
+        }
+    }
+
+    /// Return whether a receiver is an Incan-owned nominal type.
+    fn is_incan_owned_nominal_receiver(&self, receiver_ty: &IrType) -> bool {
+        match receiver_type_for_method_dispatch(receiver_ty) {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) | IrType::Enum(name) => {
+                self.name_matches(name, &self.incan_nominal_names)
+            }
+            IrType::Trait(_) => true,
+            _ => false,
+        }
+    }
+
+    /// Return whether a receiver is a rusttype alias.
+    fn is_rusttype_alias_receiver(&self, receiver_ty: &IrType) -> bool {
+        match receiver_type_for_method_dispatch(receiver_ty) {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => self.name_matches(name, &self.rusttype_alias_names),
+            _ => false,
+        }
+    }
+
+    /// Return whether a fully qualified or short name is in the provided name set.
+    fn name_matches(&self, name: &str, names: &HashSet<String>) -> bool {
+        let short_name = name.rsplit("::").next().unwrap_or(name);
+        names.contains(name) || names.contains(short_name)
+    }
+}
+
+/// Return the receiver type used for method-dispatch analysis.
+fn receiver_type_for_method_dispatch(receiver_ty: &IrType) -> &IrType {
+    let mut receiver_ty = receiver_ty;
+    while let IrType::Ref(inner) | IrType::RefMut(inner) = receiver_ty {
+        receiver_ty = inner.as_ref();
+    }
+    receiver_ty
+}
+
+/// Add backend clone bounds required by callable return values.
 fn augment_callable_type_params_for_backend_return_clones(
     type_params: &mut [IrTypeParam],
     body: &[IrStmt],
     self_clone_params: Option<&HashSet<String>>,
+    clone_context: &BackendCloneInferenceContext,
 ) {
     if type_params.is_empty() {
         return;
@@ -512,7 +595,13 @@ fn augment_callable_type_params_for_backend_return_clones(
     let type_param_names: HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
     let mut clone_params = HashSet::new();
     for stmt in body {
-        collect_backend_clone_bounds_in_stmt(stmt, &type_param_names, self_clone_params, &mut clone_params);
+        collect_backend_clone_bounds_in_stmt(
+            stmt,
+            &type_param_names,
+            self_clone_params,
+            clone_context,
+            &mut clone_params,
+        );
     }
 
     for tp in type_params {
@@ -532,6 +621,7 @@ fn collect_backend_clone_bounds_in_stmt(
     stmt: &IrStmt,
     type_param_names: &HashSet<&str>,
     self_clone_params: Option<&HashSet<String>>,
+    clone_context: &BackendCloneInferenceContext,
     clone_params: &mut HashSet<String>,
 ) {
     match &stmt.kind {
@@ -543,6 +633,7 @@ fn collect_backend_clone_bounds_in_stmt(
                 },
                 type_param_names,
                 self_clone_params,
+                clone_context,
                 clone_params,
             );
             if let IrExprKind::Call {
@@ -555,30 +646,63 @@ fn collect_backend_clone_bounds_in_stmt(
                 collect_backend_clone_bounds_in_call(
                     func,
                     args,
-                    callable_signature.as_ref(),
-                    true,
+                    BackendCallCloneContext {
+                        callable_signature: callable_signature.as_ref(),
+                        in_return: true,
+                    },
                     type_param_names,
                     self_clone_params,
+                    clone_context,
                     clone_params,
                 );
             } else {
-                collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    expr,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrStmtKind::Expr(expr) => {
-            collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                expr,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
         }
         IrStmtKind::Let { value, .. } | IrStmtKind::Assign { value, .. } | IrStmtKind::CompoundAssign { value, .. } => {
-            collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                value,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
         }
         IrStmtKind::While { body, .. } | IrStmtKind::Loop { body, .. } => {
             for stmt in body {
-                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_stmt(
+                    stmt,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrStmtKind::For { body, .. } => {
             for stmt in body {
-                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_stmt(
+                    stmt,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrStmtKind::If {
@@ -587,11 +711,23 @@ fn collect_backend_clone_bounds_in_stmt(
             ..
         } => {
             for stmt in then_branch {
-                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_stmt(
+                    stmt,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
             if let Some(else_branch) = else_branch {
                 for stmt in else_branch {
-                    collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+                    collect_backend_clone_bounds_in_stmt(
+                        stmt,
+                        type_param_names,
+                        self_clone_params,
+                        clone_context,
+                        clone_params,
+                    );
                 }
             }
         }
@@ -603,23 +739,66 @@ fn collect_backend_clone_bounds_in_stmt(
                 },
                 type_param_names,
                 self_clone_params,
+                clone_context,
                 clone_params,
             );
             for arm in arms {
-                if let IrExprKind::Block { stmts, .. } = &arm.body.kind {
-                    for stmt in stmts {
-                        collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+                for binding in &arm.bindings {
+                    collect_backend_clone_bounds_in_expr(
+                        &binding.value,
+                        type_param_names,
+                        self_clone_params,
+                        clone_context,
+                        clone_params,
+                    );
+                    if let Some(guard_value) = &binding.guard_value {
+                        collect_backend_clone_bounds_in_expr(
+                            guard_value,
+                            type_param_names,
+                            self_clone_params,
+                            clone_context,
+                            clone_params,
+                        );
                     }
                 }
-                collect_backend_clone_bounds_in_expr(&arm.body, type_param_names, self_clone_params, clone_params);
+                if let IrExprKind::Block { stmts, .. } = &arm.body.kind {
+                    for stmt in stmts {
+                        collect_backend_clone_bounds_in_stmt(
+                            stmt,
+                            type_param_names,
+                            self_clone_params,
+                            clone_context,
+                            clone_params,
+                        );
+                    }
+                }
+                collect_backend_clone_bounds_in_expr(
+                    &arm.body,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
                 if let Some(guard) = &arm.guard {
-                    collect_backend_clone_bounds_in_expr(guard, type_param_names, self_clone_params, clone_params);
+                    collect_backend_clone_bounds_in_expr(
+                        guard,
+                        type_param_names,
+                        self_clone_params,
+                        clone_context,
+                        clone_params,
+                    );
                 }
             }
         }
         IrStmtKind::Block(stmts) => {
             for stmt in stmts {
-                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_stmt(
+                    stmt,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrStmtKind::Break { value: Some(expr), .. } => {
@@ -630,9 +809,16 @@ fn collect_backend_clone_bounds_in_stmt(
                 },
                 type_param_names,
                 self_clone_params,
+                clone_context,
                 clone_params,
             );
-            collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                expr,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
         }
         IrStmtKind::Return(None) | IrStmtKind::Break { label: _, value: None } | IrStmtKind::Continue(_) => {}
     }
@@ -648,9 +834,10 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
     site: ValueUseSite<'a>,
     type_param_names: &HashSet<&str>,
     self_clone_params: Option<&HashSet<String>>,
+    clone_context: &BackendCloneInferenceContext,
     clone_params: &mut HashSet<String>,
 ) {
-    if value_use_requires_backend_clone(expr, site) {
+    if value_use_requires_clone_bound(expr, site) {
         add_backend_clone_bounds_for_cloned_expr(expr, type_param_names, self_clone_params, clone_params);
     }
 
@@ -688,6 +875,7 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
                     item_site,
                     type_param_names,
                     self_clone_params,
+                    clone_context,
                     clone_params,
                 );
             }
@@ -709,10 +897,17 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
                         },
                         type_param_names,
                         self_clone_params,
+                        clone_context,
                         clone_params,
                     ),
                     IrListEntry::Spread(value) => {
-                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                        collect_backend_clone_bounds_in_expr(
+                            value,
+                            type_param_names,
+                            self_clone_params,
+                            clone_context,
+                            clone_params,
+                        );
                     }
                 }
             }
@@ -735,6 +930,7 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
                             },
                             type_param_names,
                             self_clone_params,
+                            clone_context,
                             clone_params,
                         );
                         collect_backend_clone_bounds_for_value_use(
@@ -744,11 +940,18 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
                             },
                             type_param_names,
                             self_clone_params,
+                            clone_context,
                             clone_params,
                         );
                     }
                     IrDictEntry::Spread(value) => {
-                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                        collect_backend_clone_bounds_in_expr(
+                            value,
+                            type_param_names,
+                            self_clone_params,
+                            clone_context,
+                            clone_params,
+                        );
                     }
                 }
             }
@@ -760,6 +963,7 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
                     ValueUseSite::StructField { target_ty: None },
                     type_param_names,
                     self_clone_params,
+                    clone_context,
                     clone_params,
                 );
             }
@@ -775,38 +979,50 @@ fn collect_backend_clone_bounds_for_value_use<'a>(
 fn collect_backend_clone_bounds_in_call(
     func: &IrExpr,
     args: &[IrCallArg],
-    callable_signature: Option<&super::FunctionSignature>,
-    in_return: bool,
+    call_context: BackendCallCloneContext<'_>,
     type_param_names: &HashSet<&str>,
     self_clone_params: Option<&HashSet<String>>,
+    clone_context: &BackendCloneInferenceContext,
     clone_params: &mut HashSet<String>,
 ) {
     if call_args_use_incan_clone_policy(func) {
         for (idx, arg) in args.iter().enumerate() {
-            let sig_param = callable_signature.and_then(|sig| sig.params.get(idx));
+            let sig_param = call_context.callable_signature.and_then(|sig| sig.params.get(idx));
             let target_ty = sig_param.map(|param| &param.ty).or_else(|| match &func.ty {
                 IrType::Function { params, .. } => params.get(idx),
                 _ => None,
             });
-            let requires_clone = value_use_requires_backend_clone(
+            let requires_clone = value_use_requires_clone_bound(
                 &arg.expr,
                 ValueUseSite::IncanCallArg {
                     target_ty,
                     callee_param: sig_param,
-                    in_return,
+                    in_return: call_context.in_return,
                 },
             );
             if requires_clone {
                 add_backend_clone_bounds_for_cloned_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
             }
-            collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                &arg.expr,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
         }
     } else {
         for arg in args {
-            collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                &arg.expr,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
         }
     }
-    collect_backend_clone_bounds_in_expr(func, type_param_names, self_clone_params, clone_params);
+    collect_backend_clone_bounds_in_expr(func, type_param_names, self_clone_params, clone_context, clone_params);
 }
 
 /// Walk an expression tree for backend-planned clones and explicit clone calls that affect generic bounds.
@@ -814,6 +1030,7 @@ fn collect_backend_clone_bounds_in_expr(
     expr: &IrExpr,
     type_param_names: &HashSet<&str>,
     self_clone_params: Option<&HashSet<String>>,
+    clone_context: &BackendCloneInferenceContext,
     clone_params: &mut HashSet<String>,
 ) {
     match &expr.kind {
@@ -821,31 +1038,64 @@ fn collect_backend_clone_bounds_in_expr(
             receiver,
             args,
             arg_policy,
+            callable_signature,
             ..
         } => {
-            if method_call_args_use_incan_clone_policy(receiver, *arg_policy) {
-                for arg in args {
-                    if incan_call_arg_requires_backend_clone(&arg.expr) {
-                        add_backend_clone_bounds_for_cloned_expr(
-                            &arg.expr,
-                            type_param_names,
-                            self_clone_params,
-                            clone_params,
-                        );
-                    }
-                    collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+            let callable_signature = callable_signature.as_ref();
+            for (idx, arg) in args.iter().enumerate() {
+                let sig_param = callable_signature.and_then(|sig| sig.params.get(idx));
+                let use_site = regular_method_argument_use_site(
+                    RegularMethodArgumentContext {
+                        arg_policy: *arg_policy,
+                        receiver_ref_kind: receiver_ref_kind(receiver),
+                        has_incan_method_signature: callable_signature.is_some(),
+                        is_incan_owned_nominal_receiver: clone_context.is_incan_owned_nominal_receiver(&receiver.ty),
+                        is_rusttype_alias_receiver: clone_context.is_rusttype_alias_receiver(&receiver.ty),
+                        preserves_lookup_arg_shape: matches!(arg_policy, MethodCallArgPolicy::PreserveShape),
+                        in_return: false,
+                    },
+                    sig_param,
+                );
+                if value_use_requires_clone_bound(&arg.expr, use_site) {
+                    add_backend_clone_bounds_for_cloned_expr(
+                        &arg.expr,
+                        type_param_names,
+                        self_clone_params,
+                        clone_params,
+                    );
                 }
-            } else {
-                for arg in args {
-                    collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
-                }
+                collect_backend_clone_bounds_in_expr(
+                    &arg.expr,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
-            collect_backend_clone_bounds_in_expr(receiver, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                receiver,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
         }
         IrExprKind::KnownMethodCall { receiver, args, .. } => {
-            collect_backend_clone_bounds_in_expr(receiver, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                receiver,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
             for arg in args {
-                collect_backend_clone_bounds_in_expr(&arg.expr, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    &arg.expr,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrExprKind::Call {
@@ -856,22 +1106,37 @@ fn collect_backend_clone_bounds_in_expr(
         } => collect_backend_clone_bounds_in_call(
             func,
             args,
-            callable_signature.as_ref(),
-            false,
+            BackendCallCloneContext {
+                callable_signature: callable_signature.as_ref(),
+                in_return: false,
+            },
             type_param_names,
             self_clone_params,
+            clone_context,
             clone_params,
         ),
         IrExprKind::BuiltinCall { args, .. } | IrExprKind::Tuple(args) => {
             for arg in args {
-                collect_backend_clone_bounds_in_expr(arg, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    arg,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrExprKind::List(args) => {
             for arg in args {
                 match arg {
                     IrListEntry::Element(value) | IrListEntry::Spread(value) => {
-                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                        collect_backend_clone_bounds_in_expr(
+                            value,
+                            type_param_names,
+                            self_clone_params,
+                            clone_context,
+                            clone_params,
+                        );
                     }
                 }
             }
@@ -880,23 +1145,53 @@ fn collect_backend_clone_bounds_in_expr(
             for entry in entries {
                 match entry {
                     IrDictEntry::Pair(key, value) => {
-                        collect_backend_clone_bounds_in_expr(key, type_param_names, self_clone_params, clone_params);
-                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                        collect_backend_clone_bounds_in_expr(
+                            key,
+                            type_param_names,
+                            self_clone_params,
+                            clone_context,
+                            clone_params,
+                        );
+                        collect_backend_clone_bounds_in_expr(
+                            value,
+                            type_param_names,
+                            self_clone_params,
+                            clone_context,
+                            clone_params,
+                        );
                     }
                     IrDictEntry::Spread(value) => {
-                        collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                        collect_backend_clone_bounds_in_expr(
+                            value,
+                            type_param_names,
+                            self_clone_params,
+                            clone_context,
+                            clone_params,
+                        );
                     }
                 }
             }
         }
         IrExprKind::Set(items) => {
             for item in items {
-                collect_backend_clone_bounds_in_expr(item, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    item,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrExprKind::Struct { fields, .. } => {
             for (_, value) in fields {
-                collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    value,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrExprKind::Field { object, .. }
@@ -906,15 +1201,33 @@ fn collect_backend_clone_bounds_in_expr(
         | IrExprKind::NumericResize { expr: object, .. }
         | IrExprKind::InteropCoerce { expr: object, .. }
         | IrExprKind::UnaryOp { operand: object, .. } => {
-            collect_backend_clone_bounds_in_expr(object, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                object,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
         }
         IrExprKind::BinOp { left, right, .. }
         | IrExprKind::Index {
             object: left,
             index: right,
         } => {
-            collect_backend_clone_bounds_in_expr(left, type_param_names, self_clone_params, clone_params);
-            collect_backend_clone_bounds_in_expr(right, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                left,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+            collect_backend_clone_bounds_in_expr(
+                right,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
         }
         IrExprKind::Slice {
             target,
@@ -922,15 +1235,39 @@ fn collect_backend_clone_bounds_in_expr(
             end,
             step,
         } => {
-            collect_backend_clone_bounds_in_expr(target, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                target,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
             if let Some(start) = start {
-                collect_backend_clone_bounds_in_expr(start, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    start,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
             if let Some(end) = end {
-                collect_backend_clone_bounds_in_expr(end, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    end,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
             if let Some(step) = step {
-                collect_backend_clone_bounds_in_expr(step, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    step,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrExprKind::If {
@@ -938,29 +1275,77 @@ fn collect_backend_clone_bounds_in_expr(
             then_branch,
             else_branch,
         } => {
-            collect_backend_clone_bounds_in_expr(condition, type_param_names, self_clone_params, clone_params);
-            collect_backend_clone_bounds_in_expr(then_branch, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                condition,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+            collect_backend_clone_bounds_in_expr(
+                then_branch,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
             if let Some(else_branch) = else_branch {
-                collect_backend_clone_bounds_in_expr(else_branch, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    else_branch,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrExprKind::Block { stmts, value } => {
             for stmt in stmts {
-                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_stmt(
+                    stmt,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
             if let Some(value) = value {
-                collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    value,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrExprKind::Loop { body } => {
             for stmt in body {
-                collect_backend_clone_bounds_in_stmt(stmt, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_stmt(
+                    stmt,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrExprKind::Race { arms, .. } => {
             for arm in arms {
-                collect_backend_clone_bounds_in_expr(&arm.awaitable, type_param_names, self_clone_params, clone_params);
-                collect_backend_clone_bounds_in_expr(&arm.body, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    &arm.awaitable,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
+                collect_backend_clone_bounds_in_expr(
+                    &arm.body,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrExprKind::Match { scrutinee, arms } => {
@@ -971,17 +1356,54 @@ fn collect_backend_clone_bounds_in_expr(
                 },
                 type_param_names,
                 self_clone_params,
+                clone_context,
                 clone_params,
             );
             for arm in arms {
-                collect_backend_clone_bounds_in_expr(&arm.body, type_param_names, self_clone_params, clone_params);
+                for binding in &arm.bindings {
+                    collect_backend_clone_bounds_in_expr(
+                        &binding.value,
+                        type_param_names,
+                        self_clone_params,
+                        clone_context,
+                        clone_params,
+                    );
+                    if let Some(guard_value) = &binding.guard_value {
+                        collect_backend_clone_bounds_in_expr(
+                            guard_value,
+                            type_param_names,
+                            self_clone_params,
+                            clone_context,
+                            clone_params,
+                        );
+                    }
+                }
+                collect_backend_clone_bounds_in_expr(
+                    &arm.body,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
                 if let Some(guard) = &arm.guard {
-                    collect_backend_clone_bounds_in_expr(guard, type_param_names, self_clone_params, clone_params);
+                    collect_backend_clone_bounds_in_expr(
+                        guard,
+                        type_param_names,
+                        self_clone_params,
+                        clone_context,
+                        clone_params,
+                    );
                 }
             }
         }
         IrExprKind::Closure { body, .. } => {
-            collect_backend_clone_bounds_in_expr(body, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                body,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
         }
         IrExprKind::ListComp {
             element,
@@ -989,10 +1411,28 @@ fn collect_backend_clone_bounds_in_expr(
             filter,
             ..
         } => {
-            collect_backend_clone_bounds_in_expr(element, type_param_names, self_clone_params, clone_params);
-            collect_backend_clone_bounds_in_expr(iterable, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                element,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+            collect_backend_clone_bounds_in_expr(
+                iterable,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
             if let Some(filter) = filter {
-                collect_backend_clone_bounds_in_expr(filter, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    filter,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrExprKind::DictComp {
@@ -1002,15 +1442,39 @@ fn collect_backend_clone_bounds_in_expr(
             filter,
             ..
         } => {
-            collect_backend_clone_bounds_in_expr(key, type_param_names, self_clone_params, clone_params);
-            collect_backend_clone_bounds_in_expr(value, type_param_names, self_clone_params, clone_params);
-            collect_backend_clone_bounds_in_expr(iterable, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(key, type_param_names, self_clone_params, clone_context, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                value,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+            collect_backend_clone_bounds_in_expr(
+                iterable,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
             if let Some(filter) = filter {
-                collect_backend_clone_bounds_in_expr(filter, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    filter,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrExprKind::Generator { element, clauses } => {
-            collect_backend_clone_bounds_in_expr(element, type_param_names, self_clone_params, clone_params);
+            collect_backend_clone_bounds_in_expr(
+                element,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
             for clause in clauses {
                 match clause {
                     IrGeneratorClause::For { iterable, .. } => {
@@ -1018,6 +1482,7 @@ fn collect_backend_clone_bounds_in_expr(
                             iterable,
                             type_param_names,
                             self_clone_params,
+                            clone_context,
                             clone_params,
                         );
                     }
@@ -1026,6 +1491,7 @@ fn collect_backend_clone_bounds_in_expr(
                             condition,
                             type_param_names,
                             self_clone_params,
+                            clone_context,
                             clone_params,
                         );
                     }
@@ -1034,23 +1500,61 @@ fn collect_backend_clone_bounds_in_expr(
         }
         IrExprKind::Range { start, end, .. } => {
             if let Some(start) = start {
-                collect_backend_clone_bounds_in_expr(start, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    start,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
             if let Some(end) = end {
-                collect_backend_clone_bounds_in_expr(end, type_param_names, self_clone_params, clone_params);
+                collect_backend_clone_bounds_in_expr(
+                    end,
+                    type_param_names,
+                    self_clone_params,
+                    clone_context,
+                    clone_params,
+                );
             }
         }
         IrExprKind::Format { parts } => {
             for part in parts {
-                if let FormatPart::Expr(expr) = part {
-                    collect_backend_clone_bounds_in_expr(expr, type_param_names, self_clone_params, clone_params);
+                if let FormatPart::Expr { expr, .. } = part {
+                    collect_backend_clone_bounds_in_expr(
+                        expr,
+                        type_param_names,
+                        self_clone_params,
+                        clone_context,
+                        clone_params,
+                    );
                 }
             }
+        }
+        IrExprKind::RegisterCallableName { callable, .. } => {
+            collect_backend_clone_bounds_in_expr(
+                callable,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
+        }
+        IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+            collect_backend_clone_bounds_in_expr(
+                value,
+                type_param_names,
+                self_clone_params,
+                clone_context,
+                clone_params,
+            );
         }
         IrExprKind::Var { .. }
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
         | IrExprKind::AssociatedFunction { .. }
+        | IrExprKind::TypeToken { .. }
+        | IrExprKind::FunctionItem { .. }
         | IrExprKind::Unit
         | IrExprKind::None
         | IrExprKind::Bool(_)
@@ -1067,24 +1571,12 @@ fn collect_backend_clone_bounds_in_expr(
     }
 }
 
-/// Return whether the shared ownership planner would emit `.clone()` for this exact use site.
-fn value_use_requires_backend_clone(expr: &IrExpr, site: ValueUseSite<'_>) -> bool {
-    matches!(plan_value_use(expr, site), super::conversions::Conversion::Clone)
-}
-
-/// Return whether method-call arguments should follow owned Incan call semantics.
-///
-/// External Rust receivers and preserve-shape methods own their argument borrowing rules, so applying the generic Incan
-/// clone heuristic there would over-constrain generated signatures.
-fn method_call_args_use_incan_clone_policy(receiver: &IrExpr, arg_policy: MethodCallArgPolicy) -> bool {
-    !matches!(arg_policy, MethodCallArgPolicy::PreserveShape)
-        && !matches!(
-            &receiver.kind,
-            IrExprKind::Var {
-                ref_kind: VarRefKind::ExternalRustName,
-                ..
-            }
-        )
+/// Return the reference kind used by a receiver expression.
+fn receiver_ref_kind(receiver: &IrExpr) -> Option<VarRefKind> {
+    match &receiver.kind {
+        IrExprKind::Var { ref_kind, .. } => Some(*ref_kind),
+        _ => None,
+    }
 }
 
 /// Return whether a call expression targets an Incan callable rather than an external Rust symbol.
@@ -1109,34 +1601,6 @@ fn borrowed_method_inner_ty(expr: &IrExpr) -> Option<&IrType> {
             _ => None,
         },
         _ => None,
-    }
-}
-
-/// Lightweight predicate for Incan call arguments that may clone before the full use-site planner runs.
-///
-/// This covers the common clone-producing shapes used for call arguments: non-last-use non-`Copy` variables,
-/// non-`Copy` field reads, borrowed non-`Copy` values, and `as_ref()` results that expose non-`Copy` inner data.
-fn incan_call_arg_requires_backend_clone(expr: &IrExpr) -> bool {
-    match &expr.kind {
-        IrExprKind::Var { access, .. } if !expr.ty.is_copy() => !matches!(access, VarAccess::Move),
-        IrExprKind::Field { .. } if !expr.ty.is_copy() => true,
-        _ if matches!(&expr.ty, IrType::Ref(inner) | IrType::RefMut(inner) if !inner.as_ref().is_copy()) => true,
-        _ if borrowed_method_inner_ty(expr).is_some_and(|inner| !inner.is_copy()) => true,
-        _ => false,
-    }
-}
-
-/// Return the target type carried by a use site, if that site has one.
-fn value_use_site_target_ty(site: ValueUseSite<'_>) -> Option<&IrType> {
-    match site {
-        ValueUseSite::IncanCallArg { target_ty, .. }
-        | ValueUseSite::ExternalCallArg { target_ty }
-        | ValueUseSite::StructField { target_ty }
-        | ValueUseSite::CollectionElement { target_ty }
-        | ValueUseSite::Assignment { target_ty }
-        | ValueUseSite::ReturnValue { target_ty }
-        | ValueUseSite::MatchScrutinee { target_ty } => target_ty,
-        ValueUseSite::MethodArg => None,
     }
 }
 
@@ -1216,7 +1680,8 @@ fn collect_generic_type_param_names(ty: &IrType, type_param_names: &HashSet<&str
         | IrType::Set(inner)
         | IrType::Option(inner)
         | IrType::Ref(inner)
-        | IrType::RefMut(inner) => {
+        | IrType::RefMut(inner)
+        | IrType::TypeToken(inner) => {
             collect_generic_type_param_names(inner, type_param_names, out);
         }
         IrType::Dict(key, value) | IrType::Result(key, value) => {
@@ -1228,6 +1693,7 @@ fn collect_generic_type_param_names(ty: &IrType, type_param_names: &HashSet<&str
                 collect_generic_type_param_names(item, type_param_names, out);
             }
         }
+        IrType::ExternalUnion { union, .. } => collect_generic_type_param_names(union, type_param_names, out),
         IrType::Function { params, ret } => {
             for param in params {
                 collect_generic_type_param_names(param, type_param_names, out);
@@ -1258,6 +1724,7 @@ fn collect_generic_type_param_names(ty: &IrType, type_param_names: &HashSet<&str
         | IrType::FrozenStr
         | IrType::FrozenBytes
         | IrType::StrRef
+        | IrType::RustDisplay(_)
         | IrType::SelfType
         | IrType::Unknown => {}
     }
@@ -1270,19 +1737,20 @@ fn collect_generic_type_param_names(ty: &IrType, type_param_names: &HashSet<&str
 fn collect_inferred_bounds_for_callable(
     key: &str,
     func: &IrFunction,
+    type_params: &[IrTypeParam],
     trait_decls: &HashMap<String, super::decl::IrTrait>,
     function_bounds: &mut HashMap<String, Vec<IrTypeParam>>,
     function_params: &mut HashMap<String, Vec<FunctionParam>>,
 ) {
-    if func.type_params.is_empty() {
+    if type_params.is_empty() {
         return;
     }
 
-    let mut inferred = infer_function_bounds(func);
+    let mut inferred = infer_function_bounds(func, type_params);
 
     // Also check return types like `-> DataSet[T]` / `-> BoundedDataSet[T]`, which lower to `impl Trait` and
     // must carry through any bounds required by the returned trait's generic arguments.
-    add_bounds_from_return_type(&func.return_type, &func.type_params, trait_decls, &mut inferred);
+    add_bounds_from_return_type(&func.return_type, type_params, trait_decls, &mut inferred);
 
     function_bounds.insert(key.to_string(), inferred);
     function_params.insert(key.to_string(), func.params.clone());
@@ -1295,16 +1763,17 @@ fn collect_inferred_bounds_for_callable(
 fn propagate_bounds_for_callable(
     key: &str,
     func: &IrFunction,
+    type_params: &[IrTypeParam],
     snapshot: &HashMap<String, Vec<IrTypeParam>>,
     function_params: &HashMap<String, Vec<FunctionParam>>,
     function_bounds: &mut HashMap<String, Vec<IrTypeParam>>,
     changed: &mut bool,
 ) {
-    if func.type_params.is_empty() {
+    if type_params.is_empty() {
         return;
     }
 
-    let called_generics = collect_called_generic_functions(func, snapshot, function_params);
+    let called_generics = collect_called_generic_functions(func, type_params, snapshot, function_params);
     if let Some(current_bounds) = function_bounds.get_mut(key) {
         for (callee_name, type_arg_mapping) in &called_generics {
             if let Some(callee_bounds) = snapshot.get(callee_name)
@@ -1317,12 +1786,12 @@ fn propagate_bounds_for_callable(
 }
 
 /// Infer trait bounds for a single function by scanning its body.
-fn infer_function_bounds(func: &IrFunction) -> Vec<IrTypeParam> {
-    let type_param_names: HashSet<&str> = func.type_params.iter().map(|tp| tp.name.as_str()).collect();
+fn infer_function_bounds(func: &IrFunction, type_params: &[IrTypeParam]) -> Vec<IrTypeParam> {
+    let type_param_names: HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
     let mut bounds_map: HashMap<String, Vec<IrTraitBound>> = HashMap::new();
 
     // Start with explicit bounds from `with` clauses.
-    for tp in &func.type_params {
+    for tp in type_params {
         bounds_map.insert(tp.name.clone(), tp.bounds.clone());
     }
 
@@ -1332,7 +1801,7 @@ fn infer_function_bounds(func: &IrFunction) -> Vec<IrTypeParam> {
     }
 
     // Rebuild type params with combined bounds.
-    func.type_params
+    type_params
         .iter()
         .map(|tp| {
             let bounds = bounds_map.remove(&tp.name).unwrap_or_default();
@@ -1400,6 +1869,12 @@ fn scan_stmt_for_bounds(
         IrStmtKind::Match { scrutinee, arms } => {
             scan_expr_for_bounds(scrutinee, type_params, params, bounds_map);
             for arm in arms {
+                for binding in &arm.bindings {
+                    scan_expr_for_bounds(&binding.value, type_params, params, bounds_map);
+                    if let Some(guard_value) = &binding.guard_value {
+                        scan_expr_for_bounds(guard_value, type_params, params, bounds_map);
+                    }
+                }
                 scan_expr_for_bounds(&arm.body, type_params, params, bounds_map);
                 if let Some(guard) = &arm.guard {
                     scan_expr_for_bounds(guard, type_params, params, bounds_map);
@@ -1411,6 +1886,24 @@ fn scan_stmt_for_bounds(
                 scan_stmt_for_bounds(s, type_params, params, bounds_map);
             }
         }
+    }
+}
+
+/// Return the trait bound implied by a value-level reflection magic method.
+fn reflection_magic_trait_bound(method: &str) -> Option<&'static str> {
+    match magic_methods::from_str(method) {
+        Some(magic_methods::MagicMethodId::ClassName) => Some(tb::INCAN_CLASS_NAME),
+        Some(magic_methods::MagicMethodId::Fields) => Some(tb::INCAN_FIELD_METADATA),
+        _ => None,
+    }
+}
+
+/// Return the trait bound implied by a type-level reflection magic method.
+fn type_reflection_magic_trait_bound(method: &str) -> Option<&'static str> {
+    match magic_methods::from_str(method) {
+        Some(magic_methods::MagicMethodId::ClassName) => Some(tb::INCAN_TYPE_CLASS_NAME),
+        Some(magic_methods::MagicMethodId::Fields) => Some(tb::INCAN_TYPE_FIELD_METADATA),
+        _ => None,
     }
 }
 
@@ -1437,12 +1930,24 @@ fn scan_expr_for_bounds(
             scan_expr_for_bounds(right, type_params, params, bounds_map);
         }
 
-        // ---- f-string interpolation: expressions used in format require Display ----
+        // ---- f-string interpolation: expressions used in format require the matching formatting trait ----
         IrExprKind::Format { parts } => {
             for part in parts {
-                if let FormatPart::Expr(inner) = part {
+                if let FormatPart::Expr { expr: inner, style } = part {
+                    let bound = if style.emits_rust_debug(&inner.ty) {
+                        tb::DEBUG
+                    } else {
+                        tb::DISPLAY
+                    };
+                    let mut formatted_type_params = HashSet::new();
                     if let Some(tp_name) = expr_type_param_name(inner, type_params, params) {
-                        add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::DISPLAY));
+                        formatted_type_params.insert(tp_name);
+                    }
+                    if style.emits_rust_debug(&inner.ty) {
+                        collect_generic_type_param_names(&inner.ty, type_params, &mut formatted_type_params);
+                    }
+                    for tp_name in formatted_type_params {
+                        add_bound(bounds_map, &tp_name, IrTraitBound::simple(bound));
                     }
                     scan_expr_for_bounds(inner, type_params, params, bounds_map);
                 }
@@ -1453,10 +1958,30 @@ fn scan_expr_for_bounds(
         IrExprKind::MethodCall {
             receiver, method, args, ..
         } => {
-            if method == "clone"
-                && let Some(tp_name) = expr_type_param_name(receiver, type_params, params)
+            let receiver_is_type_name = matches!(
+                receiver.kind,
+                IrExprKind::Var {
+                    ref_kind: VarRefKind::TypeName,
+                    ..
+                }
+            );
+            if let Some(tp_name) = expr_type_param_name(receiver, type_params, params) {
+                if method == "clone" && !receiver_is_type_name {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                }
+                let reflection_bound = if receiver_is_type_name {
+                    type_reflection_magic_trait_bound(method)
+                } else {
+                    reflection_magic_trait_bound(method)
+                };
+                if let Some(bound) = reflection_bound {
+                    add_bound(bounds_map, &tp_name, IrTraitBound::simple(bound));
+                }
+            } else if receiver_is_type_name
+                && let Some(tp_name) = type_name_expr_type_param_name(receiver, type_params)
+                && let Some(bound) = type_reflection_magic_trait_bound(method)
             {
-                add_bound(bounds_map, &tp_name, IrTraitBound::simple(tb::CLONE));
+                add_bound(bounds_map, &tp_name, IrTraitBound::simple(bound));
             } else if method == "clone"
                 && matches!(receiver.ty, IrType::Unknown)
                 && matches!(&receiver.kind, IrExprKind::Var { .. } | IrExprKind::Field { .. })
@@ -1585,6 +2110,12 @@ fn scan_expr_for_bounds(
         IrExprKind::Match { scrutinee, arms } => {
             scan_expr_for_bounds(scrutinee, type_params, params, bounds_map);
             for arm in arms {
+                for binding in &arm.bindings {
+                    scan_expr_for_bounds(&binding.value, type_params, params, bounds_map);
+                    if let Some(guard_value) = &binding.guard_value {
+                        scan_expr_for_bounds(guard_value, type_params, params, bounds_map);
+                    }
+                }
                 scan_expr_for_bounds(&arm.body, type_params, params, bounds_map);
                 if let Some(guard) = &arm.guard {
                     scan_expr_for_bounds(guard, type_params, params, bounds_map);
@@ -1689,6 +2220,13 @@ fn scan_expr_for_bounds(
             scan_expr_for_bounds(expr, type_params, params, bounds_map);
         }
 
+        IrExprKind::RegisterCallableName { callable, .. } => {
+            scan_expr_for_bounds(callable, type_params, params, bounds_map);
+        }
+        IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+            scan_expr_for_bounds(value, type_params, params, bounds_map);
+        }
+
         // ---- Range: recurse ----
         IrExprKind::Range { start, end, .. } => {
             if let Some(s) = start {
@@ -1704,6 +2242,8 @@ fn scan_expr_for_bounds(
         | IrExprKind::StaticRead { .. }
         | IrExprKind::StaticBinding { .. }
         | IrExprKind::AssociatedFunction { .. }
+        | IrExprKind::TypeToken { .. }
+        | IrExprKind::FunctionItem { .. }
         | IrExprKind::Unit
         | IrExprKind::None
         | IrExprKind::Bool(_)
@@ -1761,13 +2301,29 @@ fn expr_type_param_name(
     None
 }
 
+/// Return the type parameter named by a type-name expression.
+fn type_name_expr_type_param_name(expr: &IrExpr, type_params: &HashSet<&str>) -> Option<String> {
+    let IrExprKind::Var {
+        name,
+        ref_kind: VarRefKind::TypeName,
+        ..
+    } = &expr.kind
+    else {
+        return None;
+    };
+    type_params.contains(name.as_str()).then(|| name.clone())
+}
+
+/// Extract a type parameter name from an IR type.
 fn type_param_name_from_ir_type(ty: &IrType, type_params: &HashSet<&str>) -> Option<String> {
     match ty {
         IrType::Generic(name) if type_params.contains(name.as_str()) => Some(name.clone()),
+        IrType::Struct(name) if type_params.contains(name.as_str()) => Some(name.clone()),
         _ => None,
     }
 }
 
+/// Collect type-parameter mappings between callee and caller types.
 fn collect_type_param_mapping(
     callee_ty: &IrType,
     caller_ty: &IrType,
@@ -1804,6 +2360,7 @@ fn collect_type_param_mapping(
     }
 }
 
+/// Resolve the generic function key for a call target.
 fn resolve_called_generic_key(
     local_name: &str,
     canonical_path: Option<&[String]>,
@@ -1921,10 +2478,18 @@ fn add_bounds_from_type(
                 add_bounds_from_type(arg, type_params, trait_decls, bounds_map, visited_traits);
             }
         }
+        IrType::ExternalUnion { union, .. } => {
+            add_bounds_from_type(union, type_params, trait_decls, bounds_map, visited_traits);
+        }
         IrType::ImplTrait(bound) => {
             add_bounds_from_trait_bound(bound, type_params, trait_decls, bounds_map, visited_traits);
         }
-        IrType::List(elem) | IrType::Option(elem) | IrType::Ref(elem) | IrType::RefMut(elem) | IrType::Set(elem) => {
+        IrType::List(elem)
+        | IrType::Option(elem)
+        | IrType::Ref(elem)
+        | IrType::RefMut(elem)
+        | IrType::Set(elem)
+        | IrType::TypeToken(elem) => {
             add_bounds_from_type(elem, type_params, trait_decls, bounds_map, visited_traits);
         }
         IrType::Dict(key, value) | IrType::Result(key, value) => {
@@ -1959,6 +2524,7 @@ fn add_bounds_from_type(
         | IrType::FrozenStr
         | IrType::FrozenBytes
         | IrType::StrRef
+        | IrType::RustDisplay(_)
         | IrType::SelfType
         | IrType::Unknown => {}
     }
@@ -2074,10 +2640,11 @@ fn substitute_ir_type(ty: &IrType, subst: &HashMap<&str, &IrType>) -> IrType {
 /// the caller's type parameter names when the argument is a direct type parameter pass-through.
 fn collect_called_generic_functions(
     func: &IrFunction,
+    type_params: &[IrTypeParam],
     function_bounds: &HashMap<String, Vec<IrTypeParam>>,
     function_params: &HashMap<String, Vec<FunctionParam>>,
 ) -> Vec<(String, HashMap<String, String>)> {
-    let type_param_names: HashSet<&str> = func.type_params.iter().map(|tp| tp.name.as_str()).collect();
+    let type_param_names: HashSet<&str> = type_params.iter().map(|tp| tp.name.as_str()).collect();
     let mut result = Vec::new();
 
     for stmt in &func.body {
@@ -2157,6 +2724,12 @@ fn collect_calls_in_stmt(
         IrStmtKind::Match { scrutinee, arms } => {
             recurse_expr(scrutinee, result);
             for arm in arms {
+                for binding in &arm.bindings {
+                    recurse_expr(&binding.value, result);
+                    if let Some(guard_value) = &binding.guard_value {
+                        recurse_expr(guard_value, result);
+                    }
+                }
                 recurse_expr(&arm.body, result);
                 if let Some(guard) = &arm.guard {
                     recurse_expr(guard, result);
@@ -2238,6 +2811,21 @@ fn collect_calls_in_expr(
                 recurse_expr(&arg.expr, result);
             }
         }
+        IrExprKind::FunctionItem { name, type_args } => {
+            if let Some(callee_key) = resolve_called_generic_key(name, None, function_bounds) {
+                let mut mapping = HashMap::new();
+                if let Some(callee_type_params) = function_bounds.get(callee_key.as_str()) {
+                    for (callee_tp, caller_ty) in callee_type_params.iter().zip(type_args.iter()) {
+                        if let Some(caller_tp) = type_param_name_from_ir_type(caller_ty, type_params) {
+                            mapping.insert(callee_tp.name.clone(), caller_tp);
+                        }
+                    }
+                }
+                if !mapping.is_empty() {
+                    result.push((callee_key, mapping));
+                }
+            }
+        }
         IrExprKind::BinOp { left, right, .. } => {
             recurse_expr(left, result);
             recurse_expr(right, result);
@@ -2257,10 +2845,62 @@ fn collect_calls_in_expr(
                 recurse_expr(&arg.expr, result);
             }
         }
+        IrExprKind::BuiltinCall { args, .. } | IrExprKind::Tuple(args) | IrExprKind::Set(args) => {
+            for arg in args {
+                recurse_expr(arg, result);
+            }
+        }
+        IrExprKind::Field { object, .. } => {
+            recurse_expr(object, result);
+        }
+        IrExprKind::Index { object, index } => {
+            recurse_expr(object, result);
+            recurse_expr(index, result);
+        }
+        IrExprKind::Slice {
+            target,
+            start,
+            end,
+            step,
+        } => {
+            recurse_expr(target, result);
+            if let Some(start) = start {
+                recurse_expr(start, result);
+            }
+            if let Some(end) = end {
+                recurse_expr(end, result);
+            }
+            if let Some(step) = step {
+                recurse_expr(step, result);
+            }
+        }
+        IrExprKind::List(items) => {
+            for item in items {
+                match item {
+                    IrListEntry::Element(value) | IrListEntry::Spread(value) => recurse_expr(value, result),
+                }
+            }
+        }
+        IrExprKind::Dict(entries) => {
+            for entry in entries {
+                match entry {
+                    IrDictEntry::Pair(key, value) => {
+                        recurse_expr(key, result);
+                        recurse_expr(value, result);
+                    }
+                    IrDictEntry::Spread(value) => recurse_expr(value, result),
+                }
+            }
+        }
+        IrExprKind::Struct { fields, .. } => {
+            for (_, value) in fields {
+                recurse_expr(value, result);
+            }
+        }
         IrExprKind::Format { parts } => {
             for part in parts {
-                if let FormatPart::Expr(e) = part {
-                    recurse_expr(e, result);
+                if let FormatPart::Expr { expr, .. } = part {
+                    recurse_expr(expr, result);
                 }
             }
         }
@@ -2288,14 +2928,78 @@ fn collect_calls_in_expr(
                 recurse_stmt(stmt, result);
             }
         }
+        IrExprKind::ListComp {
+            element,
+            iterable,
+            filter,
+            ..
+        } => {
+            recurse_expr(element, result);
+            recurse_expr(iterable, result);
+            if let Some(filter) = filter {
+                recurse_expr(filter, result);
+            }
+        }
+        IrExprKind::DictComp {
+            key,
+            value,
+            iterable,
+            filter,
+            ..
+        } => {
+            recurse_expr(key, result);
+            recurse_expr(value, result);
+            recurse_expr(iterable, result);
+            if let Some(filter) = filter {
+                recurse_expr(filter, result);
+            }
+        }
+        IrExprKind::Generator { element, clauses } => {
+            recurse_expr(element, result);
+            for clause in clauses {
+                match clause {
+                    IrGeneratorClause::For { iterable, .. } => recurse_expr(iterable, result),
+                    IrGeneratorClause::If(filter) => recurse_expr(filter, result),
+                }
+            }
+        }
+        IrExprKind::Match { scrutinee, arms } => {
+            recurse_expr(scrutinee, result);
+            for arm in arms {
+                for binding in &arm.bindings {
+                    recurse_expr(&binding.value, result);
+                    if let Some(guard_value) = &binding.guard_value {
+                        recurse_expr(guard_value, result);
+                    }
+                }
+                recurse_expr(&arm.body, result);
+                if let Some(guard) = &arm.guard {
+                    recurse_expr(guard, result);
+                }
+            }
+        }
+        IrExprKind::Closure { body, .. } => {
+            recurse_expr(body, result);
+        }
         IrExprKind::Race { arms, .. } => {
             for arm in arms {
                 recurse_expr(&arm.awaitable, result);
                 recurse_expr(&arm.body, result);
             }
         }
-        IrExprKind::InteropCoerce { expr, .. } => {
+        IrExprKind::Await(expr) | IrExprKind::Try(expr) => {
             recurse_expr(expr, result);
+        }
+        IrExprKind::Cast { expr, .. }
+        | IrExprKind::NumericResize { expr, .. }
+        | IrExprKind::InteropCoerce { expr, .. } => {
+            recurse_expr(expr, result);
+        }
+        IrExprKind::RegisterCallableName { callable, .. } => {
+            recurse_expr(callable, result);
+        }
+        IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+            recurse_expr(value, result);
         }
         // Other expression kinds are not recursed into for transitive inference.
         // The primary call pattern (direct function calls) is covered above.
@@ -2334,8 +3038,9 @@ fn propagate_transitive_bounds(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::ir::FunctionRegistry;
-    use crate::backend::ir::decl::{IrDecl, IrDeclKind, Visibility};
+    use crate::backend::ir::decl::{FunctionParam, IrDecl, IrDeclKind, IrImpl, Visibility};
+    use crate::backend::ir::expr::{FormatStyle, IrCallArgKind, MethodCallArgPolicy, VarAccess};
+    use crate::backend::ir::{FunctionRegistry, FunctionSignature, Mutability, TypedExpr};
 
     fn function(name: &str, type_params: Vec<IrTypeParam>) -> IrFunction {
         IrFunction {
@@ -2362,9 +3067,205 @@ mod tests {
             source_module_name: None,
             entry_point: None,
             function_registry: FunctionRegistry::new(),
+            function_reexports: Vec::new(),
             rust_module_path: None,
             newtype_checked_ctor: Default::default(),
         }
+    }
+
+    #[test]
+    fn impl_owner_generic_bounds_are_written_to_impl_header() -> Result<(), Box<dyn std::error::Error>> {
+        let method = IrFunction {
+            name: "render".to_string(),
+            params: Vec::new(),
+            return_type: IrType::Unit,
+            body: vec![IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+                IrExprKind::Format {
+                    parts: vec![FormatPart::Expr {
+                        expr: TypedExpr::new(
+                            IrExprKind::Var {
+                                name: "value".to_string(),
+                                access: VarAccess::Read,
+                                ref_kind: VarRefKind::Value,
+                            },
+                            IrType::Generic("T".to_string()),
+                        ),
+                        style: FormatStyle::Display,
+                    }],
+                },
+                IrType::String,
+            )))],
+            is_async: false,
+            is_generator: false,
+            visibility: Visibility::Public,
+            type_params: Vec::new(),
+            is_extern: false,
+            rust_attributes: Vec::new(),
+            lint_allows: Vec::new(),
+        };
+        let mut program = IrProgram {
+            declarations: vec![IrDecl::new(IrDeclKind::Impl(IrImpl {
+                target_type: "Boxed".to_string(),
+                type_params: vec![IrTypeParam::bare("T")],
+                trait_name: None,
+                trait_type_args: Vec::new(),
+                associated_types: Vec::new(),
+                methods: vec![method],
+            }))],
+            source_module_name: None,
+            entry_point: None,
+            function_registry: FunctionRegistry::new(),
+            function_reexports: Vec::new(),
+            rust_module_path: None,
+            newtype_checked_ctor: Default::default(),
+        };
+
+        infer_trait_bounds(&mut program);
+
+        let decl = program
+            .declarations
+            .first()
+            .ok_or_else(|| std::io::Error::other("expected impl declaration"))?;
+        let IrDecl {
+            kind: IrDeclKind::Impl(impl_block),
+            ..
+        } = decl
+        else {
+            return Err(std::io::Error::other("expected impl declaration").into());
+        };
+        let bounds = &impl_block.type_params[0].bounds;
+        assert!(
+            bounds.contains(&IrTraitBound::simple(tb::DISPLAY)),
+            "owner generic T should receive Display bound from impl method body, got {bounds:?}"
+        );
+        assert!(
+            impl_block.methods[0].type_params.is_empty(),
+            "impl-owner generics must stay on the impl header, not the method signature"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn backend_clone_bounds_do_not_use_incan_policy_for_external_nominal_methods()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut func = function("send", vec![IrTypeParam::bare("T")]);
+        func.body = vec![IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "client".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("external_crate::Client".to_string()),
+                )),
+                method: "send".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "value".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Generic("T".to_string()),
+                    ),
+                }],
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unit,
+        )))];
+        let mut program = program(vec![func]);
+
+        infer_trait_bounds(&mut program);
+
+        let decl = program
+            .declarations
+            .first()
+            .ok_or_else(|| std::io::Error::other("expected function declaration"))?;
+        let IrDecl {
+            kind: IrDeclKind::Function(func),
+            ..
+        } = decl
+        else {
+            return Err(std::io::Error::other("expected function declaration").into());
+        };
+        assert!(
+            func.type_params[0].bounds.is_empty(),
+            "external nominal method args should not inherit Incan clone policy, got {:?}",
+            func.type_params[0].bounds
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn backend_clone_bounds_use_incan_policy_for_methods_with_signatures() -> Result<(), Box<dyn std::error::Error>> {
+        let mut func = function("send", vec![IrTypeParam::bare("T")]);
+        func.body = vec![IrStmt::new(IrStmtKind::Expr(TypedExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: "client".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Struct("Client".to_string()),
+                )),
+                method: "send".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: vec![IrCallArg {
+                    name: None,
+                    kind: IrCallArgKind::Positional,
+                    expr: TypedExpr::new(
+                        IrExprKind::Var {
+                            name: "value".to_string(),
+                            access: VarAccess::Read,
+                            ref_kind: VarRefKind::Value,
+                        },
+                        IrType::Generic("T".to_string()),
+                    ),
+                }],
+                callable_signature: Some(FunctionSignature {
+                    params: vec![FunctionParam {
+                        name: "value".to_string(),
+                        ty: IrType::Generic("T".to_string()),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind: crate::frontend::ast::ParamKind::Normal,
+                        default: None,
+                    }],
+                    return_type: IrType::Unit,
+                }),
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Unit,
+        )))];
+        let mut program = program(vec![func]);
+
+        infer_trait_bounds(&mut program);
+
+        let decl = program
+            .declarations
+            .first()
+            .ok_or_else(|| std::io::Error::other("expected function declaration"))?;
+        let IrDecl {
+            kind: IrDeclKind::Function(func),
+            ..
+        } = decl
+        else {
+            return Err(std::io::Error::other("expected function declaration").into());
+        };
+        assert!(
+            func.type_params[0].bounds.contains(&IrTraitBound::simple(tb::CLONE)),
+            "Incan method signatures should keep clone-bound inference aligned with emission, got {:?}",
+            func.type_params[0].bounds
+        );
+        Ok(())
     }
 
     #[test]

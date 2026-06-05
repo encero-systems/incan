@@ -14,6 +14,59 @@ struct Settings {
     #[expect(dead_code, reason = "retained for Incan private field semantics")]
     auto_save: bool,
 }
+impl incan_stdlib::reflection::HasClassName for Settings {
+    fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Settings {
+    fn __class_name__() -> &'static str {
+        "Settings"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Settings {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Settings {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 3] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("theme"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("theme"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: true,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("font_size"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("font_size"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: true,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("auto_save"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("auto_save"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("bool"),
+                has_default: true,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 fn main() {
     std::panic::set_hook(
         std::boxed::Box::new(|panic_info| {

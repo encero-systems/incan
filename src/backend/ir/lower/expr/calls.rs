@@ -12,14 +12,21 @@ use super::super::super::{FunctionSignature, IrStmt, Mutability, TypedExpr};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
 use crate::frontend::ast::{self, TypeConstraintKey};
+use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
 use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType};
 use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind, ValidatedNewtypeCoercionMode};
 use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
+use crate::library_manifest::{
+    FunctionExport, MethodExport, ParamDefaultCallArgExport, ParamDefaultCallSignatureExport, ParamDefaultExport,
+    ParamExport, ParamKindExport,
+};
 use incan_core::lang::keywords::{self, KeywordId};
 use incan_core::lang::stdlib;
 use incan_core::lang::stdlib::{STDLIB_BUILTINS, STDLIB_ROOT};
 use incan_core::lang::surface::constructors::{self, ConstructorId};
 use incan_core::lang::surface::types as surface_types;
+use incan_core::lang::testing::{self, TestingAssertHelperId};
+use incan_core::lang::types::collections::{self, CollectionTypeId};
 
 const TYPE_CONSTRUCTOR_HOOK: &str = "__incan_new";
 
@@ -135,6 +142,299 @@ impl AstLowering {
         }
     }
 
+    /// Resolve a callable signature from a public dependency manifest, including materialized default expressions.
+    fn callable_signature_for_imported_pub_path(&mut self, path: &[String]) -> Option<FunctionSignature> {
+        if path.len() < 3 || path.first().map(String::as_str) != Some("pub") {
+            return None;
+        }
+        let library = path.get(1)?;
+        let function_name = path.last()?;
+        let function = self.pub_function_export(library, function_name)?;
+        Some(self.callable_signature_from_pub_function_export(library, &function))
+    }
+
+    /// Resolve the canonical imported callee path for identifier and module-qualified calls.
+    fn imported_callee_path_for_expr(&self, expr: &ast::Expr) -> Option<Vec<String>> {
+        match expr {
+            ast::Expr::Ident(name) => self
+                .active_trait_default_function_path(name)
+                .or_else(|| self.import_aliases.get(name).cloned()),
+            ast::Expr::Field(object, field) => {
+                let mut path = self.imported_field_base_path(&object.node)?;
+                path.push(field.clone());
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    /// Resolve the imported module path that roots a field-chain callee such as `widgets.make_widget`.
+    fn imported_field_base_path(&self, expr: &ast::Expr) -> Option<Vec<String>> {
+        match expr {
+            ast::Expr::Ident(name) => self.import_aliases.get(name).cloned(),
+            ast::Expr::Field(object, field) => {
+                let mut path = self.imported_field_base_path(&object.node)?;
+                path.push(field.clone());
+                Some(path)
+            }
+            _ => None,
+        }
+    }
+
+    /// Resolve `module.function(...)` syntax when the receiver is an imported public dependency module.
+    pub(in crate::backend::ir::lower) fn imported_pub_method_callee_path(
+        &self,
+        receiver: &ast::Expr,
+        method_name: &str,
+    ) -> Option<Vec<String>> {
+        let mut path = self.imported_field_base_path(receiver)?;
+        if path.first().map(String::as_str) != Some("pub") {
+            return None;
+        }
+        let library = path.get(1)?;
+        self.pub_function_export(library, method_name)?;
+        path.push(method_name.to_string());
+        Some(path)
+    }
+
+    /// Fetch the public function export or projected alias export that backs an imported public callable.
+    fn pub_function_export(&self, library: &str, function_name: &str) -> Option<FunctionExport> {
+        let index = self.library_manifest_index.as_ref()?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = index.get(library)? else {
+            return None;
+        };
+        if let Some(function) = manifest
+            .exports
+            .functions
+            .iter()
+            .find(|function| function.name == function_name)
+        {
+            return Some(function.clone());
+        }
+        manifest
+            .exports
+            .aliases
+            .iter()
+            .find(|alias| alias.name == function_name)
+            .and_then(|alias| alias.projected_function.clone())
+    }
+
+    /// Rebuild a public dependency callable signature from manifest metadata, including materialized parameter
+    /// defaults.
+    fn callable_signature_from_pub_function_export(
+        &mut self,
+        library: &str,
+        function: &FunctionExport,
+    ) -> FunctionSignature {
+        FunctionSignature {
+            params: function
+                .params
+                .iter()
+                .map(|param| {
+                    let base_ty = self.lower_pub_manifest_type_ref(library, &param.ty);
+                    let kind = param_kind_from_manifest(param.kind);
+                    FunctionParam {
+                        name: param.name.clone(),
+                        ty: Self::lower_param_container_type(kind, base_ty),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind,
+                        default: self.lower_pub_param_default(library, param),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_pub_manifest_type_ref(library, &function.return_type),
+        }
+    }
+
+    /// Lower one exported parameter default into IR so omitted public dependency arguments can be emitted at call
+    /// sites.
+    fn lower_pub_param_default(&mut self, library: &str, param: &ParamExport) -> Option<TypedExpr> {
+        match param.default.as_ref() {
+            Some(ParamDefaultExport::Unsupported) | None => None,
+            Some(default) if default.is_materializable() => self.lower_pub_default_expr(library, default),
+            Some(_) => None,
+        }
+    }
+
+    /// Lower a metadata-safe exported default expression into the subset of IR that can be materialized by consumers.
+    fn lower_pub_default_expr(&mut self, library: &str, default: &ParamDefaultExport) -> Option<TypedExpr> {
+        match default {
+            ParamDefaultExport::Int(value) => Some(TypedExpr::new(IrExprKind::Int(*value), IrType::Int)),
+            ParamDefaultExport::Float(value) => value
+                .parse::<f64>()
+                .ok()
+                .map(|value| TypedExpr::new(IrExprKind::Float(value), IrType::Float)),
+            ParamDefaultExport::Bool(value) => Some(TypedExpr::new(IrExprKind::Bool(*value), IrType::Bool)),
+            ParamDefaultExport::String(value) => Some(TypedExpr::new(
+                IrExprKind::Literal(IrLiteral::StaticStr(value.clone())),
+                IrType::StaticStr,
+            )),
+            ParamDefaultExport::Bytes(value) => Some(TypedExpr::new(IrExprKind::Bytes(value.clone()), IrType::Bytes)),
+            ParamDefaultExport::None => Some(TypedExpr::new(IrExprKind::None, IrType::Unit)),
+            ParamDefaultExport::List(values) => {
+                let entries = values
+                    .iter()
+                    .map(|value| self.lower_pub_default_expr(library, value).map(IrListEntry::Element))
+                    .collect::<Option<Vec<_>>>()?;
+                Some(TypedExpr::new(
+                    IrExprKind::List(entries),
+                    IrType::List(Box::new(IrType::Unknown)),
+                ))
+            }
+            ParamDefaultExport::Dict(entries) => {
+                let entries = entries
+                    .iter()
+                    .map(|entry| {
+                        Some(IrDictEntry::Pair(
+                            self.lower_pub_default_expr(library, &entry.key)?,
+                            Box::new(self.lower_pub_default_expr(library, &entry.value)?),
+                        ))
+                    })
+                    .collect::<Option<Vec<_>>>()?;
+                Some(TypedExpr::new(
+                    IrExprKind::Dict(entries),
+                    IrType::Dict(Box::new(IrType::Unknown), Box::new(IrType::Unknown)),
+                ))
+            }
+            ParamDefaultExport::ConstRef(path) => self.lower_pub_default_const_ref(library, path),
+            ParamDefaultExport::Call { path, args, signature } => {
+                self.lower_pub_default_call(library, path, args, signature.as_ref())
+            }
+            ParamDefaultExport::Unsupported => None,
+        }
+    }
+
+    /// Lower a default constant reference as a dependency-qualified value expression.
+    fn lower_pub_default_const_ref(&mut self, library: &str, path: &[String]) -> Option<TypedExpr> {
+        if path.is_empty() {
+            return None;
+        }
+        let mut expr = TypedExpr::new(
+            IrExprKind::Var {
+                name: library.to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::ExternalName,
+            },
+            IrType::Unknown,
+        );
+        for segment in path {
+            expr = TypedExpr::new(
+                IrExprKind::Field {
+                    object: Box::new(expr),
+                    field: segment.clone(),
+                },
+                IrType::Unknown,
+            );
+        }
+        Some(expr)
+    }
+
+    /// Lower an exported default call while preserving the public dependency canonical path for nested call planning.
+    fn lower_pub_default_call(
+        &mut self,
+        library: &str,
+        path: &[String],
+        args: &[ParamDefaultCallArgExport],
+        signature: Option<&ParamDefaultCallSignatureExport>,
+    ) -> Option<TypedExpr> {
+        let function_name = path.last()?.clone();
+        let canonical_path = self.pub_default_canonical_path(library, path);
+        let function = self.pub_function_export(library, &function_name);
+        let callable_signature = signature
+            .map(|signature| self.callable_signature_from_pub_default_call_signature(library, signature))
+            .or_else(|| {
+                function
+                    .as_ref()
+                    .map(|function| self.callable_signature_from_pub_function_export(library, function))
+            });
+        let return_type = signature
+            .map(|signature| self.lower_pub_manifest_type_ref(library, &signature.return_type))
+            .or_else(|| {
+                function
+                    .as_ref()
+                    .map(|function| self.lower_pub_manifest_type_ref(library, &function.return_type))
+            })
+            .unwrap_or(IrType::Unknown);
+        let args = args
+            .iter()
+            .map(|arg| {
+                Some(IrCallArg {
+                    name: arg.name.clone(),
+                    kind: if arg.name.is_some() {
+                        IrCallArgKind::Named
+                    } else {
+                        IrCallArgKind::Positional
+                    },
+                    expr: self.lower_pub_default_expr(library, &arg.value)?,
+                })
+            })
+            .collect::<Option<Vec<_>>>()?;
+        Some(TypedExpr::new(
+            IrExprKind::Call {
+                func: Box::new(TypedExpr::new(
+                    IrExprKind::Var {
+                        name: function_name,
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Unknown,
+                )),
+                type_args: Vec::new(),
+                args,
+                callable_signature,
+                canonical_path: Some(canonical_path),
+            },
+            self.pub_external_type(library, return_type),
+        ))
+    }
+
+    /// Rebuild the source callable surface captured for a provider-owned default helper call.
+    fn callable_signature_from_pub_default_call_signature(
+        &mut self,
+        library: &str,
+        signature: &ParamDefaultCallSignatureExport,
+    ) -> FunctionSignature {
+        FunctionSignature {
+            params: signature
+                .params
+                .iter()
+                .map(|param| {
+                    let base_ty = self.lower_pub_manifest_type_ref(library, &param.ty);
+                    let kind = param_kind_from_manifest(param.kind);
+                    FunctionParam {
+                        name: param.name.clone(),
+                        ty: Self::lower_param_container_type(kind, base_ty),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind,
+                        default: self.lower_pub_param_default(library, param),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_pub_manifest_type_ref(library, &signature.return_type),
+        }
+    }
+
+    /// Convert a default-expression path from manifest-local spelling into a public dependency canonical path.
+    fn pub_default_canonical_path(&self, library: &str, path: &[String]) -> Vec<String> {
+        let mut canonical = vec!["pub".to_string(), library.to_string()];
+        canonical.extend(path.iter().cloned());
+        canonical
+    }
+
+    /// Build the emitted function type for a public dependency callable without losing semantic call-planning metadata.
+    fn pub_external_function_type(&self, library: &str, signature: &FunctionSignature) -> IrType {
+        IrType::Function {
+            params: signature
+                .params
+                .iter()
+                .map(|param| self.pub_external_type(library, param.ty.clone()))
+                .collect(),
+            ret: Box::new(self.pub_external_type(library, signature.return_type.clone())),
+        }
+    }
+
     /// Resolve an imported stdlib type method signature by loading the owning stdlib stub AST.
     ///
     /// Function metadata already has a direct stdlib lookup path, but type-member calls such as `App.run()` arrive as
@@ -153,6 +453,84 @@ impl AstLowering {
         let mut cache = crate::frontend::typechecker::stdlib_loader::StdlibAstCache::new();
         let method = cache.lookup_type_method_decl(module_path, type_name, method_name)?;
         Some(self.callable_signature_from_stdlib_method_decl(&method))
+    }
+
+    /// Resolve an imported public dependency model/class method signature from the provider manifest.
+    pub(in crate::backend::ir::lower) fn callable_signature_for_imported_pub_type_method(
+        &mut self,
+        library: &str,
+        receiver_ty: &IrType,
+        method_name: &str,
+    ) -> Option<FunctionSignature> {
+        let type_name = Self::nominal_receiver_type_name(receiver_ty)?;
+        let manifest_index = self.library_manifest_index.as_ref()?;
+        let LibraryManifestIndexEntry::Loaded { manifest, .. } = manifest_index.get(library)? else {
+            return None;
+        };
+        let method = manifest
+            .exports
+            .models
+            .iter()
+            .find(|model| model.name == type_name)
+            .and_then(|model| model.methods.iter().find(|method| method.name == method_name))
+            .or_else(|| {
+                manifest
+                    .exports
+                    .classes
+                    .iter()
+                    .find(|class| class.name == type_name)
+                    .and_then(|class| class.methods.iter().find(|method| method.name == method_name))
+            })
+            .or_else(|| {
+                manifest
+                    .exports
+                    .newtypes
+                    .iter()
+                    .find(|newtype| newtype.name == type_name)
+                    .and_then(|newtype| newtype.methods.iter().find(|method| method.name == method_name))
+            })
+            .or_else(|| {
+                manifest
+                    .exports
+                    .enums
+                    .iter()
+                    .find(|enum_| enum_.name == type_name)
+                    .and_then(|enum_| enum_.methods.iter().find(|method| method.name == method_name))
+            })?
+            .clone();
+        Some(self.callable_signature_from_pub_method_export(library, &method))
+    }
+
+    /// Return the nominal receiver type name used for manifest method lookup.
+    fn nominal_receiver_type_name(receiver_ty: &IrType) -> Option<&str> {
+        match receiver_ty {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => Some(name.rsplit("::").next().unwrap_or(name)),
+            IrType::Ref(inner) | IrType::RefMut(inner) => Self::nominal_receiver_type_name(inner),
+            _ => None,
+        }
+    }
+
+    /// Rebuild a public dependency method signature from manifest metadata.
+    fn callable_signature_from_pub_method_export(&mut self, library: &str, method: &MethodExport) -> FunctionSignature {
+        FunctionSignature {
+            params: method
+                .params
+                .iter()
+                .map(|param| {
+                    let base_ty = self.lower_pub_manifest_type_ref(library, &param.ty);
+                    let kind = param_kind_from_manifest(param.kind);
+                    FunctionParam {
+                        name: param.name.clone(),
+                        ty: Self::lower_param_container_type(kind, base_ty),
+                        mutability: Mutability::Immutable,
+                        is_self: false,
+                        kind,
+                        default: self.lower_pub_param_default(library, param),
+                    }
+                })
+                .collect(),
+            return_type: self.lower_pub_manifest_type_ref(library, &method.return_type),
+        }
     }
 
     /// Resolve the signature for an imported stdlib function by its canonical import path.
@@ -260,6 +638,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Ok).to_string(),
                 fields: vec![Pattern::Var(value_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(
                 IrExprKind::Var {
@@ -277,6 +656,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Err).to_string(),
                 fields: vec![Pattern::Var(err_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(
                 IrExprKind::Call {
@@ -746,6 +1126,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Ok).to_string(),
                 fields: vec![Pattern::Var(value_name)],
             },
+            bindings: Vec::new(),
             guard: None,
             body: Self::validated_newtype_step_result_expr(
                 next_name,
@@ -761,6 +1142,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Err).to_string(),
                 fields: vec![Pattern::Var(error_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: Self::result_err_expr(
                 TypedExpr::new(
@@ -830,6 +1212,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Ok).to_string(),
                 fields: vec![Pattern::Var(value_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: Self::result_ok_expr(
                 TypedExpr::new(
@@ -857,6 +1240,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Err).to_string(),
                 fields: vec![Pattern::Var(error_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(
                 IrExprKind::Block {
@@ -912,6 +1296,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Ok).to_string(),
                 fields: vec![Pattern::Var(value_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(
                 IrExprKind::Var {
@@ -928,6 +1313,7 @@ impl AstLowering {
                 variant: constructors::as_str(ConstructorId::Err).to_string(),
                 fields: vec![Pattern::Var(err_name.clone())],
             },
+            bindings: Vec::new(),
             guard: None,
             body: TypedExpr::new(
                 IrExprKind::Call {
@@ -1195,31 +1581,13 @@ impl AstLowering {
         type_args.iter().map(|ty| self.lower_type(&ty.node)).collect()
     }
 
+    /// Return the expression carried by a call argument.
     fn call_arg_expr(arg: &ast::CallArg) -> &ast::Spanned<ast::Expr> {
         match arg {
             ast::CallArg::Positional(e)
             | ast::CallArg::Named(_, e)
             | ast::CallArg::PositionalUnpack(e)
             | ast::CallArg::KeywordUnpack(e) => e,
-        }
-    }
-
-    /// Build a synthetic callable signature from an already-lowered function type.
-    fn function_signature_from_ir_type(params: &[IrType], ret: &IrType) -> FunctionSignature {
-        FunctionSignature {
-            params: params
-                .iter()
-                .enumerate()
-                .map(|(idx, ty)| FunctionParam {
-                    name: format!("__incan_arg_{idx}"),
-                    ty: ty.clone(),
-                    mutability: super::super::super::types::Mutability::Immutable,
-                    is_self: false,
-                    kind: ast::ParamKind::Normal,
-                    default: None,
-                })
-                .collect(),
-            return_type: ret.clone(),
         }
     }
 
@@ -1261,7 +1629,7 @@ impl AstLowering {
             return callable_signature;
         };
         let mut signature =
-            callable_signature.unwrap_or_else(|| Self::function_signature_from_ir_type(params, ret.as_ref()));
+            callable_signature.unwrap_or_else(|| FunctionSignature::from_function_type(params, ret.as_ref()));
         let mut changed = false;
 
         for (idx, arg) in args.iter().enumerate() {
@@ -1296,6 +1664,7 @@ impl AstLowering {
         }
     }
 
+    /// Lower a rusttype interop adapter into IR.
     fn lower_rusttype_interop_adapter(
         &mut self,
         arg_ty: &IrType,
@@ -1391,7 +1760,7 @@ impl AstLowering {
         let Some(coercion) = coercion else {
             return Ok(arg_expr);
         };
-        let target_ty = self.lower_resolved_type(&coercion.target_type);
+        let target_ty = self.lower_rust_boundary_target_type(&coercion.target_type);
         let from_ty = arg_expr.ty.clone();
         let kind = match coercion.kind {
             RustArgCoercionKind::Builtin(policy) => IrInteropCoercionKind::Builtin {
@@ -1419,6 +1788,104 @@ impl AstLowering {
             },
             target_ty,
         ))
+    }
+
+    /// Lower the typechecker-selected Rust boundary target without collapsing borrowed Rust slices into owned values.
+    ///
+    /// General source-level references lower as `Ref<T>`, but Rust argument coercions use the target type as a backend
+    /// contract. A `&str` parameter therefore lowers to `StrRef`, while `&String` remains a reference to the owned Rust
+    /// string target recorded by the frontend.
+    fn lower_rust_boundary_target_type(&self, target_ty: &ResolvedType) -> IrType {
+        match target_ty {
+            ResolvedType::Ref(inner) if matches!(inner.as_ref(), ResolvedType::Str) => IrType::StrRef,
+            ResolvedType::Ref(inner) => IrType::Ref(Box::new(self.lower_rust_boundary_target_type(inner))),
+            ResolvedType::RefMut(inner) => IrType::RefMut(Box::new(self.lower_rust_boundary_target_type(inner))),
+            ResolvedType::Tuple(items) => IrType::Tuple(
+                items
+                    .iter()
+                    .map(|item| self.lower_rust_boundary_target_type(item))
+                    .collect(),
+            ),
+            ResolvedType::FrozenList(inner) => IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::FrozenList).to_string(),
+                vec![self.lower_rust_boundary_target_type(inner)],
+            ),
+            ResolvedType::FrozenSet(inner) => IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::FrozenSet).to_string(),
+                vec![self.lower_rust_boundary_target_type(inner)],
+            ),
+            ResolvedType::FrozenDict(key, value) => IrType::NamedGeneric(
+                collections::as_str(CollectionTypeId::FrozenDict).to_string(),
+                vec![
+                    self.lower_rust_boundary_target_type(key),
+                    self.lower_rust_boundary_target_type(value),
+                ],
+            ),
+            ResolvedType::Generic(name, args) => match collections::from_str(name.as_str()) {
+                Some(CollectionTypeId::List) => IrType::List(Box::new(
+                    args.first()
+                        .map(|arg| self.lower_rust_boundary_target_type(arg))
+                        .unwrap_or(IrType::Unknown),
+                )),
+                Some(CollectionTypeId::Dict) => IrType::Dict(
+                    Box::new(
+                        args.first()
+                            .map(|arg| self.lower_rust_boundary_target_type(arg))
+                            .unwrap_or(IrType::Unknown),
+                    ),
+                    Box::new(
+                        args.get(1)
+                            .map(|arg| self.lower_rust_boundary_target_type(arg))
+                            .unwrap_or(IrType::Unknown),
+                    ),
+                ),
+                Some(CollectionTypeId::Set) => IrType::Set(Box::new(
+                    args.first()
+                        .map(|arg| self.lower_rust_boundary_target_type(arg))
+                        .unwrap_or(IrType::Unknown),
+                )),
+                Some(CollectionTypeId::Option) => IrType::Option(Box::new(
+                    args.first()
+                        .map(|arg| self.lower_rust_boundary_target_type(arg))
+                        .unwrap_or(IrType::Unknown),
+                )),
+                Some(CollectionTypeId::Result) => IrType::Result(
+                    Box::new(
+                        args.first()
+                            .map(|arg| self.lower_rust_boundary_target_type(arg))
+                            .unwrap_or(IrType::Unknown),
+                    ),
+                    Box::new(
+                        args.get(1)
+                            .map(|arg| self.lower_rust_boundary_target_type(arg))
+                            .unwrap_or(IrType::Unknown),
+                    ),
+                ),
+                Some(CollectionTypeId::Tuple) => IrType::Tuple(
+                    args.iter()
+                        .map(|arg| self.lower_rust_boundary_target_type(arg))
+                        .collect(),
+                ),
+                Some(
+                    id @ (CollectionTypeId::FrozenList
+                    | CollectionTypeId::FrozenSet
+                    | CollectionTypeId::FrozenDict
+                    | CollectionTypeId::Generator),
+                ) => IrType::NamedGeneric(
+                    collections::as_str(id).to_string(),
+                    args.iter()
+                        .map(|arg| self.lower_rust_boundary_target_type(arg))
+                        .collect(),
+                ),
+                None => IrType::NamedGeneric(
+                    name.clone(),
+                    args.iter()
+                        .map(|arg| self.lower_rust_boundary_target_type(arg))
+                        .collect(),
+                ),
+            },
+            _ => self.lower_resolved_type(target_ty),
+        }
     }
 
     /// Lower a function/constructor call expression.
@@ -1522,13 +1989,24 @@ impl AstLowering {
             }
         }
 
-        let imported_callee_path = match &f.node {
-            ast::Expr::Ident(name) => self
-                .active_trait_default_function_path(name)
-                .or_else(|| self.import_aliases.get(name).cloned()),
-            _ => None,
-        };
+        let selected_emitted_name = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.selected_function_emitted_name(call_span))
+            .map(str::to_string);
+        let mut imported_callee_path = self.imported_callee_path_for_expr(&f.node);
+        if let (Some(path), Some(emitted_name)) = (&mut imported_callee_path, &selected_emitted_name)
+            && let Some(last) = path.last_mut()
+        {
+            *last = emitted_name.clone();
+        }
         let mut func = self.lower_expr_spanned(f)?;
+        if let (ast::Expr::Ident(_), Some(emitted_name), IrExprKind::Var { name, .. }) =
+            (&f.node, selected_emitted_name.as_deref(), &mut func.kind)
+        {
+            *name = emitted_name.to_string();
+            func.ty = self.lookup_var(emitted_name);
+        }
         if let Some(resolved_operator) = self
             .type_info
             .as_ref()
@@ -1561,6 +2039,11 @@ impl AstLowering {
         if let ast::Expr::Ident(name) = &f.node
             && let Some(builtin) = BuiltinFn::from_name(name)
             && imported_callee_path.is_none()
+            && self
+                .type_info
+                .as_ref()
+                .is_none_or(|info| info.ident_kind(f.span).is_none())
+            && self.callable_signature_for_call_span(call_span).is_none()
             && !matches!(func.ty, IrType::Function { .. })
         {
             let args_ir = self.lower_call_args(args)?.into_iter().map(|a| a.expr).collect();
@@ -1595,11 +2078,12 @@ impl AstLowering {
             let arg_span = Self::call_arg_expr(arg_ast).span;
             arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
         }
-        if imported_callee_path.as_ref().is_some_and(|path| {
-            path.len() == 3 && path[0] == "std" && path[1] == "testing" && path[2] == "assert_raises"
-        }) && args_ir
-            .get(1)
-            .is_none_or(|arg| !matches!(arg.expr.kind, IrExprKind::Literal(IrLiteral::StaticStr(_))))
+        if imported_callee_path
+            .as_ref()
+            .is_some_and(|path| testing::is_assert_helper_std_path(path, TestingAssertHelperId::AssertRaises))
+            && args_ir
+                .get(1)
+                .is_none_or(|arg| !matches!(arg.expr.kind, IrExprKind::Literal(IrLiteral::StaticStr(_))))
         {
             let Some(error_type) = type_args.first() else {
                 return Err(LoweringError {
@@ -1624,6 +2108,7 @@ impl AstLowering {
             .as_ref()
             .and_then(|info| info.resolved_operator_call(call_span).cloned())
             && resolved_operator.kind == ResolvedOperatorKind::Call
+            && imported_callee_path.is_none()
         {
             let ret_ty = self
                 .type_info
@@ -1646,18 +2131,42 @@ impl AstLowering {
         }
         let callable_signature = imported_callee_path
             .as_deref()
-            .and_then(|path| self.callable_signature_for_imported_stdlib_path(path))
+            .and_then(|path| {
+                self.callable_signature_for_imported_stdlib_path(path)
+                    .or_else(|| self.callable_signature_for_imported_pub_path(path))
+            })
             .or_else(|| match &f.node {
-                ast::Expr::Ident(name) => self.lookup_local_callable_signature(name),
+                ast::Expr::Ident(name) => selected_emitted_name
+                    .as_deref()
+                    .and_then(|emitted_name| self.lookup_local_callable_signature(emitted_name))
+                    .or_else(|| self.lookup_local_callable_signature(name)),
                 ast::Expr::Partial(_) => self.partial_expr_signature_for_span(f.span),
                 _ => None,
             })
             .or_else(|| self.callable_signature_for_call_span(call_span))
             .or_else(|| self.callable_signature_for_callee_span(f.span));
         let callable_signature = self.refine_function_typed_local_call(&mut func, &args_ir, callable_signature);
+        let imported_pub_library = imported_callee_path.as_deref().and_then(|path| {
+            if path.first().is_some_and(|segment| segment == "pub") {
+                path.get(1)
+            } else {
+                None
+            }
+        });
+        let callable_signature = match (imported_pub_library, callable_signature) {
+            (Some(library), Some(signature)) => Some(self.pub_external_signature(library, signature)),
+            (_, signature) => signature,
+        };
+        if let (Some(library), Some(signature)) = (imported_pub_library, callable_signature.as_ref()) {
+            func.ty = self.pub_external_function_type(library, signature);
+        }
 
         let ret_ty = if let IrType::Function { ret, .. } = &func.ty {
-            (**ret).clone()
+            let ret_ty = (**ret).clone();
+            match imported_pub_library {
+                Some(library) => self.pub_external_type(library, ret_ty),
+                None => ret_ty,
+            }
         } else {
             IrType::Unknown
         };
@@ -2019,6 +2528,15 @@ impl AstLowering {
     }
 }
 
+/// Convert manifest parameter kind metadata back to the frontend enum used by IR call signatures.
+fn param_kind_from_manifest(kind: ParamKindExport) -> ast::ParamKind {
+    match kind {
+        ParamKindExport::Normal => ast::ParamKind::Normal,
+        ParamKindExport::RestPositional => ast::ParamKind::RestPositional,
+        ParamKindExport::RestKeyword => ast::ParamKind::RestKeyword,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::AstLowering;
@@ -2097,7 +2615,7 @@ mod tests {
             (arg_span.start, arg_span.end),
             RustArgCoercionInfo {
                 rust_target_type: "&str".to_string(),
-                target_type: ResolvedType::Str,
+                target_type: ResolvedType::Ref(Box::new(ResolvedType::Str)),
                 kind: RustArgCoercionKind::Builtin(CoercionPolicy::Borrow),
             },
         );
@@ -2119,17 +2637,38 @@ mod tests {
 
         match lowered.kind {
             IrExprKind::MethodCall { args, .. } => {
-                assert!(
-                    matches!(
-                        args.first().map(|arg| &arg.expr.kind),
-                        Some(IrExprKind::InteropCoerce { .. })
-                    ),
-                    "expected first method arg to be wrapped in InteropCoerce, got {args:?}"
-                );
+                let Some(first_arg) = args.first() else {
+                    return Err("expected lowered method arg".to_string());
+                };
+                match &first_arg.expr.kind {
+                    IrExprKind::InteropCoerce { to_ty, .. } => {
+                        assert_eq!(
+                            *to_ty,
+                            IrType::StrRef,
+                            "expected borrowed str target to lower to StrRef"
+                        );
+                    }
+                    other => {
+                        return Err(format!(
+                            "expected first method arg to be wrapped in InteropCoerce, got {other:?}"
+                        ));
+                    }
+                }
             }
             other => return Err(format!("expected MethodCall lowering, got {other:?}")),
         }
         Ok(())
+    }
+
+    #[test]
+    fn lower_rust_boundary_target_preserves_nested_borrowed_str_refs() {
+        let lowering = AstLowering::new();
+        let target = ResolvedType::Generic("List".to_string(), vec![ResolvedType::Ref(Box::new(ResolvedType::Str))]);
+
+        assert_eq!(
+            lowering.lower_rust_boundary_target_type(&target),
+            IrType::List(Box::new(IrType::StrRef)),
+        );
     }
 
     #[test]

@@ -6,8 +6,8 @@ from autodetection.
 """
 
 from rust::std::io import Cursor, Read
-from rust::flate2 @ "1" import Compression as FlateCompression
-from rust::flate2::read @ "1" import DeflateDecoder, DeflateEncoder
+from rust::flate2 import Compression as FlateCompression
+from rust::flate2::read import DeflateDecoder, DeflateEncoder
 from std.compression._core import Codec, CompressionError, _codec_error, _level_or_default, _validate_chunk_size, _write_sink_bytes
 from std.fs import File
 from std.io import _BytesIO

@@ -585,6 +585,7 @@ impl AstLowering {
                     parent_levels: 0,
                 },
                 name: derive_name.to_string(),
+                type_args: Vec::new(),
                 is_call: false,
                 args: Vec::new(),
             },

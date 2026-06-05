@@ -48,6 +48,7 @@ This RFC narrows the problem: Incan owns the contracts that make interactive run
 - Making WASM the default runtime posture. WASM may be one target capability, not the definition of interactive runtime support.
 - Defining native JSX, `html()` parsing, a component DSL, or a browser router in this RFC.
 - Defining GPU algorithms, shader language semantics, scene-graph APIs, physics engines, or rendering engines.
+- Defining no-std/freestanding targets, kernel support, unsafe/layout controls, panic strategy, or allocator strategy. Runtime target manifests may inform that later work, but this RFC is not the freestanding/kernel RFC.
 - Replacing RFC 037 handler semantics.
 - Committing to a specific Rust web framework, JS framework, graphics crate, or bundler as the public contract.
 

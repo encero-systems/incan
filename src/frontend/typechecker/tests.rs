@@ -12,10 +12,11 @@ use crate::frontend::library_manifest_index::{
 use crate::frontend::testing_markers::TestingFixtureScope;
 use crate::frontend::{lexer, parser};
 use crate::library_manifest::{
-    ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport, FunctionExport,
-    LibraryContractMetadata, LibraryExports, LibraryManifest, LibraryRustAbi, MethodExport, ModelExport, ParamExport,
+    AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantExport,
+    FunctionExport, LibraryContractMetadata, LibraryExports, LibraryManifest, LibraryRustAbi, MethodExport,
+    ModelExport, ParamDefaultCallArgExport, ParamDefaultCallSignatureExport, ParamDefaultExport, ParamExport,
     ParamKindExport, PartialExport, PartialPresetExport, PartialTargetKindExport, PresetValueExport, ReceiverExport,
-    StaticExport, TraitExport, TypeBoundExport, TypeParamExport, TypeRef,
+    StaticExport, TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef,
 };
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig, write_borrowed_param_probe_crate, write_substrait_probe_crate};
@@ -526,6 +527,270 @@ def use() -> str:
     checker
         .check_program(&consumer)
         .unwrap_or_else(|errs| panic!("consumer should import public partial callable: {errs:?}"));
+}
+
+#[test]
+fn test_from_import_accepts_public_partial_export() {
+    let library = parse_program(
+        r#"
+pub model Spec:
+  namespace: str
+  policy: str
+  klass: str
+  lifecycle: str
+
+pub core_spec = partial Spec(namespace="core", policy="portable")
+"#,
+        "partial import library",
+    );
+    let consumer = parse_program(
+        r#"
+from presets import core_spec
+
+def use() -> str:
+  spec = core_spec(klass="scalar", lifecycle="v1")
+  return spec.namespace
+"#,
+        "partial from-import consumer",
+    );
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&consumer, &[("presets", &library)])
+        .unwrap_or_else(|errs| panic!("consumer should import public partial callable by name: {errs:?}"));
+}
+
+#[test]
+fn test_type_name_value_requires_type_token_expected_context() {
+    let source = r#"
+def accepts_any[T](value: T) -> None:
+  return
+
+def use() -> None:
+  accepts_any(int)
+"#;
+    let errs = check_str_err(
+        source,
+        "bare primitive type value should require Type[T] expected context",
+    );
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Cannot use type 'int' as a value")),
+        "expected type-name-as-value diagnostic, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_generic_type_token_parameter_accepts_type_name_value() {
+    let source = r#"
+def accepts_type[T](value: Type[T]) -> str:
+  return "ok"
+
+def use() -> str:
+  return accepts_type(int)
+"#;
+    let result = check_str(source);
+    assert!(
+        result.is_ok(),
+        "expected generic Type[T] parameter to accept primitive type token, got {result:?}"
+    );
+}
+
+#[test]
+fn test_top_level_alias_preserves_overloaded_type_token_function_set() -> Result<(), String> {
+    let source = r#"
+model ColumnExpr:
+  name: str
+
+model IntColumnExpr:
+  source: str
+
+model FloatColumnExpr:
+  source: str
+
+def col(name: str) -> ColumnExpr:
+  return ColumnExpr(name=name)
+
+def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:
+  return IntColumnExpr(source=expr.name)
+
+def cast(expr: ColumnExpr, target: Type[float]) -> FloatColumnExpr:
+  return FloatColumnExpr(source=expr.name)
+
+def cast(expr: ColumnExpr, target: str) -> ColumnExpr:
+  return ColumnExpr(name=target)
+
+safe_cast = alias cast
+
+def use() -> None:
+  typed: FloatColumnExpr = safe_cast(col("amount"), float)
+  fallback: ColumnExpr = safe_cast(col("amount"), "float64")
+  return
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("{errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("{errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| format!("overloaded alias should typecheck: {errs:?}"))?;
+
+    let alias = checker
+        .lookup_symbol("safe_cast")
+        .ok_or_else(|| "expected overloaded alias symbol".to_string())?;
+    let SymbolKind::FunctionOverloads(overloads) = &alias.kind else {
+        return Err(format!("expected safe_cast overload set, got {:?}", alias.kind));
+    };
+    assert_eq!(overloads.len(), 3);
+    assert_eq!(
+        checker
+            .type_info()
+            .function_overloads("safe_cast")
+            .map(|overloads| overloads.len()),
+        Some(3)
+    );
+    Ok(())
+}
+
+#[test]
+fn test_from_import_accepts_public_source_enum_variant_export() -> Result<(), Box<dyn std::error::Error>> {
+    let library = parse_program(
+        r#"
+pub enum Status(str):
+  Active = "active"
+  Disabled = "disabled"
+"#,
+        "enum variant import library",
+    );
+    let consumer = parse_program(
+        r#"
+from statuses import Active, Status
+
+def current() -> Status:
+  return Active
+"#,
+        "enum variant import consumer",
+    );
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&consumer, &[("statuses", &library)])
+        .map_err(|errs| format!("consumer should import public source enum variants by name: {errs:?}"))?;
+    Ok(())
+}
+
+#[test]
+fn test_dependency_overload_cache_keeps_module_local_symbols_when_spans_collide()
+-> Result<(), Box<dyn std::error::Error>> {
+    let left = parse_program(
+        r#"
+pub model Alpha:
+  value: str
+
+pub model Bravo:
+  value: str
+
+pub def choose(value: Type[Alpha]) -> Alpha:
+  return Alpha(value="a")
+
+pub def choose(value: Type[Bravo]) -> Bravo:
+  return Bravo(value="b")
+"#,
+        "left overload dependency",
+    );
+    let right = parse_program(
+        r#"
+pub model Gamma:
+  value: str
+
+pub model Delta:
+  value: str
+
+pub def choose(value: Type[Gamma]) -> Gamma:
+  return Gamma(value="g")
+
+pub def choose(value: Type[Delta]) -> Delta:
+  return Delta(value="d")
+"#,
+        "right overload dependency",
+    );
+    let consumer = parse_program(
+        r#"
+from left import Alpha, choose as choose_left
+from right import Gamma, choose as choose_right
+
+def use() -> None:
+  choose_left(Alpha)
+  choose_right(Gamma)
+"#,
+        "overload span collision consumer",
+    );
+
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&consumer, &[("left", &left), ("right", &right)])
+        .map_err(|errs| format!("consumer should import both overload groups independently: {errs:?}"))?;
+
+    let left_path = ImportPath {
+        is_absolute: false,
+        parent_levels: 0,
+        segments: vec!["left".to_string()],
+    };
+    let right_path = ImportPath {
+        is_absolute: false,
+        parent_levels: 0,
+        segments: vec!["right".to_string()],
+    };
+    let left_symbol = checker
+        .dependency_member_symbol_for_path(&left_path, "choose")
+        .ok_or_else(|| "expected left.choose to be present in dependency member cache".to_string())?;
+    let SymbolKind::FunctionOverloads(left_overloads) = left_symbol else {
+        return Err(format!("expected left.choose to be cached as function overloads, got {left_symbol:?}").into());
+    };
+    let right_symbol = checker
+        .dependency_member_symbol_for_path(&right_path, "choose")
+        .ok_or_else(|| "expected right.choose to be present in dependency member cache".to_string())?;
+    let SymbolKind::FunctionOverloads(right_overloads) = right_symbol else {
+        return Err(format!("expected right.choose to be cached as function overloads, got {right_symbol:?}").into());
+    };
+
+    let left_return_types = left_overloads
+        .iter()
+        .map(|overload| overload.info.return_type.to_string())
+        .collect::<Vec<_>>();
+    let right_return_types = right_overloads
+        .iter()
+        .map(|overload| overload.info.return_type.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(left_return_types, vec!["Alpha", "Bravo"]);
+    assert_eq!(right_return_types, vec!["Gamma", "Delta"]);
+
+    let left_emitted_names = left_overloads
+        .iter()
+        .filter_map(|overload| overload.info.emitted_name.as_deref())
+        .collect::<Vec<_>>();
+    let right_emitted_names = right_overloads
+        .iter()
+        .filter_map(|overload| overload.info.emitted_name.as_deref())
+        .collect::<Vec<_>>();
+    assert_eq!(left_emitted_names.len(), 2);
+    assert_eq!(right_emitted_names.len(), 2);
+    assert!(
+        left_emitted_names
+            .iter()
+            .all(|name| name.starts_with("choose__overload_")),
+        "left overloads should keep deterministic emitted names, got {left_emitted_names:?}"
+    );
+    assert!(
+        right_emitted_names
+            .iter()
+            .all(|name| name.starts_with("choose__overload_")),
+        "right overloads should keep deterministic emitted names, got {right_emitted_names:?}"
+    );
+    assert_ne!(
+        left_emitted_names, right_emitted_names,
+        "same-span overload declarations from different modules must not collapse to one emitted-name set"
+    );
+    Ok(())
 }
 
 #[test]
@@ -1207,6 +1472,10 @@ pub mean = alias avg
     assert_eq!(manifest.exports.aliases[0].name, "mean");
     assert_eq!(manifest.exports.aliases[0].target_path, vec!["avg"]);
     assert!(
+        manifest.exports.aliases[0].projected_function.is_some(),
+        "function aliases should carry callable projection metadata for pub:: consumers"
+    );
+    assert!(
         manifest
             .exports
             .functions
@@ -1375,6 +1644,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     },
                     kind: ParamKindExport::Normal,
                     has_default: true,
+                    default: None,
                 }],
                 return_type: TypeRef::Named {
                     name: "Widget".to_string(),
@@ -1393,6 +1663,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
             classes: Vec::new(),
             functions: vec![FunctionExport {
                 name: "make_widget".to_string(),
+                emitted_name: None,
                 type_params: Vec::new(),
                 params: vec![ParamExport {
                     name: "name".to_string(),
@@ -1401,6 +1672,7 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     },
                     kind: ParamKindExport::Normal,
                     has_default: false,
+                    default: None,
                 }],
                 return_type: TypeRef::Named {
                     name: "Widget".to_string(),
@@ -1460,7 +1732,13 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                 }],
                 derives: Vec::new(),
             }],
-            type_aliases: Vec::new(),
+            type_aliases: vec![TypeAliasExport {
+                name: "WidgetAlias".to_string(),
+                type_params: Vec::new(),
+                target: TypeRef::Named {
+                    name: "Widget".to_string(),
+                },
+            }],
             newtypes: Vec::new(),
             consts: vec![ConstExport {
                 name: "DEFAULT_NAME".to_string(),
@@ -1477,6 +1755,61 @@ fn library_index_with_mylib_exports() -> LibraryManifestIndex {
                     }],
                 },
             }],
+        },
+        vocab: None,
+        soft_keywords: Default::default(),
+        contract_metadata: LibraryContractMetadata::default(),
+        rust_abi: None,
+    };
+
+    LibraryManifestIndex::from_entries(HashMap::from([(
+        "mylib".to_string(),
+        LibraryManifestIndexEntry::Loaded {
+            manifest: Box::new(manifest),
+            metadata: LibraryArtifactMetadata::from_crate_root("mylib", "mylib", synthetic_artifact_root("mylib")),
+        },
+    )]))
+}
+
+fn library_index_with_callable_alias_export() -> LibraryManifestIndex {
+    let manifest = LibraryManifest {
+        name: "mylib".to_string(),
+        version: "0.1.0".to_string(),
+        incan_version: crate::version::INCAN_VERSION.to_string(),
+        manifest_format: crate::library_manifest::LIBRARY_MANIFEST_FORMAT,
+        exports: LibraryExports {
+            aliases: vec![AliasExport {
+                name: "public_target".to_string(),
+                target_path: vec!["target_impl".to_string()],
+                projected_function: Some(FunctionExport {
+                    name: "public_target".to_string(),
+                    emitted_name: None,
+                    type_params: Vec::new(),
+                    params: vec![ParamExport {
+                        name: "value".to_string(),
+                        ty: TypeRef::Named {
+                            name: "int".to_string(),
+                        },
+                        kind: ParamKindExport::Normal,
+                        has_default: false,
+                        default: None,
+                    }],
+                    return_type: TypeRef::Named {
+                        name: "int".to_string(),
+                    },
+                    is_async: false,
+                }),
+            }],
+            partials: Vec::new(),
+            models: Vec::new(),
+            classes: Vec::new(),
+            functions: Vec::new(),
+            traits: Vec::new(),
+            enums: Vec::new(),
+            type_aliases: Vec::new(),
+            newtypes: Vec::new(),
+            consts: Vec::new(),
+            statics: Vec::new(),
         },
         vocab: None,
         soft_keywords: Default::default(),
@@ -1744,6 +2077,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                     },
                                     kind: ParamKindExport::Normal,
                                     has_default: false,
+                                    default: None,
                                 },
                                 ParamExport {
                                     name: "uri".to_string(),
@@ -1752,6 +2086,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                     },
                                     kind: ParamKindExport::Normal,
                                     has_default: false,
+                                    default: None,
                                 },
                             ],
                             return_type: TypeRef::Applied {
@@ -1782,6 +2117,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                                 },
                                 kind: ParamKindExport::Normal,
                                 has_default: false,
+                                default: None,
                             }],
                             return_type: TypeRef::Applied {
                                 name: "Result".to_string(),
@@ -1853,6 +2189,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
             ],
             functions: vec![FunctionExport {
                 name: "display".to_string(),
+                emitted_name: None,
                 type_params: vec![type_param_t.clone()],
                 params: vec![ParamExport {
                     name: "data".to_string(),
@@ -1862,6 +2199,7 @@ fn library_index_with_pub_boundary_type_fidelity_exports() -> LibraryManifestInd
                     },
                     kind: ParamKindExport::Normal,
                     has_default: false,
+                    default: None,
                 }],
                 return_type: TypeRef::Named {
                     name: none_constructor_name(),
@@ -2511,6 +2849,8 @@ fn test_resolved_type_from_builtin_borrowed_displays_stays_stable() {
     let checker = TypeChecker::new();
     assert_eq!(checker.resolved_type_from_rust_display("&str"), ResolvedType::Str);
     assert_eq!(checker.resolved_type_from_rust_display("&[u8]"), ResolvedType::Bytes);
+    assert_eq!(checker.resolved_type_from_rust_display("&'h str"), ResolvedType::Str);
+    assert_eq!(checker.resolved_type_from_rust_display("&'h [u8]"), ResolvedType::Bytes);
 }
 
 #[test]
@@ -2523,6 +2863,87 @@ fn test_resolved_param_type_from_builtin_borrowed_displays_preserves_ref_payload
     assert_eq!(
         checker.resolved_param_type_from_rust_display("&[u8]"),
         ResolvedType::Ref(Box::new(ResolvedType::Bytes)),
+    );
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&'h str"),
+        ResolvedType::Ref(Box::new(ResolvedType::Str)),
+    );
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&'h [u8]"),
+        ResolvedType::Ref(Box::new(ResolvedType::Bytes)),
+    );
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&[demo::ColumnarValue]"),
+        ResolvedType::Ref(Box::new(ResolvedType::Generic(
+            "List".to_string(),
+            vec![ResolvedType::RustPath("demo::ColumnarValue".to_string())]
+        ))),
+    );
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&'h mut demo::Thing"),
+        ResolvedType::RefMut(Box::new(ResolvedType::RustPath("demo::Thing".to_string()))),
+    );
+}
+
+#[test]
+fn test_rust_owner_path_expands_crate_relative_signature_displays() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.rust_display_for_owner_path(
+            "Arc<dyn Fn(&[crate::ColumnarValue]) -> crate::Result<crate::ColumnarValue> + Send + Sync>",
+            "demo_runtime::create_udf",
+        ),
+        "Arc<dyn Fn(&[demo_runtime::ColumnarValue]) -> demo_runtime::Result<demo_runtime::ColumnarValue> + Send + Sync>",
+    );
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display_for_owner_path(
+            "crate::ScalarFunctionImplementation",
+            "demo_runtime::create_udf",
+        ),
+        ResolvedType::RustPath("demo_runtime::ScalarFunctionImplementation".to_string()),
+    );
+}
+
+#[test]
+fn test_resolved_param_type_from_structural_borrowed_display_preserves_nested_ref_payload() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("Vec<&str>"),
+        ResolvedType::Generic("List".to_string(), vec![ResolvedType::Ref(Box::new(ResolvedType::Str))]),
+    );
+    assert_eq!(
+        checker.resolved_rust_boundary_target_from_param_display("Vec<&String>"),
+        ResolvedType::Generic(
+            "List".to_string(),
+            vec![ResolvedType::Ref(Box::new(ResolvedType::RustPath(
+                "String".to_string()
+            )))]
+        ),
+    );
+}
+
+#[test]
+fn test_resolved_param_type_does_not_treat_mut_prefix_as_mutable_borrow_keyword() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&mutability::Foo"),
+        ResolvedType::Ref(Box::new(ResolvedType::RustPath("mutability::Foo".to_string()))),
+    );
+    assert_eq!(
+        checker.resolved_param_type_from_rust_display("&mut mutability::Foo"),
+        ResolvedType::RefMut(Box::new(ResolvedType::RustPath("mutability::Foo".to_string()))),
+    );
+}
+
+#[test]
+fn test_resolved_result_display_splits_only_top_level_generic_commas() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_type_from_rust_display("Result<Vec<(i32, i32)>, String>"),
+        ResolvedType::Generic(
+            "Result".to_string(),
+            vec![ResolvedType::RustPath("Vec<(i32,i32)>".to_string()), ResolvedType::Str,],
+        ),
     );
 }
 
@@ -2798,6 +3219,79 @@ def describe(value: MaybeText) -> str:
 }
 
 #[test]
+fn test_nested_union_aliases_flatten_for_match_narrowing() -> Result<(), String> {
+    let source = r#"
+model A:
+  value: str
+
+model B:
+  value: str
+
+type Base = Union[A, B]
+type Input = Union[Base, int]
+
+def from_alias(value: Input) -> Base:
+  match value:
+    Base(expr) =>
+      return expr
+    int(number) =>
+      return A(value=str(number))
+
+def keep_base(value: Base) -> bool:
+  return true
+
+def from_guarded_alias(value: Input) -> Base:
+  match value:
+    case Base(expr) if keep_base(expr):
+      return expr
+    case Base(expr):
+      return expr
+    case int(number):
+      return A(value=str(number))
+
+def from_fallback(value: Input) -> Base:
+  match value:
+    int(number) =>
+      return A(value=str(number))
+    other =>
+      return other
+"#;
+    check_str(source).map_err(|errs| format!("{errs:?}"))
+}
+
+#[test]
+fn test_guarded_union_alias_patterns_do_not_satisfy_exhaustiveness() {
+    let source = r#"
+model A:
+  value: str
+
+model B:
+  value: str
+
+type Base = Union[A, B]
+type Input = Union[Base, int]
+
+def keep_base(value: Base) -> bool:
+  return true
+
+def guarded_only(value: Input) -> Base:
+  match value:
+    case Base(expr) if keep_base(expr):
+      return expr
+    case int(number):
+      return A(value=str(number))
+"#;
+    let errors = check_str_err(source, "guarded union alias patterns should not prove coverage");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.to_lowercase().contains("non-exhaustive")),
+        "expected non-exhaustive union match diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
 fn test_union_match_requires_exhaustive_type_patterns() {
     let source = r#"
 def normalize(value: int | str) -> str:
@@ -2812,6 +3306,49 @@ def normalize(value: int | str) -> str:
             .iter()
             .any(|error| error.message.contains("non-exhaustive") || error.message.contains("str")),
         "expected non-exhaustive union match diagnostic, got: {:?}",
+        errors.iter().map(|error| &error.message).collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn test_union_clone_method_typechecks_when_members_are_cloneable() {
+    let source = r#"
+@derive(Clone)
+model Leaf:
+  value: int
+
+@derive(Clone)
+model Pair:
+  args: List[Expr]
+
+type Expr = Union[Leaf, Pair]
+
+def clone_expr(expr: Expr) -> Expr:
+  return expr.clone()
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_union_model_variants_reject_direct_recursive_payload_without_indirection() {
+    let source = r#"
+@derive(Clone)
+model Leaf:
+  value: int
+
+@derive(Clone)
+model Pair:
+  left: Expr
+  right: Expr
+
+type Expr = Union[Leaf, Pair]
+"#;
+    let errors = check_str_err(source, "direct recursive union model payload should be rejected");
+    assert!(
+        errors
+            .iter()
+            .any(|error| error.message.contains("direct recursive") && error.message.contains("Pair")),
+        "expected direct recursive model diagnostic, got: {:?}",
         errors.iter().map(|error| &error.message).collect::<Vec<_>>()
     );
 }
@@ -2983,7 +3520,7 @@ fn test_rust_inspect_function_signature_preserves_borrowed_rust_path_param() -> 
         return Err(std::io::Error::other("expected rust-inspect function entry").into());
     };
     assert_eq!(
-        checker.resolved_function_type_from_rust_sig(&sig, false),
+        checker.resolved_function_type_from_rust_sig_for_owner_path(&sig, false, "demo::takes_ref"),
         ResolvedType::Function(
             vec![CallableParam::positional(ResolvedType::Ref(Box::new(
                 ResolvedType::RustPath("demo::Thing".to_string())
@@ -3011,6 +3548,15 @@ fn test_rust_metadata_lookup_path_rejects_unknown_placeholder() {
     assert_eq!(TypeChecker::rust_metadata_lookup_path("{unknown}"), None);
 }
 
+#[test]
+fn test_rust_display_unknown_placeholder_resolves_unknown() {
+    let checker = TypeChecker::new();
+    assert_eq!(
+        checker.resolved_type_from_rust_display("{unknown}"),
+        ResolvedType::Unknown
+    );
+}
+
 #[cfg(feature = "rust_inspect")]
 #[test]
 fn test_rust_item_metadata_lookup_reuses_cached_nominal_item_for_instantiated_rust_path()
@@ -3028,6 +3574,7 @@ fn test_rust_item_metadata_lookup_reuses_cached_nominal_item_for_instantiated_ru
                 definition_path: Some("demo::SendError".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     fields: Vec::new(),
                     methods: Vec::new(),
                     implemented_traits: Vec::new(),
@@ -3120,6 +3667,7 @@ fn test_types_compatible_accepts_rust_alias_definition_without_metadata_lookup()
                 definition_path: Some("incan_stdlib::r#async::channel::Sender".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     fields: Vec::new(),
                     methods: Vec::new(),
                     implemented_traits: Vec::new(),
@@ -3157,6 +3705,7 @@ fn test_types_compatible_accepts_rust_path_alias_with_attached_definition_metada
                 definition_path: Some("incan_stdlib::r#async::sync::Semaphore".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     fields: Vec::new(),
                     methods: Vec::new(),
                     implemented_traits: Vec::new(),
@@ -3509,6 +4058,7 @@ def render[T](value: Label[T]) -> str:
                 definition_path: Some("std::string::String".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![RustMethodSig {
                         name: "as_str".to_string(),
                         signature: RustFunctionSig {
@@ -3548,6 +4098,15 @@ fn seed_async_rust_method_probe(
     checker: &mut TypeChecker,
     manifest_dir: &std::path::Path,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    seed_async_rust_method_probe_with_options_param(checker, manifest_dir, "demo::CsvReadOptions")
+}
+
+#[cfg(feature = "rust_inspect")]
+fn seed_async_rust_method_probe_with_options_param(
+    checker: &mut TypeChecker,
+    manifest_dir: &std::path::Path,
+    options_param_type: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     checker.rust_inspect_cache.insert_test_item(
         manifest_dir,
         RustItemMetadata {
@@ -3555,6 +4114,7 @@ fn seed_async_rust_method_probe(
             definition_path: Some("demo::SessionContext".to_string()),
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
                 methods: vec![
                     RustMethodSig {
                         name: "new".to_string(),
@@ -3583,7 +4143,7 @@ fn seed_async_rust_method_probe(
                                 },
                                 RustParam {
                                     name: Some("options".to_string()),
-                                    type_display: "demo::CsvReadOptions".to_string(),
+                                    type_display: options_param_type.to_string(),
                                 },
                             ],
                             return_type: "Result<(), demo::DataFusionError>".to_string(),
@@ -3605,6 +4165,7 @@ fn seed_async_rust_method_probe(
             definition_path: Some("demo::CsvReadOptions".to_string()),
             visibility: RustVisibility::Public,
             kind: RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
                 methods: vec![RustMethodSig {
                     name: "new".to_string(),
                     signature: RustFunctionSig {
@@ -3684,6 +4245,38 @@ pub async def register_csv_with_await() -> None:
 
 #[cfg(feature = "rust_inspect")]
 #[test]
+fn test_rust_async_method_call_accepts_imported_type_with_unknown_generic_metadata()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+import std.async
+from rust::demo import SessionContext
+from rust::demo import CsvReadOptions
+from rust::demo import make_context
+from rust::demo import make_options
+
+pub async def register_csv_with_unknown_options_metadata() -> None:
+  ctx = make_context()
+  opts = make_options()
+  match await ctx.register_csv("orders", "orders.csv", opts):
+    Ok(_) => pass
+    Err(_) => pass
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    checker.set_rust_inspect_manifest_dir(tmp.path().to_path_buf());
+    seed_async_rust_method_probe_with_options_param(&mut checker, tmp.path(), "demo::CsvReadOptions<?>")?;
+    checker.check_program(&ast).map_err(|errs| {
+        std::io::Error::other(format!(
+            "expected Rust async method to accept an imported Rust type when metadata has only unknown generic args: {errs:?}"
+        ))
+    })?;
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
 fn test_rust_async_method_call_without_await_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 import std.async
@@ -3742,6 +4335,7 @@ def render(value: Label) -> str:
                 definition_path: Some("std::string::String".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![RustMethodSig {
                         name: "as_str".to_string(),
                         signature: RustFunctionSig {
@@ -3826,6 +4420,7 @@ def f(x: Envelope) -> None:
                 definition_path: Some("demo::Envelope".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -3850,6 +4445,7 @@ def f(x: Envelope) -> None:
                 definition_path: Some("demo::Kind".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -3898,6 +4494,7 @@ def f(x: Envelope) -> None:
                 definition_path: Some("demo::Envelope".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -3922,6 +4519,7 @@ def f(x: Envelope) -> None:
                 definition_path: Some("demo::Kind".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -3973,6 +4571,7 @@ def inspect(rel: Rel) -> None:
                 definition_path: Some("demo::Rel".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -3997,6 +4596,7 @@ def inspect(rel: Rel) -> None:
                 definition_path: Some("demo::rel::RelType".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -4020,6 +4620,7 @@ def inspect(rel: Rel) -> None:
                 definition_path: Some("demo::ReadRel".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![RustFieldInfo {
@@ -4044,6 +4645,7 @@ def inspect(rel: Rel) -> None:
                 definition_path: Some("demo::read_rel::ReadType".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -4638,6 +5240,142 @@ def describe(u: User) -> None:
 }
 
 #[test]
+fn test_generic_reflection_magic_methods_record_surface_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def reflected_field_count[T](value: T) -> int:
+  fields = value.__fields__()
+  return len(fields)
+
+def reflected_class_name[T](value: T) -> str:
+  return value.__class_name__()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expressions
+            .expr_types
+            .values()
+            .any(|ty| matches!(ty, ResolvedType::Str)),
+        "expected generic __class_name__() to resolve to str, got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::FrozenList(inner)
+                    if matches!(inner.as_ref(), ResolvedType::Named(name) if name == "FieldInfo")
+            )
+        }),
+        "expected generic __fields__() to resolve to FrozenList[FieldInfo], got {:?}",
+        info.expressions.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_type_parameter_reflection_magic_methods_record_surface_types() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+def reflected_field_count[T]() -> int:
+  fields = T.__fields__()
+  return len(fields)
+
+def reflected_class_name[T]() -> str:
+  return T.__class_name__()
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expressions
+            .expr_types
+            .values()
+            .any(|ty| matches!(ty, ResolvedType::Str)),
+        "expected type-parameter __class_name__() to resolve to str, got {:?}",
+        info.expressions.expr_types
+    );
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::FrozenList(inner)
+                    if matches!(inner.as_ref(), ResolvedType::Named(name) if name == "FieldInfo")
+            )
+        }),
+        "expected type-parameter __fields__() to resolve to FrozenList[FieldInfo], got {:?}",
+        info.expressions.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_model_type_name_is_type_token_value() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model User:
+  name: str
+
+def accepts_user_type(value: Type[User]) -> str:
+  return "ok"
+
+def main() -> None:
+  accepts_user_type(User)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("check_program failed: {errs:?}")))?;
+    let info = checker.type_info();
+    assert!(
+        info.expressions.expr_types.values().any(|ty| {
+            matches!(
+                ty,
+                ResolvedType::TypeToken(inner) if matches!(inner.as_ref(), ResolvedType::Named(name) if name == "User")
+            )
+        }),
+        "expected model type name to resolve as Type[User], got {:?}",
+        info.expressions.expr_types
+    );
+    Ok(())
+}
+
+#[test]
+fn test_type_token_does_not_satisfy_model_value_context() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model User:
+  name: str
+
+def accepts_user(value: User) -> str:
+  return value.name
+
+def main() -> None:
+  accepts_user(User)
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let Err(errs) = checker.check_program(&ast) else {
+        return Err(std::io::Error::other("expected bare User type name to be rejected as a value").into());
+    };
+    assert!(
+        errs.iter()
+            .any(|err| err.message.contains("Cannot use type 'User' as a value")),
+        "expected type-name-as-value diagnostic, got {errs:?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn test_reflection_fieldinfo_members_typecheck_without_explicit_import() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
 model User:
@@ -4831,6 +5569,23 @@ def main() -> int:
 }
 
 #[test]
+fn test_function_callable_name_metadata_typechecks_issue694() {
+    let source = r#"
+def capture(func: (int) -> int) -> ((int) -> int):
+  name: str = func.__name__
+  return func
+
+def registered() -> (((int) -> int) -> ((int) -> int)):
+  return capture
+
+@registered()
+pub def sample(value: int) -> int:
+  return value + 1
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
 fn test_user_defined_decorator_factory_and_stacking_apply_bottom_up() {
     let source = r#"
 def keep(func: (int) -> str) -> (int) -> str:
@@ -4854,6 +5609,62 @@ def main() -> int:
   return label(1)
 "#;
     assert_check_ok(source);
+}
+
+#[test]
+fn test_generic_decorator_factory_with_explicit_function_type_arg_preserves_binding_type() {
+    let source = r#"
+model ColumnExpr:
+  name: str
+
+def registered[F](name: str) -> ((F) -> F):
+  return (func) => func
+
+@registered[(str) -> ColumnExpr]("inql.functions.col")
+def col(name: str) -> ColumnExpr:
+  return ColumnExpr(name=name)
+
+def main() -> ColumnExpr:
+  return col("id")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_generic_decorator_factory_infers_decorated_function_type() -> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+model ColumnExpr:
+  name: str
+
+def registered[F](name: str) -> ((F) -> F):
+  return (func) => func
+
+@registered("inql.functions.col")
+def col(name: str) -> ColumnExpr:
+  return ColumnExpr(name=name)
+
+def main() -> ColumnExpr:
+  return col("id")
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| format!("lex failed: {errs:?}"))?;
+    let ast = parser::parse(&tokens).map_err(|errs| format!("parse failed: {errs:?}"))?;
+    let mut checker = TypeChecker::new();
+    checker
+        .check_program(&ast)
+        .map_err(|errs| format!("typecheck failed: {errs:?}"))?;
+    let symbol = checker
+        .lookup_symbol("col")
+        .ok_or_else(|| "expected decorated col binding".to_string())?;
+    let SymbolKind::Variable(info) = &symbol.kind else {
+        return Err(format!("expected decorated binding to be a value, got {:?}", symbol.kind).into());
+    };
+    let ResolvedType::Function(params, ret) = &info.ty else {
+        return Err(format!("expected decorated binding to stay callable, got {:?}", info.ty).into());
+    };
+    assert_eq!(params.len(), 1);
+    assert_eq!(params[0].ty, ResolvedType::Str);
+    assert_eq!(**ret, ResolvedType::Named("ColumnExpr".to_string()));
+    Ok(())
 }
 
 #[test]
@@ -4979,6 +5790,24 @@ def label() -> int:
             .iter()
             .any(|err| err.message.contains("'count_factory(...)' does not return a callable")),
         "expected non-callable factory diagnostic, got {bad_factory:?}"
+    );
+
+    let bad_result = check_str_err(
+        r#"
+def count(func: () -> int) -> int:
+  return 1
+
+@count
+def label() -> int:
+  return 1
+"#,
+        "decorator returning non-callable should be rejected",
+    );
+    assert!(
+        bad_result
+            .iter()
+            .any(|err| err.message.contains("decorator 'count' must return a callable")),
+        "expected non-callable decorator result diagnostic, got {bad_result:?}"
     );
 }
 
@@ -5135,6 +5964,44 @@ def foo() -> Result[int, str]:
 "#;
     let result = check_str(source);
     assert!(result.is_err());
+}
+
+#[test]
+fn test_try_requires_result_return_type() {
+    let source = r#"
+def foo() -> int:
+  x: Result[int, str] = Ok(42)
+  return x?
+"#;
+    let errors = check_str_err(source, "try in non-Result function should fail typechecking");
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("enclosing function does not return Result")),
+        "expected non-Result enclosing function diagnostic, got {errors:?}"
+    );
+}
+
+#[test]
+fn test_try_does_not_cross_closure_boundary() {
+    let source = r#"
+def parse_value() -> Result[int, str]:
+  return Ok(42)
+
+def foo() -> Result[int, str]:
+  callback = () => parse_value()?
+  return Ok(callback())
+"#;
+    let errors = check_str_err(
+        source,
+        "try in closure should not target enclosing Result-returning function",
+    );
+    assert!(
+        errors
+            .iter()
+            .any(|err| err.message.contains("enclosing function does not return Result")),
+        "expected closure boundary diagnostic, got {errors:?}"
+    );
 }
 
 #[test]
@@ -5335,10 +6202,10 @@ def access_all(a: Account) -> str:
     let n = a.name       # canonical, no alias
     let t = a.type_      # canonical (has alias "type")
     let b = a.balance    # canonical, no alias
-    
+
     # Access field by alias
     let t2 = a.type      # alias for type_
-    
+
     # Both t and t2 should have type str
     return f"{n} {t} {t2} {b}"
 "#;
@@ -5897,6 +6764,15 @@ def add(mut xs: List[Mutex], value: Mutex) -> None:
         }),
         "expected List.append / Clone diagnostic for Rust element type; got {errs:?}"
     );
+}
+
+#[test]
+fn test_list_append_accepts_clone_bound_type_param() {
+    let source = r#"
+def add_item[T with Clone](mut items: List[T], item: T) -> None:
+  items.append(item)
+"#;
+    assert_check_ok(source);
 }
 
 #[test]
@@ -8027,6 +8903,7 @@ def f(w: Widget) -> None:
                 definition_path: Some("demo::Widget".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: Vec::new(),
                     implemented_traits: vec![RustImplementedTrait {
                         path: "demo::AlphaRender".to_string(),
@@ -8054,13 +8931,14 @@ def f(w: Widget) -> None:
     Ok(())
 }
 
+#[cfg(feature = "rust_inspect")]
 #[test]
 fn test_rust_extension_trait_associated_call_records_param_shape() -> Result<(), Box<dyn std::error::Error>> {
     let source = r#"
-from rust::demo import Cursor, FileDescriptorSet, Message
+from rust::demo import FileDescriptorSet, Message
 
-def f(cursor: Cursor) -> None:
-  _ = FileDescriptorSet.decode(cursor)
+def f(encoded: bytes) -> None:
+  _ = FileDescriptorSet.decode(encoded.as_slice())
 "#;
     let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
     let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
@@ -8082,7 +8960,7 @@ def f(cursor: Cursor) -> None:
                         signature: RustFunctionSig {
                             params: vec![RustParam {
                                 name: Some("buf".to_string()),
-                                type_display: "T".to_string(),
+                                type_display: "implBuf".to_string(),
                             }],
                             return_type: "Self".to_string(),
                             is_async: false,
@@ -8093,31 +8971,27 @@ def f(cursor: Cursor) -> None:
             },
         )
         .map_err(|err| std::io::Error::other(format!("seed trait metadata: {err}")))?;
-    for path in ["demo::Cursor", "demo::FileDescriptorSet"] {
-        checker
-            .rust_inspect_cache
-            .insert_test_item(
-                &manifest_dir,
-                RustItemMetadata {
-                    canonical_path: path.to_string(),
-                    definition_path: Some(path.to_string()),
-                    visibility: RustVisibility::Public,
-                    kind: RustItemKind::Type(RustTypeInfo {
-                        methods: Vec::new(),
-                        implemented_traits: if path.ends_with("FileDescriptorSet") {
-                            vec![RustImplementedTrait {
-                                path: "demo::Message".to_string(),
-                            }]
-                        } else {
-                            Vec::new()
-                        },
-                        fields: Vec::new(),
-                        variants: Vec::new(),
-                    }),
-                },
-            )
-            .map_err(|err| std::io::Error::other(format!("seed type metadata: {err}")))?;
-    }
+    let path = "demo::FileDescriptorSet";
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: path.to_string(),
+                definition_path: Some(path.to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
+                    methods: Vec::new(),
+                    implemented_traits: vec![RustImplementedTrait {
+                        path: "demo::Message".to_string(),
+                    }],
+                    fields: Vec::new(),
+                    variants: Vec::new(),
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed type metadata: {err}")))?;
 
     checker
         .check_program(&ast)
@@ -8134,9 +9008,84 @@ def f(cursor: Cursor) -> None:
             .calls
             .call_site_callable_params
             .values()
-            .any(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("T".to_string())),
+            .any(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("implBuf".to_string())),
         "expected trait-provided decode parameter shape to be recorded, got {:?}",
         checker.type_info().calls.call_site_callable_params
+    );
+    assert!(
+        checker.type_info().rust.arg_coercions.is_empty(),
+        "expected trait-provided impl Trait decode to avoid borrow coercions, got {:?}",
+        checker.type_info().rust.arg_coercions
+    );
+    Ok(())
+}
+
+#[cfg(feature = "rust_inspect")]
+#[test]
+fn test_rust_extension_trait_associated_call_records_param_shape_without_receiver_metadata()
+-> Result<(), Box<dyn std::error::Error>> {
+    let source = r#"
+from rust::demo import Message
+from rust::datafusion_substrait::substrait::proto import Plan as ConsumerPlan
+
+def f(encoded: bytes) -> None:
+  _ = ConsumerPlan.decode(encoded.as_slice())
+"#;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("lex failed: {errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("parse failed: {errs:?}")))?;
+    let mut checker = TypeChecker::new();
+    let tmp = seeded_rust_inspect_workspace()?;
+    let manifest_dir = tmp.path().to_path_buf();
+    checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+    checker
+        .rust_inspect_cache
+        .insert_test_item(
+            &manifest_dir,
+            RustItemMetadata {
+                canonical_path: "demo::Message".to_string(),
+                definition_path: Some("demo::Message".to_string()),
+                visibility: RustVisibility::Public,
+                kind: RustItemKind::Trait(RustTraitInfo {
+                    items: vec![RustTraitAssoc::Function {
+                        name: "decode".to_string(),
+                        signature: RustFunctionSig {
+                            params: vec![RustParam {
+                                name: Some("buf".to_string()),
+                                type_display: "implBuf".to_string(),
+                            }],
+                            return_type: "Self".to_string(),
+                            is_async: false,
+                            is_unsafe: false,
+                        },
+                    }],
+                }),
+            },
+        )
+        .map_err(|err| std::io::Error::other(format!("seed trait metadata: {err}")))?;
+
+    checker
+        .check_program(&ast)
+        .map_err(|errs| std::io::Error::other(format!("typecheck failed: {errs:?}")))?;
+    let uses = &checker.type_info().rust.method_trait_import_uses;
+    assert!(
+        uses.values()
+            .any(|import_use| import_use.binding == "Message" && import_use.method == "decode"),
+        "expected Message import use for unresolved receiver metadata, got {uses:?}"
+    );
+    assert!(
+        checker
+            .type_info()
+            .calls
+            .call_site_callable_params
+            .values()
+            .any(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("implBuf".to_string())),
+        "expected trait-provided decode parameter shape without receiver metadata, got {:?}",
+        checker.type_info().calls.call_site_callable_params
+    );
+    assert!(
+        checker.type_info().rust.arg_coercions.is_empty(),
+        "expected unresolved receiver trait signature to avoid borrow coercions, got {:?}",
+        checker.type_info().rust.arg_coercions
     );
     Ok(())
 }
@@ -8177,6 +9126,7 @@ type Thing = rusttype RustThing with Labelled
                 definition_path: Some("demo::RustThing".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: vec![RustImplementedTrait {
                         path: "demo::Labelled".to_string(),
@@ -9006,6 +9956,69 @@ def foo() -> str:
 }
 
 #[test]
+fn test_local_function_named_sleep_ms_shadows_surface_helper() {
+    let source = r#"
+def sleep_ms(value: str) -> str:
+  return value
+
+def foo() -> str:
+  return sleep_ms("ok")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_local_function_named_some_shadows_option_constructor() {
+    let source = r#"
+def Some(value: str) -> str:
+  return value
+
+def foo() -> str:
+  return Some("ok")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_local_function_named_list_shadows_collection_helper() {
+    let source = r#"
+def list(value: str) -> str:
+  return value
+
+def foo() -> str:
+  return list("ok")
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
+fn test_decorated_function_named_sum_shadows_builtin_sum_in_inline_module_tests() {
+    let source = r#"
+model IntExpr:
+  value: int
+
+model Measure:
+  kind: str
+
+def registered[F](function_ref: str) -> ((F) -> F):
+  return (func) => func
+
+def expr(value: int) -> IntExpr:
+  return IntExpr(value=value)
+
+@registered("demo.sum")
+def sum(value: IntExpr) -> Measure:
+  return Measure(kind="local")
+
+module tests:
+  def test_inline_sum() -> None:
+    measure = sum(expr(1))
+    assert measure.kind == "local"
+"#;
+    assert_check_ok(source);
+}
+
+#[test]
 fn test_explicit_std_builtins_sum_call() {
     let source = r#"
 def foo() -> int:
@@ -9253,6 +10266,29 @@ def relation_kind_name_from_conformance(rel: ConformanceRel) -> str:
       return "FilterRel"
     _ =>
       return "UnknownRel"
+"#;
+    assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_match_qualified_incan_enum_variant_uses_enum_owned_payload_metadata() {
+    let source = r#"
+enum Packet:
+  Bool(bool)
+  String(str)
+
+enum OtherKind(str):
+  Bool = "bool"
+  String = "string"
+
+def packet_name(packet: Packet) -> str:
+  match packet:
+    Packet.Bool(flag) =>
+      if flag:
+        return "true"
+      return "false"
+    Packet.String(value) =>
+      return value
 "#;
     assert!(check_str(source).is_ok());
 }
@@ -9904,10 +10940,12 @@ def main() -> None:
 fn test_stdlib_import_only_facades_reexport_imported_types() {
     let source = r#"
 from std.datetime.civil import Date, TimeDelta
+from std.datetime.error import DateTimeError
 
-def main() -> None:
+def main() -> Result[None, DateTimeError]:
   renewal = Date.fromisoformat("2026-04-14")? + TimeDelta.days(30)
   print(renewal.isoformat())
+  return Ok(None)
 "#;
     assert_check_ok(source);
 }
@@ -10826,6 +11864,24 @@ def build() -> Widget:
 }
 
 #[test]
+fn test_pub_from_import_type_alias_is_transparent() {
+    let source = r#"
+from pub::mylib import WidgetAlias, make_widget
+
+def keep(widget: WidgetAlias) -> WidgetAlias:
+  return widget
+
+def build() -> WidgetAlias:
+  return keep(make_widget("ok"))
+"#;
+    let result = check_str_with_library_index(source, library_index_with_mylib_exports());
+    assert!(
+        result.is_ok(),
+        "expected pub-imported type alias to behave transparently, got: {result:?}"
+    );
+}
+
+#[test]
 fn test_pub_from_import_manifest_partial_callable_typechecks() {
     let source = r#"
 from pub::mylib import Widget, make_default_widget
@@ -10838,6 +11894,21 @@ def build() -> Widget:
     assert!(
         result.is_ok(),
         "expected pub-imported manifest partial callable to typecheck, got: {result:?}"
+    );
+}
+
+#[test]
+fn test_pub_from_import_manifest_callable_alias_typechecks() {
+    let source = r#"
+from pub::mylib import public_target
+
+def build() -> int:
+  return public_target(1)
+"#;
+    let result = check_str_with_library_index(source, library_index_with_callable_alias_export());
+    assert!(
+        result.is_ok(),
+        "expected pub-imported callable alias to typecheck, got: {result:?}"
     );
 }
 
@@ -11598,6 +12669,29 @@ def main(result: Result[int, str]) -> None:
 }
 
 #[test]
+fn test_result_unwrap_helpers_typecheck() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def direct(result: Result[int, str]) -> int:
+  return result.unwrap()
+
+def fallback(result: Result[int, str]) -> int:
+  return result.unwrap_or(0)
+"#;
+
+    check_str(source)
+}
+
+#[test]
+fn test_option_copied_accepts_generic_reference_payloads() -> Result<(), Vec<CompileError>> {
+    let source = r#"
+def copy_placeholder[T](value: Option[&T]) -> Option[T]:
+  return value.copied()
+"#;
+
+    check_str(source)
+}
+
+#[test]
 fn test_rfc070_result_combinators_reject_bad_callbacks() {
     let source = r#"
 def wrong_arg(value: str) -> int:
@@ -12294,6 +13388,86 @@ pub model Reading with Convert[int], Convert[float]:
             .iter()
             .any(|ty| matches!(ty, TypeRef::Named { name } if name == "float")),
         "missing float convert overload: {convert_returns:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn test_checked_public_exports_qualify_default_expression_provider_paths() -> Result<(), Box<dyn std::error::Error>> {
+    let defaults_source = r#"
+pub const FALLBACK: str = "fallback"
+
+pub def make_label(value: str) -> str:
+  return value
+"#;
+    let source = r#"
+from defaults import FALLBACK, make_label
+
+pub const LOCAL_SENTINEL: str = "local"
+
+pub def imported_default(label: str = make_label(FALLBACK)) -> str:
+  return label
+
+pub def local_default(label: str = LOCAL_SENTINEL) -> str:
+  return label
+"#;
+
+    let defaults_tokens = lexer::lex(defaults_source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let defaults_ast = parser::parse(&defaults_tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let tokens = lexer::lex(source).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+    let ast = parser::parse(&tokens).map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+
+    let mut checker = TypeChecker::new();
+    checker.set_current_module_path(Some(vec!["helpers".to_string()]));
+    checker
+        .check_with_imports(&ast, &[("defaults", &defaults_ast)])
+        .map_err(|errs| std::io::Error::other(format!("{errs:?}")))?;
+
+    let exports = collect_checked_public_exports(&ast, &checker);
+    let manifest = LibraryManifest::from_checked_exports("querykit".to_string(), "0.1.0".to_string(), &exports);
+    let imported = manifest
+        .exports
+        .functions
+        .iter()
+        .find(|function| function.name == "imported_default")
+        .ok_or("missing imported_default export")?;
+    let local = manifest
+        .exports
+        .functions
+        .iter()
+        .find(|function| function.name == "local_default")
+        .ok_or("missing local_default export")?;
+
+    assert_eq!(
+        imported.params[0].default,
+        Some(ParamDefaultExport::Call {
+            path: vec!["defaults".to_string(), "make_label".to_string()],
+            args: vec![ParamDefaultCallArgExport {
+                name: None,
+                value: ParamDefaultExport::ConstRef(vec!["defaults".to_string(), "FALLBACK".to_string()]),
+            }],
+            signature: Some(ParamDefaultCallSignatureExport {
+                params: vec![ParamExport {
+                    name: "value".to_string(),
+                    ty: TypeRef::Named {
+                        name: "str".to_string(),
+                    },
+                    kind: ParamKindExport::Normal,
+                    has_default: false,
+                    default: None,
+                }],
+                return_type: TypeRef::Named {
+                    name: "str".to_string(),
+                },
+            }),
+        })
+    );
+    assert_eq!(
+        local.params[0].default,
+        Some(ParamDefaultExport::ConstRef(vec![
+            "helpers".to_string(),
+            "LOCAL_SENTINEL".to_string(),
+        ]))
     );
     Ok(())
 }

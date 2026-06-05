@@ -5,8 +5,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use super::common::CompilationSession;
 use crate::cli::{CliError, CliResult, ExitCode};
-use crate::format::{format_diff, format_source};
+use crate::format::{FormatConfig, format_diff_from_formatted, format_parsed_source_with_config};
+use crate::frontend::diagnostics;
 
 /// Format Incan source files.
 pub fn format_files(path: &str, check_mode: bool, diff_mode: bool) -> CliResult<ExitCode> {
@@ -31,13 +33,13 @@ pub fn format_files(path: &str, check_mode: bool, diff_mode: bool) -> CliResult<
             }
         };
 
-        match format_source(&source) {
+        match format_file_source(file_path, &source) {
             Ok(formatted) => {
                 let changed = source != formatted;
 
                 if diff_mode && changed {
                     println!("--- {}", file_path.display());
-                    if let Ok(Some(diff)) = format_diff(&source) {
+                    if let Some(diff) = format_diff_from_formatted(&source, &formatted) {
                         print!("{}", diff);
                     }
                     println!();
@@ -89,6 +91,26 @@ pub fn format_files(path: &str, check_mode: bool, diff_mode: bool) -> CliResult<
     }
 
     Ok(ExitCode::SUCCESS)
+}
+
+/// Format one file through the same project-aware parsing context used by check and test collection.
+fn format_file_source(file_path: &Path, source: &str) -> CliResult<String> {
+    let session = CompilationSession::discover(file_path)?;
+    let ast = session
+        .parse_source_for_collection(file_path, source)
+        .map_err(|errs| CliError::failure(format_parse_errors(file_path, source, &errs)))?;
+    format_parsed_source_with_config(source, &ast, FormatConfig::default())
+        .map_err(|error| CliError::failure(error.to_string()))
+}
+
+/// Format parser diagnostics with the real file path instead of the context-free formatter placeholder.
+fn format_parse_errors(file_path: &Path, source: &str, errors: &[diagnostics::CompileError]) -> String {
+    let file_name = file_path.to_string_lossy();
+    errors
+        .iter()
+        .map(|error| diagnostics::format_error(file_name.as_ref(), source, error))
+        .collect::<Vec<_>>()
+        .join("")
 }
 
 /// Recursively collect all `.incn` files from a path.

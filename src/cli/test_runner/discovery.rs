@@ -3,17 +3,15 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
+use crate::cli::commands::common::CompilationSession;
 use crate::frontend::ast::{
     BinaryOp, CallArg, Declaration, DecoratorArg, DecoratorArgValue, Expr, ListEntry, Literal, Program, Spanned,
     Statement, UnaryOp,
 };
 use crate::frontend::ast_walk::any_expr_in_body;
-use crate::frontend::library_manifest_index::LibraryManifestIndex;
 use crate::frontend::testing_markers::{
     TestingMarkerKind, TestingMarkerSemantics, load_testing_marker_semantics, resolve_testing_marker_kind,
 };
-use crate::frontend::{lexer, parser};
-use crate::manifest::ProjectManifest;
 
 use super::types::{DiscoveryResult, FixtureInfo, FixtureScope, ParametrizeCase, TestInfo, TestMarker};
 
@@ -37,6 +35,15 @@ fn source_may_contain_inline_test_module(source: &str) -> bool {
     source.contains("module tests")
 }
 
+/// Parse one source file for collection-time discovery using the same dependency-provided vocabulary surfaces that
+/// ordinary source compilation receives.
+fn parse_collection_program(path: &Path, source: &str) -> Result<Program, String> {
+    let session = CompilationSession::discover(path).map_err(|e| format!("Manifest error: {}", e.message))?;
+    session
+        .parse_source_for_collection(path, source)
+        .map_err(|e| format!("Parser error: {:?}", e))
+}
+
 /// Parse a non-test source file just far enough to prove it contains a real RFC 018 inline test module.
 fn file_has_inline_test_module(path: &Path) -> bool {
     if !is_incan_source_file(path) || is_named_test_file(path) {
@@ -50,11 +57,7 @@ fn file_has_inline_test_module(path: &Path) -> bool {
         return false;
     }
 
-    let Ok(tokens) = lexer::lex(&source) else {
-        return false;
-    };
-    let path_display = path.to_string_lossy();
-    let Ok(ast) = parser::parse_with_module_path(&tokens, Some(path_display.as_ref())) else {
+    let Ok(ast) = parse_collection_program(path, &source) else {
         return false;
     };
 
@@ -143,19 +146,7 @@ pub(crate) fn discover_tests_and_fixtures_with_context(
     eval_context: &CollectionEvalContext,
 ) -> Result<DiscoveryResult, String> {
     let source = fs::read_to_string(file_path).map_err(|e| format!("Failed to read file: {}", e))?;
-
-    let tokens = lexer::lex(&source).map_err(|e| format!("Lexer error: {:?}", e))?;
-
-    let path_display = file_path.to_string_lossy();
-    let manifest = ProjectManifest::discover(file_path.parent().unwrap_or_else(|| Path::new(".")))
-        .map_err(|e| format!("Manifest error: {}", e))?;
-    let library_manifest_index = manifest
-        .as_ref()
-        .map(LibraryManifestIndex::from_project_manifest)
-        .unwrap_or_default();
-    let library_imported_vocab = library_manifest_index.library_imported_vocab();
-    let ast = parser::parse_with_context(&tokens, Some(path_display.as_ref()), Some(&library_imported_vocab))
-        .map_err(|e| format!("Parser error: {:?}", e))?;
+    let ast = parse_collection_program(file_path, &source)?;
 
     let is_named_test_file = is_named_test_file(file_path);
     let is_conftest_file = file_path.file_name().and_then(|name| name.to_str()) == Some("conftest.incn");

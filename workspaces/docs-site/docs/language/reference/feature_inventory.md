@@ -27,6 +27,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Abstract traits and supertraits | TypeSystem | 0.2 | None. | `trait OrderedCollection[T] with Collection[T]:`<br>`def first(values: Collection[int]) -> int:` | Trait names are abstract annotation types, and traits can adopt supertraits with `with`. | Hidden generic bounds or duplicated method requirements when a trait annotation names the concept. | [Derives and traits](derives_and_traits.md#traits-authoring), [Derives and traits explained](../explanation/derives_and_traits.md) |
 | Source-defined derives and trait contracts | TypeSystem | 0.2 | Import the relevant `std.derives.*`, `std.traits.*`, or derivable module. | `@derive(json)`<br>`model Row with Serialize:`<br>`T with Clone` | Derive and trait surfaces are authored as named stdlib capability contracts rather than compiler folklore. | Backend-only helper shims or comments that claim derive behavior without source-visible contracts. | [Derives and traits](derives_and_traits.md), [std.derives](stdlib/derives.md), [std.traits](stdlib/traits.md) |
 | Model field metadata and reflection | TypeSystem | 0.2 | None for field metadata; import `std.reflection` helpers when needed. | `name as "wire_name": str`<br>`user.__fields__()` | Model fields can carry aliases/descriptions and reflection exposes typed `FieldInfo` metadata. | Stringly schema maps that duplicate model field names and wire aliases. | [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [Release 0.2](../../release_notes/0_2.md) |
+| Type tokens and type-argument reflection | TypeSystem | 0.3 | Use explicit type arguments for compile-time reflection, or call an overload that expects `Type[T]`. | `T.__class_name__()`<br>`def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:`<br>`def accepts_schema(value: Type[MySchema]) -> str:`<br>`cast(col("amount"), int)` | Primitive type arguments expose stable source names, model type tokens carry checked source type evidence, and expected `Type[T]` parameters let visible type names select precise overloads without making types general runtime values. | String target names, dummy schema values, or helper families used only to recover type-specific return types. | [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [RFC 107 north star](../../RFCs/107_type_directed_library_apis.md), [Release 0.3](../../release_notes/0_3.md) |
 | Value enums | TypeSystem | 0.3 | None. | `enum Level(str):`<br>`WARN = "WARN"`<br>`Level.from_value(raw)` | Enums can use `str` or `int` backing values while preserving enum type safety. | Loose string/int constants or duplicate parsing helpers around enum-like values. | [Enums explained](../explanation/enums.md), [Modeling with enums](../how-to/modeling_with_enums.md), [Release 0.3](../../release_notes/0_3.md) |
 | Union types and narrowing | TypeSystem | 0.3 | None. | `value: int \| str`<br>`if isinstance(value, int):`<br>`match value:` | Closed anonymous unions support `Union[A, B]`, `A \| B`, narrowing, and exhaustive match type patterns. | Untyped `Any`-like values, parallel option fields, or manual tag/payload models for closed alternatives. | [Union types](union_types.md), [Release 0.3](../../release_notes/0_3.md) |
 | Validated newtypes and checked coercion | TypeSystem | 0.3 | None. | `type UserId = newtype int[ge=0]:`<br>`Email.new(value)`<br>`@no_implicit_coercion` | Newtypes can validate primitive constraints and participate in checked construction/coercion. | Raw primitives passed across APIs with comments describing expected invariants. | [Newtypes](newtypes.md), [Book: newtypes](../tutorials/book/12_newtypes.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -39,7 +40,7 @@ Use it when deciding whether code should use an existing Incan surface before ad
 | Symbol, method, and variant aliases | Syntax | 0.3 | None. | `pub average = alias avg`<br>`mean = avg`<br>`WARNING = alias WARN` | Aliases expose another resolved name for the same declaration, method, or enum variant without duplicating behavior. | Wrapper functions or duplicated enum variants used only for compatibility names. | [Symbol aliases](symbol_aliases.md), [Imports and modules](imports_and_modules.md), [Release 0.3](../../release_notes/0_3.md) |
 | Callable presets with `partial` | Syntax | 0.3 | None. | `pub get = partial route(method="GET")`<br>`set_alive = partial set_state(state=true)` | `partial` creates a callable surface from an existing callable by supplying named preset values. | Hand-written wrappers whose only job is to pass the same keyword defaults. | [Callable presets](callable_presets.md), [Callable presets explained](../explanation/callable_presets.md), [Release 0.3](../../release_notes/0_3.md) |
 | Rest parameters, unpacking, and spreads | Syntax | 0.3 | None. | `def log(*items: str, **fields: str) -> None:`<br>`f(*xs, **kw)`<br>`[*prefix, item]`<br>`{**base, "x": 1}` | Functions can capture `*args` / `**kwargs`; calls and literals support typed unpack/spread forms. | Manually spelling every forwarding arity or merging collections one element at a time. | [Functions and calls](functions.md), [Release 0.3](../../release_notes/0_3.md) |
-| User-defined decorators | Syntax | 0.3 | None for user-defined decorators; compiler-owned decorators keep their documented imports. | `@logged`<br>`@route("/users")`<br>`@trace(level=Level.INFO)` | Decorators are ordinary callable values applied to functions and methods, including decorator factories. | Boilerplate wrapper declarations around every function that needs the same callable transform. | [Language reference](language.md#decorators), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md) |
+| User-defined decorators | Syntax | 0.3 | None for user-defined decorators; compiler-owned decorators keep their documented imports. | `@logged`<br>`@registered("catalog.ref")`<br>`func.__name__`<br>`@registered[(str) -> ColumnExpr]("catalog.ref")` | Decorators are ordinary callable values applied to functions and methods, including generic decorator factories that infer or accept the decorated function type and decorator helpers that expose `func.__name__`. | Boilerplate wrapper declarations around every function that needs the same callable transform. | [Language reference](language.md#decorators), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md) |
 | Generators | Syntax | 0.3 | None. | `def numbers() -> Generator[int]:`<br>`yield value`<br>`(x * 2 for x in values)` | `yield`-based functions and generator expressions produce lazy `Generator[T]` values. | Eager list construction when callers only need lazy iteration. | [Generators](generators.md), [Generators how-to](../how-to/generators.md), [Release 0.3](../../release_notes/0_3.md) |
 | Iterator adapters and terminal consumers | Stdlib | 0.3 | Use iterator values. | `values.iter().map(parse).filter(valid).collect()`<br>`items.enumerate().take(10)`<br>`numbers.fold(0, add)` | Iterator pipelines expose lazy adapters and explicit terminal consumers. | Manual loop accumulators for ordinary map/filter/fold pipeline shapes. | [Collection protocols](stdlib_traits/collection_protocols.md), [Release 0.3](../../release_notes/0_3.md) |
 | `Result[T, E]` combinators | Stdlib | 0.3 | Use `Result[T, E]` values. | `result.map(transform)`<br>`result.and_then(validate)`<br>`result.inspect(log_success)` | `Result` values support branch-local transforms, fallible chaining, recovery, and inspection taps. | Nested matches that only rewrap `Ok` / `Err` around one transformed branch. | [std.result](stdlib/result.md), [Fallible and infallible paths](../tutorials/fallible_and_infallible_paths.md), [Release 0.3](../../release_notes/0_3.md) |
@@ -230,6 +231,26 @@ Canonical forms:
 
 - `name as "wire_name": str`
 - `user.__fields__()`
+
+### Type tokens and type-argument reflection
+
+- **Id:** `TypeTokensReflection`
+- **Category:** `TypeSystem`
+- **Since:** `0.3`
+- **RFC:** `RFC 107`
+- **Stability:** `Stable`
+- **Activation:** Use explicit type arguments for compile-time reflection, or call an overload that expects `Type[T]`.
+- **Use instead of:** String target names, dummy schema values, or helper families used only to recover type-specific return types.
+- **References:** [Reflection](reflection.md), [std.reflection](stdlib/reflection.md), [RFC 107 north star](../../RFCs/107_type_directed_library_apis.md), [Release 0.3](../../release_notes/0_3.md)
+
+Primitive type arguments expose stable source names, model type tokens carry checked source type evidence, and expected `Type[T]` parameters let visible type names select precise overloads without making types general runtime values.
+
+Canonical forms:
+
+- `T.__class_name__()`
+- `def cast(expr: ColumnExpr, target: Type[int]) -> IntColumnExpr:`
+- `def accepts_schema(value: Type[MySchema]) -> str:`
+- `cast(col("amount"), int)`
 
 ### Value enums
 
@@ -464,13 +485,14 @@ Canonical forms:
 - **Use instead of:** Boilerplate wrapper declarations around every function that needs the same callable transform.
 - **References:** [Language reference](language.md#decorators), [Derives and traits](derives_and_traits.md), [Release 0.3](../../release_notes/0_3.md)
 
-Decorators are ordinary callable values applied to functions and methods, including decorator factories.
+Decorators are ordinary callable values applied to functions and methods, including generic decorator factories that infer or accept the decorated function type and decorator helpers that expose `func.__name__`.
 
 Canonical forms:
 
 - `@logged`
-- `@route("/users")`
-- `@trace(level=Level.INFO)`
+- `@registered("catalog.ref")`
+- `func.__name__`
+- `@registered[(str) -> ColumnExpr]("catalog.ref")`
 
 ### Generators
 

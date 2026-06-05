@@ -1,12 +1,12 @@
 //! Rust boundary matching, Rust call validation, and coercion metadata recording.
 
 use super::TypeChecker;
-use crate::frontend::ast::{CallArg, Span};
+use crate::frontend::ast::{CallArg, ParamKind, Span};
 use crate::frontend::diagnostics::errors;
 use crate::frontend::symbols::{CallableParam, ResolvedType, TypeInfo};
 use crate::frontend::typechecker::helpers::collection_type_id;
 use crate::frontend::typechecker::{RustArgCoercionInfo, RustArgCoercionKind};
-use incan_core::interop::{CoercionPolicy, RustFunctionSig, admitted_builtin_coercion};
+use incan_core::interop::{CoercionPolicy, RustFunctionSig, RustParam, admitted_builtin_coercion};
 use incan_core::lang::types::collections::CollectionTypeId;
 use incan_core::lang::types::numerics;
 
@@ -20,6 +20,12 @@ enum RustArgBoundaryMatch {
     NoMatch,
 }
 
+struct RustCallArgBinding<'a> {
+    arg: &'a CallArg,
+    arg_ty: &'a ResolvedType,
+    param: &'a RustParam,
+}
+
 impl TypeChecker {
     /// Eagerly cache metadata for Rust path types returned by inspected Rust calls.
     ///
@@ -28,31 +34,53 @@ impl TypeChecker {
     /// signature is known lets the next method call validate against its real signature instead of falling back to
     /// permissive unknown-method lowering.
     fn prewarm_rust_return_type_metadata(&self, ty: &ResolvedType) {
+        self.prewarm_rust_type_identity_metadata(ty);
+    }
+
+    /// Eagerly cache Rust identity metadata for nominal paths nested inside Rust display types.
+    ///
+    /// rust-inspect can report public signatures such as `Arc<crate::Type>` while another API returns the same type
+    /// through its defining module, for example `Arc<crate::private::Type>`. The outer generic wrapper is not the
+    /// semantic identity; the nested Rust path is. Prewarming those nested paths lets compatibility use cache-only
+    /// definition metadata instead of treating the two displays as unrelated nominal types.
+    fn prewarm_rust_type_identity_metadata(&self, ty: &ResolvedType) {
         match ty {
             ResolvedType::RustPath(path) => {
-                let _ = self.rust_item_metadata_for_path_blocking(path);
+                let (base, args) = self.rust_path_base_and_args(path);
+                if base.contains("::") {
+                    let _ = self.rust_item_metadata_for_path_blocking(base.as_str());
+                }
+                for arg in args {
+                    self.prewarm_rust_type_identity_metadata(&arg);
+                }
             }
-            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.prewarm_rust_return_type_metadata(inner),
+            ResolvedType::Ref(inner) | ResolvedType::RefMut(inner) => self.prewarm_rust_type_identity_metadata(inner),
             ResolvedType::Generic(_, args) | ResolvedType::Tuple(args) => {
                 for arg in args {
-                    self.prewarm_rust_return_type_metadata(arg);
+                    self.prewarm_rust_type_identity_metadata(arg);
                 }
             }
             ResolvedType::FrozenList(inner) | ResolvedType::FrozenSet(inner) => {
-                self.prewarm_rust_return_type_metadata(inner);
+                self.prewarm_rust_type_identity_metadata(inner);
             }
             ResolvedType::FrozenDict(key, value) => {
-                self.prewarm_rust_return_type_metadata(key);
-                self.prewarm_rust_return_type_metadata(value);
+                self.prewarm_rust_type_identity_metadata(key);
+                self.prewarm_rust_type_identity_metadata(value);
             }
-            ResolvedType::Function(_, ret) => self.prewarm_rust_return_type_metadata(ret),
+            ResolvedType::Function(params, ret) => {
+                for param in params {
+                    self.prewarm_rust_type_identity_metadata(&param.ty);
+                }
+                self.prewarm_rust_type_identity_metadata(ret);
+            }
             _ => {}
         }
     }
 
     /// Resolve an inspected Rust return display and cache any returned Rust receiver metadata.
-    fn resolved_rust_return_type_from_sig(&self, sig: &RustFunctionSig) -> ResolvedType {
-        let return_ty = self.resolved_type_from_rust_display(sig.return_type.as_str());
+    fn resolved_rust_return_type_from_sig(&self, sig: &RustFunctionSig, owner_path: &str) -> ResolvedType {
+        let return_display = self.rust_display_for_owner_path(sig.return_type.as_str(), owner_path);
+        let return_ty = self.resolved_type_from_rust_display(return_display.as_str());
         self.prewarm_rust_return_type_metadata(&return_ty);
         return_ty
     }
@@ -62,8 +90,8 @@ impl TypeChecker {
     /// In an `await` operand we keep the existing source-async behavior: the inner call checks to its output type and
     /// `check_await` returns that type. Outside `await`, expose the pending future as `Awaitable[T]` so consumers
     /// cannot accidentally match or unwrap `T` before awaiting the Rust future.
-    fn resolved_rust_call_type_from_sig(&self, sig: &RustFunctionSig, span: Span) -> ResolvedType {
-        let return_ty = self.resolved_rust_return_type_from_sig(sig);
+    fn resolved_rust_call_type_from_sig(&self, sig: &RustFunctionSig, owner_path: &str, span: Span) -> ResolvedType {
+        let return_ty = self.resolved_rust_return_type_from_sig(sig, owner_path);
         if sig.is_async && !self.is_in_await_operand(span) {
             ResolvedType::Generic("Awaitable".to_string(), vec![return_ty])
         } else {
@@ -104,6 +132,7 @@ impl TypeChecker {
         );
     }
 
+    /// Return how a rusttype boundary matches an argument type.
     fn rusttype_boundary_match(&self, arg_ty: &ResolvedType, target_ty: &ResolvedType) -> Option<RustArgCoercionKind> {
         if let ResolvedType::Named(type_name) = arg_ty
             && let Some(TypeInfo::Newtype(newtype)) = self.lookup_type_info(type_name)
@@ -131,6 +160,7 @@ impl TypeChecker {
         None
     }
 
+    /// Return whether a Rust type display names a generic type parameter.
     fn is_rust_generic_type_param_display(rust_ty: &str) -> bool {
         let normalized = rust_ty.trim().replace(' ', "");
         let mut chars = normalized.chars();
@@ -268,20 +298,22 @@ impl TypeChecker {
     /// This first tries builtin coercion-matrix matches, then resolved-type compatibility, then rusttype-specific
     /// boundary adapters.
     fn rust_arg_boundary_match(&self, arg_ty: &ResolvedType, rust_param_ty: &str) -> RustArgBoundaryMatch {
-        let normalized = rust_param_ty.replace(' ', "");
+        let display = Self::rust_display_without_lifetimes(rust_param_ty);
+        let normalized = display.replace(' ', "");
         if Self::rust_display_type_var_name(normalized.as_str()).is_some() {
             return RustArgBoundaryMatch::Exact;
         }
-        let borrowed_shared = matches!(Self::rust_display_borrow_kind(normalized.as_str()), Some((false, _)));
-        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(normalized.as_str()) {
-            if Self::is_rust_generic_type_param_display(inner)
+        let borrowed_shared = matches!(Self::rust_display_borrow_kind(display.as_str()), Some((false, _)));
+        if let Some((is_mut, inner)) = Self::rust_display_borrow_kind(display.as_str()) {
+            let inner_normalized = Self::compact_rust_display(inner);
+            if Self::is_rust_generic_type_param_display(inner_normalized.as_str())
                 && !is_mut
                 && !matches!(arg_ty, ResolvedType::Ref(_) | ResolvedType::RefMut(_))
             {
                 return RustArgBoundaryMatch::Exact;
             }
             if !is_mut {
-                let target_inner_ty = self.resolved_type_from_rust_display(inner);
+                let target_inner_ty = self.resolved_type_from_rust_display(inner_normalized.as_str());
                 if Self::incan_boundary_type_display(arg_ty).is_none()
                     && self.types_compatible(arg_ty, &target_inner_ty)
                 {
@@ -289,13 +321,13 @@ impl TypeChecker {
                 }
             }
             if is_mut {
-                let target_inner_ty = self.resolved_type_from_rust_display(inner);
+                let target_inner_ty = self.resolved_type_from_rust_display(inner_normalized.as_str());
                 if self.types_compatible(arg_ty, &target_inner_ty) {
                     return RustArgBoundaryMatch::Exact;
                 }
                 if let Some(incan_display) = Self::incan_boundary_type_display(arg_ty)
                     && let Some(CoercionPolicy::Exact) =
-                        admitted_builtin_coercion(incan_display.as_str(), inner.replace(' ', "").as_str())
+                        admitted_builtin_coercion(incan_display.as_str(), inner_normalized.as_str())
                 {
                     return RustArgBoundaryMatch::Exact;
                 }
@@ -327,19 +359,173 @@ impl TypeChecker {
     }
 
     /// Record inspected Rust parameter types so codegen can emit the same borrow shape the typechecker accepted.
-    fn record_rust_call_site_params(&mut self, span: Span, params: &[incan_core::interop::RustParam]) {
+    fn rust_params_as_callable_params(
+        &self,
+        params: &[incan_core::interop::RustParam],
+        owner_path: &str,
+    ) -> Vec<CallableParam> {
         let params: Vec<CallableParam> = params
             .iter()
             .map(|param| {
-                CallableParam::positional(self.resolved_param_type_from_rust_display(param.type_display.as_str()))
+                let ty =
+                    self.resolved_param_type_from_rust_display_for_owner_path(param.type_display.as_str(), owner_path);
+                CallableParam {
+                    name: param.name.clone(),
+                    ty,
+                    kind: ParamKind::Normal,
+                    has_default: false,
+                }
+            })
+            .collect();
+        params
+    }
+
+    /// Record inspected Rust parameter types so codegen can emit the same borrow shape the typechecker accepted.
+    fn record_rust_call_site_params(
+        &mut self,
+        span: Span,
+        params: &[incan_core::interop::RustParam],
+        owner_path: &str,
+        force_exact: bool,
+    ) {
+        let params: Vec<CallableParam> = params
+            .iter()
+            .map(|param| {
+                let ty = self.resolved_rust_boundary_target_from_param_display_for_owner_path(
+                    param.type_display.as_str(),
+                    owner_path,
+                );
+                CallableParam {
+                    name: param.name.clone(),
+                    ty,
+                    kind: ParamKind::Normal,
+                    has_default: false,
+                }
             })
             .collect();
         // Plain Rust type variables carry by-value shape, but they are not ordinary borrow-boundary snapshots.
-        if params.iter().any(|param| matches!(param.ty, ResolvedType::TypeVar(_))) {
+        if force_exact || params.iter().any(|param| matches!(param.ty, ResolvedType::TypeVar(_))) {
             self.type_info.record_call_site_callable_params_exact(span, &params);
         } else {
             self.type_info.record_call_site_callable_params(span, &params);
         }
+    }
+
+    /// Bind Incan call arguments to a Rust function signature.
+    fn bind_rust_call_args<'a>(
+        &mut self,
+        callable_display: &str,
+        params: &'a [RustParam],
+        args: &'a [CallArg],
+        arg_types: &'a [ResolvedType],
+        span: Span,
+    ) -> Vec<RustCallArgBinding<'a>> {
+        let has_keyword_args = args
+            .iter()
+            .any(|arg| matches!(arg, CallArg::Named(_, _) | CallArg::KeywordUnpack(_)));
+        let has_unpack_args = args
+            .iter()
+            .any(|arg| matches!(arg, CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_)));
+        if !has_keyword_args || has_unpack_args {
+            if arg_types.len() != params.len() {
+                self.errors.push(errors::builtin_arity(
+                    callable_display,
+                    params.len(),
+                    arg_types.len(),
+                    span,
+                ));
+                return Vec::new();
+            }
+            return args
+                .iter()
+                .zip(arg_types.iter())
+                .zip(params.iter())
+                .map(|((arg, arg_ty), param)| RustCallArgBinding { arg, arg_ty, param })
+                .collect();
+        }
+
+        let mut params_by_name = std::collections::HashMap::new();
+        for (idx, param) in params.iter().enumerate() {
+            if let Some(name) = param.name.as_deref() {
+                params_by_name.insert(name, idx);
+            }
+        }
+
+        let mut bound_spans: Vec<Option<Span>> = vec![None; params.len()];
+        let mut named_seen: std::collections::HashMap<&str, Span> = std::collections::HashMap::new();
+        let mut positional_index = 0usize;
+        let mut unexpected_positional = 0usize;
+        let mut bindings = Vec::new();
+
+        for (arg, arg_ty) in args.iter().zip(arg_types.iter()) {
+            let arg_span = Self::call_arg_expr(arg).span;
+            match arg {
+                CallArg::Positional(_) => {
+                    if positional_index >= params.len() {
+                        unexpected_positional += 1;
+                        continue;
+                    }
+                    let param = &params[positional_index];
+                    if let Some(bound_span) = bound_spans[positional_index] {
+                        let name = param.name.as_deref().unwrap_or("<positional>");
+                        self.errors
+                            .push(errors::duplicate_call_argument(callable_display, name, bound_span));
+                    } else {
+                        bound_spans[positional_index] = Some(arg_span);
+                        bindings.push(RustCallArgBinding { arg, arg_ty, param });
+                    }
+                    positional_index += 1;
+                }
+                CallArg::Named(name, _) => {
+                    if let Some(first_span) = named_seen.insert(name.as_str(), arg_span) {
+                        self.errors
+                            .push(errors::duplicate_call_argument(callable_display, name, first_span));
+                    }
+                    let Some(param_index) = params_by_name.get(name.as_str()).copied() else {
+                        self.errors
+                            .push(errors::unknown_keyword_argument(callable_display, name, arg_span));
+                        continue;
+                    };
+                    if bound_spans[param_index].is_some() {
+                        self.errors
+                            .push(errors::duplicate_call_argument(callable_display, name, arg_span));
+                        continue;
+                    }
+                    let param = &params[param_index];
+                    bound_spans[param_index] = Some(arg_span);
+                    bindings.push(RustCallArgBinding { arg, arg_ty, param });
+                }
+                CallArg::PositionalUnpack(_) | CallArg::KeywordUnpack(_) => {}
+            }
+        }
+
+        if unexpected_positional > 0 {
+            self.errors.push(errors::builtin_arity(
+                callable_display,
+                params.len(),
+                params.len() + unexpected_positional,
+                span,
+            ));
+        }
+
+        let mut missing_unnamed_param = false;
+        for (idx, param) in params.iter().enumerate() {
+            if bound_spans[idx].is_some() {
+                continue;
+            }
+            if let Some(name) = param.name.as_deref() {
+                self.errors
+                    .push(errors::missing_required_argument(callable_display, name, span));
+            } else {
+                missing_unnamed_param = true;
+            }
+        }
+        if missing_unnamed_param {
+            self.errors
+                .push(errors::builtin_arity(callable_display, params.len(), args.len(), span));
+        }
+
+        bindings
     }
 
     /// Return whether a lookup-style Rust method should preserve the probe argument's emitted shape.
@@ -361,6 +547,7 @@ impl TypeChecker {
         }
     }
 
+    /// Return whether an argument can cross a Rust boundary.
     #[cfg(test)]
     pub(in crate::frontend::typechecker) fn rust_arg_matches_boundary(
         &self,
@@ -394,26 +581,33 @@ impl TypeChecker {
         } else {
             &sig.params
         };
-        self.record_rust_call_site_params(span, params);
+        let has_keyword_args = args
+            .iter()
+            .any(|arg| matches!(arg, CallArg::Named(_, _) | CallArg::KeywordUnpack(_)));
+        self.record_rust_call_site_params(span, params, callable_display, has_keyword_args);
 
-        if arg_types.len() != params.len() {
-            self.errors.push(errors::builtin_arity(
-                callable_display,
-                params.len(),
-                arg_types.len(),
-                span,
-            ));
-            return self.resolved_rust_call_type_from_sig(sig, span);
+        let binding_errors_before = self.errors.len();
+        let bindings = self.bind_rust_call_args(callable_display, params, args, arg_types, span);
+        if self.errors.len() != binding_errors_before {
+            return self.resolved_rust_call_type_from_sig(sig, callable_display, span);
         }
 
-        for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(params.iter()) {
-            let arg_expr = Self::call_arg_expr(arg);
-            let normalized = param.type_display.replace(' ', "");
-            let target_ty = self.resolved_type_from_rust_display(normalized.as_str());
+        for binding in bindings {
+            let arg_expr = Self::call_arg_expr(binding.arg);
+            let arg_ty = binding.arg_ty;
+            let param = binding.param;
+            let param_display = self.rust_display_for_owner_path(param.type_display.as_str(), callable_display);
+            let normalized = param_display.replace(' ', "");
+            let target_ty = self.resolved_rust_boundary_target_from_param_display_for_owner_path(
+                param.type_display.as_str(),
+                callable_display,
+            );
+            self.prewarm_rust_type_identity_metadata(arg_ty);
+            self.prewarm_rust_type_identity_metadata(&target_ty);
             if preserves_lookup_arg_shape && self.rust_lookup_probe_boundary_match(arg_ty, &target_ty) {
                 continue;
             }
-            match self.rust_arg_boundary_match(arg_ty, param.type_display.as_str()) {
+            match self.rust_arg_boundary_match(arg_ty, param_display.as_str()) {
                 RustArgBoundaryMatch::Exact => {}
                 RustArgBoundaryMatch::Coercion(kind) => {
                     self.type_info.rust.arg_coercions.insert(
@@ -435,7 +629,7 @@ impl TypeChecker {
             }
         }
 
-        let ret = self.resolved_rust_call_type_from_sig(sig, span);
+        let ret = self.resolved_rust_call_type_from_sig(sig, callable_display, span);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         ret
     }
@@ -451,19 +645,29 @@ impl TypeChecker {
         if sig.is_async && !self.is_in_await_operand(span) {
             self.errors.push(errors::async_call_without_await(path, span));
         }
-        let arg_types = self.check_call_arg_types(args);
-        self.record_rust_call_site_params(span, &sig.params);
-        if arg_types.len() != sig.params.len() {
-            self.errors
-                .push(errors::builtin_arity(path, sig.params.len(), arg_types.len(), span));
-            return self.resolved_rust_call_type_from_sig(sig, span);
+        let expected_params = self.rust_params_as_callable_params(&sig.params, path);
+        let arg_types = self.check_call_arg_types_for_params(args, &expected_params);
+        let has_keyword_args = args
+            .iter()
+            .any(|arg| matches!(arg, CallArg::Named(_, _) | CallArg::KeywordUnpack(_)));
+        self.record_rust_call_site_params(span, &sig.params, path, has_keyword_args);
+        let binding_errors_before = self.errors.len();
+        let bindings = self.bind_rust_call_args(path, &sig.params, args, &arg_types, span);
+        if self.errors.len() != binding_errors_before {
+            return self.resolved_rust_call_type_from_sig(sig, path, span);
         }
 
-        for ((arg, arg_ty), param) in args.iter().zip(arg_types.iter()).zip(sig.params.iter()) {
-            let arg_expr = Self::call_arg_expr(arg);
-            let normalized = param.type_display.replace(' ', "");
-            let target_ty = self.resolved_type_from_rust_display(normalized.as_str());
-            match self.rust_arg_boundary_match(arg_ty, param.type_display.as_str()) {
+        for binding in bindings {
+            let arg_expr = Self::call_arg_expr(binding.arg);
+            let arg_ty = binding.arg_ty;
+            let param = binding.param;
+            let param_display = self.rust_display_for_owner_path(param.type_display.as_str(), path);
+            let normalized = param_display.replace(' ', "");
+            let target_ty =
+                self.resolved_rust_boundary_target_from_param_display_for_owner_path(param.type_display.as_str(), path);
+            self.prewarm_rust_type_identity_metadata(arg_ty);
+            self.prewarm_rust_type_identity_metadata(&target_ty);
+            match self.rust_arg_boundary_match(arg_ty, param_display.as_str()) {
                 RustArgBoundaryMatch::Exact => {}
                 RustArgBoundaryMatch::Coercion(kind) => {
                     self.type_info.rust.arg_coercions.insert(
@@ -485,7 +689,7 @@ impl TypeChecker {
             }
         }
 
-        let ret = self.resolved_rust_call_type_from_sig(sig, span);
+        let ret = self.resolved_rust_call_type_from_sig(sig, path, span);
         self.record_rust_return_coercion_from_display(sig.return_type.as_str(), &ret, span);
         ret
     }
@@ -499,6 +703,24 @@ mod validate_rust_function_call_tests {
     use incan_core::interop::{RustFunctionSig, RustParam};
     use incan_core::lang::types::numerics::NumericTypeId;
     use std::collections::HashMap;
+
+    #[cfg(feature = "rust_inspect")]
+    fn scalar_udf_metadata(path: &str, definition_path: &str) -> incan_core::interop::RustItemMetadata {
+        use incan_core::interop::{RustItemKind, RustTypeInfo, RustVisibility};
+
+        incan_core::interop::RustItemMetadata {
+            canonical_path: path.to_string(),
+            definition_path: Some(definition_path.to_string()),
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
+                methods: Vec::new(),
+                implemented_traits: Vec::new(),
+                fields: Vec::new(),
+                variants: Vec::new(),
+            }),
+        }
+    }
 
     #[test]
     fn zero_parameter_rust_sig_rejects_extra_arguments() {
@@ -524,6 +746,61 @@ mod validate_rust_function_call_tests {
             "expected builtin_arity for 0-param Rust call with 1 arg, errors={:?}",
             checker.errors
         );
+    }
+
+    #[cfg(feature = "rust_inspect")]
+    #[test]
+    fn rust_function_call_matches_reexported_identity_inside_generic_wrapper() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let mut checker = TypeChecker::new();
+        let tmp = tempfile::tempdir()?;
+        std::fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"incan_test_rust_generic_identity\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        let manifest_dir = tmp.path().to_path_buf();
+        checker.set_rust_inspect_manifest_dir(manifest_dir.clone());
+        checker.rust_inspect_cache.insert_test_item(
+            &manifest_dir,
+            scalar_udf_metadata("bridge::ScalarUDF", "bridge::udf::ScalarUDF"),
+        )?;
+        checker.rust_inspect_cache.insert_test_item(
+            &manifest_dir,
+            scalar_udf_metadata("bridge::udf::ScalarUDF", "bridge::udf::ScalarUDF"),
+        )?;
+
+        let span = Span::new(10, 20);
+        checker.symbols.define(Symbol {
+            name: "udf".to_string(),
+            kind: SymbolKind::Variable(VariableInfo {
+                ty: ResolvedType::RustPath("rust::Arc<bridge::udf::ScalarUDF>".to_string()),
+                is_mutable: false,
+                is_used: false,
+            }),
+            span,
+            scope: 0,
+        });
+
+        let arg_expr = Spanned::new(Expr::Ident("udf".to_string()), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("udf".to_string()),
+                type_display: "Arc<bridge::ScalarUDF>".to_string(),
+            }],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::bridge::consume_udf", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected Rust re-export identity to match inside generic wrapper, errors={:?}",
+            checker.errors
+        );
+        Ok(())
     }
 
     #[test]
@@ -578,6 +855,55 @@ mod validate_rust_function_call_tests {
             "expected arity error when call has fewer args than Rust params, errors={:?}",
             checker.errors
         );
+    }
+
+    #[test]
+    fn rust_function_call_binds_keyword_args_by_inspected_param_name() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(0, 60);
+        let text_span = Span::new(10, 20);
+        let count_span = Span::new(30, 31);
+        let args = [
+            CallArg::Named(
+                "text".to_string(),
+                Spanned::new(Expr::Literal(Literal::String("demo".to_string())), text_span),
+            ),
+            CallArg::Named(
+                "count".to_string(),
+                Spanned::new(Expr::Literal(Literal::Int(IntLiteral::synthetic(3))), count_span),
+            ),
+        ];
+        let sig = RustFunctionSig {
+            params: vec![
+                RustParam {
+                    name: Some("count".to_string()),
+                    type_display: "i64".to_string(),
+                },
+                RustParam {
+                    name: Some("text".to_string()),
+                    type_display: "&str".to_string(),
+                },
+            ],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::crate::f", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected keyword Rust call args to bind by parameter name, errors={:?}",
+            checker.errors
+        );
+        let recorded = checker
+            .type_info
+            .calls
+            .call_site_callable_params
+            .get(&(span.start, span.end))
+            .expect("keyword Rust calls should record exact call-site params for lowering");
+        let names: Vec<_> = recorded.iter().filter_map(|param| param.name.as_deref()).collect();
+        assert_eq!(names, vec!["count", "text"]);
     }
 
     #[test]
@@ -837,6 +1163,89 @@ mod validate_rust_function_call_tests {
                 .contains_key(&(span.start, span.end)),
             "expected rust arg coercion metadata for borrowed String boundary"
         );
+        let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath("String".to_string())));
+        assert_eq!(
+            checker
+                .type_info
+                .rust
+                .arg_coercions
+                .get(&(span.start, span.end))
+                .map(|coercion| &coercion.target_type),
+            Some(&expected),
+            "borrowed owned Rust params must preserve owned target shape in lowering metadata"
+        );
+    }
+
+    #[test]
+    fn rust_function_call_accepts_string_for_borrowed_str_param() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(10, 20);
+        let arg_expr = Spanned::new(Expr::Literal(Literal::String("{}".to_string())), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("value".to_string()),
+                type_display: "&str".to_string(),
+            }],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::demo::takes_borrowed_str", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected borrowed str boundary to admit Incan str, errors={:?}",
+            checker.errors
+        );
+        let expected = ResolvedType::Ref(Box::new(ResolvedType::Str));
+        assert_eq!(
+            checker
+                .type_info
+                .rust
+                .arg_coercions
+                .get(&(span.start, span.end))
+                .map(|coercion| &coercion.target_type),
+            Some(&expected),
+            "borrowed str params must stay distinct from borrowed owned String params"
+        );
+    }
+
+    #[test]
+    fn rust_function_call_accepts_bytes_for_borrowed_vec_param() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(10, 20);
+        let arg_expr = Spanned::new(Expr::Literal(Literal::Bytes(b"abc".to_vec())), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("value".to_string()),
+                type_display: "&Vec<u8>".to_string(),
+            }],
+            return_type: "()".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_function_call("rust::demo::takes_borrowed_vec", &sig, &args, span);
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected borrowed Vec<u8> boundary to admit Incan bytes, errors={:?}",
+            checker.errors
+        );
+        let expected = ResolvedType::Ref(Box::new(ResolvedType::RustPath("Vec<u8>".to_string())));
+        assert_eq!(
+            checker
+                .type_info
+                .rust
+                .arg_coercions
+                .get(&(span.start, span.end))
+                .map(|coercion| &coercion.target_type),
+            Some(&expected),
+            "borrowed owned Rust byte-vector params must preserve owned target shape in lowering metadata"
+        );
     }
 
     #[test]
@@ -895,6 +1304,7 @@ mod validate_rust_function_call_tests {
                 definition_path: Some("substrait::proto::Plan".to_string()),
                 visibility: RustVisibility::Public,
                 kind: RustItemKind::Type(RustTypeInfo {
+                    alias_target: None,
                     methods: vec![],
                     implemented_traits: Vec::new(),
                     fields: vec![],
@@ -999,6 +1409,8 @@ mod validate_rust_function_call_tests {
         let checker = TypeChecker::new();
 
         assert!(checker.rust_arg_matches_boundary(&ResolvedType::Named("Payload".to_string()), "T",));
+        assert!(checker.rust_arg_matches_boundary(&ResolvedType::Bytes, "impl Buf"));
+        assert!(checker.rust_arg_matches_boundary(&ResolvedType::Bytes, "implBuf"));
         assert!(checker.rust_arg_matches_boundary(&ResolvedType::Named("Payload".to_string()), "&T",));
         assert!(checker.rust_arg_matches_boundary(&ResolvedType::Named("Payload".to_string()), "&TValue",));
     }
@@ -1042,6 +1454,54 @@ mod validate_rust_function_call_tests {
                 .get(&(span.start, span.end))
                 .is_some_and(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("T".to_string())),
             "expected Rust by-value generic method param shape to be recorded, got {:?}",
+            checker.type_info.calls.call_site_callable_params
+        );
+    }
+
+    #[test]
+    fn validate_rust_method_call_records_by_value_impl_trait_param_shape() {
+        let mut checker = TypeChecker::new();
+        let span = Span::new(30, 40);
+        let arg_expr = Spanned::new(Expr::Ident("encoded".to_string()), span);
+        let args = [CallArg::Positional(arg_expr)];
+        let arg_types = [ResolvedType::Bytes];
+        let sig = RustFunctionSig {
+            params: vec![RustParam {
+                name: Some("buf".to_string()),
+                type_display: "implBuf".to_string(),
+            }],
+            return_type: "demo::FileDescriptorSet".to_string(),
+            is_async: false,
+            is_unsafe: false,
+        };
+
+        let _ = checker.validate_rust_method_call(
+            "rust::demo::FileDescriptorSet.decode",
+            &sig,
+            &args,
+            &arg_types,
+            false,
+            span,
+        );
+
+        assert!(
+            checker.errors.is_empty(),
+            "expected by-value impl Trait Rust param to accept bytes without borrow coercion, got {:?}",
+            checker.errors
+        );
+        assert!(
+            checker.type_info.rust.arg_coercions.is_empty(),
+            "expected by-value impl Trait Rust param to avoid borrow coercion, got {:?}",
+            checker.type_info.rust.arg_coercions
+        );
+        assert!(
+            checker
+                .type_info
+                .calls
+                .call_site_callable_params
+                .get(&(span.start, span.end))
+                .is_some_and(|params| params.len() == 1 && params[0].ty == ResolvedType::TypeVar("implBuf".to_string())),
+            "expected Rust by-value impl Trait method param shape to be recorded, got {:?}",
             checker.type_info.calls.call_site_callable_params
         );
     }

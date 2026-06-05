@@ -142,6 +142,7 @@ impl TypeChecker {
 
         ResolvedType::Generic(surface_types::as_str(tid).to_string(), vec![inner])
     }
+    /// Return whether a call target names an enum type.
     pub(in crate::frontend::typechecker::check_expr::calls) fn is_enum_type_name_expr_for_call(
         &self,
         expr: &Spanned<Expr>,
@@ -217,6 +218,7 @@ impl TypeChecker {
         }
         value_enum.value_type.resolved_type()
     }
+    /// Return the result type produced by a constructor call.
     pub(in crate::frontend::typechecker::check_expr::calls) fn constructor_result_type(
         &self,
         name: &str,
@@ -450,7 +452,7 @@ impl TypeChecker {
         } else {
             ResolvedType::Generic(type_name.to_string(), resolved_type_args)
         };
-        Some(self.check_generic_method_call(TYPE_CONSTRUCTOR_HOOK, hook, &[], args, &[], span, &receiver_ty))
+        Some(self.check_generic_method_call(TYPE_CONSTRUCTOR_HOOK, hook, &[], args, &[], span, &receiver_ty, None))
     }
 
     /// Return whether a call's named arguments exactly describe normal model/class field construction.

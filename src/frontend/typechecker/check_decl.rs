@@ -11,7 +11,7 @@ use crate::frontend::testing_markers::{
     TestingFixtureMarkerArgs, TestingMarkerSemantics, load_testing_marker_semantics,
     resolve_testing_fixture_marker_args,
 };
-use crate::frontend::typechecker::helpers::{dict_ty, list_ty};
+use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty};
 
 use super::{DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, TestingFixtureInfo, TypeChecker, YieldContext};
 use incan_core::interop::{RustItemKind, RustItemMetadata, RustTraitAssoc};
@@ -19,7 +19,9 @@ use incan_core::lang::decorators::{self, DecoratorId};
 use incan_core::lang::derives::{self, DeriveId};
 use incan_core::lang::magic_methods;
 use incan_core::lang::stdlib;
+use incan_core::lang::testing;
 use incan_core::lang::traits::{self as builtin_traits, TraitId};
+use incan_core::lang::types::collections::CollectionTypeId;
 use incan_semantics_core::SurfaceModifierTypeCheck;
 use std::collections::{HashMap, HashSet};
 
@@ -37,6 +39,7 @@ fn property_infos_identical(a: &PropertyInfo, b: &PropertyInfo) -> bool {
     a.has_body == b.has_body && a.return_type == b.return_type
 }
 
+/// Resolve the local type used for a checked function parameter.
 fn local_type_for_param(kind: ParamKind, ty: ResolvedType) -> ResolvedType {
     match kind {
         ParamKind::Normal => ty,
@@ -172,7 +175,10 @@ fn fixture_function_span(func: &FunctionDecl) -> Span {
 /// Return whether a decorator resolves to the RFC 004 `std.testing.fixture` marker path.
 fn is_possible_testing_fixture_decorator(dec: &Decorator, aliases: &HashMap<String, Vec<String>>) -> bool {
     let resolved = crate::frontend::decorator_resolution::resolve_decorator_path(dec, aliases);
-    resolved.len() == 3 && resolved[0] == "std" && resolved[1] == "testing" && resolved[2] == "fixture"
+    resolved.len() == 3
+        && resolved[0] == stdlib::STDLIB_ROOT
+        && resolved[1] == testing::STDLIB_TESTING_MODULE
+        && resolved[2] == testing::TESTING_MARKER_FIXTURE
 }
 
 /// Return whether any declaration in this slice of AST may be a `std.testing.fixture`.
@@ -478,13 +484,17 @@ impl TypeChecker {
                             .params
                             .iter()
                             .skip(skip)
-                            .map(|p| self.resolved_param_type_from_rust_display(p.type_display.as_str()))
+                            .map(|p| {
+                                self.resolved_param_type_from_rust_display_for_owner_path(p.type_display.as_str(), path)
+                            })
                             .collect();
+                        let return_display =
+                            self.rust_display_for_owner_path(method.signature.return_type.as_str(), path);
                         candidates.push(InteropAdapterSig {
                             name: format!("rust::{}.{name}", path),
                             receiver,
                             params,
-                            return_type: self.resolved_type_from_rust_display(method.signature.return_type.as_str()),
+                            return_type: self.resolved_type_from_rust_display(return_display.as_str()),
                         });
                     }
                 }
@@ -765,6 +775,7 @@ impl TypeChecker {
             }
         }
     }
+    /// Render a named method signature for compatibility diagnostics.
     fn method_sig_string_named(&self, method_name: &str, m: &MethodInfo) -> String {
         let recv = match m.receiver {
             Some(Receiver::Mutable) => "mut self",
@@ -789,6 +800,7 @@ impl TypeChecker {
         )
     }
 
+    /// Return whether two method signatures are compatible.
     pub(in crate::frontend::typechecker) fn method_sigs_compatible(
         &self,
         expected: &MethodInfo,
@@ -2080,7 +2092,7 @@ impl TypeChecker {
             Declaration::TypeAlias(_) => {} // Type aliases are transparent; no body to check
             Declaration::Newtype(nt) => self.check_newtype(nt),
             Declaration::Enum(en) => self.check_enum(en),
-            Declaration::Function(func) => self.check_function(func),
+            Declaration::Function(func) => self.check_function(func, decl.span),
             Declaration::TestModule(test_module) => self.check_test_module(test_module),
             Declaration::Docstring(_) => {} // Docstrings don't need checking
         }
@@ -2244,6 +2256,7 @@ impl TypeChecker {
         }
     }
 
+    /// Typecheck an inline test module declaration.
     fn check_test_module(&mut self, test_module: &TestModuleDecl) {
         self.symbols.enter_scope(ScopeKind::Block);
         for decl in &test_module.body {
@@ -2439,6 +2452,7 @@ impl TypeChecker {
         // Define fields in scope
         for field in &model.fields {
             let ty = self.resolve_type_checked(&field.node.ty);
+            self.validate_direct_recursive_model_field(&model.name, &ty, field.span);
             self.symbols.define(Symbol {
                 name: field.node.name.clone(),
                 kind: SymbolKind::Field(FieldInfo {
@@ -2485,6 +2499,131 @@ impl TypeChecker {
         self.symbols.exit_scope();
     }
 
+    /// Reject model fields whose resolved type contains the model itself without an indirection boundary.
+    fn validate_direct_recursive_model_field(&mut self, model_name: &str, field_ty: &ResolvedType, span: Span) {
+        let mut visiting = HashSet::new();
+        if self.type_contains_direct_recursive_model(field_ty, model_name, &mut visiting) {
+            self.errors.push(CompileError::type_error(
+                format!(
+                    "Model '{model_name}' has a direct recursive field type '{field_ty}'. Use an indirection such as List[...] for recursive payloads."
+                ),
+                span,
+            ));
+        }
+    }
+
+    /// Return whether a type contains the target model through only inline Rust-layout positions.
+    fn type_contains_direct_recursive_model(
+        &self,
+        ty: &ResolvedType,
+        model_name: &str,
+        visiting: &mut HashSet<String>,
+    ) -> bool {
+        match ty {
+            ResolvedType::Named(name) => {
+                self.nominal_type_contains_direct_recursive_model(name, &[], model_name, visiting)
+            }
+            ResolvedType::Generic(name, args) if name == UNION_TYPE_NAME => args
+                .iter()
+                .any(|arg| self.type_contains_direct_recursive_model(arg, model_name, visiting)),
+            ResolvedType::Generic(name, args) => match collection_type_id(name.as_str()) {
+                Some(
+                    CollectionTypeId::List
+                    | CollectionTypeId::Dict
+                    | CollectionTypeId::Set
+                    | CollectionTypeId::FrozenList
+                    | CollectionTypeId::FrozenDict
+                    | CollectionTypeId::FrozenSet
+                    | CollectionTypeId::Generator,
+                ) => false,
+                Some(CollectionTypeId::Tuple | CollectionTypeId::Option | CollectionTypeId::Result) => args
+                    .iter()
+                    .any(|arg| self.type_contains_direct_recursive_model(arg, model_name, visiting)),
+                None => self.nominal_type_contains_direct_recursive_model(name, args, model_name, visiting),
+            },
+            ResolvedType::Tuple(items) => items
+                .iter()
+                .any(|item| self.type_contains_direct_recursive_model(item, model_name, visiting)),
+            ResolvedType::Ref(_)
+            | ResolvedType::RefMut(_)
+            | ResolvedType::TypeToken(_)
+            | ResolvedType::FrozenList(_)
+            | ResolvedType::FrozenDict(_, _)
+            | ResolvedType::FrozenSet(_)
+            | ResolvedType::Function(_, _) => false,
+            ResolvedType::Int
+            | ResolvedType::Float
+            | ResolvedType::Numeric(_)
+            | ResolvedType::Bool
+            | ResolvedType::Str
+            | ResolvedType::Bytes
+            | ResolvedType::FrozenStr
+            | ResolvedType::FrozenBytes
+            | ResolvedType::Unit
+            | ResolvedType::TypeVar(_)
+            | ResolvedType::SelfType
+            | ResolvedType::RustPath(_)
+            | ResolvedType::CallSiteInfer
+            | ResolvedType::Unknown => false,
+        }
+    }
+
+    /// Follow known nominal field types to find direct recursive model layouts.
+    fn nominal_type_contains_direct_recursive_model(
+        &self,
+        type_name: &str,
+        type_args: &[ResolvedType],
+        model_name: &str,
+        visiting: &mut HashSet<String>,
+    ) -> bool {
+        if type_name == model_name {
+            return true;
+        }
+
+        let visit_key = if type_args.is_empty() {
+            type_name.to_string()
+        } else {
+            format!(
+                "{}[{}]",
+                type_name,
+                type_args.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ")
+            )
+        };
+        if !visiting.insert(visit_key.clone()) {
+            return false;
+        }
+
+        let result = match self.lookup_semantic_type_info(type_name) {
+            Some(TypeInfo::Model(info)) => {
+                let subst = type_param_subst_map(&info.type_params, type_args);
+                info.fields.values().any(|field| {
+                    let field_ty = substitute_resolved_type(&field.ty, &subst);
+                    let field_ty = self.expand_type_aliases(field_ty);
+                    self.type_contains_direct_recursive_model(&field_ty, model_name, visiting)
+                })
+            }
+            Some(TypeInfo::Class(info)) => {
+                let subst = type_param_subst_map(&info.type_params, type_args);
+                info.fields.values().any(|field| {
+                    let field_ty = substitute_resolved_type(&field.ty, &subst);
+                    let field_ty = self.expand_type_aliases(field_ty);
+                    self.type_contains_direct_recursive_model(&field_ty, model_name, visiting)
+                })
+            }
+            Some(TypeInfo::Newtype(info)) => {
+                let subst = type_param_subst_map(&info.type_params, type_args);
+                let underlying = substitute_resolved_type(&info.underlying, &subst);
+                let underlying = self.expand_type_aliases(underlying);
+                self.type_contains_direct_recursive_model(&underlying, model_name, visiting)
+            }
+            Some(TypeInfo::Enum(_) | TypeInfo::Builtin | TypeInfo::TypeAlias) | None => false,
+        };
+
+        visiting.remove(&visit_key);
+        result
+    }
+
+    /// Validate a model declaration that derives validation support.
     fn check_validate_derive_model(&mut self, model: &ModelDecl) {
         // Validate that validate() exists and has the expected signature.
         let Some(TypeInfo::Model(info)) = self.lookup_type_info(&model.name) else {
@@ -3641,34 +3780,74 @@ impl TypeChecker {
             return;
         }
 
-        let Some(original_ty) = self.lookup_symbol(&func.name).and_then(|symbol| match &symbol.kind {
-            SymbolKind::Function(info) => Some(function_info_callable_type(info)),
-            SymbolKind::Variable(info) => Some(info.ty.clone()),
-            _ => None,
-        }) else {
+        let Some(original_function_info) = self.function_info_for_declaration_span(&func.name, span) else {
             return;
         };
+        let original_ty = function_info_callable_type(&original_function_info);
 
-        let mut binding_ty = original_ty;
+        let mut binding_ty = original_ty.clone();
         for decorator in func.decorators.iter().rev() {
             if self.is_user_defined_decorator_candidate(&decorator.node) {
                 binding_ty = self.apply_user_defined_decorator(decorator, binding_ty, &func.name);
             }
         }
 
+        let binding = DecoratedFunctionBindingInfo {
+            ty: binding_ty.clone(),
+            original_ty,
+            type_params: original_function_info.type_params.clone(),
+            type_param_bounds: original_function_info.type_param_bounds.clone(),
+            type_param_bound_details: original_function_info.type_param_bound_details.clone(),
+            is_async: original_function_info.is_async,
+        };
+        self.type_info
+            .declarations
+            .decorated_function_bindings_by_span
+            .insert((span.start, span.end), binding.clone());
+
         if let Some(symbol_id) = self.symbols.lookup(&func.name)
             && let Some(symbol) = self.symbols.get_mut(symbol_id)
         {
-            self.type_info.declarations.decorated_function_bindings.insert(
-                func.name.clone(),
-                DecoratedFunctionBindingInfo { ty: binding_ty.clone() },
-            );
-            symbol.kind = SymbolKind::Variable(VariableInfo {
-                ty: binding_ty,
-                is_mutable: false,
-                is_used: false,
-            });
-            symbol.span = span;
+            match &mut symbol.kind {
+                SymbolKind::Function(_) => {
+                    self.type_info
+                        .declarations
+                        .decorated_function_bindings
+                        .insert(func.name.clone(), binding);
+                    symbol.kind = SymbolKind::Variable(VariableInfo {
+                        ty: binding_ty,
+                        is_mutable: false,
+                        is_used: false,
+                    });
+                    symbol.span = span;
+                }
+                SymbolKind::FunctionOverloads(overloads) => {
+                    if let Some(overload) = overloads.iter_mut().find(|overload| overload.span == span)
+                        && let ResolvedType::Function(params, ret) = binding_ty
+                    {
+                        overload.info.params = params;
+                        overload.info.return_type = *ret;
+                    }
+                    self.type_info
+                        .declarations
+                        .function_overloads
+                        .insert(func.name.clone(), overloads.clone());
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Return the function candidate declared at `span`, preserving same-name overload identity.
+    fn function_info_for_declaration_span(&self, name: &str, span: Span) -> Option<FunctionInfo> {
+        let symbol = self.lookup_symbol(name)?;
+        match &symbol.kind {
+            SymbolKind::Function(info) => Some(info.clone()),
+            SymbolKind::FunctionOverloads(overloads) => overloads
+                .iter()
+                .find(|overload| overload.span == span)
+                .map(|overload| overload.info.clone()),
+            _ => None,
         }
     }
 
@@ -3806,17 +3985,20 @@ impl TypeChecker {
             let base = Self::decorator_path_expr_from_import_path(&base_path, decorator.span);
             let method = path.last().cloned().unwrap_or_default();
             Spanned::new(
-                Expr::MethodCall(Box::new(base), method, Vec::new(), args),
+                Expr::MethodCall(Box::new(base), method, decorator.node.type_args.clone(), args),
                 decorator.span,
             )
         } else {
             let callee = Self::decorator_path_expr(&decorator.node, decorator.span);
-            Spanned::new(Expr::Call(Box::new(callee), Vec::new(), args), decorator.span)
+            Spanned::new(
+                Expr::Call(Box::new(callee), decorator.node.type_args.clone(), args),
+                decorator.span,
+            )
         };
         self.check_expr(&factory_expr)
     }
 
-    /// Apply a callable decorator value to the decorated binding type and return the post-decoration binding type.
+    /// Apply a callable decorator value to the decorated binding type and return the post-decoration callable type.
     fn apply_decorator_callable(
         &mut self,
         display: &str,
@@ -3845,7 +4027,12 @@ impl TypeChecker {
         if self.errors.len() != error_count {
             return ResolvedType::Unknown;
         }
-        substitute_resolved_type(&ret, &type_bindings)
+        let result_ty = substitute_resolved_type(&ret, &type_bindings);
+        if !matches!(result_ty, ResolvedType::Function(_, _) | ResolvedType::Unknown) {
+            self.errors.push(errors::decorator_result_not_callable(display, span));
+            return ResolvedType::Unknown;
+        }
+        result_ty
     }
 
     /// Convert decorator arguments into ordinary call arguments for user-defined decorator factory checking.
@@ -3872,7 +4059,11 @@ impl TypeChecker {
     fn decorator_display(decorator: &Decorator) -> String {
         let path = decorator.path.segments.join(".");
         if decorator.is_call {
-            format!("{path}(...)")
+            if decorator.type_args.is_empty() {
+                format!("{path}(...)")
+            } else {
+                format!("{path}[...](...)")
+            }
         } else {
             path
         }
@@ -3897,7 +4088,7 @@ impl TypeChecker {
     }
 
     /// Typecheck one function body with its parameters, return type, decorators, and generic bounds in scope.
-    fn check_function(&mut self, func: &FunctionDecl) {
+    fn check_function(&mut self, func: &FunctionDecl, decl_span: Span) {
         self.symbols.enter_scope(ScopeKind::Function);
 
         self.validate_decorators_allowing_user_defined(&func.decorators);
@@ -4018,7 +4209,7 @@ impl TypeChecker {
         self.current_return_error_type = None;
         self.current_type_param_bound_details.pop();
         self.symbols.exit_scope();
-        self.apply_user_defined_function_decorators(func, fixture_span);
+        self.apply_user_defined_function_decorators(func, decl_span);
     }
 
     /// Resolve generic type-parameter bounds while preserving trait type arguments for call-site checks.

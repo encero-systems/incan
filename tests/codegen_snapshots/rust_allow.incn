@@ -30,4 +30,3 @@ type allow_newtype = newtype int:
 @rust.allow("non_snake_case", "clippy::too_many_arguments")
 def MixedName(a: int, b: int, c: int) -> int:
     return a + b + c
-

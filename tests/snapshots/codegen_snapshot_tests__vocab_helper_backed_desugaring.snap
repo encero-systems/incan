@@ -20,5 +20,5 @@ fn main() {
             }
         }),
     );
-    __incan_vocab_helper_query_filter(1);
+    query::filter(1);
 }

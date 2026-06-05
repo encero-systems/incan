@@ -21,6 +21,7 @@ use super::super::types::IrType;
 use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
+use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
 use crate::frontend::typechecker::{IdentKind, ResolvedMethodDispatch, ResolvedOperatorKind};
 use incan_core::interop::RustCollectionFamily;
 use incan_core::lang::magic_methods::{self, MagicMethodId};
@@ -32,6 +33,70 @@ use incan_core::lang::types::collections::{self as collection_types, CollectionT
 use incan_semantics_core::SurfaceExprLoweringAction;
 
 impl AstLowering {
+    /// Return the public dependency owner for a method receiver when lowering can prove one.
+    fn public_library_for_method_receiver(&self, receiver: &TypedExpr) -> Option<String> {
+        match &receiver.kind {
+            IrExprKind::Call {
+                canonical_path: Some(path),
+                ..
+            } => Self::public_library_from_canonical_path(path),
+            IrExprKind::InteropCoerce { expr, .. } => self.public_library_for_method_receiver(expr),
+            _ => self.public_library_for_nominal_receiver_type(&receiver.ty),
+        }
+    }
+
+    /// Return the library key from a canonical `pub::<library>::...` path.
+    fn public_library_from_canonical_path(path: &[String]) -> Option<String> {
+        if path.first().map(String::as_str) == Some("pub") {
+            path.get(1).cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Return the public dependency owner for an explicitly imported nominal receiver type.
+    ///
+    /// If the receiver type is not directly imported, this falls back only when exactly one loaded public dependency
+    /// exports that nominal type and no local declaration shadows it.
+    fn public_library_for_nominal_receiver_type(&self, ty: &IrType) -> Option<String> {
+        let name = match ty {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) => name.rsplit("::").next().unwrap_or(name),
+            IrType::Ref(inner) | IrType::RefMut(inner) => {
+                return self.public_library_for_nominal_receiver_type(inner);
+            }
+            _ => return None,
+        };
+
+        if let Some(path) = self.import_aliases.get(name)
+            && path.first().map(String::as_str) == Some("pub")
+        {
+            return path.get(1).cloned();
+        }
+
+        if self.struct_names.contains_key(name) || self.enum_names.contains_key(name) {
+            return None;
+        }
+
+        let manifest_index = self.library_manifest_index.as_ref()?;
+        let matches = manifest_index
+            .known_libraries()
+            .into_iter()
+            .filter(|library| {
+                let Some(LibraryManifestIndexEntry::Loaded { manifest, .. }) = manifest_index.get(library) else {
+                    return false;
+                };
+                manifest.exports.models.iter().any(|item| item.name == name)
+                    || manifest.exports.classes.iter().any(|item| item.name == name)
+                    || manifest.exports.newtypes.iter().any(|item| item.name == name)
+                    || manifest.exports.enums.iter().any(|item| item.name == name)
+            })
+            .collect::<Vec<_>>();
+        match matches.as_slice() {
+            [library] => Some(library.clone()),
+            _ => None,
+        }
+    }
+
     /// Return the source-defined `std.logging.Logger.<method>` signature, including default expressions.
     fn std_logging_logger_method_signature(&mut self, method: &str) -> Option<super::super::FunctionSignature> {
         self.callable_signature_for_imported_stdlib_type_method_path(
@@ -315,6 +380,7 @@ impl AstLowering {
         }
     }
 
+    /// Classify an IR type as a Rust collection family.
     fn rust_collection_family_for_ir_type(ty: &IrType) -> Option<RustCollectionFamily> {
         match ty {
             IrType::Struct(name) | IrType::NamedGeneric(name, _) => {
@@ -325,6 +391,7 @@ impl AstLowering {
         }
     }
 
+    /// Return the ordinary argument policy for a method call.
     fn regular_method_call_arg_policy(
         &self,
         receiver_span: crate::frontend::ast::Span,
@@ -370,49 +437,74 @@ impl AstLowering {
     /// This is a stepping stone toward fully typed lowering.
     pub fn lower_expr_spanned(&mut self, expr: &Spanned<ast::Expr>) -> Result<TypedExpr, LoweringError> {
         let mut lowered = self.lower_expr(&expr.node, expr.span)?;
-        if let Some(info) = &self.type_info {
-            if let Some(res_ty) = info.expr_type(expr.span) {
-                // Preserve reference wrappers introduced by lowering (e.g. mutable parameters are tracked as
-                // `RefMut(T)` in IR), while still benefiting from the typechecker's inner type information.
-                //
-                // The frontend type system does not model references, so `expr_type` typically returns `T` where
-                // lowering may have already marked the same binding as `Ref(T)`/`RefMut(T)`.
-                //
-                // Likewise, RFC-008 const lowering may have already refined `str`/`bytes` to their static IR forms.
-                // Keep those backend-specific const representations intact so later emission can materialize owned
-                // values only when required.
-                let inferred = self.lower_resolved_type(res_ty);
-                lowered.ty = match &lowered.ty {
-                    IrType::Ref(existing_inner) => {
-                        IrType::Ref(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred)))
-                    }
-                    IrType::RefMut(existing_inner) => {
-                        IrType::RefMut(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred)))
-                    }
-                    IrType::StaticStr => IrType::StaticStr,
-                    IrType::StaticBytes => IrType::StaticBytes,
-                    existing => Self::merge_inferred_ir_type(existing, inferred),
-                };
-            }
-            if let Some(kind) = info.ident_kind(expr.span) {
-                match (&expr.node, &mut lowered.kind) {
-                    (ast::Expr::Ident(name), _) if matches!(kind, IdentKind::Static) => {
-                        lowered.kind = IrExprKind::StaticRead { name: name.clone() };
-                    }
-                    (_, IrExprKind::Var { ref_kind, .. }) => {
-                        *ref_kind = match kind {
-                            IdentKind::Value => *ref_kind,
-                            IdentKind::Static => *ref_kind,
-                            IdentKind::TypeName => VarRefKind::TypeName,
-                            IdentKind::Variant => VarRefKind::TypeName,
-                            IdentKind::Module => VarRefKind::ExternalName,
-                            IdentKind::RustImport => VarRefKind::ExternalRustName,
-                            IdentKind::RustValue => VarRefKind::Value,
-                            IdentKind::Trait => VarRefKind::TypeName,
-                        };
-                    }
-                    _ => {}
+        if let Some(info) = &self.type_info
+            && let Some(res_ty) = info.expr_type(expr.span)
+        {
+            // Preserve reference wrappers introduced by lowering (e.g. mutable parameters are tracked as
+            // `RefMut(T)` in IR), while still benefiting from the typechecker's inner type information.
+            //
+            // The frontend type system does not model references, so `expr_type` typically returns `T` where
+            // lowering may have already marked the same binding as `Ref(T)`/`RefMut(T)`.
+            //
+            // Likewise, RFC-008 const lowering may have already refined `str`/`bytes` to their static IR forms.
+            // Keep those backend-specific const representations intact so later emission can materialize owned
+            // values only when required.
+            let inferred = self.lower_resolved_type(res_ty);
+            lowered.ty = match &lowered.ty {
+                IrType::Ref(existing_inner) => {
+                    IrType::Ref(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred)))
                 }
+                IrType::RefMut(existing_inner) => {
+                    IrType::RefMut(Box::new(Self::merge_inferred_ir_type(existing_inner, inferred)))
+                }
+                IrType::StaticStr => IrType::StaticStr,
+                IrType::StaticBytes => IrType::StaticBytes,
+                existing => Self::merge_inferred_ir_type(existing, inferred),
+            };
+        }
+        if matches!(expr.node, ast::Expr::Ident(_))
+            && let IrType::TypeToken(inner) = &lowered.ty
+        {
+            lowered.kind = IrExprKind::TypeToken {
+                ty: inner.as_ref().clone(),
+            };
+        }
+        if let Some(kind) = self.ident_kind_for_lowering(expr) {
+            match (&expr.node, &mut lowered.kind) {
+                (ast::Expr::Ident(name), _) if matches!(kind, IdentKind::Static) => {
+                    lowered.kind = IrExprKind::StaticRead { name: name.clone() };
+                }
+                (ast::Expr::Ident(name), IrExprKind::Var { ref_kind, .. }) => {
+                    *ref_kind = match kind {
+                        IdentKind::Value => *ref_kind,
+                        IdentKind::Static => *ref_kind,
+                        IdentKind::TypeName => VarRefKind::TypeName,
+                        IdentKind::Variant => VarRefKind::TypeName,
+                        IdentKind::Module => VarRefKind::ExternalName,
+                        IdentKind::RustImport => VarRefKind::ExternalRustName,
+                        IdentKind::RustValue => VarRefKind::Value,
+                        IdentKind::Trait => VarRefKind::TypeName,
+                    };
+                    if matches!(kind, IdentKind::TypeName | IdentKind::Variant | IdentKind::Trait)
+                        && matches!(lowered.ty, IrType::Unknown)
+                        && let Some(ty) = self.synthetic_type_ident_ir_type(name)
+                    {
+                        lowered.ty = ty;
+                    }
+                }
+                (_, IrExprKind::Var { ref_kind, .. }) => {
+                    *ref_kind = match kind {
+                        IdentKind::Value => *ref_kind,
+                        IdentKind::Static => *ref_kind,
+                        IdentKind::TypeName => VarRefKind::TypeName,
+                        IdentKind::Variant => VarRefKind::TypeName,
+                        IdentKind::Module => VarRefKind::ExternalName,
+                        IdentKind::RustImport => VarRefKind::ExternalRustName,
+                        IdentKind::RustValue => VarRefKind::Value,
+                        IdentKind::Trait => VarRefKind::TypeName,
+                    };
+                }
+                _ => {}
             }
         }
         // Apply any rusttype method return coercion recorded by the typechecker (e.g. &str → String).
@@ -420,6 +512,53 @@ impl AstLowering {
         // Apply RFC 017 implicit validated-newtype coercions at typechecker-approved destination sites.
         lowered = self.wrap_with_validated_newtype_coercion(lowered, expr.span)?;
         Ok(lowered)
+    }
+
+    /// Return the identifier classification that lowering should use for this expression.
+    ///
+    /// Most source expressions use span-keyed frontend metadata. Synthetic expressions created by lowering, such as
+    /// user-defined decorator factory calls, intentionally use the default span so they do not collide with call-site
+    /// expression types. Those synthetic nodes still need metadata-backed classification for type names and module
+    /// statics; otherwise they fall back to value-shaped Rust emission.
+    fn ident_kind_for_lowering(&self, expr: &Spanned<ast::Expr>) -> Option<IdentKind> {
+        if let Some(kind) = self.type_info.as_ref().and_then(|info| info.ident_kind(expr.span)) {
+            return Some(kind);
+        }
+        if expr.span != ast::Span::default() {
+            return None;
+        }
+        let ast::Expr::Ident(name) = &expr.node else {
+            return None;
+        };
+        if self
+            .type_info
+            .as_ref()
+            .is_some_and(|info| info.static_binding(name).is_some())
+        {
+            return Some(IdentKind::Static);
+        }
+        if self.synthetic_type_ident_ir_type(name).is_some() {
+            return Some(IdentKind::TypeName);
+        }
+        None
+    }
+
+    /// Return the known IR type for a synthetic type-like identifier.
+    fn synthetic_type_ident_ir_type(&self, name: &str) -> Option<IrType> {
+        self.struct_names
+            .get(name)
+            .cloned()
+            .or_else(|| self.enum_names.get(name).cloned())
+            .or_else(|| {
+                self.class_decls
+                    .contains_key(name)
+                    .then(|| IrType::Struct(name.to_string()))
+            })
+            .or_else(|| {
+                self.trait_decls
+                    .contains_key(name)
+                    .then(|| IrType::Struct(name.to_string()))
+            })
     }
 
     /// Lower an expression to IR.
@@ -485,7 +624,22 @@ impl AstLowering {
                         IrType::Struct("Logger".to_string()),
                     ));
                 }
-                let access = self.select_var_access_for_ident(&lowered_name, &ty);
+                // Imported string-like bindings are dependency-owned path references, not local owned strings that can
+                // be consumed by the current block's last-use analysis.
+                let inferred_import_ty = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.expr_type(expr_span).cloned())
+                    .map(|ty| self.lower_resolved_type(&ty));
+                let access = if self.import_aliases.contains_key(name)
+                    && matches!(
+                        inferred_import_ty.as_ref().unwrap_or(&ty),
+                        IrType::String | IrType::StaticStr | IrType::StrRef | IrType::FrozenStr
+                    ) {
+                    VarAccess::Read
+                } else {
+                    self.select_var_access_for_ident(&lowered_name, &ty)
+                };
                 (
                     IrExprKind::Var {
                         name: lowered_name.clone(),
@@ -726,6 +880,13 @@ impl AstLowering {
 
             // ---- Method calls ----
             ast::Expr::MethodCall(o, m, type_args, args) => {
+                if self.imported_pub_method_callee_path(&o.node, m).is_some() {
+                    let callee = ast::Spanned::new(ast::Expr::Field(o.clone(), m.clone()), expr_span);
+                    return self
+                        .lower_call_expr(&callee, type_args, args, expr_span)
+                        .map(|(kind, ty)| TypedExpr::new(kind, ty));
+                }
+
                 if Self::is_explicit_builtin_namespace_expr(o)
                     && let Some(builtin) = BuiltinFn::from_name(m)
                 {
@@ -800,12 +961,17 @@ impl AstLowering {
                         arg_ir.expr = self.wrap_with_rust_arg_coercion(arg_ir.expr.clone(), arg_span)?;
                     }
                 }
-                let expr_ty = self
+                let mut expr_ty = self
                     .type_info
                     .as_ref()
                     .and_then(|info| info.expr_type(expr_span))
                     .map(|ty| self.lower_resolved_type(ty))
                     .unwrap_or(IrType::Unknown);
+                if magic_methods::from_str(&method_name) == Some(MagicMethodId::ClassName)
+                    && matches!(expr_ty, IrType::String)
+                {
+                    expr_ty = IrType::StaticStr;
+                }
                 let dispatch = self
                     .type_info
                     .as_ref()
@@ -869,6 +1035,10 @@ impl AstLowering {
                             }),
                             _ => None,
                         };
+                    let public_receiver_library = self.public_library_for_method_receiver(&receiver);
+                    let imported_pub_method_signature = public_receiver_library.as_deref().and_then(|library| {
+                        self.callable_signature_for_imported_pub_type_method(library, &receiver.ty, m)
+                    });
                     let call_site_signature = self.callable_signature_for_call_span(expr_span);
                     let std_logging_signature = if matches!(
                         &receiver.ty,
@@ -880,7 +1050,7 @@ impl AstLowering {
                     };
                     let callable_signature = match (
                         std_logging_signature.or(call_site_signature),
-                        imported_type_method_signature,
+                        imported_type_method_signature.or(imported_pub_method_signature),
                     ) {
                         (Some(mut call_site), Some(imported)) => {
                             for (param, imported_param) in call_site.params.iter_mut().zip(imported.params.iter()) {
@@ -892,6 +1062,10 @@ impl AstLowering {
                         }
                         (Some(call_site), None) => Some(call_site),
                         (None, imported) => imported,
+                    };
+                    let callable_signature = match (public_receiver_library.clone(), callable_signature) {
+                        (Some(library), Some(signature)) => Some(self.pub_external_signature(&library, signature)),
+                        (_, signature) => signature,
                     };
                     // Unknown method - keep as string-based call
                     (
@@ -1008,6 +1182,19 @@ impl AstLowering {
                         result_ty,
                     )
                 } else {
+                    if let Some(rust_field) = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.rust_field_access_name(expr_span))
+                    {
+                        return Ok(TypedExpr::new(
+                            IrExprKind::Field {
+                                object: Box::new(obj),
+                                field: rust_field.to_string(),
+                            },
+                            IrType::Unknown,
+                        ));
+                    }
                     // RFC 021: resolve field alias to canonical name if object is a known struct type
                     let struct_name = obj.ty.nominal_type_name().or_else(|| match &obj.kind {
                         IrExprKind::Var { name, .. } if name == "self" => self.current_impl_type.as_deref(),
@@ -1070,6 +1257,16 @@ impl AstLowering {
                 }
             }
 
+            ast::Expr::VocabBlock(block) => {
+                return Err(LoweringError {
+                    message: format!(
+                        "vocab expression declaration `{}` reached lowering before desugaring",
+                        block.keyword
+                    ),
+                    span: super::super::IrSpan::default(),
+                });
+            }
+
             // ---- Try (?) ----
             ast::Expr::Try(e) => {
                 let inner = self.lower_expr_spanned(e)?;
@@ -1083,7 +1280,7 @@ impl AstLowering {
             // ---- Match expressions (delegated to patterns submodule) ----
             ast::Expr::Match(s, arms) => {
                 let scrutinee = self.lower_expr_spanned(s)?;
-                let arms_ir = self.lower_match_arms(arms, &scrutinee.ty)?;
+                let arms_ir = self.lower_match_arms(arms, &scrutinee)?;
                 let ty = arms_ir.first().map(|a| a.body.ty.clone()).unwrap_or(IrType::Unknown);
                 (
                     IrExprKind::Match {
@@ -1135,9 +1332,40 @@ impl AstLowering {
 
             // ---- Closures ----
             ast::Expr::Closure(params, body) => {
+                let recorded_param_types = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| match info.expr_type(expr_span) {
+                        Some(crate::frontend::symbols::ResolvedType::Function(callable_params, _)) => Some(
+                            callable_params
+                                .iter()
+                                .map(|param| self.lower_resolved_type(&param.ty))
+                                .collect::<Vec<_>>(),
+                        ),
+                        _ => None,
+                    });
+                let exact_rust_param_types = self
+                    .type_info
+                    .as_ref()
+                    .and_then(|info| info.closure_param_type_displays(expr_span))
+                    .filter(|displays| displays.len() == params.len())
+                    .map(|displays| {
+                        displays
+                            .iter()
+                            .map(|display| IrType::RustDisplay(display.clone()))
+                            .collect::<Vec<_>>()
+                    });
                 let param_pairs: Vec<(String, IrType)> = params
                     .iter()
-                    .map(|p| (p.node.name.clone(), self.lower_type(&p.node.ty.node)))
+                    .enumerate()
+                    .map(|(idx, p)| {
+                        let ty = exact_rust_param_types
+                            .as_ref()
+                            .and_then(|types| types.get(idx).cloned())
+                            .or_else(|| recorded_param_types.as_ref().and_then(|types| types.get(idx).cloned()))
+                            .unwrap_or_else(|| self.lower_type(&p.node.ty.node));
+                        (p.node.name.clone(), ty)
+                    })
                     .collect();
                 self.non_linear_context_depth += 1;
                 let body_ir_result = self.lower_expr_spanned(body);
@@ -1259,9 +1487,13 @@ impl AstLowering {
                     .iter()
                     .map(|part| match part {
                         ast::FStringPart::Literal(s) => Ok(super::super::expr::FormatPart::Literal(s.clone())),
-                        ast::FStringPart::Expr(e) => {
-                            let lowered = self.lower_expr_spanned(e)?;
-                            Ok(super::super::expr::FormatPart::Expr(lowered))
+                        ast::FStringPart::Expr { expr, format } => {
+                            let lowered = self.lower_expr_spanned(expr)?;
+                            let style = match format {
+                                ast::FStringFormat::Display => super::super::expr::FormatStyle::Display,
+                                ast::FStringFormat::Debug => super::super::expr::FormatStyle::Debug,
+                            };
+                            Ok(super::super::expr::FormatPart::Expr { expr: lowered, style })
                         }
                     })
                     .collect::<Result<Vec<_>, LoweringError>>()?;

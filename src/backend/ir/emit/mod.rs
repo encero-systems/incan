@@ -31,11 +31,11 @@ use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 
 use proc_macro2::TokenStream;
-use quote::quote;
+use quote::{format_ident, quote};
 
 use super::decl::{IrDeclKind, IrEnumValue, IrEnumValueType, IrStruct, VariantFields, Visibility};
 use super::expr::TypedExpr;
-use super::types::IrType;
+use super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::{FunctionRegistry, FunctionSignature, IrProgram};
 use incan_core::lang::rust_keywords;
 
@@ -67,6 +67,44 @@ pub(crate) struct ExternalOrdinalCustomKey {
     pub has_ordinal_bytes_equal: bool,
 }
 
+/// Cross-module callable-name resolver metadata keyed by a concrete function-pointer signature.
+#[derive(Debug, Clone)]
+pub(crate) struct CallableNameResolution {
+    pub(super) params: Vec<IrType>,
+    pub(super) ret: IrType,
+    pub(super) module_paths: Vec<Vec<String>>,
+}
+
+/// Callable-name usage facts collected from one lowered program.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct CallableNameUseFacts {
+    pub(crate) signature_keys: HashSet<String>,
+    pub(crate) function_arg_signature_keys: HashSet<String>,
+    pub(crate) generic_trait_used: bool,
+}
+
+/// Generated callable-name symbol roles for one concrete function-pointer signature.
+#[derive(Debug, Clone, Copy)]
+enum CallableNameSymbolRole {
+    /// Resolve a function pointer to a source name, using static candidates first and dynamic registrations second.
+    Resolver,
+    /// Return the shared dynamic-name storage for generic/decorated callables with this signature.
+    Registry,
+    /// Insert or update one dynamic callable-name registration for this signature.
+    Register,
+}
+
+impl CallableNameSymbolRole {
+    /// Return the stable generated Rust symbol prefix for this helper role.
+    const fn prefix(self) -> &'static str {
+        match self {
+            Self::Resolver => "__incan_callable_name",
+            Self::Registry => "__incan_callable_name_registry",
+            Self::Register => "__incan_register_callable_name",
+        }
+    }
+}
+
 /// Usage facts collected before Rust emission.
 ///
 /// This analysis is intentionally about generated Rust lints, not source-language reachability diagnostics. It records
@@ -94,6 +132,31 @@ pub(super) struct GeneratedUseAnalysis {
     pub(super) result_observer_callable_types: HashSet<String>,
     /// Top-level function values adapted to a borrowed function-pointer parameter.
     pub(super) borrowed_function_adapters: HashSet<(String, Vec<usize>)>,
+    /// Concrete function-pointer signatures whose values read `__name__`.
+    pub(super) callable_name_signature_keys: HashSet<String>,
+    /// Concrete top-level function signatures passed through reachable calls.
+    pub(super) callable_name_function_arg_signature_keys: HashSet<String>,
+    /// Whether a generic callable parameter reads `__name__` through the generated callable-name trait.
+    pub(super) uses_generic_callable_name_trait: bool,
+}
+
+impl GeneratedUseAnalysis {
+    /// Return whether generated Rust should retain an impl method under the current program-level preservation mode.
+    pub(super) fn should_retain_method(
+        &self,
+        preserve_public_items: bool,
+        target_type: &str,
+        method_name: &str,
+        visibility: &Visibility,
+    ) -> bool {
+        self.public_types.contains(target_type)
+            || (!preserve_public_items
+                && !matches!(visibility, Visibility::Private)
+                && self.reachable_items.contains(target_type))
+            || self
+                .used_methods
+                .contains(&(target_type.to_string(), method_name.to_string()))
+    }
 }
 
 #[derive(Clone)]
@@ -190,12 +253,20 @@ pub struct IrEmitter<'a> {
     externally_reachable_items: HashSet<String>,
     /// Pre-emission usage facts used to avoid generated `dead_code` and `unused_imports` suppressions.
     generated_use_analysis: RefCell<GeneratedUseAnalysis>,
+    /// Rust overload implementation imports already emitted in the current module.
+    ///
+    /// Source aliases can project the same overloaded callable under another source name. The public metadata keeps
+    /// both source names, but Rust still has one concrete implementation symbol, so a facade importing the canonical
+    /// name and the alias must not emit the same `use`/`pub use` binding twice.
+    emitted_overload_import_bindings: RefCell<HashSet<String>>,
     /// Whether to emit the Zen of Incan in main
     emit_zen_in_main: bool,
     /// Whether serde is needed for emitted Rust derives or helpers.
     needs_serde: RefCell<bool>,
-    /// Function registry for call-site type checking
+    /// Function registry for module-local call-site default argument filling and type-aware argument conversion.
     function_registry: &'a FunctionRegistry,
+    /// Cross-module registry used only for IR calls that carry an explicit canonical callee path.
+    canonical_function_registry: Option<FunctionRegistry>,
     /// Track struct derives for generating serde methods in impl blocks
     struct_derives: std::collections::HashMap<String, Vec<String>>,
     /// Current function's return type (for applying conversions in return statements)
@@ -220,6 +291,8 @@ pub struct IrEmitter<'a> {
     struct_field_defaults: std::collections::HashMap<(String, String), super::IrExpr>,
     /// Constructor metadata variants for source-defined structs that share a simple name across modules.
     struct_constructor_metadata: HashMap<String, Vec<StructConstructorMetadata>>,
+    /// Transparent local type aliases keyed by alias name.
+    type_aliases: HashMap<String, IrType>,
     /// Incan `rusttype` aliases that should use compiler-owned call conversion rules at the surface boundary.
     rusttype_alias_names: HashSet<String>,
     /// Method signature lookup for Incan-owned nominal receivers, including imported modules.
@@ -234,6 +307,10 @@ pub struct IrEmitter<'a> {
     type_module_paths: HashMap<String, Vec<String>>,
     /// Type names that are declared in multiple modules (ambiguous).
     ambiguous_type_names: HashSet<String>,
+    /// Map of value name -> module path segments for dependency modules.
+    value_module_paths: HashMap<String, Vec<String>>,
+    /// Value names that are declared in multiple modules (ambiguous).
+    ambiguous_value_names: HashSet<String>,
     /// Imported enum type names discovered from dependency modules.
     ///
     /// Imported enums usually lower to `IrType::Struct(name)` in consumer modules, so for-loop emission needs this
@@ -265,6 +342,11 @@ pub struct IrEmitter<'a> {
     newtype_checked_ctor: HashMap<String, String>,
     /// Whether the currently emitted module contains any local `static` declarations.
     module_has_local_statics: RefCell<bool>,
+    /// Imported static bindings that need their defining module's static-init guard before use.
+    imported_static_init_bindings: RefCell<HashSet<String>>,
+    /// Imported static bindings re-exported by this module whose defining module's static-init guard should be
+    /// chained from this module's init helper.
+    imported_static_module_init_bindings: RefCell<Vec<String>>,
     /// Whether expression emission is currently inside a static initializer.
     ///
     /// Used to avoid recursively forcing the module-wide static init helper while generating static initializer code.
@@ -296,6 +378,15 @@ pub struct IrEmitter<'a> {
     emitted_result_observer_callable_helpers: RefCell<HashSet<String>>,
     /// Top-level function values adapted to a borrowed function-pointer parameter.
     borrowed_function_adapters: RefCell<HashSet<(String, Vec<usize>)>>,
+    /// Current generated Rust module path. The crate root uses an empty path.
+    callable_name_current_module_path: Vec<String>,
+    /// Concrete callable-name helper modules available to this compilation unit.
+    callable_name_resolutions: HashMap<String, CallableNameResolution>,
+    /// Concrete callable-name signatures used somewhere in this compilation unit.
+    callable_name_used_signature_keys: HashSet<String>,
+    /// Local callable registry used for module-local callable-name helpers when the main emitter has a unified
+    /// cross-module call registry.
+    callable_name_local_registry: Option<FunctionRegistry>,
 }
 
 impl<'a> IrEmitter<'a> {
@@ -311,9 +402,11 @@ impl<'a> IrEmitter<'a> {
             public_ordinal_type_identities: HashMap::new(),
             externally_reachable_items: HashSet::new(),
             generated_use_analysis: RefCell::new(GeneratedUseAnalysis::default()),
+            emitted_overload_import_bindings: RefCell::new(HashSet::new()),
             emit_zen_in_main: false,
             needs_serde: RefCell::new(false),
             function_registry,
+            canonical_function_registry: None,
             struct_derives: std::collections::HashMap::new(),
             current_function_return_type: RefCell::new(None),
             external_rust_functions: std::collections::HashSet::new(),
@@ -326,6 +419,7 @@ impl<'a> IrEmitter<'a> {
             struct_field_descriptions: std::collections::HashMap::new(),
             struct_field_defaults: std::collections::HashMap::new(),
             struct_constructor_metadata: HashMap::new(),
+            type_aliases: HashMap::new(),
             rusttype_alias_names: HashSet::new(),
             method_signatures: HashMap::new(),
             method_signature_type_params: HashMap::new(),
@@ -333,6 +427,8 @@ impl<'a> IrEmitter<'a> {
             const_string_literals: std::collections::HashMap::new(),
             type_module_paths: HashMap::new(),
             ambiguous_type_names: HashSet::new(),
+            value_module_paths: HashMap::new(),
+            ambiguous_value_names: HashSet::new(),
             dependency_enum_types: HashSet::new(),
             external_error_trait_types: HashSet::new(),
             internal_module_roots: HashSet::new(),
@@ -340,6 +436,8 @@ impl<'a> IrEmitter<'a> {
             rust_import_paths: RefCell::new(std::collections::HashMap::new()),
             newtype_checked_ctor: HashMap::new(),
             module_has_local_statics: RefCell::new(false),
+            imported_static_init_bindings: RefCell::new(HashSet::new()),
+            imported_static_module_init_bindings: RefCell::new(Vec::new()),
             in_static_initializer: RefCell::new(false),
             qualify_internal_canonical_paths: RefCell::new(false),
             qualify_union_types_from_crate: false,
@@ -349,15 +447,366 @@ impl<'a> IrEmitter<'a> {
             result_observer_callable_types: RefCell::new(HashSet::new()),
             emitted_result_observer_callable_helpers: RefCell::new(HashSet::new()),
             borrowed_function_adapters: RefCell::new(HashSet::new()),
+            callable_name_current_module_path: Vec::new(),
+            callable_name_resolutions: HashMap::new(),
+            callable_name_used_signature_keys: HashSet::new(),
+            callable_name_local_registry: None,
         }
     }
 
+    /// Configure the generated Rust module path for callable-name helper routing.
+    pub(crate) fn set_callable_name_current_module_path(&mut self, path: Vec<String>) {
+        self.callable_name_current_module_path = path;
+    }
+
+    /// Configure the canonical callable registry for explicit cross-module call paths.
+    pub(crate) fn set_canonical_function_registry(&mut self, registry: FunctionRegistry) {
+        self.canonical_function_registry = Some(registry);
+    }
+
+    /// Return the canonical function registry used for callable-name lookups.
+    pub(super) fn canonical_function_registry(&self) -> &FunctionRegistry {
+        self.canonical_function_registry
+            .as_ref()
+            .unwrap_or(self.function_registry)
+    }
+
+    /// Configure the concrete callable-name helper modules available to this emitter.
+    pub(crate) fn set_callable_name_resolutions(&mut self, resolutions: HashMap<String, CallableNameResolution>) {
+        self.callable_name_resolutions = resolutions;
+    }
+
+    /// Configure the callable-name signatures that are used anywhere in this generated crate.
+    pub(crate) fn set_callable_name_used_signature_keys(&mut self, keys: HashSet<String>) {
+        self.callable_name_used_signature_keys = keys;
+    }
+
+    /// Configure the local callable registry used by generated callable-name helpers.
+    pub(crate) fn set_callable_name_local_registry(&mut self, registry: FunctionRegistry) {
+        self.callable_name_local_registry = Some(registry);
+    }
+
+    /// Add every concrete function-pointer signature from one lowered program to the cross-module resolver map.
+    pub(crate) fn add_callable_name_resolutions_for_program(
+        out: &mut HashMap<String, CallableNameResolution>,
+        module_path: Vec<String>,
+        program: &IrProgram,
+    ) {
+        for (_, signature) in program.function_registry.iter() {
+            let params = signature
+                .params
+                .iter()
+                .map(|param| param.ty.clone())
+                .collect::<Vec<_>>();
+            let ret = signature.return_type.clone();
+            let Some(key) = Self::callable_name_signature_key(&params, &ret) else {
+                continue;
+            };
+            let resolution = out.entry(key).or_insert_with(|| CallableNameResolution {
+                params,
+                ret,
+                module_paths: Vec::new(),
+            });
+            if !resolution.module_paths.contains(&module_path) {
+                resolution.module_paths.push(module_path.clone());
+            }
+        }
+        for resolution in out.values_mut() {
+            resolution.module_paths.sort();
+        }
+    }
+
+    /// Return a deterministic generated symbol for one callable-name helper role and concrete signature key.
+    fn callable_name_symbol_ident(role: CallableNameSymbolRole, key: &str) -> proc_macro2::Ident {
+        format_ident!(
+            "{}_{:016x}",
+            role.prefix(),
+            Self::stable_callable_name_hash(key.as_bytes())
+        )
+    }
+
+    /// Return the generated resolver helper identifier for a concrete callable signature key.
+    ///
+    /// The resolver checks same-module static function candidates and then the per-signature dynamic registry.
+    pub(super) fn callable_name_helper_ident(key: &str) -> proc_macro2::Ident {
+        Self::callable_name_symbol_ident(CallableNameSymbolRole::Resolver, key)
+    }
+
+    /// Return the generated dynamic-name registration helper identifier for a concrete callable signature key.
+    ///
+    /// The registration helper records runtime metadata for concrete generic/decorated function values.
+    pub(super) fn callable_name_register_ident(key: &str) -> proc_macro2::Ident {
+        Self::callable_name_symbol_ident(CallableNameSymbolRole::Register, key)
+    }
+
+    /// Return the generated dynamic-name registry accessor identifier for a concrete callable signature key.
+    ///
+    /// The registry accessor owns the per-signature `OnceLock<Mutex<...>>` used by the registration helper.
+    pub(super) fn callable_name_registry_ident(key: &str) -> proc_macro2::Ident {
+        Self::callable_name_symbol_ident(CallableNameSymbolRole::Registry, key)
+    }
+
+    /// Return a stable signature key for callable-name helpers when the function-pointer type is concrete.
+    pub(super) fn callable_name_signature_key(params: &[IrType], ret: &IrType) -> Option<String> {
+        if !params.iter().all(Self::callable_name_type_supported) || !Self::callable_name_type_supported(ret) {
+            return None;
+        }
+        let params = params.iter().map(IrType::rust_name).collect::<Vec<_>>().join(", ");
+        Some(format!("fn({params}) -> {}", ret.rust_name()))
+    }
+
+    /// Build a callable-name signature key from a function signature.
+    fn callable_name_signature_key_from_signature(signature: &FunctionSignature) -> Option<String> {
+        let params = signature
+            .params
+            .iter()
+            .map(|param| param.ty.clone())
+            .collect::<Vec<_>>();
+        Self::callable_name_signature_key(&params, &signature.return_type)
+    }
+
+    /// Return whether a type can participate in callable-name helper signatures.
+    fn callable_name_type_supported(ty: &IrType) -> bool {
+        match ty {
+            IrType::Unknown | IrType::Generic(_) | IrType::ImplTrait(_) | IrType::SelfType => false,
+            IrType::List(inner)
+            | IrType::Set(inner)
+            | IrType::Option(inner)
+            | IrType::Ref(inner)
+            | IrType::RefMut(inner) => Self::callable_name_type_supported(inner),
+            IrType::Dict(key, value) | IrType::Result(key, value) => {
+                Self::callable_name_type_supported(key) && Self::callable_name_type_supported(value)
+            }
+            IrType::Tuple(items) => items.iter().all(Self::callable_name_type_supported),
+            IrType::TypeToken(inner) => Self::callable_name_type_supported(inner),
+            IrType::ExternalUnion { union, .. } => Self::callable_name_type_supported(union),
+            IrType::NamedGeneric(_, args) => args.iter().all(Self::callable_name_type_supported),
+            IrType::Function { params, ret } => Self::callable_name_signature_key(params, ret).is_some(),
+            IrType::Unit
+            | IrType::Bool
+            | IrType::Int
+            | IrType::Float
+            | IrType::Decimal { .. }
+            | IrType::String
+            | IrType::StrRef
+            | IrType::StaticStr
+            | IrType::FrozenStr
+            | IrType::Bytes
+            | IrType::StaticBytes
+            | IrType::FrozenBytes
+            | IrType::Numeric(_)
+            | IrType::Struct(_)
+            | IrType::Enum(_)
+            | IrType::Trait(_)
+            | IrType::RustDisplay(_) => true,
+        }
+    }
+
+    /// Hash a callable-name signature key with a stable FNV-1a variant.
+    fn stable_callable_name_hash(bytes: &[u8]) -> u64 {
+        let mut hash = 0xcbf29ce484222325u64;
+        for byte in bytes {
+            hash ^= u64::from(*byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hash
+    }
+
+    /// Return callable-name signature keys defined by the current module.
+    pub(super) fn local_callable_name_signature_keys(&self) -> HashSet<String> {
+        self.callable_name_local_registry()
+            .iter()
+            .filter_map(|(_, signature)| Self::callable_name_signature_key_from_signature(signature))
+            .collect()
+    }
+
+    /// Return the local function registry used for callable-name helpers.
+    pub(super) fn callable_name_local_registry(&self) -> &FunctionRegistry {
+        self.callable_name_local_registry
+            .as_ref()
+            .unwrap_or(self.function_registry)
+    }
+
+    /// Return whether two call-signature types describe the same emitted surface after transparent aliases expand.
+    pub(in crate::backend::ir::emit) fn call_signature_type_matches(&self, left: &IrType, right: &IrType) -> bool {
+        if left == right {
+            return true;
+        }
+        let left = self.resolve_type_aliases_for_emit(left);
+        let right = self.resolve_type_aliases_for_emit(right);
+        left == right || Self::semantic_signature_type(&left) == Self::semantic_signature_type(&right)
+    }
+
+    /// Return the semantic type shape used for callable-surface comparisons.
+    fn semantic_signature_type(ty: &IrType) -> IrType {
+        match ty {
+            IrType::ExternalUnion { union, .. } => Self::semantic_signature_type(union),
+            IrType::List(inner) => IrType::List(Box::new(Self::semantic_signature_type(inner))),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(Self::semantic_signature_type(key)),
+                Box::new(Self::semantic_signature_type(value)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(Self::semantic_signature_type(inner))),
+            IrType::Tuple(items) => IrType::Tuple(items.iter().map(Self::semantic_signature_type).collect()),
+            IrType::Option(inner) => IrType::Option(Box::new(Self::semantic_signature_type(inner))),
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(Self::semantic_signature_type(ok)),
+                Box::new(Self::semantic_signature_type(err)),
+            ),
+            IrType::Function { params, ret } => IrType::Function {
+                params: params.iter().map(Self::semantic_signature_type).collect(),
+                ret: Box::new(Self::semantic_signature_type(ret)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(Self::semantic_signature_type(inner))),
+            IrType::RefMut(inner) => IrType::RefMut(Box::new(Self::semantic_signature_type(inner))),
+            IrType::NamedGeneric(name, args) => {
+                IrType::NamedGeneric(name.clone(), args.iter().map(Self::semantic_signature_type).collect())
+            }
+            IrType::TypeToken(inner) => IrType::TypeToken(Box::new(Self::semantic_signature_type(inner))),
+            other => other.clone(),
+        }
+    }
+
+    /// Resolve transparent type aliases before emission decisions that need structural type information.
+    pub(in crate::backend::ir::emit) fn resolve_type_aliases_for_emit(&self, ty: &IrType) -> IrType {
+        let mut visiting = HashSet::new();
+        self.resolve_type_aliases_for_emit_inner(ty, &mut visiting)
+    }
+
+    /// Resolve nested transparent aliases while preserving cycles as their original alias names.
+    fn resolve_type_aliases_for_emit_inner(&self, ty: &IrType, visiting: &mut HashSet<String>) -> IrType {
+        match ty {
+            IrType::Struct(name) | IrType::NamedGeneric(name, _) if self.type_aliases.contains_key(name) => {
+                if !visiting.insert(name.clone()) {
+                    return ty.clone();
+                }
+                let Some(target) = self.type_aliases.get(name) else {
+                    visiting.remove(name);
+                    return ty.clone();
+                };
+                let resolved = self.resolve_type_aliases_for_emit_inner(target, visiting);
+                visiting.remove(name);
+                resolved
+            }
+            IrType::List(inner) => IrType::List(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting))),
+            IrType::Dict(key, value) => IrType::Dict(
+                Box::new(self.resolve_type_aliases_for_emit_inner(key, visiting)),
+                Box::new(self.resolve_type_aliases_for_emit_inner(value, visiting)),
+            ),
+            IrType::Set(inner) => IrType::Set(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting))),
+            IrType::Tuple(items) => IrType::Tuple(
+                items
+                    .iter()
+                    .map(|item| self.resolve_type_aliases_for_emit_inner(item, visiting))
+                    .collect(),
+            ),
+            IrType::Option(inner) => {
+                IrType::Option(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting)))
+            }
+            IrType::Result(ok, err) => IrType::Result(
+                Box::new(self.resolve_type_aliases_for_emit_inner(ok, visiting)),
+                Box::new(self.resolve_type_aliases_for_emit_inner(err, visiting)),
+            ),
+            IrType::NamedGeneric(name, args) if name == IR_UNION_TYPE_NAME => {
+                let mut members = Vec::new();
+                for arg in args {
+                    match self.resolve_type_aliases_for_emit_inner(arg, visiting) {
+                        IrType::NamedGeneric(inner_name, inner_args) if inner_name == IR_UNION_TYPE_NAME => {
+                            members.extend(inner_args);
+                        }
+                        resolved => members.push(resolved),
+                    }
+                }
+                members.sort_by_key(IrType::rust_name);
+                members.dedup();
+                match members.as_slice() {
+                    [single] => single.clone(),
+                    _ => IrType::NamedGeneric(name.clone(), members),
+                }
+            }
+            IrType::NamedGeneric(name, args) => IrType::NamedGeneric(
+                name.clone(),
+                args.iter()
+                    .map(|arg| self.resolve_type_aliases_for_emit_inner(arg, visiting))
+                    .collect(),
+            ),
+            IrType::Function { params, ret } => IrType::Function {
+                params: params
+                    .iter()
+                    .map(|param| self.resolve_type_aliases_for_emit_inner(param, visiting))
+                    .collect(),
+                ret: Box::new(self.resolve_type_aliases_for_emit_inner(ret, visiting)),
+            },
+            IrType::TypeToken(inner) => {
+                IrType::TypeToken(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting)))
+            }
+            IrType::ExternalUnion { library, union } => IrType::ExternalUnion {
+                library: library.clone(),
+                union: Box::new(self.resolve_type_aliases_for_emit_inner(union, visiting)),
+            },
+            IrType::Ref(inner) => IrType::Ref(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting))),
+            IrType::RefMut(inner) => {
+                IrType::RefMut(Box::new(self.resolve_type_aliases_for_emit_inner(inner, visiting)))
+            }
+            _ => ty.clone(),
+        }
+    }
+
+    /// Emit the generated call that initializes local and imported module statics.
     pub(super) fn emit_module_static_init_call(&self) -> TokenStream {
-        if *self.module_has_local_statics.borrow() {
+        if *self.module_has_local_statics.borrow() || !self.imported_static_module_init_bindings.borrow().is_empty() {
             let init_fn = Self::rust_ident("__incan_init_module_statics");
             quote! { #init_fn(); }
         } else {
             quote! {}
+        }
+    }
+
+    /// Replace the imported static bindings that need per-static init calls.
+    pub(super) fn set_imported_static_init_bindings(&self, bindings: HashSet<String>) {
+        *self.imported_static_init_bindings.borrow_mut() = bindings;
+    }
+
+    /// Replace imported static modules that need module-level init calls.
+    pub(super) fn set_imported_static_module_init_bindings(&self, bindings: Vec<String>) {
+        *self.imported_static_module_init_bindings.borrow_mut() = bindings;
+    }
+
+    /// Build the generated Rust identifier for an imported static init shim.
+    pub(super) fn imported_static_init_ident(name: &str) -> proc_macro2::Ident {
+        let mut rendered = String::from("__incan_init_imported_static_");
+        for ch in name.chars() {
+            if ch.is_ascii_alphanumeric() {
+                rendered.push(ch.to_ascii_lowercase());
+            } else {
+                rendered.push('_');
+            }
+        }
+        proc_macro2::Ident::new(&rendered, proc_macro2::Span::call_site())
+    }
+
+    /// Return whether a static binding needs its imported init shim called.
+    pub(super) fn static_needs_imported_init_call(&self, name: &str) -> bool {
+        self.imported_static_init_bindings.borrow().contains(name)
+    }
+
+    /// Return whether a static binding needs any imported static init support.
+    pub(super) fn static_needs_imported_init_import(&self, name: &str) -> bool {
+        self.static_needs_imported_init_call(name)
+            || self
+                .imported_static_module_init_bindings
+                .borrow()
+                .iter()
+                .any(|binding| binding == name)
+    }
+
+    /// Emit the generated init call required before touching a static binding.
+    pub(super) fn emit_static_init_call_for_static(&self, name: &str) -> TokenStream {
+        if self.static_needs_imported_init_call(name) {
+            let init_fn = Self::imported_static_init_ident(name);
+            quote! { #init_fn(); }
+        } else {
+            self.emit_module_static_init_call()
         }
     }
 
@@ -564,14 +1013,12 @@ impl<'a> IrEmitter<'a> {
 
     /// True when a method should be emitted for a preserved public surface or an observed generated-use call.
     pub(super) fn should_emit_method(&self, target_type: &str, method_name: &str, visibility: &Visibility) -> bool {
-        let analysis = self.generated_use_analysis.borrow();
-        analysis.public_types.contains(target_type)
-            || (!self.preserve_public_items
-                && !matches!(visibility, Visibility::Private)
-                && analysis.reachable_items.contains(target_type))
-            || analysis
-                .used_methods
-                .contains(&(target_type.to_string(), method_name.to_string()))
+        self.generated_use_analysis.borrow().should_retain_method(
+            self.preserve_public_items,
+            target_type,
+            method_name,
+            visibility,
+        )
     }
 
     /// True when the generated free constructor function for a struct should be retained.
@@ -605,6 +1052,50 @@ impl<'a> IrEmitter<'a> {
     pub fn set_type_module_paths(&mut self, paths: HashMap<String, Vec<String>>, ambiguous: HashSet<String>) {
         self.type_module_paths = paths;
         self.ambiguous_type_names = ambiguous;
+    }
+
+    /// Set value-to-module path mappings for dependency expressions that must be emitted outside their defining
+    /// module.
+    pub fn set_value_module_paths(&mut self, paths: HashMap<String, Vec<String>>, ambiguous: HashSet<String>) {
+        self.value_module_paths = paths;
+        self.ambiguous_value_names = ambiguous;
+    }
+
+    /// Emit a qualified path for an item imported from dependency metadata.
+    pub(in crate::backend::ir::emit) fn emit_dependency_item_path(
+        &self,
+        module_path: &[String],
+        name: &str,
+    ) -> Option<TokenStream> {
+        let mut segments = vec![quote! { crate }];
+        for segment in module_path {
+            let ident = Self::rust_ident(segment);
+            segments.push(quote! { #ident });
+        }
+        let ident = Self::rust_ident(name);
+        segments.push(quote! { #ident });
+
+        let mut iter = segments.into_iter();
+        let first = iter.next()?;
+        Some(iter.fold(first, |acc, segment| quote! { #acc :: #segment }))
+    }
+
+    /// Emit a dependency-qualified type path when a local type name is ambiguous.
+    pub(in crate::backend::ir::emit) fn emit_dependency_type_path(&self, name: &str) -> Option<TokenStream> {
+        if name.contains("::") || self.ambiguous_type_names.contains(name) {
+            return None;
+        }
+        let module_path = self.type_module_paths.get(name)?;
+        self.emit_dependency_item_path(module_path, name)
+    }
+
+    /// Emit a dependency-qualified value path when a local value name is ambiguous.
+    pub(in crate::backend::ir::emit) fn emit_dependency_value_path(&self, name: &str) -> Option<TokenStream> {
+        if name.contains("::") || self.ambiguous_value_names.contains(name) {
+            return None;
+        }
+        let module_path = self.value_module_paths.get(name)?;
+        self.emit_dependency_item_path(module_path, name)
     }
 
     /// Set imported enum type names discovered during codegen setup.
@@ -676,13 +1167,20 @@ impl<'a> IrEmitter<'a> {
                 }
                 IrDeclKind::TypeAlias {
                     name,
-                    is_rusttype: true,
+                    type_params,
+                    ty,
+                    is_rusttype,
                     ..
                 } => {
                     if skip_ambiguous && self.ambiguous_type_names.contains(name) {
                         continue;
                     }
-                    self.rusttype_alias_names.insert(name.clone());
+                    if type_params.is_empty() && !is_rusttype {
+                        self.type_aliases.insert(name.clone(), ty.clone());
+                    }
+                    if *is_rusttype {
+                        self.rusttype_alias_names.insert(name.clone());
+                    }
                 }
                 IrDeclKind::Impl(i) => {
                     for method in &i.methods {
@@ -882,6 +1380,11 @@ impl<'a> IrEmitter<'a> {
                     .collect(),
                 ret: Box::new(Self::substitute_signature_type(ret, subst)),
             },
+            IrType::TypeToken(inner) => IrType::TypeToken(Box::new(Self::substitute_signature_type(inner, subst))),
+            IrType::ExternalUnion { library, union } => IrType::ExternalUnion {
+                library: library.clone(),
+                union: Box::new(Self::substitute_signature_type(union, subst)),
+            },
             IrType::Ref(inner) => IrType::Ref(Box::new(Self::substitute_signature_type(inner, subst))),
             IrType::RefMut(inner) => IrType::RefMut(Box::new(Self::substitute_signature_type(inner, subst))),
             _ => ty.clone(),
@@ -1015,7 +1518,8 @@ impl<'a> IrEmitter<'a> {
             | IrType::Set(inner)
             | IrType::Option(inner)
             | IrType::Ref(inner)
-            | IrType::RefMut(inner) => {
+            | IrType::RefMut(inner)
+            | IrType::TypeToken(inner) => {
                 Self::collect_signature_generics(inner, out);
             }
             IrType::Dict(key, value) | IrType::Result(key, value) => {
@@ -1027,6 +1531,7 @@ impl<'a> IrEmitter<'a> {
                     Self::collect_signature_generics(item, out);
                 }
             }
+            IrType::ExternalUnion { union, .. } => Self::collect_signature_generics(union, out),
             IrType::Function { params, ret } => {
                 for param in params {
                     Self::collect_signature_generics(param, out);

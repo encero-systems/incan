@@ -20,8 +20,9 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
+use crate::frontend::symbols::{overload_emitted_name_prefix, overload_source_name_from_emitted};
 use incan_core::lang::surface::result_methods::ResultMethodId;
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::{conventions, magic_methods, stdlib as core_stdlib, trait_capabilities};
@@ -31,12 +32,13 @@ use super::super::decl::{
     IrTraitBound, IrTypeParam, Visibility,
 };
 use super::super::expr::{
-    IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, IrMethodDispatch, MethodKind, Pattern, VarRefKind,
+    IrCallArg, IrDictEntry, IrExprKind, IrGeneratorClause, IrListEntry, IrMethodDispatch, MethodKind, Pattern,
+    VarRefKind,
 };
 use super::super::stmt::AssignTarget;
 use super::super::types::{IR_UNION_TYPE_NAME, IrType};
 use super::super::{FunctionRegistry, FunctionSignature, IrDecl, IrProgram, IrStmt, IrStmtKind, TypedExpr};
-use super::{EmitError, GeneratedUseAnalysis, IrEmitter};
+use super::{CallableNameUseFacts, EmitError, GeneratedUseAnalysis, IrEmitter};
 
 struct OrdinalValueEnumBridgeSpec {
     type_path: TokenStream,
@@ -217,6 +219,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
 
         for name in externally_reachable_items {
             analyzer.mark_reachable_item(name);
+            analyzer.mark_reachable_overload_items(name);
         }
 
         while let Some(name) = analyzer.pending.pop() {
@@ -238,6 +241,20 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         self.analysis.used_imports.insert(name.to_string());
         if self.declarations_by_name.contains_key(name) && self.analysis.reachable_items.insert(name.to_string()) {
             self.pending.push(name.to_string());
+        }
+    }
+
+    /// Mark concrete Rust implementation items for one source overload binding as reachable.
+    fn mark_reachable_overload_items(&mut self, source_name: &str) {
+        let prefix = overload_emitted_name_prefix(source_name);
+        let overload_names = self
+            .declarations_by_name
+            .keys()
+            .filter(|name| name.starts_with(&prefix))
+            .cloned()
+            .collect::<Vec<_>>();
+        for overload_name in overload_names {
+            self.mark_reachable_item(&overload_name);
         }
     }
 
@@ -343,23 +360,21 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         match magic_methods::from_str(method.name.as_str()) {
             Some(magic_methods::MagicMethodId::Eq | magic_methods::MagicMethodId::Str) => true,
             Some(magic_methods::MagicMethodId::ClassName | magic_methods::MagicMethodId::Fields) => {
-                self.method_is_needed(&impl_block.target_type, method)
+                self.analysis.should_retain_method(
+                    self.preserve_public_items,
+                    &impl_block.target_type,
+                    &method.name,
+                    &method.visibility,
+                )
             }
             _ if impl_block.trait_name.is_some() => true,
-            _ => self.method_is_needed(&impl_block.target_type, method),
+            _ => self.analysis.should_retain_method(
+                self.preserve_public_items,
+                &impl_block.target_type,
+                &method.name,
+                &method.visibility,
+            ),
         }
-    }
-
-    /// Mirror the emitter's method-retention predicate for generated-use analysis.
-    fn method_is_needed(&self, target_type: &str, method: &IrFunction) -> bool {
-        self.analysis.public_types.contains(target_type)
-            || (!self.preserve_public_items
-                && !matches!(method.visibility, Visibility::Private)
-                && self.analysis.reachable_items.contains(target_type))
-            || self
-                .analysis
-                .used_methods
-                .contains(&(target_type.to_string(), method.name.clone()))
     }
 
     /// Scan a function signature, defaults, and body for generated Rust dependencies.
@@ -467,6 +482,13 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 self.scan_expr(scrutinee);
                 for arm in arms {
                     self.scan_pattern(&arm.pattern);
+                    for binding in &arm.bindings {
+                        self.scan_type(&binding.ty);
+                        self.scan_expr(&binding.value);
+                        if let Some(guard_value) = &binding.guard_value {
+                            self.scan_expr(guard_value);
+                        }
+                    }
                     if let Some(guard) = &arm.guard {
                         self.scan_expr(guard);
                     }
@@ -547,6 +569,23 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                         .insert((type_name.clone(), original_name.to_string()));
                 }
             }
+            IrExprKind::FunctionItem { name, type_args } => {
+                self.mark_reachable_item(name);
+                for ty in type_args {
+                    self.scan_type(ty);
+                }
+            }
+            IrExprKind::RegisterCallableName { callable, .. } => {
+                self.scan_expr(callable);
+                if let IrType::Function { params, ret } = &callable.ty
+                    && let Some(key) = IrEmitter::callable_name_signature_key(params, ret)
+                {
+                    self.analysis.callable_name_signature_keys.insert(key);
+                }
+            }
+            IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+                self.scan_expr(value);
+            }
             IrExprKind::BinOp { left, right, .. } => {
                 self.scan_expr(left);
                 self.scan_expr(right);
@@ -573,6 +612,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                     self.scan_type(ty);
                 }
                 for arg in args {
+                    for key in self.callable_name_function_arg_signature_keys(&arg.expr) {
+                        self.analysis.callable_name_function_arg_signature_keys.insert(key);
+                    }
                     self.scan_expr(&arg.expr);
                 }
             }
@@ -622,6 +664,15 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             }
             IrExprKind::Field { object, field } => {
                 self.scan_expr(object);
+                if field == "__name__"
+                    && let IrType::Function { params, ret } = &object.ty
+                    && let Some(key) = IrEmitter::callable_name_signature_key(params, ret)
+                {
+                    self.analysis.callable_name_signature_keys.insert(key);
+                }
+                if field == "__name__" && matches!(object.ty, IrType::Generic(_)) {
+                    self.analysis.uses_generic_callable_name_trait = true;
+                }
                 if let Some(type_name) = self.object_nominal_type_name(object) {
                     let field = self
                         .struct_field_aliases
@@ -725,6 +776,13 @@ impl<'program> GeneratedUseAnalyzer<'program> {
                 self.scan_expr(scrutinee);
                 for arm in arms {
                     self.scan_pattern(&arm.pattern);
+                    for binding in &arm.bindings {
+                        self.scan_type(&binding.ty);
+                        self.scan_expr(&binding.value);
+                        if let Some(guard_value) = &binding.guard_value {
+                            self.scan_expr(guard_value);
+                        }
+                    }
                     if let Some(guard) = &arm.guard {
                         self.scan_expr(guard);
                     }
@@ -763,12 +821,13 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             }
             IrExprKind::Format { parts } => {
                 for part in parts {
-                    if let super::super::expr::FormatPart::Expr(expr) = part {
+                    if let super::super::expr::FormatPart::Expr { expr, .. } = part {
                         self.scan_expr(expr);
                     }
                 }
             }
             IrExprKind::SerdeFromJson(type_name) => self.mark_reachable_item(type_name),
+            IrExprKind::TypeToken { ty } => self.scan_type(ty),
             IrExprKind::Unit
             | IrExprKind::None
             | IrExprKind::Bool(_)
@@ -781,6 +840,67 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrExprKind::Literal(_)
             | IrExprKind::FieldsList(_)
             | IrExprKind::SerdeToJson => {}
+        }
+    }
+
+    /// Collect callable-name signature keys required by function arguments.
+    fn callable_name_function_arg_signature_keys(&self, expr: &TypedExpr) -> Vec<String> {
+        match &expr.kind {
+            IrExprKind::Var { name, .. } => {
+                let mut keys = HashSet::new();
+                if let IrType::Function { params, ret } = &expr.ty
+                    && let Some(key) = IrEmitter::callable_name_signature_key(params, ret)
+                {
+                    keys.insert(key);
+                }
+                if let Some(signature) = self.function_registry.get(name) {
+                    let params = signature
+                        .params
+                        .iter()
+                        .map(|param| param.ty.clone())
+                        .collect::<Vec<_>>();
+                    if let Some(key) = IrEmitter::callable_name_signature_key(&params, &signature.return_type) {
+                        keys.insert(key);
+                    }
+                }
+                let Some(IrDecl {
+                    kind: IrDeclKind::Function(func),
+                    ..
+                }) = self.declarations_by_name.get(name).copied()
+                else {
+                    let mut keys = keys.into_iter().collect::<Vec<_>>();
+                    keys.sort();
+                    return keys;
+                };
+                if func.is_async || !func.type_params.is_empty() {
+                    return Vec::new();
+                }
+                let params = func.params.iter().map(|param| param.ty.clone()).collect::<Vec<_>>();
+                if let Some(key) = IrEmitter::callable_name_signature_key(&params, &func.return_type) {
+                    keys.insert(key);
+                }
+                let mut keys = keys.into_iter().collect::<Vec<_>>();
+                keys.sort();
+                keys
+            }
+            IrExprKind::FunctionItem { .. } => {
+                let mut keys = HashSet::new();
+                if let IrType::Function { params, ret } = &expr.ty
+                    && let Some(key) = IrEmitter::callable_name_signature_key(params, ret)
+                {
+                    keys.insert(key);
+                }
+                let mut keys = keys.into_iter().collect::<Vec<_>>();
+                keys.sort();
+                keys
+            }
+            IrExprKind::InteropCoerce { expr, .. }
+            | IrExprKind::NumericResize { expr, .. }
+            | IrExprKind::Cast { expr, .. } => self.callable_name_function_arg_signature_keys(expr),
+            IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+                self.callable_name_function_arg_signature_keys(value)
+            }
+            _ => Vec::new(),
         }
     }
 
@@ -831,29 +951,14 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             IrExprKind::Var { name, .. } => Some(name.as_str()),
             _ => None,
         };
-        let canonical_name = canonical_path.as_ref().and_then(|path| path.last()).map(String::as_str);
-        local_name
-            .and_then(|name| self.function_registry.get(name).cloned())
-            .or_else(|| canonical_name.and_then(|name| self.function_registry.get(name).cloned()))
-            .or_else(|| callable_signature.cloned())
-            .or_else(|| match &func.ty {
-                IrType::Function { params, ret } => Some(FunctionSignature {
-                    params: params
-                        .iter()
-                        .enumerate()
-                        .map(|(idx, ty)| super::super::decl::FunctionParam {
-                            name: format!("__incan_arg_{idx}"),
-                            ty: ty.clone(),
-                            mutability: super::super::types::Mutability::Immutable,
-                            is_self: false,
-                            kind: crate::frontend::ast::ParamKind::Normal,
-                            default: None,
-                        })
-                        .collect(),
-                    return_type: ret.as_ref().clone(),
-                }),
-                _ => None,
-            })
+        FunctionRegistry::effective_call_signature(
+            self.function_registry,
+            self.function_registry,
+            local_name,
+            canonical_path.as_deref(),
+            callable_signature,
+            Some(&func.ty),
+        )
     }
 
     /// Record named function arguments that need private adapters for borrowed function-pointer parameters.
@@ -916,16 +1021,15 @@ impl<'program> GeneratedUseAnalyzer<'program> {
         method: &str,
         dispatch: Option<&IrMethodDispatch>,
     ) {
-        if let Some(IrMethodDispatch::RustExtensionTraitImport { binding }) = dispatch {
-            if self.rust_extension_trait_imports.contains_key(binding) {
-                self.analysis.used_extension_trait_imports.insert(binding.clone());
+        let Some(IrMethodDispatch::RustExtensionTraitImport { binding }) = dispatch else {
+            if self.receiver_can_use_rust_extension_trait(receiver) {
+                self.mark_unambiguous_rust_extension_trait_import(method);
             }
             return;
+        };
+        if self.rust_extension_trait_imports.contains_key(binding) {
+            self.analysis.used_extension_trait_imports.insert(binding.clone());
         }
-        if !self.receiver_can_use_rust_extension_trait(receiver) {
-            return;
-        }
-        self.mark_unambiguous_rust_extension_trait_import(method);
     }
 
     /// Mark a trait import for metadata-free fallback only when the method has one possible imported trait.
@@ -992,7 +1096,9 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrType::Set(inner)
             | IrType::Option(inner)
             | IrType::Ref(inner)
-            | IrType::RefMut(inner) => self.scan_type(inner),
+            | IrType::RefMut(inner)
+            | IrType::TypeToken(inner) => self.scan_type(inner),
+            IrType::ExternalUnion { union, .. } => self.scan_type(union),
             IrType::Dict(key, value) | IrType::Result(key, value) => {
                 self.scan_type(key);
                 self.scan_type(value);
@@ -1039,6 +1145,7 @@ impl<'program> GeneratedUseAnalyzer<'program> {
             | IrType::FrozenBytes
             | IrType::StrRef
             | IrType::Generic(_)
+            | IrType::RustDisplay(_)
             | IrType::SelfType
             | IrType::Unknown => {}
         }
@@ -1091,6 +1198,45 @@ impl<'program> GeneratedUseAnalyzer<'program> {
 }
 
 impl<'a> IrEmitter<'a> {
+    /// Collect imported static bindings that need generated init calls.
+    fn collect_imported_static_init_bindings(&self, declarations: &[&IrDecl]) -> (HashSet<String>, Vec<String>) {
+        let mut access_bindings = HashSet::new();
+        let mut module_init_bindings = HashSet::new();
+        for decl in declarations {
+            let IrDeclKind::Import {
+                visibility,
+                origin,
+                qualifier,
+                path,
+                items,
+                ..
+            } = &decl.kind
+            else {
+                continue;
+            };
+            if matches!(origin, IrImportOrigin::PubLibrary { .. }) || matches!(qualifier, IrImportQualifier::None) {
+                continue;
+            }
+            let is_incan_source_stdlib = Self::is_incan_source_stdlib_import(origin, qualifier, path);
+            let is_public_reexport = !matches!(visibility, Visibility::Private);
+            for item in items {
+                if !item.is_static {
+                    continue;
+                }
+                let binding = item.alias.as_ref().unwrap_or(&item.name);
+                if self.should_emit_import_binding(binding) {
+                    access_bindings.insert(binding.clone());
+                }
+                if is_public_reexport && !(is_incan_source_stdlib && binding.starts_with('_')) {
+                    module_init_bindings.insert(binding.clone());
+                }
+            }
+        }
+        let mut module_init_bindings: Vec<_> = module_init_bindings.into_iter().collect();
+        module_init_bindings.sort();
+        (access_bindings, module_init_bindings)
+    }
+
     /// Return whether the current emitted module defines one registry-backed temporary capability trait contract.
     fn emitted_declarations_define_capability_trait(
         program: &IrProgram,
@@ -1605,7 +1751,9 @@ impl<'a> IrEmitter<'a> {
 
     /// Collect anonymous union shapes that appear inside a type.
     fn collect_union_types_from_type(ty: &IrType, out: &mut HashMap<String, IrType>) {
-        if let Some(name) = ty.union_type_name() {
+        if !matches!(ty, IrType::ExternalUnion { .. })
+            && let Some(name) = ty.union_type_name()
+        {
             out.insert(name, ty.clone());
         }
 
@@ -1624,6 +1772,8 @@ impl<'a> IrEmitter<'a> {
                     Self::collect_union_types_from_type(item, out);
                 }
             }
+            IrType::ExternalUnion { .. } => {}
+            IrType::TypeToken(inner) => Self::collect_union_types_from_type(inner, out),
             IrType::ImplTrait(bound) => {
                 for item in &bound.type_args {
                     Self::collect_union_types_from_type(item, out);
@@ -1655,6 +1805,7 @@ impl<'a> IrEmitter<'a> {
             | IrType::Enum(_)
             | IrType::Trait(_)
             | IrType::Generic(_)
+            | IrType::RustDisplay(_)
             | IrType::SelfType
             | IrType::Unknown => {}
         }
@@ -1662,12 +1813,172 @@ impl<'a> IrEmitter<'a> {
 
     /// Collect anonymous union shapes referenced by an expression tree.
     fn collect_union_types_from_expr(expr: &TypedExpr, out: &mut HashMap<String, IrType>) {
-        Self::collect_union_types_from_type(&expr.ty, out);
+        Self::collect_union_types_from_expr_inner(expr, out, None);
+    }
+
+    /// Collect union shapes for an expression while honoring the type position the expression is emitted into.
+    ///
+    /// Public dependency calls can target provider-owned anonymous unions nested inside containers such as
+    /// `list[provider::Union]`. In that case the target type owns the generated wrapper, and the expression's local
+    /// semantic union shape must not be collected as a consumer-owned enum definition.
+    fn collect_union_types_from_expr_for_target(
+        expr: &TypedExpr,
+        target_ty: Option<&IrType>,
+        out: &mut HashMap<String, IrType>,
+    ) {
+        if let Some(target_ty) = target_ty {
+            Self::collect_union_types_from_type(target_ty, out);
+        }
+        Self::collect_union_types_from_expr_inner(expr, out, target_ty);
+    }
+
+    /// Collect union shapes inside an expression type while preserving provider-owned target ownership.
+    fn collect_union_types_from_type_for_target(
+        expr_ty: &IrType,
+        target_ty: Option<&IrType>,
+        out: &mut HashMap<String, IrType>,
+    ) {
+        let Some(target_ty) = target_ty else {
+            Self::collect_union_types_from_type(expr_ty, out);
+            return;
+        };
+        if Self::target_external_union_covers_expr(target_ty, expr_ty) {
+            return;
+        }
+        match (target_ty, expr_ty) {
+            (IrType::List(target), IrType::List(expr)) | (IrType::Set(target), IrType::Set(expr)) => {
+                Self::collect_union_types_from_type_for_target(expr, Some(target), out);
+            }
+            (IrType::Option(target), IrType::Option(expr))
+            | (IrType::Ref(target), IrType::Ref(expr))
+            | (IrType::RefMut(target), IrType::RefMut(expr)) => {
+                Self::collect_union_types_from_type_for_target(expr, Some(target), out);
+            }
+            (IrType::Option(target), expr) => {
+                Self::collect_union_types_from_type_for_target(expr, Some(target), out);
+            }
+            (IrType::Dict(target_key, target_value), IrType::Dict(expr_key, expr_value)) => {
+                Self::collect_union_types_from_type_for_target(expr_key, Some(target_key), out);
+                Self::collect_union_types_from_type_for_target(expr_value, Some(target_value), out);
+            }
+            (IrType::Result(target_ok, target_err), IrType::Result(expr_ok, expr_err)) => {
+                Self::collect_union_types_from_type_for_target(expr_ok, Some(target_ok), out);
+                Self::collect_union_types_from_type_for_target(expr_err, Some(target_err), out);
+            }
+            (IrType::Tuple(target_items), IrType::Tuple(expr_items)) if target_items.len() == expr_items.len() => {
+                for (target, expr) in target_items.iter().zip(expr_items) {
+                    Self::collect_union_types_from_type_for_target(expr, Some(target), out);
+                }
+            }
+            _ => Self::collect_union_types_from_type(expr_ty, out),
+        }
+    }
+
+    /// Return whether a target type covers an expression's union shape through a provider-owned external union.
+    ///
+    /// The check is structural rather than top-level only so containers, options, tuples, dictionaries, and result
+    /// payloads can preserve public dependency ownership across nested argument and collection positions.
+    fn target_external_union_covers_expr(target_ty: &IrType, expr_ty: &IrType) -> bool {
+        match (target_ty, expr_ty) {
+            (IrType::ExternalUnion { .. }, _) => target_ty.union_type_name() == expr_ty.union_type_name(),
+            (IrType::List(target), IrType::List(expr)) | (IrType::Set(target), IrType::Set(expr)) => {
+                Self::target_external_union_covers_expr(target, expr)
+            }
+            (IrType::Option(target), IrType::Option(expr))
+            | (IrType::Ref(target), IrType::Ref(expr))
+            | (IrType::RefMut(target), IrType::RefMut(expr)) => Self::target_external_union_covers_expr(target, expr),
+            (IrType::Option(target), expr) => Self::target_external_union_covers_expr(target, expr),
+            (IrType::Dict(target_key, target_value), IrType::Dict(expr_key, expr_value)) => {
+                Self::target_external_union_covers_expr(target_key, expr_key)
+                    && Self::target_external_union_covers_expr(target_value, expr_value)
+            }
+            (IrType::Result(target_ok, target_err), IrType::Result(expr_ok, expr_err)) => {
+                Self::target_external_union_covers_expr(target_ok, expr_ok)
+                    && Self::target_external_union_covers_expr(target_err, expr_err)
+            }
+            (IrType::Tuple(target_items), IrType::Tuple(expr_items)) if target_items.len() == expr_items.len() => {
+                target_items
+                    .iter()
+                    .zip(expr_items)
+                    .all(|(target, expr)| Self::target_external_union_covers_expr(target, expr))
+            }
+            _ => false,
+        }
+    }
+
+    /// Return the target type for one list or set element when a collection expression has an expected type.
+    fn list_element_target_type(target_ty: Option<&IrType>) -> Option<&IrType> {
+        match target_ty {
+            Some(IrType::List(inner) | IrType::Set(inner)) => Some(inner),
+            _ => None,
+        }
+    }
+
+    /// Return expected key and value types for a dictionary expression when the surrounding type provides them.
+    fn dict_target_types(target_ty: Option<&IrType>) -> (Option<&IrType>, Option<&IrType>) {
+        match target_ty {
+            Some(IrType::Dict(key, value)) => (Some(key), Some(value)),
+            _ => (None, None),
+        }
+    }
+
+    /// Return the expected item type for one tuple position when the surrounding type provides it.
+    fn tuple_item_target_type(target_ty: Option<&IrType>, index: usize) -> Option<&IrType> {
+        match target_ty {
+            Some(IrType::Tuple(items)) => items.get(index),
+            _ => None,
+        }
+    }
+
+    /// Return the expected argument type from a callable signature for a positional or named call argument.
+    fn call_arg_target_type<'sig>(
+        arg: &IrCallArg,
+        index: usize,
+        signature: Option<&'sig FunctionSignature>,
+    ) -> Option<&'sig IrType> {
+        let signature = signature?;
+        if let Some(name) = &arg.name
+            && let Some(param) = signature.params.iter().find(|param| param.name == *name)
+        {
+            return Some(&param.ty);
+        }
+        signature.params.get(index).map(|param| &param.ty)
+    }
+
+    /// Collect union shapes from callable defaults that may be emitted as missing call arguments.
+    fn collect_union_types_from_signature_defaults(signature: &FunctionSignature, out: &mut HashMap<String, IrType>) {
+        for param in &signature.params {
+            if let Some(default) = &param.default {
+                Self::collect_union_types_from_expr_for_target(default, Some(&param.ty), out);
+            }
+        }
+    }
+
+    /// Collect union shapes from an expression tree, optionally using an expected target type to keep ownership stable.
+    fn collect_union_types_from_expr_inner(
+        expr: &TypedExpr,
+        out: &mut HashMap<String, IrType>,
+        target_ty: Option<&IrType>,
+    ) {
+        Self::collect_union_types_from_type_for_target(&expr.ty, target_ty, out);
         match &expr.kind {
-            IrExprKind::Call { func, args, .. } => {
-                Self::collect_union_types_from_expr(func, out);
-                for arg in args {
-                    Self::collect_union_types_from_expr(&arg.expr, out);
+            IrExprKind::Call {
+                func,
+                args,
+                callable_signature,
+                ..
+            } => {
+                if let Some(callable_signature) = callable_signature {
+                    Self::collect_union_types_from_signature_defaults(callable_signature, out);
+                } else {
+                    Self::collect_union_types_from_call_callee(func, out);
+                }
+                for (index, arg) in args.iter().enumerate() {
+                    Self::collect_union_types_from_expr_for_target(
+                        &arg.expr,
+                        Self::call_arg_target_type(arg, index, callable_signature.as_ref()),
+                        out,
+                    );
                 }
             }
             IrExprKind::BuiltinCall { args, .. } => {
@@ -1675,7 +1986,22 @@ impl<'a> IrEmitter<'a> {
                     Self::collect_union_types_from_expr(arg, out);
                 }
             }
-            IrExprKind::MethodCall { receiver, args, .. } | IrExprKind::KnownMethodCall { receiver, args, .. } => {
+            IrExprKind::MethodCall {
+                receiver,
+                args,
+                callable_signature,
+                ..
+            } => {
+                Self::collect_union_types_from_expr(receiver, out);
+                for (index, arg) in args.iter().enumerate() {
+                    Self::collect_union_types_from_expr_for_target(
+                        &arg.expr,
+                        Self::call_arg_target_type(arg, index, callable_signature.as_ref()),
+                        out,
+                    );
+                }
+            }
+            IrExprKind::KnownMethodCall { receiver, args, .. } => {
                 Self::collect_union_types_from_expr(receiver, out);
                 for arg in args {
                     Self::collect_union_types_from_expr(&arg.expr, out);
@@ -1691,6 +2017,10 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::Cast { expr: operand, .. }
             | IrExprKind::NumericResize { expr: operand, .. }
             | IrExprKind::InteropCoerce { expr: operand, .. } => Self::collect_union_types_from_expr(operand, out),
+            IrExprKind::RegisterCallableName { callable, .. } => Self::collect_union_types_from_expr(callable, out),
+            IrExprKind::CacheGenericDecoratedFunction { value, .. } => {
+                Self::collect_union_types_from_expr(value, out);
+            }
             IrExprKind::Index { object, index } => {
                 Self::collect_union_types_from_expr(object, out);
                 Self::collect_union_types_from_expr(index, out);
@@ -1708,28 +2038,46 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Field { object, .. } => Self::collect_union_types_from_expr(object, out),
             IrExprKind::List(items) => {
+                let element_target_ty = Self::list_element_target_type(target_ty);
                 for item in items {
                     match item {
                         IrListEntry::Element(value) | IrListEntry::Spread(value) => {
-                            Self::collect_union_types_from_expr(value, out);
+                            let item_target_ty = match item {
+                                IrListEntry::Element(_) => element_target_ty,
+                                IrListEntry::Spread(_) => target_ty,
+                            };
+                            Self::collect_union_types_from_expr_for_target(value, item_target_ty, out);
                         }
                     }
                 }
             }
             IrExprKind::Dict(entries) => {
+                let (key_target_ty, value_target_ty) = Self::dict_target_types(target_ty);
                 for entry in entries {
                     match entry {
                         IrDictEntry::Pair(key, value) => {
-                            Self::collect_union_types_from_expr(key, out);
-                            Self::collect_union_types_from_expr(value, out);
+                            Self::collect_union_types_from_expr_for_target(key, key_target_ty, out);
+                            Self::collect_union_types_from_expr_for_target(value, value_target_ty, out);
                         }
-                        IrDictEntry::Spread(value) => Self::collect_union_types_from_expr(value, out),
+                        IrDictEntry::Spread(value) => {
+                            Self::collect_union_types_from_expr_for_target(value, target_ty, out)
+                        }
                     }
                 }
             }
-            IrExprKind::Set(items) | IrExprKind::Tuple(items) => {
+            IrExprKind::Set(items) => {
+                let element_target_ty = Self::list_element_target_type(target_ty);
                 for item in items {
-                    Self::collect_union_types_from_expr(item, out);
+                    Self::collect_union_types_from_expr_for_target(item, element_target_ty, out);
+                }
+            }
+            IrExprKind::Tuple(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    Self::collect_union_types_from_expr_for_target(
+                        item,
+                        Self::tuple_item_target_type(target_ty, index),
+                        out,
+                    );
                 }
             }
             IrExprKind::Struct { fields, .. } => {
@@ -1751,6 +2099,13 @@ impl<'a> IrEmitter<'a> {
             IrExprKind::Match { scrutinee, arms } => {
                 Self::collect_union_types_from_expr(scrutinee, out);
                 for arm in arms {
+                    for binding in &arm.bindings {
+                        Self::collect_union_types_from_type(&binding.ty, out);
+                        Self::collect_union_types_from_expr(&binding.value, out);
+                        if let Some(guard_value) = &binding.guard_value {
+                            Self::collect_union_types_from_expr(guard_value, out);
+                        }
+                    }
                     if let Some(guard) = &arm.guard {
                         Self::collect_union_types_from_expr(guard, out);
                     }
@@ -1792,7 +2147,7 @@ impl<'a> IrEmitter<'a> {
             }
             IrExprKind::Format { parts } => {
                 for part in parts {
-                    if let super::super::expr::FormatPart::Expr(expr) = part {
+                    if let super::super::expr::FormatPart::Expr { expr, .. } = part {
                         Self::collect_union_types_from_expr(expr, out);
                     }
                 }
@@ -1842,6 +2197,8 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::String(_)
             | IrExprKind::Bytes(_)
             | IrExprKind::AssociatedFunction { .. }
+            | IrExprKind::FunctionItem { .. }
+            | IrExprKind::TypeToken { .. }
             | IrExprKind::Var { .. }
             | IrExprKind::StaticRead { .. }
             | IrExprKind::StaticBinding { .. }
@@ -1849,6 +2206,36 @@ impl<'a> IrEmitter<'a> {
             | IrExprKind::FieldsList(_)
             | IrExprKind::SerdeToJson
             | IrExprKind::SerdeFromJson(_) => {}
+        }
+    }
+
+    /// Collect anonymous unions needed by a call callee expression without treating the callee's own function type as
+    /// an emitted type position.
+    ///
+    /// Imported public helpers can carry function signatures that mention dependency-owned anonymous unions. Those
+    /// signatures guide argument planning, but the function type itself is not printed into the generated Rust call.
+    /// Only nested value expressions inside the callee need collection.
+    fn collect_union_types_from_call_callee(expr: &TypedExpr, out: &mut HashMap<String, IrType>) {
+        match &expr.kind {
+            IrExprKind::Field { object, .. } => Self::collect_union_types_from_expr(object, out),
+            IrExprKind::Index { object, index } => {
+                Self::collect_union_types_from_expr(object, out);
+                Self::collect_union_types_from_expr(index, out);
+            }
+            IrExprKind::Call { func, args, .. } => {
+                Self::collect_union_types_from_call_callee(func, out);
+                for arg in args {
+                    Self::collect_union_types_from_expr(&arg.expr, out);
+                }
+            }
+            IrExprKind::MethodCall { receiver, args, .. } => {
+                Self::collect_union_types_from_expr(receiver, out);
+                for arg in args {
+                    Self::collect_union_types_from_expr(&arg.expr, out);
+                }
+            }
+            IrExprKind::Var { .. } | IrExprKind::Literal(_) => {}
+            _ => Self::collect_union_types_from_expr(expr, out),
         }
     }
 
@@ -1902,6 +2289,13 @@ impl<'a> IrEmitter<'a> {
             IrStmtKind::Match { scrutinee, arms } => {
                 Self::collect_union_types_from_expr(scrutinee, out);
                 for arm in arms {
+                    for binding in &arm.bindings {
+                        Self::collect_union_types_from_type(&binding.ty, out);
+                        Self::collect_union_types_from_expr(&binding.value, out);
+                        if let Some(guard_value) = &binding.guard_value {
+                            Self::collect_union_types_from_expr(guard_value, out);
+                        }
+                    }
                     if let Some(guard) = &arm.guard {
                         Self::collect_union_types_from_expr(guard, out);
                     }
@@ -1989,6 +2383,10 @@ impl<'a> IrEmitter<'a> {
 
     /// Emit the generated Rust enum for one normalized anonymous union shape.
     fn emit_generated_union_type(&self, ty: &IrType) -> Option<TokenStream> {
+        let ty = self.resolve_type_aliases_for_emit(ty);
+        if matches!(ty, IrType::ExternalUnion { .. }) {
+            return None;
+        }
         let name = ty.union_type_name()?;
         let members = ty.union_members()?;
         let name_ident = format_ident!("{}", name);
@@ -2018,13 +2416,13 @@ impl<'a> IrEmitter<'a> {
     fn emit_generated_union_member_type(&self, ty: &IrType) -> TokenStream {
         match ty {
             IrType::Struct(name) | IrType::Enum(name) | IrType::Trait(name) => self
-                .emit_dependency_nominal_type_path(name)
+                .emit_dependency_type_path(name)
                 .unwrap_or_else(|| self.emit_type(ty)),
             IrType::NamedGeneric(name, args) if name == super::super::types::IR_UNION_TYPE_NAME => {
                 self.emit_union_type_path(ty)
             }
             IrType::NamedGeneric(name, args) => {
-                let base = self.emit_dependency_nominal_type_path(name).unwrap_or_else(|| {
+                let base = self.emit_dependency_type_path(name).unwrap_or_else(|| {
                     let ident = Self::rust_ident(name);
                     quote! { #ident }
                 });
@@ -2079,6 +2477,11 @@ impl<'a> IrEmitter<'a> {
                 let inner = self.emit_generated_union_member_type(inner);
                 quote! { &mut #inner }
             }
+            IrType::TypeToken(inner) => {
+                let inner = self.emit_generated_union_member_type(inner);
+                quote! { incan_stdlib::reflection::TypeToken<#inner> }
+            }
+            IrType::ExternalUnion { .. } => self.emit_type(ty),
             IrType::Unit
             | IrType::Bool
             | IrType::Int
@@ -2094,28 +2497,10 @@ impl<'a> IrEmitter<'a> {
             | IrType::StrRef
             | IrType::ImplTrait(_)
             | IrType::Generic(_)
+            | IrType::RustDisplay(_)
             | IrType::SelfType
             | IrType::Unknown => self.emit_type(ty),
         }
-    }
-
-    /// Emit a crate-qualified path for an unambiguous nominal type declared in a dependency module.
-    fn emit_dependency_nominal_type_path(&self, name: &str) -> Option<TokenStream> {
-        if name.contains("::") || self.ambiguous_type_names.contains(name) {
-            return None;
-        }
-        let module_path = self.type_module_paths.get(name)?;
-        let mut segments = vec![quote! { crate }];
-        for segment in module_path {
-            let ident = Self::rust_ident(segment);
-            segments.push(quote! { #ident });
-        }
-        let name_ident = Self::rust_ident(name);
-        segments.push(quote! { #name_ident });
-
-        let mut iter = segments.into_iter();
-        let first = iter.next()?;
-        Some(iter.fold(first, |acc, segment| quote! { #acc :: #segment }))
     }
 
     /// Emit a complete IR program to formatted Rust code.
@@ -2162,6 +2547,18 @@ impl<'a> IrEmitter<'a> {
                     self.enum_variant_aliases
                         .insert((e.name.clone(), alias.name.clone()), alias.target.clone());
                 }
+            }
+            if let IrDeclKind::TypeAlias {
+                name,
+                type_params,
+                ty,
+                is_rusttype,
+                ..
+            } = &decl.kind
+                && type_params.is_empty()
+                && !is_rusttype
+            {
+                self.type_aliases.insert(name.clone(), ty.clone());
             }
             if let IrDeclKind::TypeAlias {
                 name,
@@ -2214,6 +2611,268 @@ impl<'a> IrEmitter<'a> {
         Ok(format!("{}{}", header, with_marker))
     }
 
+    /// Collect callable-name use facts for a whole IR program.
+    pub(crate) fn callable_name_use_facts_for_program(
+        program: &IrProgram,
+        externally_reachable_items: &HashSet<String>,
+        preserve_public_items: bool,
+        external_error_trait_types: &HashSet<String>,
+    ) -> CallableNameUseFacts {
+        let analysis = GeneratedUseAnalyzer::analyze(
+            program,
+            externally_reachable_items,
+            preserve_public_items,
+            external_error_trait_types,
+        );
+        CallableNameUseFacts {
+            signature_keys: analysis.callable_name_signature_keys,
+            function_arg_signature_keys: analysis.callable_name_function_arg_signature_keys,
+            generic_trait_used: analysis.uses_generic_callable_name_trait,
+        }
+    }
+
+    /// Return the callable-name signature metadata for a helper key.
+    fn callable_name_signature_for_key(&self, key: &str) -> Option<(Vec<IrType>, IrType)> {
+        self.callable_name_local_registry()
+            .iter()
+            .find_map(|(_, signature)| {
+                let params = signature
+                    .params
+                    .iter()
+                    .map(|param| param.ty.clone())
+                    .collect::<Vec<_>>();
+                (Self::callable_name_signature_key(&params, &signature.return_type).as_deref() == Some(key))
+                    .then(|| (params, signature.return_type.clone()))
+            })
+            .or_else(|| {
+                self.callable_name_resolutions
+                    .get(key)
+                    .map(|resolution| (resolution.params.clone(), resolution.ret.clone()))
+            })
+    }
+
+    /// Return helper keys needed for callable-name resolution.
+    fn callable_name_helper_keys(
+        &self,
+        local_callable_name_signature_keys: &HashSet<String>,
+        include_generic_callable_signatures: bool,
+    ) -> Vec<String> {
+        let mut keys = local_callable_name_signature_keys.clone();
+        if include_generic_callable_signatures {
+            keys.extend(self.callable_name_used_signature_keys.iter().filter_map(|key| {
+                self.callable_name_signature_for_key(key)
+                    .is_some()
+                    .then_some(key.clone())
+            }));
+        }
+        for (key, resolution) in &self.callable_name_resolutions {
+            if self.callable_name_used_signature_keys.contains(key)
+                && resolution
+                    .module_paths
+                    .contains(&self.callable_name_current_module_path)
+            {
+                keys.insert(key.clone());
+            }
+        }
+        let mut keys = keys.into_iter().collect::<Vec<_>>();
+        keys.sort();
+        keys
+    }
+
+    /// Build a callable-name resolution expression with a source-name fallback.
+    fn callable_name_resolution_expr_with_fallback(
+        &self,
+        key: &str,
+        callable_tokens: TokenStream,
+        fallback: TokenStream,
+    ) -> TokenStream {
+        let helper = Self::callable_name_helper_ident(key);
+        let mut helper_calls = Vec::new();
+        helper_calls.push(quote! { #helper(#callable_tokens) });
+        if let Some(resolution) = self.callable_name_resolutions.get(key) {
+            for module_path in &resolution.module_paths {
+                if module_path == &self.callable_name_current_module_path {
+                    continue;
+                }
+                if module_path.is_empty() && !self.callable_name_current_module_path.is_empty() {
+                    continue;
+                }
+                let helper_path = self.emit_callable_name_helper_path(module_path, key);
+                helper_calls.push(quote! { #helper_path(#callable_tokens) });
+            }
+        }
+        let mut resolved = fallback;
+        for helper_call in helper_calls.into_iter().rev() {
+            resolved = quote! {
+                if let Some(__incan_name) = #helper_call {
+                    __incan_name.to_string()
+                } else {
+                    #resolved
+                }
+            };
+        }
+        resolved
+    }
+
+    /// Emit the trait used for generic callable-name reflection.
+    fn emit_generic_callable_name_trait(&self, keys: &[String]) -> Option<TokenStream> {
+        if keys.is_empty() {
+            return None;
+        }
+        let trait_ident = Self::rust_ident("__IncanCallableName");
+        let mut grouped_keys: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for key in keys {
+            let Some((params, ret)) = self.callable_name_signature_for_key(key) else {
+                continue;
+            };
+            let resolved_params = params
+                .iter()
+                .map(|param| self.resolve_type_aliases_for_emit(param))
+                .collect::<Vec<_>>();
+            let resolved_ret = self.resolve_type_aliases_for_emit(&ret);
+            let Some(resolved_key) = Self::callable_name_signature_key(&resolved_params, &resolved_ret) else {
+                continue;
+            };
+            grouped_keys.entry(resolved_key).or_default().push(key.clone());
+        }
+
+        let impls = grouped_keys
+            .values_mut()
+            .filter_map(|keys| {
+                keys.sort();
+                let primary_key = keys.first()?;
+                let (params, ret) = self.callable_name_signature_for_key(primary_key)?;
+                let fn_ty = self.emit_callable_fn_type(&params, &ret);
+                let fallback = proc_macro2::Literal::string("<callable>");
+                let mut resolved = quote! { #fallback.to_string() };
+                for key in keys.iter().rev() {
+                    resolved =
+                        self.callable_name_resolution_expr_with_fallback(key, quote! { __incan_callable }, resolved);
+                }
+                Some(quote! {
+                    impl #trait_ident for #fn_ty {
+                        fn __incan_callable_name(&self) -> String {
+                            let __incan_callable: #fn_ty = *self;
+                            #resolved
+                        }
+                    }
+                })
+            })
+            .collect::<Vec<_>>();
+        if impls.is_empty() {
+            return None;
+        }
+        Some(quote! {
+            pub trait #trait_ident {
+                fn __incan_callable_name(&self) -> String;
+            }
+
+            #(#impls)*
+        })
+    }
+
+    /// Emit generated callable-name helper functions.
+    fn emit_callable_name_helpers(
+        &self,
+        emitted_callable_names: &HashSet<String>,
+        dynamic_only_callable_names: &HashSet<String>,
+        keys: &[String],
+    ) -> Vec<TokenStream> {
+        keys.iter()
+            .filter_map(|key| {
+                let (params, ret) = self.callable_name_signature_for_key(key)?;
+                let helper = Self::callable_name_helper_ident(key);
+                let registry = Self::callable_name_registry_ident(key);
+                let register = Self::callable_name_register_ident(key);
+                let fn_ty = self.emit_callable_fn_type(&params, &ret);
+                let mut candidates = self
+                    .callable_name_local_registry()
+                    .iter()
+                    .filter(|(name, signature)| {
+                        emitted_callable_names.contains(*name)
+                            && !dynamic_only_callable_names.contains(*name)
+                            && signature.params.len() == params.len()
+                            && signature.params.iter().map(|param| &param.ty).eq(params.iter())
+                            && signature.return_type == ret
+                    })
+                    .map(|(name, _)| {
+                        let source_name = name.strip_prefix("__incan_original_").unwrap_or(name);
+                        let source_name = overload_source_name_from_emitted(source_name);
+                        (name.clone(), source_name.to_string())
+                    })
+                    .collect::<Vec<_>>();
+                candidates.sort_by(|left, right| left.0.cmp(&right.0));
+
+                let dynamic_lookup = quote! {{
+                    let __incan_entries = #registry()
+                        .lock()
+                        .unwrap_or_else(|__incan_poisoned| __incan_poisoned.into_inner());
+                    __incan_entries.iter().rev().find_map(|(__incan_registered, __incan_name)| {
+                        if std::ptr::fn_addr_eq(*__incan_registered, callable) {
+                            Some(*__incan_name)
+                        } else {
+                            None
+                        }
+                    })
+                }};
+                let mut body = dynamic_lookup;
+                for (candidate, source_name) in candidates.into_iter().rev() {
+                    let candidate_ident = Self::rust_ident(&candidate);
+                    let source_literal = proc_macro2::Literal::string(&source_name);
+                    body = quote! {
+                        if std::ptr::fn_addr_eq(callable, #candidate_ident as #fn_ty) {
+                            Some(#source_literal)
+                        } else {
+                            #body
+                        }
+                    };
+                }
+
+                let visibility = if self.callable_name_resolutions.get(key).is_some_and(|resolution| {
+                    self.callable_name_used_signature_keys.contains(key)
+                        && resolution
+                            .module_paths
+                            .contains(&self.callable_name_current_module_path)
+                }) {
+                    quote! { pub(crate) }
+                } else {
+                    quote! {}
+                };
+                let private_interfaces_allow = (!visibility.is_empty()).then(|| {
+                    quote! { #[allow(private_interfaces)] }
+                });
+
+                Some(quote! {
+                    fn #registry() -> &'static std::sync::Mutex<Vec<(#fn_ty, &'static str)>> {
+                        static __INCAN_CALLABLE_NAMES:
+                            std::sync::OnceLock<std::sync::Mutex<Vec<(#fn_ty, &'static str)>>> =
+                            std::sync::OnceLock::new();
+                        __INCAN_CALLABLE_NAMES.get_or_init(|| std::sync::Mutex::new(Vec::new()))
+                    }
+
+                    fn #register(callable: #fn_ty, source_name: &'static str) {
+                        let mut __incan_entries = #registry()
+                            .lock()
+                            .unwrap_or_else(|__incan_poisoned| __incan_poisoned.into_inner());
+                        if let Some((_, __incan_name)) = __incan_entries
+                            .iter_mut()
+                            .find(|(__incan_registered, _)| std::ptr::fn_addr_eq(*__incan_registered, callable))
+                        {
+                            *__incan_name = source_name;
+                        } else {
+                            __incan_entries.push((callable, source_name));
+                        }
+                    }
+
+                    #private_interfaces_allow
+                    #visibility fn #helper(callable: #fn_ty) -> Option<&'static str> {
+                        #body
+                    }
+                })
+            })
+            .collect()
+    }
+
     /// Emit a program to TokenStream (without formatting).
     pub fn emit_program_tokens(&self, program: &IrProgram) -> Result<TokenStream, EmitError> {
         let mut items = Vec::new();
@@ -2226,9 +2885,13 @@ impl<'a> IrEmitter<'a> {
         let uses_stdlib_error_trait = analysis.uses_stdlib_error_trait;
         let result_observer_callable_types = analysis.result_observer_callable_types.clone();
         let borrowed_function_adapters = analysis.borrowed_function_adapters.clone();
+        let local_callable_name_signature_keys = analysis.callable_name_signature_keys.clone();
+        let uses_generic_callable_name_trait = analysis.uses_generic_callable_name_trait;
         self.set_result_observer_callable_types(result_observer_callable_types);
         self.set_borrowed_function_adapters(borrowed_function_adapters);
         self.set_generated_use_analysis(analysis);
+        let callable_name_helper_keys =
+            self.callable_name_helper_keys(&local_callable_name_signature_keys, uses_generic_callable_name_trait);
 
         let emitted_declarations: Vec<&IrDecl> = program
             .declarations
@@ -2243,6 +2906,10 @@ impl<'a> IrEmitter<'a> {
             })
             .collect();
         *self.module_has_local_statics.borrow_mut() = !static_names.is_empty();
+        let (imported_static_init_bindings, imported_static_module_init_bindings) =
+            self.collect_imported_static_init_bindings(&emitted_declarations);
+        self.set_imported_static_init_bindings(imported_static_init_bindings);
+        self.set_imported_static_module_init_bindings(imported_static_module_init_bindings);
 
         if self.emit_strict_generated_lint_denies {
             items.push(quote! {
@@ -2261,16 +2928,20 @@ impl<'a> IrEmitter<'a> {
             matches!(
                 &decl.kind,
                 IrDeclKind::Impl(impl_block)
-                    if impl_block.trait_name.as_deref() == Some("json.Serialize")
-                        || impl_block.trait_name.as_deref() == Some("std.serde.json.Serialize")
+                    if impl_block.trait_name
+                        .as_deref()
+                        .and_then(incan_core::lang::stdlib::stdlib_json_trait_scope_import_id)
+                        == Some(incan_core::lang::stdlib::StdlibJsonTraitId::Serialize)
             )
         });
         let needs_json_deserialize_trait_scope = emitted_declarations.iter().any(|decl| {
             matches!(
                 &decl.kind,
                 IrDeclKind::Impl(impl_block)
-                    if impl_block.trait_name.as_deref() == Some("json.Deserialize")
-                        || impl_block.trait_name.as_deref() == Some("std.serde.json.Deserialize")
+                    if impl_block.trait_name
+                        .as_deref()
+                        .and_then(incan_core::lang::stdlib::stdlib_json_trait_scope_import_id)
+                        == Some(incan_core::lang::stdlib::StdlibJsonTraitId::Deserialize)
             )
         });
         match (needs_json_serialize_trait_scope, needs_json_deserialize_trait_scope) {
@@ -2315,7 +2986,17 @@ impl<'a> IrEmitter<'a> {
                     }
                 }
             }
-            let mut union_type_items: Vec<_> = union_types.into_iter().collect();
+            let mut canonical_union_types = HashMap::new();
+            for (_, union_ty) in union_types {
+                let union_ty = self.resolve_type_aliases_for_emit(&union_ty);
+                if matches!(union_ty, IrType::ExternalUnion { .. }) {
+                    continue;
+                }
+                if let Some(name) = union_ty.union_type_name() {
+                    canonical_union_types.insert(name, union_ty);
+                }
+            }
+            let mut union_type_items: Vec<_> = canonical_union_types.into_iter().collect();
             union_type_items.sort_by(|(left, _), (right, _)| left.cmp(right));
             for (_, union_ty) in union_type_items {
                 if let Some(item) = self.emit_generated_union_type(&union_ty) {
@@ -2325,7 +3006,16 @@ impl<'a> IrEmitter<'a> {
         }
 
         // RFC 052: force declaration-order static initialization once per module before any static access helper call.
-        if !static_names.is_empty() {
+        let imported_static_init_calls: Vec<TokenStream> = self
+            .imported_static_module_init_bindings
+            .borrow()
+            .iter()
+            .map(|name| {
+                let ident = Self::imported_static_init_ident(name);
+                quote! { #ident(); }
+            })
+            .collect();
+        if !static_names.is_empty() || !imported_static_init_calls.is_empty() {
             let force_calls: Vec<TokenStream> = static_names
                 .iter()
                 .map(|name| {
@@ -2335,7 +3025,7 @@ impl<'a> IrEmitter<'a> {
                 .collect();
             items.push(quote! {
                 #[inline(always)]
-                fn __incan_init_module_statics() {
+                pub(crate) fn __incan_init_module_statics() {
                     static __INCAN_STATIC_INIT_RUNNING: std::sync::atomic::AtomicBool =
                         std::sync::atomic::AtomicBool::new(false);
                     if __INCAN_STATIC_INIT_RUNNING.load(std::sync::atomic::Ordering::Acquire) {
@@ -2351,10 +3041,37 @@ impl<'a> IrEmitter<'a> {
                         }
                         __INCAN_STATIC_INIT_RUNNING.store(true, std::sync::atomic::Ordering::Release);
                         let _guard = __IncanStaticInitGuard(&__INCAN_STATIC_INIT_RUNNING);
+                        #(#imported_static_init_calls)*
                         #(#force_calls)*
                     });
                 }
             });
+        }
+
+        let emitted_callable_names: HashSet<String> = emitted_declarations
+            .iter()
+            .filter_map(|decl| match &decl.kind {
+                IrDeclKind::Function(func) => Some(func.name.clone()),
+                IrDeclKind::SymbolAlias { name, .. } => Some(name.clone()),
+                _ => None,
+            })
+            .collect();
+        let dynamic_only_callable_names: HashSet<String> = emitted_declarations
+            .iter()
+            .filter_map(|decl| match &decl.kind {
+                IrDeclKind::Function(func) if func.is_async || !func.type_params.is_empty() => Some(func.name.clone()),
+                _ => None,
+            })
+            .collect();
+        items.extend(self.emit_callable_name_helpers(
+            &emitted_callable_names,
+            &dynamic_only_callable_names,
+            &callable_name_helper_keys,
+        ));
+        if uses_generic_callable_name_trait
+            && let Some(trait_item) = self.emit_generic_callable_name_trait(&callable_name_helper_keys)
+        {
+            items.push(trait_item);
         }
 
         // Emit all declarations.
@@ -2436,5 +3153,76 @@ impl<'a> IrEmitter<'a> {
                 .reachable_items
                 .contains(&impl_block.target_type),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IrEmitter;
+    use crate::backend::ir::types::{IR_UNION_TYPE_NAME, IrType};
+    use std::collections::HashMap;
+
+    fn union(members: Vec<IrType>) -> IrType {
+        IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), members)
+    }
+
+    fn provider_union() -> IrType {
+        union(vec![IrType::Struct("ProviderColumn".to_string()), IrType::Int])
+    }
+
+    fn external_provider_union() -> IrType {
+        IrType::ExternalUnion {
+            library: "provider".to_string(),
+            union: Box::new(provider_union()),
+        }
+    }
+
+    fn local_union() -> IrType {
+        union(vec![IrType::Struct("LocalValue".to_string()), IrType::String])
+    }
+
+    #[test]
+    fn external_union_coverage_requires_all_compound_slots_to_match() {
+        assert!(IrEmitter::target_external_union_covers_expr(
+            &IrType::Tuple(vec![external_provider_union(), external_provider_union()]),
+            &IrType::Tuple(vec![provider_union(), provider_union()])
+        ));
+        assert!(!IrEmitter::target_external_union_covers_expr(
+            &IrType::Tuple(vec![external_provider_union(), IrType::String]),
+            &IrType::Tuple(vec![provider_union(), local_union()])
+        ));
+        assert!(!IrEmitter::target_external_union_covers_expr(
+            &IrType::Dict(Box::new(external_provider_union()), Box::new(IrType::String)),
+            &IrType::Dict(Box::new(provider_union()), Box::new(local_union()))
+        ));
+        assert!(!IrEmitter::target_external_union_covers_expr(
+            &IrType::Result(Box::new(external_provider_union()), Box::new(IrType::String)),
+            &IrType::Result(Box::new(provider_union()), Box::new(local_union()))
+        ));
+    }
+
+    #[test]
+    fn targeted_union_collection_keeps_uncovered_local_compound_slots() -> Result<(), String> {
+        let target = IrType::Tuple(vec![external_provider_union(), IrType::String]);
+        let expr_ty = IrType::Tuple(vec![provider_union(), local_union()]);
+        let mut collected = HashMap::new();
+
+        IrEmitter::collect_union_types_from_type_for_target(&expr_ty, Some(&target), &mut collected);
+        let provider_name = provider_union()
+            .union_type_name()
+            .ok_or("provider union should have a generated name")?;
+        let local_name = local_union()
+            .union_type_name()
+            .ok_or("local union should have a generated name")?;
+
+        assert!(
+            !collected.contains_key(&provider_name),
+            "provider-owned union should not be re-collected locally"
+        );
+        assert!(
+            collected.contains_key(&local_name),
+            "uncovered local union sibling should still be collected"
+        );
+        Ok(())
     }
 }

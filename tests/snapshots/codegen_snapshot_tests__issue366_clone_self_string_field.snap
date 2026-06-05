@@ -12,6 +12,50 @@ pub struct ActiveRegistration {
     pub logical_name: String,
     pub rank: i64,
 }
+impl incan_stdlib::reflection::HasClassName for ActiveRegistration {
+    fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for ActiveRegistration {
+    fn __class_name__() -> &'static str {
+        "ActiveRegistration"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for ActiveRegistration {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for ActiveRegistration {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 2] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("logical_name"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("logical_name"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("rank"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("rank"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("int"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl ActiveRegistration {
     pub fn clone(&self) -> Self {
         return ActiveRegistration {

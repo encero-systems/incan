@@ -64,6 +64,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
     });
     manifest.exports.functions.push(FunctionExport {
         name: "make_widget".to_string(),
+        emitted_name: None,
         type_params: Vec::new(),
         params: vec![ParamExport {
             name: "name".to_string(),
@@ -72,6 +73,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
             },
             kind: ParamKindExport::Normal,
             has_default: false,
+            default: None,
         }],
         return_type: TypeRef::Named {
             name: "Widget".to_string(),
@@ -117,6 +119,7 @@ fn generate_rust_with_widgets_manifest(source: &str) -> String {
     normalize_codegen_output(&code)
 }
 
+#[cfg(feature = "rust_inspect")]
 fn generate_rust_with_substrait_probe(source: &str) -> String {
     let tmp = match tempfile::tempdir() {
         Ok(tmp) => tmp,
@@ -489,6 +492,7 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str) -> Strin
     let mut manifest = LibraryManifest::new("query_core", "0.1.0");
     manifest.exports.functions.push(FunctionExport {
         name: "filter".to_string(),
+        emitted_name: None,
         type_params: Vec::new(),
         params: vec![ParamExport {
             name: "value".to_string(),
@@ -497,6 +501,7 @@ fn generate_rust_with_helper_backed_vocab_wasm_desugaring(source: &str) -> Strin
             },
             kind: ParamKindExport::Normal,
             has_default: false,
+            default: None,
         }],
         return_type: TypeRef::Named {
             name: "int".to_string(),
@@ -654,6 +659,13 @@ fn test_user_defined_decorators_codegen() {
 }
 
 #[test]
+fn test_decorated_variadic_function_codegen() {
+    let source = load_test_file("decorated_variadic_function");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("decorated_variadic_function", rust_code);
+}
+
+#[test]
 fn test_user_defined_method_decorators_codegen() {
     let source = load_test_file("user_defined_method_decorators");
     let rust_code = generate_rust(&source);
@@ -719,6 +731,27 @@ def main(result: Result[int, str]) -> Result[int, str]:
     assert!(
         !rust_code.contains("clone()"),
         "Copy observer adaptation should not introduce clone calls:\n{rust_code}"
+    );
+}
+
+#[test]
+fn test_rfc070_result_unwrap_codegen_does_not_require_debug_err() {
+    let source = r#"
+model PlainError:
+  message: str
+
+pub def direct(result: Result[int, PlainError]) -> int:
+  return result.unwrap()
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.split_whitespace().collect::<String>();
+    assert!(
+        compact.contains("matchresult{Ok(__incan_ok)=>__incan_ok,Err(_)=>panic!"),
+        "Result.unwrap should lower to an explicit match that discards Err without a Debug bound:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains("result.unwrap()"),
+        "Result.unwrap should not lower to Rust unwrap(), which requires E: Debug:\n{rust_code}"
     );
 }
 
@@ -1211,6 +1244,34 @@ fn test_collections_codegen() {
     assert!(
         rust_code.contains("(2, \"two\".to_string())"),
         "expected dict[_, str] literal values to materialize owned String values"
+    );
+}
+
+#[test]
+fn test_issue633_question_mark_list_comprehension_codegen_uses_loop() {
+    let source = r#"
+def parse_value(value: int) -> Result[int, str]:
+    return Ok(value)
+
+
+def parse_all(values: list[int]) -> Result[list[int], str]:
+    return Ok([parse_value(value)? for value in values])
+
+
+def main() -> None:
+    match parse_all([1, 2, 3]):
+        Ok(values) => println(values[0])
+        Err(err) => println(err)
+"#;
+    let rust_code = generate_rust(source);
+    let compact = rust_code.split_whitespace().collect::<String>();
+    assert!(
+        compact.contains("letmut__incan_list=Vec::new();forvaluein(values).iter().copied(){__incan_list.push(parse_value(value)?);}__incan_list"),
+        "expected issue633 comprehension to lower to an outer-function loop, got:\n{rust_code}"
+    );
+    assert!(
+        !compact.contains(".map(|value|parse_value(value)?)"),
+        "question-mark comprehension must not lower into an element-returning Rust map closure:\n{rust_code}"
     );
 }
 
@@ -1712,6 +1773,13 @@ fn test_generic_methods_codegen() {
     let source = load_test_file("generic_methods");
     let rust_code = generate_rust(&source);
     insta::assert_snapshot!("generic_methods", rust_code);
+}
+
+#[test]
+fn test_issue731_generic_method_defaults_codegen() {
+    let source = load_test_file("issue731_generic_method_defaults");
+    let rust_code = generate_rust(&source);
+    insta::assert_snapshot!("issue731_generic_method_defaults", rust_code);
 }
 
 #[test]
@@ -2337,6 +2405,7 @@ fn test_issue217_rust_enum_match_bindings_codegen() {
     insta::assert_snapshot!("issue217_rust_enum_match_bindings", rust_code);
 }
 
+#[cfg(feature = "rust_inspect")]
 #[test]
 fn test_issue459_rust_enum_pattern_import_codegen() {
     let source = load_test_file("issue459_rust_enum_pattern_import");

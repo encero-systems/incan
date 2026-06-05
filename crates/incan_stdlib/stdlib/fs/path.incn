@@ -520,8 +520,8 @@ pub type Path = newtype str:
             Err(err) =>
                 message = f"{err}"
                 if (
-                    message.contains("cross-device") or 
-                    message.contains("Invalid cross-device") or 
+                    message.contains("cross-device") or
+                    message.contains("Invalid cross-device") or
                     message.contains("EXDEV",)
                 ):
                     self.copy(dest.0, true, true)?

@@ -127,6 +127,8 @@ Key rules:
 
 - `DslSurface::on_import("routekit")` must match the consumer-facing import spelling after `pub::`.
 - Declarations own their clause grammar directly, so nested DSL structure stays close to the declaration that introduces it.
+- Use `DeclarationSurface::desugars_to_expression()` when the DSL declaration produces a value. Expression-desugaring declarations can be used in ordinary expression positions such as assignment values and returns, and the compiler desugars them before typechecking.
+- Use `ClauseSurface::expr_list("SELECT")` for SQL-shaped projection clauses that accept entries such as `sum(amount) as total`; add declared item modifiers with `ExpressionItemModifierSurface::expr("for")` or similar when a projection item needs metadata such as `sum(amount) for customer with context`. The desugarer receives structured expression-list items with alias and modifier metadata, while `ClauseSurface::fields(...)` remains for config-style `name = value` sections.
 - `LibraryManifest` is where you describe exported module metadata plus any Cargo dependencies or stdlib features that must travel with the library artifact.
 - `KeywordRegistration` remains available only as a lower-level escape hatch for especially simple or incremental cases.
 
@@ -349,11 +351,13 @@ Use `DesugarOutput::Statements(...)` when the DSL lowers into host statements an
 
 If you need non-default packaging metadata, register the desugarer with `with_desugarer_registration(...)` and override fields on `DesugarerRegistration` or `DesugarerMetadata`. The default packaging profile targets `wasm32-wasip1` in `release` mode.
 
-When you package a desugarer, make sure your Rust toolchain has that target installed:
+When you package a desugarer locally, make sure your Rust toolchain has that target installed:
 
 ```bash
 rustup target add wasm32-wasip1
 ```
+
+CI jobs that install Incan through the repository's `install-incan` GitHub Action get `wasm32-wasip1` by default, so downstream vocab consumers do not need a separate `rustup target add wasm32-wasip1` step just to run `incan fmt --check`, `incan test`, or `incan build --lib`.
 
 Also export the standard WASM bridge symbols from your companion crate root:
 
@@ -412,7 +416,7 @@ from pub::routekit import routekit_name
 - The activation namespace must match the consumer import spelling after `pub::`.
 - Do not split the public contract across `build.rs`, convention functions, or hand-maintained `vocab_metadata.json` files.
 - Companion crates that package a desugarer must include `cdylib` in `[lib].crate-type`.
-- If desugarer packaging fails with a missing target error, install the required Rust target (`rustup target add wasm32-wasip1`) and rerun `incan build --lib`.
+- If local desugarer packaging fails with a missing target error, install the required Rust target (`rustup target add wasm32-wasip1`) and rerun `incan build --lib`.
 - If desugared code needs Rust crates or stdlib features, declare them in `LibraryManifest` so consumer builds get the same requirements.
 - Block or clause-oriented DSL registrations need a desugarer when they cannot continue through the compiler as ordinary Incan syntax on their own.
 

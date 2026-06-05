@@ -5,6 +5,10 @@ inputs:
     description: Rust toolchain used to build Incan.
     required: false
     default: stable
+  targets:
+    description: Extra Rust targets installed with the toolchain. The default supports vocab companion desugarers used by downstream fmt/check jobs.
+    required: false
+    default: wasm32-wasip1
   profile:
     description: Cargo profile for the compiler build. Supported values are release and debug.
     required: false
@@ -38,6 +42,7 @@ runs:
       uses: dtolnay/rust-toolchain@master
       with:
         toolchain: ${{ inputs.toolchain }}
+        targets: ${{ inputs.targets }}
 
     - name: Cache Incan build artifacts
       if: ${{ inputs.cache == 'true' }}

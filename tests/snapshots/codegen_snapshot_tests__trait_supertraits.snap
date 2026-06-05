@@ -17,6 +17,41 @@ pub trait OrderedCollection<T>: Collection<T> {
 struct BoxedValue<T> {
     value: T,
 }
+impl<T> incan_stdlib::reflection::HasClassName for BoxedValue<T> {
+    fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl<T> incan_stdlib::reflection::HasTypeClassName for BoxedValue<T> {
+    fn __class_name__() -> &'static str {
+        "BoxedValue"
+    }
+}
+impl<T> incan_stdlib::reflection::HasFieldMetadata for BoxedValue<T> {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl<T> incan_stdlib::reflection::HasTypeFieldMetadata for BoxedValue<T> {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("value"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("value"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("T"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 impl<T: Clone> BoxedValue<T> {
     pub fn first(&self) -> T {
         return self.value.clone();

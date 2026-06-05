@@ -57,6 +57,8 @@ pub enum IrDeclKind {
         visibility: Visibility,
         name: String,
         target_path: Vec<String>,
+        target_origin: Option<IrImportOrigin>,
+        target_qualifier: Option<IrImportQualifier>,
     },
 
     /// Constant
@@ -171,6 +173,17 @@ pub struct IrRustTraitImport {
 pub struct IrImportItem {
     pub name: String,
     pub alias: Option<String>,
+    /// Whether this import item binds an Incan `static` storage cell.
+    ///
+    /// Static declarations use Rust global naming in generated code, so imported static items must emit the provider's
+    /// static identifier and, when aliased, the local static identifier instead of treating the source spelling as an
+    /// ordinary Rust value binding.
+    pub is_static: bool,
+    /// Whether this imported item must be publicly reexported even when the source import itself is private.
+    ///
+    /// Public aliases of imported overload sets project concrete emitted Rust functions. The aliasing module needs to
+    /// reexport those concrete functions so downstream facades do not reach through its private imports.
+    pub force_reexport: bool,
     /// Metadata provided when this item is a Rust trait import.
     ///
     /// Extension-trait imports can be used by Rust method lookup without appearing as identifiers in emitted tokens.

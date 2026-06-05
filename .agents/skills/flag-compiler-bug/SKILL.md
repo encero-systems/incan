@@ -45,7 +45,7 @@ Do not flag a compiler bug when the issue is more likely:
 
 Capture:
 
-- exact command
+- exact local command for your private working notes, then derive a sanitized public command before filing
 - exact observed output, panic text, or wrong behavior
 - affected stage if inferable: parser, typechecker, lowering, emission, runtime boundary, formatter, CLI, or LSP
 - current branch / commit / task context
@@ -100,13 +100,15 @@ Include:
 
 - minimal repro
 - expected vs actual behavior
-- exact command
+- sanitized command, using repo-relative paths and tool names instead of local absolute binary paths
 - logs / panic text / snapshot diff if relevant
 - affected stage
 - blocker status
 - workaround, if any
 - environment and commit context
 - related issue, RFC, branch, or task
+
+Before creating the issue, run the `create-github-issue` public text safety gate on the exact title/body you will publish. Do not publish absolute local paths such as `/Users/...`, `/home/...`, `/private/...`, `/tmp/...`, or commands that expose a local checkout path. If the private reproduction used a local compiler binary, publish a generic equivalent such as `incan run path/to/repro.incn` and keep commit/version information in the Environment section.
 
 If the current workflow permits creating the GitHub issue directly, do that after the duplicate check. Otherwise return the ready-to-file draft.
 
@@ -138,5 +140,6 @@ If a real workaround exists, continue the task and explicitly record:
 
 - Repro is minimal and copy-pastable.
 - Duplicate search is explicit, not assumed.
+- Public issue text is sanitized before the first GitHub create/update call.
 - Blocking vs workaround judgment is stated plainly.
 - The original task is either paused honestly or resumed with a real workaround.

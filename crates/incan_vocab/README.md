@@ -74,7 +74,9 @@ Version 0.2.0 is the RFC 040 release. It adds the stable library-author contract
 Companion crates should export one obvious Rust function:
 
 ```rust
-use incan_vocab::{ClauseSurface, DeclarationSurface, DslSurface, VocabRegistration};
+use incan_vocab::{
+    ClauseSurface, DeclarationSurface, DslSurface, ExpressionItemModifierSurface, VocabRegistration,
+};
 
 pub fn library_vocab() -> VocabRegistration {
     VocabRegistration::new().with_surface(
@@ -84,7 +86,10 @@ pub fn library_vocab() -> VocabRegistration {
                 .desugars_to_expression()
                 .with_clauses([
                     ClauseSurface::expr("FROM").required(),
-                    ClauseSurface::expr_list("SELECT").required().after("FROM"),
+                    ClauseSurface::expr_list("SELECT")
+                        .with_expression_item_modifier(ExpressionItemModifierSurface::expr("for"))
+                        .required()
+                        .after("FROM"),
                 ]),
         ),
     )
@@ -92,6 +97,8 @@ pub fn library_vocab() -> VocabRegistration {
 ```
 
 `VocabRegistration` is the source of truth for one library's activated DSL surfaces, machine-readable manifest metadata, and optional Rust desugarer.
+
+Declarations marked with `DeclarationSurface::desugars_to_expression()` are value-producing DSL forms. The compiler accepts them in expression positions such as assignments and returns, then hands the structured `VocabDeclaration` to the desugarer before typechecking the returned expression. Clause boundaries, expression-list aliases/modifiers, and compound clause tokens such as `GROUP BY` are preserved in the public AST instead of being reparsed from source text.
 
 ### High-level surface types
 

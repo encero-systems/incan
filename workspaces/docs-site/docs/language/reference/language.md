@@ -289,7 +289,7 @@ def main() -> None:
 
 ## Decorators
 
-User-defined decorators are valid on top-level `def` / `async def` declarations and instance methods. A decorator is an ordinary callable value that receives the decorated function value and returns the binding that should replace it:
+User-defined decorators are valid on top-level `def` / `async def` declarations and instance methods. A decorator is an ordinary callable value that receives the decorated function or method callable and returns the callable that should replace it:
 
 ```incan
 def parse(value: int) -> int:
@@ -307,6 +307,45 @@ def main() -> None:
 ```
 
 Stacked decorators apply bottom-up, matching Python's declaration model: the decorator closest to `def` receives the original function value first, and the outer decorators receive each previous result. Decorator factories such as `@logged("name")` are checked by first evaluating the factory expression as a callable-producing expression and then applying the produced decorator to the function value.
+
+!!! tip "Coming from Python?"
+    Python decorators can replace a function with any object. Incan user-defined function decorators are stricter: the decorator input is the decorated callable, and the result must also be callable. Python's `Callable[[A, B], R]` corresponds to Incan's `(A, B) -> R`; `=>` is only for closure expressions, not callable types. Use `(F) -> F` when a decorator preserves the original callable signature, and spell the source and replacement callable types separately when it intentionally changes the signature, such as `((str) -> R) -> ((str, str) -> R)`.
+
+Decorator factories can be generic over the decorated function type. This is the usual shape for registry, catalog, routing, telemetry, and validation decorators that record metadata but return the original function unchanged:
+
+```incan
+def registered[F](function_ref: str) -> ((F) -> F):
+    return (func) => func
+
+@registered("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+```
+
+The compiler infers `F` from the decorated function when the factory result is applied. If inference needs help, pass the decorated function type explicitly on the decorator factory call:
+
+```incan
+@registered[(str) -> ColumnExpr]("inql.functions.col")
+pub def col(name: str) -> ColumnExpr:
+    return ColumnExpr(name=name)
+```
+
+The post-decoration binding keeps the concrete callable signature of the decorated function unless the decorator deliberately returns a different callable shape. Checked API metadata and imports observe that concrete signature, not the generic helper's `F`.
+
+The callable value passed into a decorator exposes `__name__` as the source callable name. Registry and catalog decorators can use this from concrete decorator helpers and from generic `(F) -> F` helpers, so a decorator can record `func.__name__` without requiring the decorated declaration to repeat its own public name in a string argument.
+
+```incan
+def capture[F](func: F) -> F:
+    registry_names.append(func.__name__)
+    return func
+
+def registered[F]() -> ((F) -> F):
+    return (func) => capture[F](func)
+
+@registered()
+pub def sample(value: int) -> int:
+    return value + 1
+```
 
 Method decorators receive an unbound callable shape with the receiver first. A decorator on `def label(self, value: int) -> str` sees `(&Box, int) -> str`; a decorator on `def bump(mut self, value: int) -> int` sees `(&mut Box, int) -> int`. The wrapper passes the actual receiver borrow through to the decorated callable, so method decorators do not require cloning the receiver.
 
@@ -641,6 +680,35 @@ Class, model, trait, enum, newtype, field, alias, and module decorators remain l
 | OrElse | `or_else` |  | Recover or remap through a Result-returning operation from an Err payload. | RFC 070 | 0.3 | Stable |
 | Inspect | `inspect` |  | Observe an Ok payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
 | InspectErr | `inspect_err` |  | Observe an Err payload by implicit borrow while preserving the original Result. | RFC 070 | 0.3 | Stable |
+| Unwrap | `unwrap` |  | Return the Ok payload or panic. | RFC 000 | 0.1 | Stable |
+| UnwrapOr | `unwrap_or` |  | Return the Ok payload or a default value. | RFC 000 | 0.1 | Stable |
+
+
+### Iterator methods
+
+| Id | Canonical | Aliases | Description | RFC | Since | Stability |
+|---|---|---|---|---|---|---|
+| Iter | `iter` |  | Create an iterator over an iterable. | RFC 088 | 0.3 | Stable |
+| Map | `map` |  | Lazily transform iterator items. | RFC 088 | 0.3 | Stable |
+| Filter | `filter` |  | Lazily keep items that match a predicate. | RFC 088 | 0.3 | Stable |
+| Enumerate | `enumerate` |  | Yield each item with its zero-based index. | RFC 088 | 0.3 | Stable |
+| Zip | `zip` |  | Pair items from two iterables. | RFC 088 | 0.3 | Stable |
+| Take | `take` |  | Yield at most the requested number of items. | RFC 088 | 0.3 | Stable |
+| Skip | `skip` |  | Discard at most the requested number of items. | RFC 088 | 0.3 | Stable |
+| TakeWhile | `take_while` |  | Yield items until a predicate first returns false. | RFC 088 | 0.3 | Stable |
+| SkipWhile | `skip_while` |  | Discard items while a predicate returns true. | RFC 088 | 0.3 | Stable |
+| Chain | `chain` |  | Yield receiver items followed by another iterable. | RFC 088 | 0.3 | Stable |
+| FlatMap | `flat_map` |  | Map items to iterables and flatten the result. | RFC 088 | 0.3 | Stable |
+| Batch | `batch` |  | Yield fixed-size list batches. | RFC 088 | 0.3 | Stable |
+| Collect | `collect` |  | Consume an iterator into a list. | RFC 088 | 0.3 | Stable |
+| Count | `count` |  | Consume an iterator and return the item count. | RFC 088 | 0.3 | Stable |
+| Reduce | `reduce` |  | Consume an iterator with an explicit accumulator. | RFC 088 | 0.3 | Stable |
+| Fold | `fold` |  | Consume an iterator with an explicit accumulator. | RFC 088 | 0.3 | Stable |
+| Any | `any` |  | Return whether any item satisfies a predicate. | RFC 088 | 0.3 | Stable |
+| All | `all` |  | Return whether every item satisfies a predicate. | RFC 088 | 0.3 | Stable |
+| Find | `find` |  | Return the first item satisfying a predicate. | RFC 088 | 0.3 | Stable |
+| ForEach | `for_each` |  | Consume an iterator for side effects. | RFC 088 | 0.3 | Stable |
+| Sum | `sum` |  | Consume an iterator and return the numeric sum. | RFC 088 | 0.3 | Stable |
 
 
 ### FrozenList methods

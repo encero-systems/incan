@@ -57,6 +57,7 @@ pub(crate) fn substitute_resolved_type(ty: &ResolvedType, map: &HashMap<String, 
                 .collect(),
             Box::new(substitute_resolved_type(ret, map)),
         ),
+        ResolvedType::TypeToken(inner) => ResolvedType::TypeToken(Box::new(substitute_resolved_type(inner, map))),
         ResolvedType::Tuple(elems) => {
             ResolvedType::Tuple(elems.iter().map(|e| substitute_resolved_type(e, map)).collect())
         }

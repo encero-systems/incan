@@ -4,7 +4,7 @@ use std::fmt;
 
 use incan_semantics_core::SurfaceFeatureKey;
 
-use super::{Ident, Param, Spanned, Statement, Type};
+use super::{Ident, Param, Spanned, Statement, Type, VocabBlockStmt};
 
 // ============================================================================
 // Expressions
@@ -83,6 +83,8 @@ pub enum Expr {
     },
     /// Generic surface expression routed to semantics handlers.
     Surface(Box<SurfaceExpr>),
+    /// Raw library vocab declaration used as an expression before vocab desugaring.
+    VocabBlock(Box<VocabBlockStmt>),
 }
 
 /// One entry in a list literal.
@@ -183,9 +185,15 @@ pub struct ScopedSurfaceOwner {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum FStringFormat {
+    Display,
+    Debug,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub enum FStringPart {
     Literal(String),
-    Expr(Spanned<Expr>),
+    Expr { expr: Spanned<Expr>, format: FStringFormat },
 }
 
 /// Parsed integer literal with the **source substring** used for formatting.

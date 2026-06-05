@@ -22,6 +22,6 @@ fn main() {
             }
         }),
     );
-    let _w: Widget = make_widget(DEFAULT_NAME.clone());
-    widgets::make_widget(DEFAULT_NAME);
+    let _w: Widget = widgets::make_widget(DEFAULT_NAME.to_string());
+    widgets::make_widget(DEFAULT_NAME.to_string());
 }

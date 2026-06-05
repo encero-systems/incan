@@ -48,6 +48,8 @@ from rust::my_crate::proto import type as proto_type
 
 The same rule applies to path segments after `rust::` (for example `rust::substrait::proto::type::Binary`).
 
+For Rust struct fields whose real Rust identifier is a keyword, use the keyword spelling in Incan field access and named constructor arguments. For example, a Rust field declared as `r#type` is available as `value.type` and `TypeName(type=value)` in Incan source; generated Rust still uses the real raw identifier. An ordinary Rust field named `type_` remains `value.type_`.
+
 ## Dependency Management
 
 When you use `import rust::crate_name`, Incan automatically adds the dependency to your generated `Cargo.toml`. Dependencies are resolved using a three-tier precedence system:
@@ -219,6 +221,18 @@ Body-less `rusttype` adoption is only accepted when Rust metadata proves that th
 When a library exposes Rust-backed items, run `incan build --lib` before another project consumes it through `pub::`. The generated `.incnlib` embeds a versioned Rust ABI payload containing the canonical Rust item signatures captured during the producer build.
 
 Consumers load that shipped ABI metadata first for Rust-backed imported symbols. `rust_inspect` remains available for producer capture, local workspace imports, and explicit fallback/debug paths, but a packaged dependency should not require consumer-side workspace inspection for signatures that were already published in its `.incnlib`.
+
+### Calling imported Rust functions
+
+Imported Rust free functions use ordinary Incan call syntax. When the compiler has inspected or shipped Rust signature metadata with parameter names, keyword arguments bind to those Rust parameters and lower to the positional Rust call shape that Cargo expects:
+
+```incan
+from rust::demo import create_widget
+
+widget = create_widget(name="primary", enabled=true)
+```
+
+If the Rust metadata does not include the named parameter, the compiler rejects the keyword argument instead of guessing a positional mapping.
 
 ### Qualified backing paths
 
@@ -501,8 +515,7 @@ Direct `list[T]` arguments lower to Rust `Vec<T>`. At external Rust call boundar
 ## Understanding Rust types (optional)
 
 ??? tip "Coming from Python?"
-    If you're new to Rust types like `Vec`, `HashMap`, `String`, `Option`, and `Result`, see
-    [Understanding Rust types (coming from Python)](rust_types_for_python_devs.md).
+    If you're new to Rust types like `Vec`, `HashMap`, `String`, `Option`, and `Result`, see [Understanding Rust types (coming from Python)](rust_types_for_python_devs.md).
 
 ### Matching on Rust-backed enums and oneofs
 
@@ -582,8 +595,8 @@ If the scrutinee is typed as a bare imported Rust path (not a `rusttype` alias),
 
 - [Managing dependencies](../../tooling/how-to/dependencies.md) - Adding crates, locking, CI
 - [Project configuration reference](../../tooling/reference/project_configuration.md) - Full `incan.toml` format
-- [RFC 057] - `@rust.allow(...)` targeted generated-Rust lint suppression
-- [RFC 041] - `rusttype`, `interop`, capability bounds
+- [Targeted generated-Rust lint suppression](#targeted-generated-rust-lint-suppression) - `@rust.allow(...)` for narrow generated-code lint allowances
+- [Rust types for Python developers](rust_types_for_python_devs.md) - `rusttype`, interop declarations, and type mapping concepts
 - [Error Handling](../explanation/error_handling.md) - Working with `Result` types
 - [Derives & Traits](../reference/derives_and_traits.md) - Drop trait for custom cleanup
 - [File I/O](file_io.md) - Reading, writing, and path handling

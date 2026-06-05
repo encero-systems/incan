@@ -129,6 +129,7 @@ fn scan_types_in_call(type_args: &[Spanned<Type>], offset: usize) -> Option<&Spa
     None
 }
 
+/// Scan call arguments for LSP call-site type argument hints.
 fn scan_call_args(args: &[CallArg], offset: usize) -> Option<&Spanned<Type>> {
     for a in args {
         match a {
@@ -251,8 +252,8 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
         Expr::Paren(inner) => call_site_type_in_expr(inner, offset),
         Expr::Constructor(_, args) => scan_call_args(args, offset),
         Expr::FString(parts) => parts.iter().find_map(|p| {
-            if let crate::frontend::ast::FStringPart::Expr(e) = p {
-                call_site_type_in_expr(e, offset)
+            if let crate::frontend::ast::FStringPart::Expr { expr, .. } = p {
+                call_site_type_in_expr(expr, offset)
             } else {
                 None
             }
@@ -283,6 +284,11 @@ fn call_site_type_in_expr(expr: &Spanned<Expr>, offset: usize) -> Option<&Spanne
                 })
             }
         },
+        Expr::VocabBlock(block) => block
+            .header_args
+            .iter()
+            .find_map(|arg| call_site_type_in_expr(arg, offset))
+            .or_else(|| call_site_types_in_stmts(&block.body, offset)),
         Expr::Ident(_) | Expr::Literal(_) | Expr::SelfExpr => None,
     }
 }
@@ -304,6 +310,7 @@ fn call_site_types_in_stmts(stmts: &[Spanned<Statement>], offset: usize) -> Opti
     None
 }
 
+/// Find call-site type argument opportunities inside a statement.
 fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Type>> {
     match stmt {
         Statement::Assignment(a) => call_site_type_in_expr(&a.value, offset),
@@ -339,6 +346,11 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
             .find_map(|e| call_site_type_in_expr(e, offset))
             .or_else(|| call_site_type_in_expr(&t.value, offset)),
         Statement::ChainedAssignment(c) => call_site_type_in_expr(&c.value, offset),
+        Statement::VocabExpressionItem(item) => call_site_type_in_expr(&item.expr, offset).or_else(|| {
+            item.modifiers
+                .iter()
+                .find_map(|modifier| call_site_type_in_expr(&modifier.value, offset))
+        }),
         Statement::Assert(assert_stmt) => call_site_type_in_assert_stmt(assert_stmt, offset),
         Statement::Surface(s) => match &s.payload {
             crate::frontend::ast::SurfaceStmtPayload::KeywordArgs(exprs) => {
@@ -351,6 +363,7 @@ fn call_site_type_in_stmt(stmt: &Statement, offset: usize) -> Option<&Spanned<Ty
     }
 }
 
+/// Find call-site type argument opportunities inside an assert statement.
 fn call_site_type_in_assert_stmt(
     assert_stmt: &crate::frontend::ast::AssertStmt,
     offset: usize,

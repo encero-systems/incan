@@ -9,6 +9,7 @@ use crate::frontend::typechecker::helpers::{collection_type_id, dict_ty, list_ty
 use incan_core::lang::types::collections::CollectionTypeId;
 
 impl TypeChecker {
+    /// Return the expression carried by a call argument.
     pub(in crate::frontend::typechecker::check_expr::calls) fn call_arg_expr(arg: &CallArg) -> &Spanned<Expr> {
         match arg {
             CallArg::Positional(e)

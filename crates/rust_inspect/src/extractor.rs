@@ -5,7 +5,8 @@ use std::collections::BTreeMap;
 use incan_core::interop::{
     RustFieldInfo, RustFunctionSig, RustImplementedTrait, RustItemKind, RustItemMetadata, RustMethodSig,
     RustModuleChild, RustModuleChildKind, RustModuleInfo, RustParam, RustTraitAssoc, RustTraitInfo, RustTypeInfo,
-    RustTypeShape, RustVariantInfo, RustVisibility,
+    RustTypeShape, RustVariantInfo, RustVisibility, render_rust_type_shape, split_top_level_rust_args,
+    strip_rust_borrow_lifetimes,
 };
 use ra_ap_hir::{
     Adt, AssocItem, Crate, DisplayTarget, Enum, FieldSource, Function, HasSource, HasVisibility, HirDisplay, Impl,
@@ -116,36 +117,36 @@ fn canonical_adt_path(adt: Adt, db: &RootDatabase) -> Option<String> {
     canonical_module_def_path(ModuleDef::Adt(adt), db)
 }
 
-fn render_shape_display(shape: &RustTypeShape) -> String {
-    match shape {
-        RustTypeShape::Bool => "bool".to_string(),
-        RustTypeShape::Float => "f64".to_string(),
-        RustTypeShape::Int => "i64".to_string(),
-        RustTypeShape::Str => "String".to_string(),
-        RustTypeShape::Bytes => "Vec<u8>".to_string(),
-        RustTypeShape::Unit => "()".to_string(),
-        RustTypeShape::Option(inner) => format!("Option<{}>", render_shape_display(inner)),
-        RustTypeShape::Result(ok, err) => {
-            format!("Result<{}, {}>", render_shape_display(ok), render_shape_display(err))
-        }
-        RustTypeShape::Tuple(items) => {
-            let rendered: Vec<String> = items.iter().map(render_shape_display).collect();
-            format!("({})", rendered.join(", "))
-        }
-        RustTypeShape::Ref(inner) => format!("&{}", render_shape_display(inner)),
-        RustTypeShape::RustPath { path, args } => {
-            if args.is_empty() {
-                path.clone()
-            } else {
-                let rendered_args: Vec<String> = args.iter().map(render_shape_display).collect();
-                format!("{path}<{}>", rendered_args.join(", "))
-            }
-        }
-        RustTypeShape::TypeParam(name) => name.clone(),
-        RustTypeShape::Unknown => "?".to_string(),
+/// Normalize source type text from Rust inspection display output.
+fn normalize_source_type_text(text: &str) -> String {
+    strip_rust_borrow_lifetimes(text).trim().replace(' ', "")
+}
+
+/// Return the source spelling for a borrowed builtin Rust type.
+fn borrowed_builtin_source_display(text: &str) -> Option<String> {
+    let normalized = normalize_source_type_text(text);
+    let (prefix, inner) = if let Some(inner) = normalized.strip_prefix("&mut") {
+        ("&mut", inner)
+    } else if let Some(inner) = normalized.strip_prefix('&') {
+        ("&", inner)
+    } else {
+        return None;
+    };
+    match inner {
+        "str"
+        | "[u8]"
+        | "String"
+        | "std::string::String"
+        | "alloc::string::String"
+        | "Vec<u8>"
+        | "std::vec::Vec<u8>"
+        | "alloc::vec::Vec<u8>" => Some(format!("{prefix}{inner}")),
+        _ if is_exact_numeric_display(inner) => Some(format!("{prefix}{inner}")),
+        _ => None,
     }
 }
 
+/// Return whether a Rust display type is an exact numeric primitive.
 fn is_exact_numeric_display(text: &str) -> bool {
     matches!(
         text,
@@ -232,36 +233,9 @@ fn resolve_source_path(text: &str, crate_name: &str, module: Module, db: &RootDa
     None
 }
 
-fn split_top_level_args(text: &str) -> Vec<&str> {
-    let mut args = Vec::new();
-    let mut start = 0usize;
-    let mut angle = 0usize;
-    let mut paren = 0usize;
-    let mut bracket = 0usize;
-    for (idx, ch) in text.char_indices() {
-        match ch {
-            '<' => angle += 1,
-            '>' => angle = angle.saturating_sub(1),
-            '(' => paren += 1,
-            ')' => paren = paren.saturating_sub(1),
-            '[' => bracket += 1,
-            ']' => bracket = bracket.saturating_sub(1),
-            ',' if angle == 0 && paren == 0 && bracket == 0 => {
-                args.push(text[start..idx].trim());
-                start = idx + 1;
-            }
-            _ => {}
-        }
-    }
-    let tail = text[start..].trim();
-    if !tail.is_empty() {
-        args.push(tail);
-    }
-    args
-}
-
+/// Classify the source-level shape represented by a Rust display type.
 fn source_type_shape(text: &str, crate_name: &str, module: Module, db: &RootDatabase) -> RustTypeShape {
-    let text = text.trim().replace(' ', "");
+    let text = normalize_source_type_text(text);
     if text.is_empty() {
         return RustTypeShape::Unknown;
     }
@@ -281,7 +255,7 @@ fn source_type_shape(text: &str, crate_name: &str, module: Module, db: &RootData
         return RustTypeShape::Ref(Box::new(source_type_shape(inner, crate_name, module, db)));
     }
 
-    if text == "[u8]" || text == "&[u8]" {
+    if text == "[u8]" {
         return RustTypeShape::Bytes;
     }
 
@@ -291,7 +265,7 @@ fn source_type_shape(text: &str, crate_name: &str, module: Module, db: &RootData
             return RustTypeShape::Unit;
         }
         return RustTypeShape::Tuple(
-            split_top_level_args(inner)
+            split_top_level_rust_args(inner)
                 .into_iter()
                 .map(|arg| source_type_shape(arg, crate_name, module, db))
                 .collect(),
@@ -304,7 +278,7 @@ fn source_type_shape(text: &str, crate_name: &str, module: Module, db: &RootData
         let base =
             resolve_source_path(&text[..start], crate_name, module, db).unwrap_or_else(|| text[..start].to_string());
         let inner = &text[start + 1..text.len() - 1];
-        let args: Vec<RustTypeShape> = split_top_level_args(inner)
+        let args: Vec<RustTypeShape> = split_top_level_rust_args(inner)
             .into_iter()
             .map(|arg| source_type_shape(arg, crate_name, module, db))
             .collect();
@@ -348,6 +322,20 @@ fn source_field_type_shape(field: &ra_ap_hir::Field, db: &RootDatabase, crate_na
     };
     let module = field_module(field, db);
     Some(source_type_shape(text.as_str(), crate_name, module, db))
+}
+
+/// Return the Rust source spelling for a named field, removing only Rust's raw-identifier prefix.
+///
+/// rust-analyzer may expose a raw field such as `r#type` through a safe internal name. Incan needs the source spelling
+/// instead: `type` should be accepted in Incan and later emitted as `r#type`, while an ordinary Rust field named
+/// `type_` must remain `type_`.
+fn source_field_name(field: &ra_ap_hir::Field, db: &RootDatabase) -> Option<String> {
+    let source = field.source(db)?;
+    let FieldSource::Named(field) = source.value else {
+        return None;
+    };
+    let raw = field.name()?.syntax().text().to_string();
+    Some(raw.strip_prefix("r#").unwrap_or(raw.as_str()).to_string())
 }
 
 fn normalize_variant_payload_shape(shape: RustTypeShape) -> RustTypeShape {
@@ -449,6 +437,7 @@ fn rust_type_shape(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> RustT
     RustTypeShape::Unknown
 }
 
+/// Render a Rust signature type in source-oriented form.
 fn function_sig_type_display(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget) -> String {
     let raw = normalize_display_path(format_ty(ty, db, dt).as_str());
     if let Some(display) = exact_numeric_boundary_display(raw.as_str()) {
@@ -456,7 +445,7 @@ fn function_sig_type_display(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget
     }
     match rust_type_shape(ty, db, dt) {
         RustTypeShape::Unknown => raw,
-        other => render_shape_display(&other),
+        other => render_rust_type_shape(&other),
     }
 }
 
@@ -469,6 +458,9 @@ fn function_sig_type_display(ty: &Type<'_>, db: &RootDatabase, dt: DisplayTarget
 fn source_function_return_type_display(f: Function, db: &RootDatabase) -> Option<String> {
     let source = f.source(db)?;
     let text = source.value.ret_type()?.ty()?.to_string();
+    if let Some(display) = borrowed_builtin_source_display(text.as_str()) {
+        return Some(display);
+    }
     let module = f.module(db);
     let crate_name = module
         .krate(db)
@@ -480,8 +472,18 @@ fn source_function_return_type_display(f: Function, db: &RootDatabase) -> Option
     }
     Some(match shape {
         RustTypeShape::Unknown => normalize_display_path(text.as_str()),
-        other => render_shape_display(&other),
+        other => render_rust_type_shape(&other),
     })
+}
+
+/// Return the written RHS of a Rust `type` alias when available.
+///
+/// HIR type displays may erase callable trait-object arguments inside aliases to `_`. The source RHS is the
+/// authoritative contract for contextual typing at Rust boundaries, so preserve it when rust-analyzer can recover the
+/// defining syntax.
+fn source_type_alias_target_display(alias: ra_ap_hir::TypeAlias, db: &RootDatabase) -> Option<String> {
+    let source = alias.source(db)?;
+    source.value.ty().map(|ty| ty.to_string().trim().to_string())
 }
 
 fn join_use_path(prefix: Option<&str>, path: &str) -> String {
@@ -600,6 +602,9 @@ fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>,
     }
     let source_param = param_list.params().nth(param.index() - self_offset)?;
     let text = source_param.ty()?.to_string();
+    if let Some(display) = borrowed_builtin_source_display(text.as_str()) {
+        return Some(display);
+    }
     if let Some(imported_display) = canonicalize_imported_single_segment_type_display(text.as_str(), f, db) {
         return Some(imported_display);
     }
@@ -619,7 +624,7 @@ fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>,
     }
     let rendered = match shape {
         RustTypeShape::Unknown => normalize_display_path(text.as_str()),
-        other => render_shape_display(&other),
+        other => render_rust_type_shape(&other),
     };
     if rendered.contains('?')
         && let Some(imported_display) = canonicalize_imported_single_segment_type_display(text.as_str(), f, db)
@@ -629,6 +634,7 @@ fn source_function_param_type_display(f: Function, param: &ra_ap_hir::Param<'_>,
     Some(rendered)
 }
 
+/// Extract a Rust function signature from inspection metadata.
 fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> RustFunctionSig {
     let params = f
         .assoc_fn_params(db)
@@ -636,7 +642,12 @@ fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> Ru
         .map(|p| {
             let shape = rust_type_shape(p.ty(), db, dt);
             let mut type_display = function_sig_type_display(p.ty(), db, dt);
-            if (type_shape_contains_unknown(&shape) || p.ty().contains_unknown() || type_display.contains('?'))
+            if (type_shape_contains_unknown(&shape)
+                || p.ty().contains_unknown()
+                || type_display.contains('?')
+                || source_function_param_type_display(f, &p, db).is_some_and(|source_type_display| {
+                    source_type_display.starts_with('&') && !type_display.starts_with('&')
+                }))
                 && let Some(source_type_display) = source_function_param_type_display(f, &p, db)
             {
                 type_display = source_type_display;
@@ -648,8 +659,12 @@ fn extract_function_sig(f: Function, db: &RootDatabase, dt: DisplayTarget) -> Ru
         })
         .collect();
     let output_type = f.async_ret_type(db).unwrap_or_else(|| f.ret_type(db));
+    let output_shape = rust_type_shape(&output_type, db, dt);
     let mut return_type = function_sig_type_display(&output_type, db, dt);
-    if return_type.starts_with("impl ")
+    if (return_type.starts_with("impl ")
+        || type_shape_contains_unknown(&output_shape)
+        || output_type.contains_unknown()
+        || return_type.contains('?'))
         && let Some(source_return_type) = source_function_return_type_display(f, db)
     {
         return_type = source_return_type;
@@ -693,6 +708,10 @@ fn collect_implemented_traits(ty: Type<'_>, db: &RootDatabase) -> Vec<RustImplem
     traits.into_values().collect()
 }
 
+/// Collect public Rust fields in declaration order with source-facing names and semantic type shapes.
+///
+/// Field names are taken from Rust source when possible so raw identifiers surface to Incan without `r#`, and codegen
+/// can later decide whether that source-facing name needs raw Rust emission.
 fn collect_public_fields(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget, crate_name: &str) -> Vec<RustFieldInfo> {
     if let Some(adt) = ty.as_adt() {
         let type_args: Vec<Type<'_>> = ty.type_arguments().collect();
@@ -712,7 +731,7 @@ fn collect_public_fields(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget, cra
                 type_shape = source_field_type_shape(&field, db, crate_name).unwrap_or(type_shape);
             }
             collected.push(RustFieldInfo {
-                name: field.name(db).as_str().to_owned(),
+                name: source_field_name(&field, db).unwrap_or_else(|| field.name(db).as_str().to_owned()),
                 type_display: format_ty(&field_ty, db, dt),
                 type_shape,
             });
@@ -730,7 +749,7 @@ fn collect_public_fields(ty: Type<'_>, db: &RootDatabase, dt: DisplayTarget, cra
             type_shape = source_field_type_shape(&field, db, crate_name).unwrap_or(type_shape);
         }
         fields.push(RustFieldInfo {
-            name: field.name(db).as_str().to_owned(),
+            name: source_field_name(&field, db).unwrap_or_else(|| field.name(db).as_str().to_owned()),
             type_display: format_ty(&field_ty, db, dt),
             type_shape,
         });
@@ -943,6 +962,7 @@ fn extract_rust_item_inner(
         ModuleDef::Adt(adt) => {
             let ty = adt.ty(db);
             RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
                 methods: collect_inherent_methods(ty.clone(), db, dt),
                 implemented_traits: collect_implemented_traits(ty.clone(), db),
                 fields: collect_public_fields(ty.clone(), db, dt, crate_name),
@@ -955,6 +975,7 @@ fn extract_rust_item_inner(
         ModuleDef::BuiltinType(b) => {
             let ty = b.ty(db);
             RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
                 methods: collect_inherent_methods(ty.clone(), db, dt),
                 implemented_traits: collect_implemented_traits(ty.clone(), db),
                 fields: collect_public_fields(ty, db, dt, crate_name),
@@ -971,6 +992,7 @@ fn extract_rust_item_inner(
         ModuleDef::TypeAlias(a) => {
             let ty = a.ty(db);
             RustItemKind::Type(RustTypeInfo {
+                alias_target: source_type_alias_target_display(a, db).or_else(|| Some(format_ty(&ty, db, dt))),
                 methods: collect_inherent_methods(ty.clone(), db, dt),
                 implemented_traits: collect_implemented_traits(ty.clone(), db),
                 fields: collect_public_fields(ty, db, dt, crate_name),
@@ -1072,6 +1094,128 @@ edition = "2021"
         };
         let fields = info.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>();
         assert_eq!(fields, ["zeta", "alpha"]);
+        Ok(())
+    }
+
+    #[test]
+    fn type_metadata_unescapes_raw_keyword_fields_without_rewriting_plain_names()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo_raw_field_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )?;
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"pub struct JoinRel {
+    pub r#type: i64,
+    pub type_: i64,
+    pub r#match: i64,
+}
+"#,
+        )?;
+
+        let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let metadata = extract_rust_item(&workspace, "demo_raw_field_probe::JoinRel")?;
+        let RustItemKind::Type(info) = metadata.kind else {
+            return Err(std::io::Error::other("expected type metadata").into());
+        };
+        let fields = info.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>();
+        assert_eq!(fields, ["type", "type_", "match"]);
+        Ok(())
+    }
+
+    #[test]
+    fn type_alias_metadata_preserves_source_target_shape() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo_alias_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )?;
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"use std::sync::Arc;
+
+pub struct ColumnarValue;
+pub struct CallbackError;
+
+pub type SliceCallback =
+    Arc<dyn Fn(&[ColumnarValue]) -> Result<ColumnarValue, CallbackError> + Send + Sync>;
+"#,
+        )?;
+
+        let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let metadata = extract_rust_item(&workspace, "demo_alias_probe::SliceCallback")?;
+        let RustItemKind::Type(info) = metadata.kind else {
+            return Err(std::io::Error::other("expected type metadata").into());
+        };
+        assert_eq!(
+            info.alias_target.as_deref(),
+            Some("Arc<dyn Fn(&[ColumnarValue]) -> Result<ColumnarValue, CallbackError> + Send + Sync>")
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn type_metadata_preserves_borrowed_slice_params_and_borrowed_option_returns()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::create_dir_all(tmp.path().join("src"))?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            r#"[package]
+name = "demo_borrow_probe"
+version = "0.1.0"
+edition = "2021"
+"#,
+        )?;
+        fs::write(
+            tmp.path().join("src/lib.rs"),
+            r#"pub struct Codec;
+
+pub static CODEC: Codec = Codec;
+
+impl Codec {
+    pub fn for_label(label: &[u8]) -> Option<&'static Codec> {
+        let _ = label;
+        Some(&CODEC)
+    }
+
+    pub fn decode<'a>(&'static self, bytes: &'a [u8]) -> (&'a [u8], &'static Codec, bool) {
+        (bytes, self, false)
+    }
+}
+"#,
+        )?;
+
+        let workspace = RustWorkspace::load(tmp.path(), &|_| ())?;
+        let metadata = extract_rust_item(&workspace, "demo_borrow_probe::Codec")?;
+        let RustItemKind::Type(info) = metadata.kind else {
+            return Err(std::io::Error::other("expected type metadata").into());
+        };
+        let for_label = info
+            .methods
+            .iter()
+            .find(|method| method.name == "for_label")
+            .ok_or_else(|| std::io::Error::other("expected for_label metadata"))?;
+        assert_eq!(for_label.signature.params[0].type_display, "&[u8]");
+        assert_eq!(for_label.signature.return_type, "Option<&demo_borrow_probe::Codec>");
+        let decode = info
+            .methods
+            .iter()
+            .find(|method| method.name == "decode")
+            .ok_or_else(|| std::io::Error::other("expected decode metadata"))?;
+        assert_eq!(decode.signature.params[1].type_display, "&[u8]");
         Ok(())
     }
 }

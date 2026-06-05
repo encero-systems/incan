@@ -243,13 +243,13 @@ from incan.ui import component, signal, html, Element
 def counter(initial: int = 0) -> Element:
     """A simple counter component."""
     count, set_count = signal(initial)
-    
+
     def increment() -> None:
         set_count(count + 1)
-    
+
     def decrement() -> None:
         set_count(count - 1)
-    
+
     return html("""
         <div class="counter">
             <span>Count: {count}</span>
@@ -296,7 +296,7 @@ return html("""
         else:
             <LoginForm />
         }
-        
+
         <!-- Loops -->
         <ul>
             {
@@ -304,7 +304,7 @@ return html("""
                 <li key={item.id}>{item.name}</li>
             }
         </ul>
-        
+
         <!-- Event handlers -->
         <button on:click={handle_click}>Click me</button>
         <input on:input={(e) => set_value(e.target.value)} />
@@ -346,7 +346,7 @@ import std.async
 def dataFetcher(url: str) -> Element:
     data, set_data = signal(None)
     loading, set_loading = signal(True)
-    
+
     # Runs on mount and when url changes
     effect(async () => (
         set_loading(True)
@@ -354,7 +354,7 @@ def dataFetcher(url: str) -> Element:
         set_data(result)
         set_loading(False)
     ), deps=[url])
-    
+
     return html("""
         {
         if loading:
@@ -379,7 +379,7 @@ def app() -> Element:
                 <Link to="/about">About</Link>
                 <Link to="/users/{id}">User</Link>
             </nav>
-            
+
             <Route path="/" component={Home} />
             <Route path="/about" component={About} />
             <Route path="/users/{id}" component={UserProfile} />
@@ -434,13 +434,13 @@ from incan.ui import component, signal, jsx, Element
 @component
 def counter(initial: int = 0) -> Element:
     count, set_count = signal(initial)
-    
+
     def increment() -> None:
         set_count(count + 1)
-    
+
     def decrement() -> None:
         set_count(count - 1)
-    
+
     return jsx(
         <div class="counter">
             <span>Count: {count}</span>
@@ -772,7 +772,7 @@ texture = await load_texture("diffuse.png")
 # Load environment map
 skybox = await load_cubemap([
     "px.jpg", "nx.jpg",
-    "py.jpg", "ny.jpg", 
+    "py.jpg", "ny.jpg",
     "pz.jpg", "nz.jpg"
 ])
 scene.environment = skybox

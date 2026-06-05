@@ -108,6 +108,7 @@ impl Inspector {
         let mut warmed = 0usize;
         let mut skipped = 0usize;
         let mut seen = BTreeSet::new();
+        let mut paths = Vec::new();
         for canonical_path in canonical_paths {
             if canonical_path.is_empty() {
                 continue;
@@ -115,14 +116,28 @@ impl Inspector {
             if !seen.insert(canonical_path.clone()) {
                 continue;
             }
+            paths.push(canonical_path);
+        }
+        if paths.is_empty() {
+            return Ok(());
+        }
+        let total = paths.len();
+        progress(format!("rust-inspect prewarm start: {total} item(s)"));
+        for (idx, canonical_path) in paths.into_iter().enumerate() {
             let started_item = Instant::now();
+            progress(format!(
+                "rust-inspect prewarm item {}/{}: {canonical_path}",
+                idx + 1,
+                total
+            ));
             if debug {
                 tracing::debug!(query = %canonical_path, "rust-inspect prewarm start");
             }
-            match self
-                .cache
-                .get_or_extract(self.config.manifest_dir(), canonical_path.as_str(), progress)
-            {
+            match self.cache.get_or_extract_deferred_persist(
+                self.config.manifest_dir(),
+                canonical_path.as_str(),
+                progress,
+            ) {
                 Ok(_) => {
                     warmed += 1;
                     if debug {
@@ -150,6 +165,11 @@ impl Inspector {
                 Err(err) => return Err(err.into()),
             }
         }
+        self.cache.persist_manifest_dir(self.config.manifest_dir())?;
+        progress(format!(
+            "rust-inspect prewarm complete: warmed={warmed} skipped={skipped} elapsed_ms={:.0}",
+            started_all.elapsed().as_secs_f64() * 1000.0
+        ));
         if debug {
             tracing::debug!(
                 warmed,
@@ -252,5 +272,77 @@ fn metadata_has_unknowns(metadata: &RustItemMetadata) -> bool {
                     .any(shape_has_unknown)
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::sync::Mutex;
+
+    use incan_core::interop::{RustItemKind, RustItemMetadata, RustTypeInfo, RustVisibility};
+
+    use super::*;
+
+    fn dummy_type_metadata(path: &str) -> RustItemMetadata {
+        RustItemMetadata {
+            canonical_path: path.to_string(),
+            definition_path: None,
+            visibility: RustVisibility::Public,
+            kind: RustItemKind::Type(RustTypeInfo {
+                alias_target: None,
+                methods: Vec::new(),
+                implemented_traits: Vec::new(),
+                fields: Vec::new(),
+                variants: Vec::new(),
+            }),
+        }
+    }
+
+    #[test]
+    fn prewarm_reports_deduped_progress_without_forcing_callers_to_probe() -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        fs::write(
+            tmp.path().join("Cargo.toml"),
+            "[package]\nname = \"probe\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+        )?;
+        let inspector = Inspector::new(InspectorConfig::new(tmp.path()));
+        inspector
+            .cache()
+            .insert_test_item(tmp.path(), dummy_type_metadata("demo::Thing"))?;
+        let messages = Mutex::new(Vec::new());
+
+        inspector.prewarm(vec!["demo::Thing".to_string(), "demo::Thing".to_string()], &|message| {
+            if let Ok(mut messages) = messages.lock() {
+                messages.push(message);
+            }
+        })?;
+
+        let messages = messages
+            .into_inner()
+            .map_err(|_| std::io::Error::other("progress message lock poisoned"))?;
+        assert!(
+            messages
+                .iter()
+                .any(|message| message == "rust-inspect prewarm start: 1 item(s)"),
+            "expected observable prewarm start message, got {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message == "rust-inspect prewarm item 1/1: demo::Thing"),
+            "expected observable prewarm item message, got {messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| message.starts_with("rust-inspect prewarm complete:")),
+            "expected observable prewarm completion message, got {messages:?}"
+        );
+        assert!(
+            messages.iter().all(|message| !message.contains("item 2/")),
+            "prewarm progress should report deduped work, got {messages:?}"
+        );
+        Ok(())
     }
 }

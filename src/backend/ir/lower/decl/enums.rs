@@ -107,7 +107,8 @@ fn type_defaults_partial_eq(ty: &IrType) -> bool {
             type_defaults_partial_eq(key) && type_defaults_partial_eq(value)
         }
         IrType::Tuple(items) => items.iter().all(type_defaults_partial_eq),
-        IrType::Ref(inner) | IrType::RefMut(inner) => type_defaults_partial_eq(inner),
+        IrType::Ref(inner) | IrType::RefMut(inner) | IrType::TypeToken(inner) => type_defaults_partial_eq(inner),
+        IrType::ExternalUnion { .. } => false,
         IrType::Struct(_)
         | IrType::Enum(_)
         | IrType::Trait(_)
@@ -115,6 +116,7 @@ fn type_defaults_partial_eq(ty: &IrType) -> bool {
         | IrType::ImplTrait(_)
         | IrType::Function { .. }
         | IrType::Generic(_)
+        | IrType::RustDisplay(_)
         | IrType::SelfType
         | IrType::Unknown => false,
     }

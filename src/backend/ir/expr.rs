@@ -17,7 +17,9 @@ use super::decl::IrInteropAdapterKind;
 use super::{FunctionSignature, IrSpan, IrType, Ownership};
 use incan_core::interop::CoercionPolicy;
 use incan_core::lang::builtins::{self as core_builtins, BuiltinFnId};
-use incan_core::lang::surface::{dict_methods, list_methods, result_methods, set_methods, string_methods};
+use incan_core::lang::surface::{
+    dict_methods, iterator_methods, list_methods, result_methods, set_methods, string_methods,
+};
 use incan_core::lang::traits::{self as core_traits, TraitId};
 use incan_core::lang::types::collections::{self as collection_types, CollectionTypeId};
 
@@ -140,6 +142,41 @@ pub enum IrExprKind {
     AssociatedFunction {
         type_name: String,
         function_name: String,
+    },
+    /// Zero-sized value-level marker for a source type.
+    TypeToken {
+        ty: IrType,
+    },
+
+    /// Reference a free function item with optional explicit type arguments.
+    ///
+    /// Generic decorated wrappers need to pass `__incan_original_name::<T>` as a callable value after the wrapper has
+    /// a concrete type-parameter environment. A plain variable reference cannot carry that turbofish.
+    FunctionItem {
+        name: String,
+        type_args: Vec<IrType>,
+    },
+
+    /// Register a generated function pointer with its source callable name.
+    ///
+    /// Generic decorated wrappers instantiate `__incan_original_name::<T>` at runtime. Rust can coerce that
+    /// monomorphized item to a function pointer, but a global function-pointer trait impl cannot name the originating
+    /// generic declaration. This expression records explicit compiler metadata for that concrete pointer before the
+    /// decorator sees it.
+    RegisterCallableName {
+        callable: Box<IrExpr>,
+        source_name: String,
+    },
+
+    /// Cache one decorated generic function value by concrete type-argument key.
+    ///
+    /// Generic decorators that return the same callable surface are still declaration-side metadata hooks. When the
+    /// callable signature itself does not mention the generic type parameters, generated Rust can keep one decorated
+    /// function pointer per concrete type-argument tuple and avoid replaying decorator side effects on every call.
+    CacheGenericDecoratedFunction {
+        cache_name: String,
+        type_param_names: Vec<String>,
+        value: Box<IrExpr>,
     },
 
     // Binary operations
@@ -417,7 +454,38 @@ pub enum FormatPart {
     /// Literal text
     Literal(String),
     /// Expression to interpolate
-    Expr(IrExpr),
+    Expr { expr: IrExpr, style: FormatStyle },
+}
+
+/// Formatting style requested by one f-string interpolation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum FormatStyle {
+    /// User-facing display formatting (`{value}`).
+    #[default]
+    Display,
+    /// Structured debug formatting (`{value:?}`).
+    Debug,
+}
+
+impl FormatStyle {
+    /// Return whether this interpolation should emit Rust debug formatting for the resolved backend type.
+    pub fn emits_rust_debug(self, ty: &IrType) -> bool {
+        matches!(self, Self::Debug) || matches!(self, Self::Display) && display_style_uses_structured_debug(ty)
+    }
+}
+
+/// Return whether default Incan f-string display should use structured formatting for a backend representation that
+/// does not expose Rust `Display` directly.
+pub fn display_style_uses_structured_debug(ty: &IrType) -> bool {
+    matches!(
+        ty,
+        IrType::List(_)
+            | IrType::Dict(_, _)
+            | IrType::Set(_)
+            | IrType::Tuple(_)
+            | IrType::Option(_)
+            | IrType::Result(_, _)
+    )
 }
 
 /// How a variable is accessed
@@ -501,8 +569,18 @@ pub enum UnaryOp {
 #[derive(Debug, Clone)]
 pub struct MatchArm {
     pub pattern: Pattern,
+    pub bindings: Vec<MatchArmBinding>,
     pub guard: Option<IrExpr>,
     pub body: IrExpr,
+}
+
+/// Compiler-inserted binding materialized before a match-arm body runs.
+#[derive(Debug, Clone)]
+pub struct MatchArmBinding {
+    pub name: String,
+    pub ty: IrType,
+    pub value: IrExpr,
+    pub guard_value: Option<IrExpr>,
 }
 
 /// Pattern for match expressions
@@ -757,7 +835,7 @@ impl MethodKind {
         iterator_method_kind(name).map(Self::Iterator)
     }
 
-    /// Try to resolve an RFC 070 result-combinator method name without considering a receiver type.
+    /// Try to resolve a Result method name without considering a receiver type.
     pub fn for_result_method_name(name: &str) -> Option<Self> {
         result_methods::from_str(name).map(Self::Result)
     }
@@ -798,7 +876,7 @@ impl MethodKind {
                 }))
             }
             IrType::List(_) => {
-                if name == "iter" {
+                if iterator_methods::from_str(name) == Some(iterator_methods::IteratorMethodId::Iter) {
                     return Some(Self::Iterator(IteratorMethodKind::Iter));
                 }
                 let id = list_methods::from_str(name)?;
@@ -828,7 +906,7 @@ impl MethodKind {
                 }))
             }
             IrType::Set(_) => {
-                if name == "iter" {
+                if iterator_methods::from_str(name) == Some(iterator_methods::IteratorMethodId::Iter) {
                     return Some(Self::Iterator(IteratorMethodKind::Iter));
                 }
                 if set_methods::from_str(name).is_some() {
@@ -840,7 +918,7 @@ impl MethodKind {
                 if matches!(
                     collection_types::from_str(type_name),
                     Some(CollectionTypeId::FrozenList | CollectionTypeId::FrozenSet)
-                ) && name == "iter" =>
+                ) && iterator_methods::from_str(name) == Some(iterator_methods::IteratorMethodId::Iter) =>
             {
                 Some(Self::Iterator(IteratorMethodKind::Iter))
             }
@@ -864,28 +942,30 @@ fn is_iterator_protocol_type_name(name: &str) -> bool {
 
 /// Classify an RFC 088 iterator method name into the structured backend method family.
 fn iterator_method_kind(name: &str) -> Option<IteratorMethodKind> {
-    Some(match name {
-        "map" => IteratorMethodKind::Map,
-        "filter" => IteratorMethodKind::Filter,
-        "enumerate" => IteratorMethodKind::Enumerate,
-        "zip" => IteratorMethodKind::Zip,
-        "take" => IteratorMethodKind::Take,
-        "skip" => IteratorMethodKind::Skip,
-        "take_while" => IteratorMethodKind::TakeWhile,
-        "skip_while" => IteratorMethodKind::SkipWhile,
-        "chain" => IteratorMethodKind::Chain,
-        "flat_map" => IteratorMethodKind::FlatMap,
-        "batch" => IteratorMethodKind::Batch,
-        "collect" => IteratorMethodKind::Collect,
-        "count" => IteratorMethodKind::Count,
-        "reduce" => IteratorMethodKind::Reduce,
-        "fold" => IteratorMethodKind::Fold,
-        "any" => IteratorMethodKind::Any,
-        "all" => IteratorMethodKind::All,
-        "find" => IteratorMethodKind::Find,
-        "for_each" => IteratorMethodKind::ForEach,
-        "sum" => IteratorMethodKind::Sum,
-        _ => return None,
+    let id = iterator_methods::from_str(name)?;
+    use iterator_methods::IteratorMethodId as M;
+    Some(match id {
+        M::Iter => IteratorMethodKind::Iter,
+        M::Map => IteratorMethodKind::Map,
+        M::Filter => IteratorMethodKind::Filter,
+        M::Enumerate => IteratorMethodKind::Enumerate,
+        M::Zip => IteratorMethodKind::Zip,
+        M::Take => IteratorMethodKind::Take,
+        M::Skip => IteratorMethodKind::Skip,
+        M::TakeWhile => IteratorMethodKind::TakeWhile,
+        M::SkipWhile => IteratorMethodKind::SkipWhile,
+        M::Chain => IteratorMethodKind::Chain,
+        M::FlatMap => IteratorMethodKind::FlatMap,
+        M::Batch => IteratorMethodKind::Batch,
+        M::Collect => IteratorMethodKind::Collect,
+        M::Count => IteratorMethodKind::Count,
+        M::Reduce => IteratorMethodKind::Reduce,
+        M::Fold => IteratorMethodKind::Fold,
+        M::Any => IteratorMethodKind::Any,
+        M::All => IteratorMethodKind::All,
+        M::Find => IteratorMethodKind::Find,
+        M::ForEach => IteratorMethodKind::ForEach,
+        M::Sum => IteratorMethodKind::Sum,
     })
 }
 
@@ -949,7 +1029,7 @@ mod tests {
     }
 
     #[test]
-    fn result_method_kind_for_receiver_classifies_rfc070_surface() {
+    fn result_method_kind_for_receiver_classifies_result_surface() {
         let result_ty = IrType::Result(Box::new(IrType::Int), Box::new(IrType::String));
         for (name, expected) in [
             ("map", result_methods::ResultMethodId::Map),
@@ -958,6 +1038,8 @@ mod tests {
             ("or_else", result_methods::ResultMethodId::OrElse),
             ("inspect", result_methods::ResultMethodId::Inspect),
             ("inspect_err", result_methods::ResultMethodId::InspectErr),
+            ("unwrap", result_methods::ResultMethodId::Unwrap),
+            ("unwrap_or", result_methods::ResultMethodId::UnwrapOr),
         ] {
             assert_eq!(
                 MethodKind::for_receiver(&result_ty, name),
@@ -965,6 +1047,6 @@ mod tests {
                 "expected Result method classification for `{name}`"
             );
         }
-        assert_eq!(MethodKind::for_receiver(&result_ty, "unwrap"), None);
+        assert_eq!(MethodKind::for_receiver(&result_ty, "missing"), None);
     }
 }

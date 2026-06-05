@@ -141,6 +141,7 @@ impl TypeChecker {
         None
     }
 
+    /// Convert function symbol information into a resolved function type.
     fn function_info_to_resolved_function_type(info: &FunctionInfo) -> ResolvedType {
         ResolvedType::Function(info.params.clone(), Box::new(info.return_type.clone()))
     }
@@ -185,8 +186,8 @@ impl TypeChecker {
             Expr::Constructor(name, args) => self.check_constructor(name, args, expr.span),
             Expr::FString(parts) => {
                 for part in parts {
-                    if let FStringPart::Expr(e) = part {
-                        self.check_expr(e);
+                    if let FStringPart::Expr { expr, .. } = part {
+                        self.check_expr(expr);
                     }
                 }
                 ResolvedType::Str
@@ -229,11 +230,45 @@ impl TypeChecker {
                 end,
                 inclusive: _,
             } => self.check_range_expr(start, end),
+            Expr::VocabBlock(block) => {
+                self.errors.push(CompileError::type_error(
+                    format!(
+                        "Vocab expression declaration `{}` reached typechecking before desugaring",
+                        block.keyword
+                    ),
+                    expr.span,
+                ));
+                ResolvedType::Unknown
+            }
         };
 
         // Record for downstream stages (lowering/codegen).
         self.record_expr_type(expr.span, ty.clone());
         ty
+    }
+
+    /// Type-check an expression used as a type-owned receiver, such as `Type.method()` or `Enum.Variant`.
+    pub(crate) fn check_type_receiver_expr(&mut self, expr: &Spanned<Expr>) -> ResolvedType {
+        self.type_receiver_spans.push((expr.span.start, expr.span.end));
+        let ty = self.check_expr(expr);
+        self.type_receiver_spans.pop();
+        ty
+    }
+
+    /// Return whether a span identifies a type receiver.
+    pub(crate) fn is_type_receiver_span(&self, span: Span) -> bool {
+        self.type_receiver_spans
+            .iter()
+            .rev()
+            .any(|&(start, end)| start == span.start && end == span.end)
+    }
+
+    /// Return whether a span identifies a type name being checked against an explicit `Type[T]` destination.
+    pub(crate) fn is_type_token_value_span(&self, span: Span) -> bool {
+        self.type_token_value_spans
+            .iter()
+            .rev()
+            .any(|&(start, end)| start == span.start && end == span.end)
     }
 
     /// Type-check an expression with an expected destination type when one is already known.
@@ -247,6 +282,12 @@ impl TypeChecker {
     ) -> ResolvedType {
         let ty = match (&expr.node, expected) {
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
+            (Expr::Ident(_), Some(ResolvedType::TypeToken(_))) => {
+                self.type_token_value_spans.push((expr.span.start, expr.span.end));
+                let ty = self.check_expr(expr);
+                self.type_token_value_spans.pop();
+                ty
+            }
             (Expr::Literal(Literal::Int(_)), Some(expected_ty))
                 if super::numeric_type_id_for_compat(expected_ty).is_some() =>
             {
@@ -280,8 +321,14 @@ impl TypeChecker {
                 self.check_unary_with_expected(*op, operand, expr.span, Some(expected_ty))
             }
             (Expr::Try(inner), Some(expected_ty)) => self.check_try_with_expected(inner, expr.span, Some(expected_ty)),
+            (Expr::Call(callee, type_args, args), Some(expected_ty)) => {
+                self.check_call_with_expected(callee, type_args, args, expr.span, Some(expected_ty))
+            }
             (Expr::MethodCall(base, method, type_args, args), Some(expected_ty)) => {
                 self.check_method_call_with_expected(base, method, type_args, args, expr.span, Some(expected_ty))
+            }
+            (Expr::Closure(params, body), Some(ResolvedType::Function(expected_params, expected_ret))) => {
+                self.check_closure_with_expected(params, body, expected_params, expected_ret, expr.span)
             }
             (Expr::List(elems), expected_ty) => self.check_list_with_expected(elems, expected_ty),
             (Expr::Dict(entries), expected_ty) => self.check_dict_with_expected(entries, expected_ty),

@@ -8,7 +8,7 @@
     - RFC 023 (compilable stdlib and Rust module binding)
     - RFC 059 (`std.regex`)
     - RFC 070 (Result combinators)
-- **Issue:** —
+- **Issue:** https://github.com/dannys-code-corner/incan/issues/668
 - **RFC PR:** —
 - **Written against:** v0.3
 - **Shipped in:** —

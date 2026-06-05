@@ -21,6 +21,10 @@ fn run_incan(current_dir: &Path, args: &[&str]) -> Result<Output, Box<dyn std::e
         .current_dir(current_dir)
         .env("CARGO_NET_OFFLINE", "true")
         .env("INCAN_NO_BANNER", "1")
+        .env(
+            "INCAN_GENERATED_CARGO_TARGET_DIR",
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("target/incan_generated_shared_target"),
+        )
         .output()?)
 }
 

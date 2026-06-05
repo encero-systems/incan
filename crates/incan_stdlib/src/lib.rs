@@ -51,7 +51,7 @@ pub mod __private {
 pub mod web;
 
 // Re-export commonly used items
-pub use reflection::{FieldInfo, HasFieldInfo};
+pub use reflection::{FieldInfo, HasClassName, HasFieldInfo, HasFieldMetadata, HasTypeClassName, HasTypeFieldMetadata};
 
 #[cfg(feature = "json")]
 pub use json::{FromJson, ToJson};

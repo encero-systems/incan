@@ -17,6 +17,10 @@ impl Formatter {
                     self.writer.newline();
                 }
             }
+            Statement::VocabExpressionItem(item) => {
+                self.format_vocab_expression_item_contents(item);
+                self.writer.newline();
+            }
             Statement::Assert(assert_stmt) => self.format_assert(assert_stmt),
             Statement::Assignment(assign) => {
                 self.format_assignment(assign);
@@ -89,16 +93,7 @@ impl Formatter {
                     self.writer.write("@");
                     self.writer.writeln(&decorator.node.path.segments.join("."));
                 }
-                self.writer.write(&vocab_block.keyword);
-                if !vocab_block.header_args.is_empty() {
-                    self.writer.write(" ");
-                    for (idx, arg) in vocab_block.header_args.iter().enumerate() {
-                        if idx > 0 {
-                            self.writer.write(", ");
-                        }
-                        self.format_expr(&arg.node);
-                    }
-                }
+                self.format_vocab_block_header(vocab_block);
                 self.writer.writeln(":");
                 self.writer.indent();
                 for stmt in &vocab_block.body {
@@ -181,6 +176,7 @@ impl Formatter {
         self.writer.newline();
     }
 
+    /// Format an assert statement.
     fn format_assert(&mut self, assert_stmt: &AssertStmt) {
         self.writer.write("assert ");
         match &assert_stmt.kind {
@@ -203,6 +199,7 @@ impl Formatter {
         self.writer.newline();
     }
 
+    /// Format an if statement.
     fn format_if(&mut self, if_stmt: &IfStmt) {
         self.writer.write("if ");
         self.format_condition(&if_stmt.condition);
@@ -243,6 +240,7 @@ impl Formatter {
         }
     }
 
+    /// Format a loop statement.
     fn format_loop(&mut self, loop_stmt: &LoopStmt) {
         self.writer.writeln("loop:");
         self.writer.indent();
@@ -255,6 +253,7 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Format a while statement.
     fn format_while(&mut self, while_stmt: &WhileStmt) {
         self.writer.write("while ");
         self.format_condition(&while_stmt.condition);
@@ -285,7 +284,8 @@ impl Formatter {
         self.writer.dedent();
     }
 
-    fn format_for_pattern(&mut self, pattern: &Pattern) {
+    /// Format a `for`-target pattern using the grammar's unparenthesized tuple-target spelling.
+    pub(super) fn format_for_pattern(&mut self, pattern: &Pattern) {
         if let Pattern::Tuple(items) = pattern {
             for (i, item) in items.iter().enumerate() {
                 if i > 0 {
@@ -298,6 +298,7 @@ impl Formatter {
         }
     }
 
+    /// Format a conditional expression.
     fn format_condition(&mut self, condition: &Condition) {
         match condition {
             Condition::Expr(expr) => self.format_expr(&expr.node),

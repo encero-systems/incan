@@ -21,8 +21,9 @@ mod mutation_scan;
 mod structures;
 
 use proc_macro2::{Literal, TokenStream};
-use quote::{format_ident, quote};
+use quote::quote;
 
+use crate::frontend::symbols::is_overload_emitted_name;
 use incan_core::lang::stdlib;
 
 use super::super::decl::{IrDecl, IrDeclKind, IrImportOrigin, IrImportQualifier};
@@ -61,7 +62,7 @@ impl<'a> IrEmitter<'a> {
                 interop_edges: _,
             } => {
                 let vis = self.emit_visibility(visibility);
-                let name_ident = format_ident!("{}", name);
+                let name_ident = Self::rust_ident(name);
                 let ty_tokens = self.emit_type(ty);
                 let generics = self.emit_type_params(type_params);
                 Ok(quote! {
@@ -72,17 +73,13 @@ impl<'a> IrEmitter<'a> {
                 visibility,
                 name,
                 target_path,
+                target_origin,
+                target_qualifier,
             } => {
                 let vis = self.emit_visibility(visibility);
-                let name_ident = format_ident!("{}", name);
-                let target_segments = target_path
-                    .iter()
-                    .map(|segment| {
-                        let ident = format_ident!("{}", segment);
-                        quote! { #ident }
-                    })
-                    .collect::<Vec<_>>();
-                let target = join_path_tokens(&target_segments);
+                let name_ident = Self::rust_ident(name);
+                let target =
+                    self.emit_symbol_alias_target_path(target_origin.as_ref(), target_qualifier.as_ref(), target_path);
                 Ok(quote! {
                     #vis use #target as #name_ident;
                 })
@@ -149,7 +146,7 @@ impl<'a> IrEmitter<'a> {
         self.validate_const_emittable(name, ty, value)?;
 
         let vis = self.emit_visibility(visibility);
-        let name_ident = format_ident!("{}", name);
+        let name_ident = Self::rust_ident(name);
         let ty_tokens = self.emit_type(ty);
         let value_tokens = self.emit_const_value_for_type(ty, value)?;
 
@@ -221,6 +218,7 @@ impl<'a> IrEmitter<'a> {
                 let elems = elems?;
                 Ok(quote! { (#(#elems),*) })
             }
+            (T::Struct(_), IrExprKind::Struct { name, fields }) => self.emit_const_struct_value(name, fields),
             (T::FrozenStr, IrExprKind::String(s)) => Ok(quote! { incan_stdlib::frozen::FrozenStr::new(#s) }),
             (T::FrozenBytes, IrExprKind::Bytes(bytes)) => {
                 let lit = Literal::byte_string(bytes);
@@ -230,7 +228,160 @@ impl<'a> IrEmitter<'a> {
         }
     }
 
+    /// Emit a struct/model literal in a Rust const initializer without applying runtime ownership conversions.
+    fn emit_const_struct_value(
+        &self,
+        name: &str,
+        fields: &[(String, super::super::TypedExpr)],
+    ) -> Result<TokenStream, EmitError> {
+        let n = Self::rust_ident(name);
+        let Some(metadata) = self.struct_constructor_metadata_for_fields(name, fields) else {
+            let field_tokens: Result<Vec<_>, EmitError> = fields
+                .iter()
+                .map(|(field_name, field_value)| {
+                    let field_ident = Self::rust_ident(field_name);
+                    let value = self.emit_const_value_for_type(&field_value.ty, field_value)?;
+                    Ok(quote! { #field_ident: #value })
+                })
+                .collect();
+            let field_tokens = field_tokens?;
+            return Ok(quote! { #n { #(#field_tokens),* } });
+        };
+
+        let mut provided: std::collections::HashMap<&str, &super::super::TypedExpr> = std::collections::HashMap::new();
+        for (field_name, field_value) in fields {
+            if let Some(canonical) = metadata.canonical_field_name(field_name) {
+                provided.insert(canonical, field_value);
+            }
+        }
+
+        let mut out_fields = Vec::new();
+        for field_name in &metadata.fields {
+            let field_ident = Self::rust_ident(field_name);
+            let Some(target_ty) = metadata.field_types.get(field_name) else {
+                return Err(EmitError::Unsupported(format!(
+                    "missing field type metadata for const field '{}.{}'",
+                    name, field_name
+                )));
+            };
+            let Some(field_value) = provided.get(field_name.as_str()) else {
+                return Err(EmitError::Unsupported(format!(
+                    "const model constructor '{}' must provide field '{}' explicitly",
+                    name, field_name
+                )));
+            };
+            let value = self.emit_const_value_for_type(target_ty, field_value)?;
+            out_fields.push(quote! { #field_ident: #value });
+        }
+
+        Ok(quote! { #n { #(#out_fields),* } })
+    }
+
     // ---- Import emission ----
+
+    /// Return whether an import path refers to the source-authored Incan stdlib namespace.
+    pub(super) fn is_incan_source_stdlib_import(
+        origin: &IrImportOrigin,
+        qualifier: &IrImportQualifier,
+        path: &[String],
+    ) -> bool {
+        !matches!(origin, IrImportOrigin::PubLibrary { .. })
+            && !matches!(qualifier, IrImportQualifier::None)
+            && stdlib::is_any_stdlib_path(path)
+    }
+
+    /// Convert an IR import path into Rust path segments using the same qualification rules for imports and aliases.
+    fn import_path_tokens(
+        &self,
+        origin: &IrImportOrigin,
+        qualifier: &IrImportQualifier,
+        path: &[String],
+    ) -> Vec<TokenStream> {
+        let is_pub_library_import = matches!(origin, IrImportOrigin::PubLibrary { .. });
+        let is_stdlib = Self::is_incan_source_stdlib_import(origin, qualifier, path);
+
+        if is_stdlib {
+            let mut tokens = vec![quote! { crate }];
+            let std_namespace = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);
+            tokens.push(quote! { #std_namespace });
+            for seg in path.iter().skip(1) {
+                let ident = Self::rust_ident(seg);
+                tokens.push(quote! { #ident });
+            }
+            return tokens;
+        }
+
+        if is_pub_library_import {
+            return path
+                .iter()
+                .map(|segment| {
+                    let ident = Self::rust_ident(segment);
+                    quote! { #ident }
+                })
+                .collect();
+        }
+
+        let mut tokens: Vec<TokenStream> = Vec::new();
+        match qualifier {
+            IrImportQualifier::Auto => {
+                if self.is_internal_module_path(path) {
+                    tokens.push(quote! { crate });
+                }
+            }
+            IrImportQualifier::Crate => tokens.push(quote! { crate }),
+            IrImportQualifier::Super(levels) => {
+                for _ in 0..*levels {
+                    tokens.push(quote! { super });
+                }
+            }
+            IrImportQualifier::None => {}
+        }
+        tokens.extend(path.iter().map(|segment| {
+            let ident = Self::rust_ident(segment);
+            quote! { #ident }
+        }));
+        tokens
+    }
+
+    /// Emit the Rust path used by a module-level symbol alias target.
+    ///
+    /// Imported targets use their original import path so public aliases re-export public items directly instead of
+    /// re-exporting a private local `use` binding.
+    fn emit_symbol_alias_target_path(
+        &self,
+        target_origin: Option<&IrImportOrigin>,
+        target_qualifier: Option<&IrImportQualifier>,
+        target_path: &[String],
+    ) -> TokenStream {
+        let Some(origin) = target_origin else {
+            let target_segments = target_path
+                .iter()
+                .map(|segment| {
+                    let ident = Self::rust_ident(segment);
+                    quote! { #ident }
+                })
+                .collect::<Vec<_>>();
+            return join_path_tokens(&target_segments);
+        };
+        let Some(qualifier) = target_qualifier else {
+            let target_segments = target_path
+                .iter()
+                .map(|segment| {
+                    let ident = Self::rust_ident(segment);
+                    quote! { #ident }
+                })
+                .collect::<Vec<_>>();
+            return join_path_tokens(&target_segments);
+        };
+
+        let path_tokens = self.import_path_tokens(origin, qualifier, target_path);
+        let path = join_path_tokens(&path_tokens);
+        if matches!(qualifier, IrImportQualifier::None) && !matches!(origin, IrImportOrigin::PubLibrary { .. }) {
+            quote! { :: #path }
+        } else {
+            path
+        }
+    }
 
     /// Emit a Rust import or re-export after generated-use analysis prunes private unused bindings.
     fn emit_import(
@@ -257,64 +408,9 @@ impl<'a> IrEmitter<'a> {
         // Only Incan stdlib imports (qualifier `Auto`) are mapped. Rust crate imports like
         // `from rust::std::collections import HashMap` (qualifier `None`) are left as-is.
         let is_pub_library_import = matches!(origin, IrImportOrigin::PubLibrary { .. });
-        let is_stdlib =
-            !is_pub_library_import && !matches!(qualifier, IrImportQualifier::None) && stdlib::is_any_stdlib_path(path);
-        let is_incan_source_stdlib = is_stdlib;
+        let is_incan_source_stdlib = Self::is_incan_source_stdlib_import(origin, qualifier, path);
 
-        let path_tokens: Vec<TokenStream> = if is_incan_source_stdlib {
-            let mut tokens = vec![quote! { crate }];
-            let std_namespace = Self::rust_ident(stdlib::INCAN_STD_NAMESPACE);
-            tokens.push(quote! { #std_namespace });
-            for seg in path.iter().skip(1) {
-                let ident = Self::rust_ident(seg);
-                tokens.push(quote! { #ident });
-            }
-            tokens
-        } else if is_pub_library_import {
-            path.iter()
-                .map(|segment| {
-                    let ident = Self::rust_ident(segment);
-                    quote! { #ident }
-                })
-                .collect()
-        } else {
-            let mut tokens: Vec<TokenStream> = Vec::new();
-            let mapped_path_tokens: Vec<_> = if is_stdlib {
-                let mut mapped = vec![quote! { incan_stdlib }];
-                // Skip the `std` root, map the rest with keyword escaping.
-                for seg in path.iter().skip(1) {
-                    let ident = Self::rust_ident(seg);
-                    mapped.push(quote! { #ident });
-                }
-                mapped
-            } else {
-                path.iter()
-                    .map(|s| {
-                        let ident = Self::rust_ident(s);
-                        quote! { #ident }
-                    })
-                    .collect()
-            };
-            let apply_prefix = !is_stdlib;
-            if apply_prefix {
-                match qualifier {
-                    IrImportQualifier::Auto => {
-                        if self.is_internal_module_path(path) {
-                            tokens.push(quote! { crate });
-                        }
-                    }
-                    IrImportQualifier::Crate => tokens.push(quote! { crate }),
-                    IrImportQualifier::Super(levels) => {
-                        for _ in 0..*levels {
-                            tokens.push(quote! { super });
-                        }
-                    }
-                    IrImportQualifier::None => {}
-                }
-            }
-            tokens.extend(mapped_path_tokens);
-            tokens
-        };
+        let path_tokens = self.import_path_tokens(origin, qualifier, path);
 
         let path_ts = join_path_tokens(&path_tokens);
         // Public source imports, stdlib facades, and rust.module imports are re-exported. Private `pub::` library
@@ -375,7 +471,7 @@ impl<'a> IrEmitter<'a> {
                 if is_incan_source_stdlib && binding.starts_with('_') {
                     return false;
                 }
-                export_item_import
+                export_item_import || item.force_reexport
             };
             let item_stmts: Vec<TokenStream> = items
                 .iter()
@@ -397,12 +493,42 @@ impl<'a> IrEmitter<'a> {
                             && item.name.chars().next().is_some_and(|ch| ch.is_ascii_uppercase()))
                 })
                 .map(|item| {
-                    let name_ident = Self::rust_ident(&item.name);
+                    let binding = item.alias.as_ref().unwrap_or(&item.name);
+                    let name_ident = if item.is_static {
+                        Self::rust_static_ident(&item.name)
+                    } else {
+                        Self::rust_ident(&item.name)
+                    };
                     let path_tokens_clone = path_tokens.clone();
                     let path_ts_clone = join_path_tokens(&path_tokens_clone);
                     let absolute_path = matches!(qualifier, IrImportQualifier::None) && !is_pub_library_import;
-                    if let Some(alias) = &item.alias {
-                        let alias_ident = Self::rust_ident(alias);
+                    let static_init_import = if item.is_static && self.static_needs_imported_init_import(binding) {
+                        let init_ident = Self::rust_ident("__incan_init_module_statics");
+                        let init_alias = Self::imported_static_init_ident(binding);
+                        if absolute_path {
+                            quote! { use :: #path_ts_clone :: #init_ident as #init_alias; }
+                        } else {
+                            quote! { use #path_ts_clone :: #init_ident as #init_alias; }
+                        }
+                    } else {
+                        quote! {}
+                    };
+                    if item.alias.is_none()
+                        && is_overload_emitted_name(&item.name)
+                        && !self
+                            .emitted_overload_import_bindings
+                            .borrow_mut()
+                            .insert(item.name.clone())
+                    {
+                        return quote! {};
+                    }
+
+                    let item_import = if let Some(alias) = &item.alias {
+                        let alias_ident = if item.is_static {
+                            Self::rust_static_ident(alias)
+                        } else {
+                            Self::rust_ident(alias)
+                        };
                         if should_reexport_item(item) {
                             if absolute_path {
                                 quote! { pub use :: #path_ts_clone :: #name_ident as #alias_ident; }
@@ -430,11 +556,12 @@ impl<'a> IrEmitter<'a> {
                                 quote! { use #path_ts_clone :: #name_ident; }
                             }
                         }
-                    }
+                    };
+                    quote! { #static_init_import #item_import }
                 })
                 .collect();
             Ok(quote! { #(#item_stmts)* })
-        } else if path.len() == 1 && !is_stdlib {
+        } else if path.len() == 1 && !is_incan_source_stdlib {
             Ok(quote! {})
         } else if export_module_import {
             Ok(quote! {

@@ -6,6 +6,7 @@ use crate::frontend::ast::*;
 use super::{Formatter, RFC053_METHOD_BLANK_LINES};
 
 impl Formatter {
+    /// Return whether a method declaration owns a formatted body.
     fn method_is_body_bearing(method: &MethodDecl) -> bool {
         method.body.is_some()
     }
@@ -15,6 +16,7 @@ impl Formatter {
         property.body.is_some()
     }
 
+    /// Format methods with declaration spacing preserved.
     fn format_methods_with_spacing(&mut self, methods: &[Spanned<MethodDecl>], seen_member_before_methods: bool) {
         let mut seen_member = seen_member_before_methods;
         for method in methods {
@@ -112,6 +114,7 @@ impl Formatter {
         self.writer.newline();
     }
 
+    /// Format an inline test module declaration.
     fn format_test_module(&mut self, test_module: &TestModuleDecl) {
         self.writer.write("module ");
         self.writer.write(&test_module.name);
@@ -126,6 +129,7 @@ impl Formatter {
         self.writer.dedent();
     }
 
+    /// Format a docstring while preserving source prose.
     pub(super) fn format_docstring(&mut self, doc: &str) {
         // Trim leading and trailing whitespace from the docstring content to ensure idempotent formatting
         let trimmed = doc.trim();
@@ -1048,6 +1052,16 @@ impl Formatter {
     fn format_decorator(&mut self, dec: &Decorator) {
         self.writer.write("@");
         self.format_decorator_path(&dec.path);
+        if !dec.type_args.is_empty() {
+            self.writer.write("[");
+            for (idx, arg) in dec.type_args.iter().enumerate() {
+                if idx > 0 {
+                    self.writer.write(", ");
+                }
+                self.format_type(&arg.node);
+            }
+            self.writer.write("]");
+        }
         if dec.is_call {
             self.writer.write("(");
             for (i, arg) in dec.args.iter().enumerate() {
@@ -1140,6 +1154,7 @@ impl Formatter {
         }
     }
 
+    /// Format one function parameter.
     fn format_param(&mut self, param: &Param) {
         if param.is_mut {
             self.writer.write("mut ");
@@ -1269,6 +1284,7 @@ fn strip_common_indent(line: &str, indent: usize) -> &str {
     &line[start..]
 }
 
+/// Return normalized docstring body lines.
 fn normalized_docstring_lines(doc: &str) -> Vec<String> {
     let lines: Vec<&str> = doc.lines().collect();
     let first = lines.first().map(|line| line.trim()).unwrap_or_default();

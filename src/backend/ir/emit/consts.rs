@@ -37,43 +37,77 @@ impl<'a> IrEmitter<'a> {
     ///
     /// Everything else is rejected with an actionable error.
     pub(super) fn validate_const_emittable(&self, name: &str, ty: &IrType, value: &TypedExpr) -> Result<(), EmitError> {
-        /// Return whether an IR type can appear in a Rust `const` initializer emitted by RFC 008.
-        fn ok_ty(ty: &IrType) -> bool {
-            match ty {
-                IrType::Int
-                | IrType::Numeric(_)
-                | IrType::Float
-                | IrType::Bool
-                | IrType::StaticStr
-                | IrType::StaticBytes
-                | IrType::FrozenStr
-                | IrType::FrozenBytes => true,
-                IrType::Struct(_) => true,
-                IrType::Tuple(items) => items.iter().all(ok_ty),
-                IrType::NamedGeneric(name, args) if name == collections::as_str(CollectionTypeId::FrozenList) => {
-                    args.first().map(ok_ty).unwrap_or(false)
-                }
-                IrType::NamedGeneric(name, args) if name == collections::as_str(CollectionTypeId::FrozenSet) => {
-                    args.first().map(ok_ty).unwrap_or(false)
-                }
-                IrType::NamedGeneric(name, args) if name == collections::as_str(CollectionTypeId::FrozenDict) => {
-                    args.first().map(ok_ty).unwrap_or(false) && args.get(1).map(ok_ty).unwrap_or(false)
-                }
-                _ => false,
-            }
-        }
-
-        if !ok_ty(ty) {
+        if !self.const_type_emittable(ty) {
             let ty_name = ty.rust_name();
             return Err(EmitError::Unsupported(format!(
                 "const '{}' of type '{}' is not representable as a Rust const.\n\
-                 Allowed: int/exact-width numeric/float/bool/&'static str/&'static [u8]/tuples, FrozenList/Set/Dict with allowed element types.\n\
+                 Allowed: int/exact-width numeric/float/bool/&'static str/&'static [u8]/tuples, Option, const-safe models, FrozenList/Set/Dict with allowed element types.\n\
                  Consider computing at runtime or simplifying the const.",
                 name, ty_name
             )));
         }
 
         Self::validate_const_expr_kind(&value.kind)
+    }
+
+    /// Return whether an IR type can appear in a Rust `const` initializer emitted by RFC 008.
+    fn const_type_emittable(&self, ty: &IrType) -> bool {
+        let mut seen_structs = std::collections::HashSet::new();
+        self.const_type_emittable_inner(ty, &mut seen_structs)
+    }
+
+    /// Return whether a constant type can be emitted in generated Rust.
+    fn const_type_emittable_inner(&self, ty: &IrType, seen_structs: &mut std::collections::HashSet<String>) -> bool {
+        match ty {
+            IrType::Int
+            | IrType::Numeric(_)
+            | IrType::Float
+            | IrType::Bool
+            | IrType::StaticStr
+            | IrType::StaticBytes
+            | IrType::FrozenStr
+            | IrType::FrozenBytes => true,
+            IrType::Option(inner) => self.const_type_emittable_inner(inner, seen_structs),
+            IrType::Struct(name) => self.const_struct_type_emittable(name, seen_structs),
+            IrType::Tuple(items) => items
+                .iter()
+                .all(|item| self.const_type_emittable_inner(item, seen_structs)),
+            IrType::NamedGeneric(name, args) if name == collections::as_str(CollectionTypeId::FrozenList) => args
+                .first()
+                .map(|arg| self.const_type_emittable_inner(arg, seen_structs))
+                .unwrap_or(false),
+            IrType::NamedGeneric(name, args) if name == collections::as_str(CollectionTypeId::FrozenSet) => args
+                .first()
+                .map(|arg| self.const_type_emittable_inner(arg, seen_structs))
+                .unwrap_or(false),
+            IrType::NamedGeneric(name, args) if name == collections::as_str(CollectionTypeId::FrozenDict) => {
+                args.first()
+                    .map(|arg| self.const_type_emittable_inner(arg, seen_structs))
+                    .unwrap_or(false)
+                    && args
+                        .get(1)
+                        .map(|arg| self.const_type_emittable_inner(arg, seen_structs))
+                        .unwrap_or(false)
+            }
+            _ => false,
+        }
+    }
+
+    /// Return whether a struct constant can be emitted in generated Rust.
+    fn const_struct_type_emittable(&self, name: &str, seen_structs: &mut std::collections::HashSet<String>) -> bool {
+        if !seen_structs.insert(name.to_string()) {
+            return false;
+        }
+        let emittable = self.struct_constructor_metadata.get(name).is_some_and(|variants| {
+            variants.iter().any(|metadata| {
+                metadata
+                    .field_types
+                    .values()
+                    .all(|field_ty| self.const_type_emittable_inner(field_ty, seen_structs))
+            })
+        });
+        seen_structs.remove(name);
+        emittable
     }
 
     /// RFC 008 const expression shape check (defensive backend guard).
@@ -142,8 +176,11 @@ impl<'a> IrEmitter<'a> {
                 }
                 Ok(())
             }
-            K::Struct { fields, .. } if fields.len() == 1 && fields[0].0.is_empty() => {
-                Self::validate_const_expr_kind(&fields[0].1.kind)
+            K::Struct { fields, .. } => {
+                for (_, field_value) in fields {
+                    Self::validate_const_expr_kind(&field_value.kind)?;
+                }
+                Ok(())
             }
 
             K::Call {

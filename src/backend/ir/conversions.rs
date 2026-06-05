@@ -171,6 +171,7 @@
 
 use super::decl::FunctionParam;
 use super::expr::{BinOp, VarAccess};
+use super::reference_shape::expr_has_rust_reference_shape;
 use super::types::Mutability;
 use super::{IrExpr, IrExprKind, IrType, TypedExpr};
 use crate::numeric_adapters::{ir_type_to_numeric_ty, numeric_op_from_ir, pow_exponent_kind_from_ir};
@@ -518,16 +519,16 @@ fn determine_owned_storage_conversion(expr: &IrExpr, target_ty: Option<&IrType>)
     match (&expr.kind, target_ty) {
         (IrExprKind::String(_), Some(IrType::String)) => Conversion::ToString,
         (IrExprKind::StaticRead { .. }, Some(IrType::String | IrType::Generic(_)))
-            if matches!(expr.ty, IrType::StaticStr) =>
+            if is_borrowed_string_like_type(&expr.ty) =>
         {
             Conversion::ToString
         }
-        (IrExprKind::StaticRead { .. }, None) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
-        (_, Some(IrType::String)) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+        (IrExprKind::StaticRead { .. }, None) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
+        (_, Some(IrType::String)) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
         (IrExprKind::String(_), Some(IrType::Generic(_))) => Conversion::ToString,
-        (_, Some(IrType::Generic(_))) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+        (_, Some(IrType::Generic(_))) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
         (IrExprKind::String(_), None) => Conversion::ToString,
-        (_, None) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+        (_, None) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
         _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
         (IrExprKind::Var { access, .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => match access {
             VarAccess::Move => Conversion::None,
@@ -592,6 +593,16 @@ fn is_result_like_type(ty: &IrType) -> bool {
         }
         _ => false,
     }
+}
+
+/// Return whether a source value has Rust borrowed/static string shape while representing Incan `str`.
+fn is_borrowed_string_like_type(ty: &IrType) -> bool {
+    matches!(ty, IrType::StaticStr | IrType::StrRef | IrType::FrozenStr)
+}
+
+/// Return whether an owned Incan sink needs borrowed/static string materialization.
+fn borrowed_string_like_needs_owned_string(source_ty: &IrType, target_ty: Option<&IrType>) -> bool {
+    is_borrowed_string_like_type(source_ty) && matches!(target_ty, None | Some(IrType::String | IrType::Generic(_)))
 }
 
 /// Whether a value type came from Rust interop and can reasonably cross an Incan `str` boundary via `ToString`.
@@ -684,23 +695,23 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 (IrExprKind::String(_), Some(IrType::String)) => Conversion::ToString,
                 // Static const reads still represent Incan `str` at ordinary call sites.
                 (IrExprKind::StaticRead { .. }, Some(IrType::String | IrType::Generic(_)))
-                    if matches!(expr.ty, IrType::StaticStr) =>
+                    if is_borrowed_string_like_type(&expr.ty) =>
                 {
                     Conversion::ToString
                 }
-                (IrExprKind::StaticRead { .. }, None) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
-                // Const `str` values lower as `&'static str` but still follow Incan owned-string semantics at call
-                // sites.
-                (_, Some(IrType::String)) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                (IrExprKind::StaticRead { .. }, None) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
+                // Const/imported `str` values can lower as borrowed/static Rust string shapes but still follow Incan
+                // owned-string semantics at call sites.
+                (_, Some(IrType::String)) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
                 // String literal to generic type param (e.g. assert_eq[T]) → owned String.
                 // Typechecker constrains `T`; this keeps Incan `str` semantics in generic calls.
                 (IrExprKind::String(_), Some(IrType::Generic(_))) => Conversion::ToString,
                 // Generic `T` instantiated with Incan `str` must still materialize to owned `String`.
-                (_, Some(IrType::Generic(_))) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                (_, Some(IrType::Generic(_))) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
                 // String literal with unknown target (enum variants, etc.) → .to_string()
                 (IrExprKind::String(_), None) => Conversion::ToString,
                 // Const `str` values need the same owned-string materialization when the target is inferred.
-                (_, None) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                (_, None) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
                 // Borrowed method-chain results such as `box.as_ref()` must materialize owned values at Incan call
                 // boundaries.
                 _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
@@ -739,9 +750,12 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
             match (&expr.kind, target_ty) {
                 // String literal → .to_string()
                 (IrExprKind::String(_), _) => Conversion::ToString,
-                (IrExprKind::StaticRead { .. }, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
-                // Const `str` values remain owned `str` at the Incan surface even inside return-context calls.
-                (_, _) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                (IrExprKind::StaticRead { .. }, _) if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) => {
+                    Conversion::ToString
+                }
+                // Const/imported `str` values remain owned `str` at the Incan surface even inside return-context
+                // calls.
+                (_, _) if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) => Conversion::ToString,
                 _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
                 _ if rust_value_needs_stringification(expr, target_ty) => Conversion::ToString,
 
@@ -793,14 +807,30 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 (IrExprKind::Field { .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => {
                     Conversion::Clone
                 }
-                (IrExprKind::Var { .. }, _) if matches!(expr.ty, IrType::String) => Conversion::Borrow,
-                (IrExprKind::Field { .. }, None) if matches!(expr.ty, IrType::String) => Conversion::Borrow,
-                (_, Some(IrType::Ref(_))) if !matches!(expr.ty, IrType::Ref(_) | IrType::RefMut(_)) => {
+                (_, Some(IrType::StrRef))
+                    if matches!(expr.ty, IrType::String) && !expr_has_rust_reference_shape(expr) =>
+                {
                     Conversion::Borrow
                 }
-                (_, Some(IrType::RefMut(_))) if !matches!(expr.ty, IrType::Ref(_) | IrType::RefMut(_)) => {
-                    Conversion::MutBorrow
+                (IrExprKind::Var { .. }, _) if matches!(expr.ty, IrType::String) => {
+                    if expr_has_rust_reference_shape(expr) {
+                        Conversion::None
+                    } else {
+                        Conversion::Borrow
+                    }
                 }
+                (IrExprKind::Field { .. }, None) if matches!(expr.ty, IrType::String) => {
+                    if expr_has_rust_reference_shape(expr) {
+                        Conversion::None
+                    } else {
+                        Conversion::Borrow
+                    }
+                }
+                (_, None) if matches!(expr.ty, IrType::String) && !expr_has_rust_reference_shape(expr) => {
+                    Conversion::Borrow
+                }
+                (_, Some(IrType::Ref(_))) if !expr_has_rust_reference_shape(expr) => Conversion::Borrow,
+                (_, Some(IrType::RefMut(_))) if !expr_has_rust_reference_shape(expr) => Conversion::MutBorrow,
                 // Rust adapter leaves commonly accept borrowed handles (`&Sender<T>`, `&Mutex<T>`, ...).
                 // When metadata is unavailable, do not move non-Copy wrapper fields out of `&self`.
                 (IrExprKind::Field { .. }, None)
@@ -828,11 +858,11 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 // String literal assigned to String variable → .to_string()
                 (IrExprKind::String(_), Some(IrType::String)) => Conversion::ToString,
                 (IrExprKind::StaticRead { .. }, Some(IrType::String | IrType::Generic(_)))
-                    if matches!(expr.ty, IrType::StaticStr) =>
+                    if is_borrowed_string_like_type(&expr.ty) =>
                 {
                     Conversion::ToString
                 }
-                (_, Some(IrType::String)) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                (_, Some(IrType::String)) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
                 _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
                 (IrExprKind::Field { .. }, _)
                     if matches!(expr.ty, IrType::String) && field_read_needs_owned_materialization(expr) =>
@@ -851,10 +881,10 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
             match (&expr.kind, target_ty) {
                 // String literal returned when function returns String → .to_string()
                 (IrExprKind::String(_), Some(IrType::String)) => Conversion::ToString,
-                (IrExprKind::StaticRead { .. }, Some(IrType::String)) if matches!(expr.ty, IrType::StaticStr) => {
+                (IrExprKind::StaticRead { .. }, Some(IrType::String)) if is_borrowed_string_like_type(&expr.ty) => {
                     Conversion::ToString
                 }
-                (_, Some(IrType::String)) if matches!(expr.ty, IrType::StaticStr) => Conversion::ToString,
+                (_, Some(IrType::String)) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
                 _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
                 // Non-Copy vars can move on last use; otherwise materialize an owned return value.
                 (IrExprKind::Var { access, .. }, _) if !expr.ty.is_copy() => match access {
@@ -925,11 +955,11 @@ pub(crate) fn determine_conversion_for_incan_call(
     ) {
         match target_ty {
             Some(IrType::Ref(_)) => match &expr.ty {
-                IrType::Ref(_) | IrType::RefMut(_) => return Conversion::None,
+                _ if expr_has_rust_reference_shape(expr) => return Conversion::None,
                 _ => return Conversion::Borrow,
             },
             Some(IrType::RefMut(_)) => match &expr.ty {
-                IrType::Ref(_) | IrType::RefMut(_) => return Conversion::None,
+                _ if expr_has_rust_reference_shape(expr) => return Conversion::None,
                 _ => return Conversion::MutBorrow,
             },
             _ => {}
@@ -949,7 +979,7 @@ pub(crate) fn determine_conversion_for_incan_call(
 mod tests {
     use super::*;
     use crate::backend::ir::decl::FunctionParam;
-    use crate::backend::ir::expr::{VarAccess, VarRefKind};
+    use crate::backend::ir::expr::{MethodCallArgPolicy, VarAccess, VarRefKind};
     use crate::backend::ir::types::Mutability;
 
     // === IncanFunctionArg Tests ===
@@ -1067,6 +1097,22 @@ mod tests {
     }
 
     #[test]
+    fn test_incan_function_frozen_str_var_to_string() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "s".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::FrozenStr,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
     fn test_incan_function_static_str_var_to_generic() {
         let expr = IrExpr::new(
             IrExprKind::Var {
@@ -1079,6 +1125,22 @@ mod tests {
         let target = IrType::Generic("T".to_string());
 
         let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_assignment_frozen_str_var_to_string() {
+        let expr = IrExpr::new(
+            IrExprKind::Var {
+                name: "s".to_string(),
+                access: VarAccess::Read,
+                ref_kind: VarRefKind::Value,
+            },
+            IrType::FrozenStr,
+        );
+        let target = IrType::String;
+
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::Assignment);
         assert_eq!(conv, Conversion::ToString);
     }
 
@@ -1343,6 +1405,55 @@ mod tests {
 
         let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
         assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_external_function_string_expression_to_str_ref_borrows_issue716() {
+        let expr = IrExpr::new(IrExprKind::Format { parts: Vec::new() }, IrType::String);
+
+        let conv = determine_conversion(&expr, Some(&IrType::StrRef), ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::Borrow);
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(conv, Conversion::Borrow);
+    }
+
+    #[test]
+    fn test_external_function_as_slice_arg_does_not_double_borrow() {
+        let expr = IrExpr::new(
+            IrExprKind::MethodCall {
+                receiver: Box::new(IrExpr::new(
+                    IrExprKind::Var {
+                        name: "data".to_string(),
+                        access: VarAccess::Read,
+                        ref_kind: VarRefKind::Value,
+                    },
+                    IrType::Bytes,
+                )),
+                method: "as_slice".to_string(),
+                dispatch: None,
+                type_args: Vec::new(),
+                args: Vec::new(),
+                callable_signature: None,
+                arg_policy: MethodCallArgPolicy::Default,
+            },
+            IrType::Bytes,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "an explicit as_slice() argument is already a Rust borrow boundary"
+        );
+
+        let target = IrType::Ref(Box::new(IrType::Bytes));
+        let conv = determine_conversion(&expr, Some(&target), ConversionContext::ExternalFunctionArg);
+        assert_eq!(
+            conv,
+            Conversion::None,
+            "an explicit as_slice() argument must not become &&[u8] for ref targets"
+        );
     }
 
     #[test]

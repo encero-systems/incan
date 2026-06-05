@@ -3,6 +3,6 @@ mkdocs-material==9.5.49
 mike==2.1.3
 mkdocs-redirects==1.2.1
 mkdocs-gen-files==0.6.0
-pymdown-extensions==10.21.2
-# PyMdown 10.21.2 handles Pygments 2.20+ when no fence title produces filename=None.
+pymdown-extensions==10.21.3
+# PyMdown 10.21.3 handles Pygments 2.20+ when no fence title produces filename=None.
 pygments==2.20.0

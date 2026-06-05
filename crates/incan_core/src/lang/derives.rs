@@ -33,6 +33,12 @@ pub enum DeriveId {
     Validate,
 }
 
+/// Compiler-generated derive name that emits model/class field metadata.
+pub const FIELD_INFO_DERIVE_NAME: &str = "FieldInfo";
+
+/// Compiler-generated derive name that emits model/class class-name metadata.
+pub const INCAN_CLASS_DERIVE_NAME: &str = "IncanClass";
+
 /// Metadata for a builtin derive.
 pub type DeriveInfo = LangItemInfo<DeriveId>;
 

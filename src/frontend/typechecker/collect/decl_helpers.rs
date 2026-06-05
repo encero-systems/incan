@@ -106,6 +106,7 @@ fn resolve_owner_self_reference(
     }
 }
 
+/// Return declared type parameter names as a set.
 pub(super) fn type_param_name_set(
     owner_type_params: &[TypeParam],
     method_type_params: &[TypeParam],
@@ -117,6 +118,7 @@ pub(super) fn type_param_name_set(
         .collect()
 }
 
+/// Remove type parameters shadowed by inner declarations.
 fn shadow_declared_type_params(ty: ResolvedType, type_param_names: &HashSet<String>) -> ResolvedType {
     match ty {
         ResolvedType::Named(name) | ResolvedType::TypeVar(name) if type_param_names.contains(&name) => {
@@ -164,6 +166,7 @@ fn shadow_declared_type_params(ty: ResolvedType, type_param_names: &HashSet<Stri
     }
 }
 
+/// Resolve a declared source type into a checked type.
 pub(super) fn resolve_declared_type(
     checker: &mut TypeChecker,
     ty: &Spanned<Type>,

@@ -21,6 +21,41 @@ struct Search {
     #[expect(dead_code, reason = "retained for Incan private field semantics")]
     q: String,
 }
+impl incan_stdlib::reflection::HasClassName for Search {
+    fn __class_name__(&self) -> &'static str {
+        <Self as incan_stdlib::reflection::HasTypeClassName>::__class_name__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeClassName for Search {
+    fn __class_name__() -> &'static str {
+        "Search"
+    }
+}
+impl incan_stdlib::reflection::HasFieldMetadata for Search {
+    fn __fields__(
+        &self,
+    ) -> incan_stdlib::frozen::FrozenList<incan_stdlib::reflection::FieldInfo> {
+        <Self as incan_stdlib::reflection::HasTypeFieldMetadata>::__fields__()
+    }
+}
+impl incan_stdlib::reflection::HasTypeFieldMetadata for Search {
+    fn __fields__() -> incan_stdlib::frozen::FrozenList<
+        incan_stdlib::reflection::FieldInfo,
+    > {
+        static __INCAN_FIELDS: [incan_stdlib::reflection::FieldInfo; 1] = [
+            incan_stdlib::reflection::FieldInfo {
+                name: incan_stdlib::frozen::FrozenStr::new("q"),
+                alias: None,
+                description: None,
+                wire_name: incan_stdlib::frozen::FrozenStr::new("q"),
+                type_name: incan_stdlib::frozen::FrozenStr::new("str"),
+                has_default: false,
+                extra: incan_stdlib::frozen::FrozenDict::new(&[]),
+            },
+        ];
+        incan_stdlib::frozen::FrozenList::new(&__INCAN_FIELDS)
+    }
+}
 #[incan_web_macros::route("/snapshot/{id}", method = "GET")]
 async fn snapshot(_: Path<i64>, query: Query<Search>) -> Json<Search> {
     return crate::__incan_std::web::Json(query.value.clone());
