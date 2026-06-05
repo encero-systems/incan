@@ -1197,77 +1197,6 @@ impl<'program> GeneratedUseAnalyzer<'program> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::IrEmitter;
-    use crate::backend::ir::types::{IR_UNION_TYPE_NAME, IrType};
-    use std::collections::HashMap;
-
-    fn union(members: Vec<IrType>) -> IrType {
-        IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), members)
-    }
-
-    fn provider_union() -> IrType {
-        union(vec![IrType::Struct("ProviderColumn".to_string()), IrType::Int])
-    }
-
-    fn external_provider_union() -> IrType {
-        IrType::ExternalUnion {
-            library: "provider".to_string(),
-            union: Box::new(provider_union()),
-        }
-    }
-
-    fn local_union() -> IrType {
-        union(vec![IrType::Struct("LocalValue".to_string()), IrType::String])
-    }
-
-    #[test]
-    fn external_union_coverage_requires_all_compound_slots_to_match() {
-        assert!(IrEmitter::target_external_union_covers_expr(
-            &IrType::Tuple(vec![external_provider_union(), external_provider_union()]),
-            &IrType::Tuple(vec![provider_union(), provider_union()])
-        ));
-        assert!(!IrEmitter::target_external_union_covers_expr(
-            &IrType::Tuple(vec![external_provider_union(), IrType::String]),
-            &IrType::Tuple(vec![provider_union(), local_union()])
-        ));
-        assert!(!IrEmitter::target_external_union_covers_expr(
-            &IrType::Dict(Box::new(external_provider_union()), Box::new(IrType::String)),
-            &IrType::Dict(Box::new(provider_union()), Box::new(local_union()))
-        ));
-        assert!(!IrEmitter::target_external_union_covers_expr(
-            &IrType::Result(Box::new(external_provider_union()), Box::new(IrType::String)),
-            &IrType::Result(Box::new(provider_union()), Box::new(local_union()))
-        ));
-    }
-
-    #[test]
-    fn targeted_union_collection_keeps_uncovered_local_compound_slots() -> Result<(), String> {
-        let target = IrType::Tuple(vec![external_provider_union(), IrType::String]);
-        let expr_ty = IrType::Tuple(vec![provider_union(), local_union()]);
-        let mut collected = HashMap::new();
-
-        IrEmitter::collect_union_types_from_type_for_target(&expr_ty, Some(&target), &mut collected);
-        let provider_name = provider_union()
-            .union_type_name()
-            .ok_or("provider union should have a generated name")?;
-        let local_name = local_union()
-            .union_type_name()
-            .ok_or("local union should have a generated name")?;
-
-        assert!(
-            !collected.contains_key(&provider_name),
-            "provider-owned union should not be re-collected locally"
-        );
-        assert!(
-            collected.contains_key(&local_name),
-            "uncovered local union sibling should still be collected"
-        );
-        Ok(())
-    }
-}
-
 impl<'a> IrEmitter<'a> {
     /// Collect imported static bindings that need generated init calls.
     fn collect_imported_static_init_bindings(&self, declarations: &[&IrDecl]) -> (HashSet<String>, Vec<String>) {
@@ -3224,5 +3153,76 @@ impl<'a> IrEmitter<'a> {
                 .reachable_items
                 .contains(&impl_block.target_type),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::IrEmitter;
+    use crate::backend::ir::types::{IR_UNION_TYPE_NAME, IrType};
+    use std::collections::HashMap;
+
+    fn union(members: Vec<IrType>) -> IrType {
+        IrType::NamedGeneric(IR_UNION_TYPE_NAME.to_string(), members)
+    }
+
+    fn provider_union() -> IrType {
+        union(vec![IrType::Struct("ProviderColumn".to_string()), IrType::Int])
+    }
+
+    fn external_provider_union() -> IrType {
+        IrType::ExternalUnion {
+            library: "provider".to_string(),
+            union: Box::new(provider_union()),
+        }
+    }
+
+    fn local_union() -> IrType {
+        union(vec![IrType::Struct("LocalValue".to_string()), IrType::String])
+    }
+
+    #[test]
+    fn external_union_coverage_requires_all_compound_slots_to_match() {
+        assert!(IrEmitter::target_external_union_covers_expr(
+            &IrType::Tuple(vec![external_provider_union(), external_provider_union()]),
+            &IrType::Tuple(vec![provider_union(), provider_union()])
+        ));
+        assert!(!IrEmitter::target_external_union_covers_expr(
+            &IrType::Tuple(vec![external_provider_union(), IrType::String]),
+            &IrType::Tuple(vec![provider_union(), local_union()])
+        ));
+        assert!(!IrEmitter::target_external_union_covers_expr(
+            &IrType::Dict(Box::new(external_provider_union()), Box::new(IrType::String)),
+            &IrType::Dict(Box::new(provider_union()), Box::new(local_union()))
+        ));
+        assert!(!IrEmitter::target_external_union_covers_expr(
+            &IrType::Result(Box::new(external_provider_union()), Box::new(IrType::String)),
+            &IrType::Result(Box::new(provider_union()), Box::new(local_union()))
+        ));
+    }
+
+    #[test]
+    fn targeted_union_collection_keeps_uncovered_local_compound_slots() -> Result<(), String> {
+        let target = IrType::Tuple(vec![external_provider_union(), IrType::String]);
+        let expr_ty = IrType::Tuple(vec![provider_union(), local_union()]);
+        let mut collected = HashMap::new();
+
+        IrEmitter::collect_union_types_from_type_for_target(&expr_ty, Some(&target), &mut collected);
+        let provider_name = provider_union()
+            .union_type_name()
+            .ok_or("provider union should have a generated name")?;
+        let local_name = local_union()
+            .union_type_name()
+            .ok_or("local union should have a generated name")?;
+
+        assert!(
+            !collected.contains_key(&provider_name),
+            "provider-owned union should not be re-collected locally"
+        );
+        assert!(
+            collected.contains_key(&local_name),
+            "uncovered local union sibling should still be collected"
+        );
+        Ok(())
     }
 }

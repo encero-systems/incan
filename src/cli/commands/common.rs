@@ -29,8 +29,8 @@ use crate::frontend::module::{
 };
 use crate::frontend::{ast_walk, diagnostics, lexer, parser, typechecker, vocab_desugar_pass};
 use crate::lockfile::CargoFeatureSelection;
-use crate::manifest::ProjectManifest;
 use crate::manifest::{DependencySource, DependencySpec};
+use crate::manifest::{MANIFEST_FILENAME, ProjectManifest};
 use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig};
@@ -293,7 +293,9 @@ fn prepare_missing_library_dependency_artifacts(manifest: &ProjectManifest) -> C
         let Some(LibraryManifestIndexEntry::Failed(failure)) = initial_index.get(dependency_key) else {
             continue;
         };
-        if failure.kind == LibraryManifestFailureKind::ArtifactMissing {
+        if failure.kind == LibraryManifestFailureKind::ArtifactMissing
+            && dependency.path.join(MANIFEST_FILENAME).is_file()
+        {
             missing.push((dependency_key.clone(), dependency.path.clone()));
         }
     }
