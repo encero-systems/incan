@@ -530,6 +530,16 @@ impl<'a> IrEmitter<'a> {
             .and_then(Self::external_union_qualifier_for_type);
         let target_union_qualifier = target_type_union_qualifier.as_deref().or(target_union_qualifier);
         if let Some(target_ty) = resolved_target_ty.as_ref() {
+            match (&expr.kind, target_ty) {
+                (IrExprKind::String(value), IrType::FrozenStr) => {
+                    return Ok(quote! { incan_stdlib::frozen::FrozenStr::new(#value) });
+                }
+                (IrExprKind::Bytes(bytes), IrType::FrozenBytes) => {
+                    let lit = Literal::byte_string(bytes);
+                    return Ok(quote! { incan_stdlib::frozen::FrozenBytes::new(#lit) });
+                }
+                _ => {}
+            }
             if let Some(wrapped) =
                 self.emit_union_payload_arg_for_site(expr, target_ty, target_union_qualifier, site)?
             {
@@ -991,10 +1001,18 @@ impl<'a> IrEmitter<'a> {
                 .map_err(|err| EmitError::SynParse(format!("invalid integer literal `{repr}`: {err}"))),
             IrExprKind::Float(n) => Ok(quote! { #n }),
             IrExprKind::Decimal(repr) => Ok(quote! { incan_stdlib::num::Decimal128::from_literal(#repr) }),
-            IrExprKind::String(s) => Ok(quote! { #s }),
+            IrExprKind::String(s) => {
+                if matches!(expr.ty, IrType::FrozenStr) {
+                    Ok(quote! { incan_stdlib::frozen::FrozenStr::new(#s) })
+                } else {
+                    Ok(quote! { #s })
+                }
+            }
             IrExprKind::Bytes(bytes) => {
                 let lit = Literal::byte_string(bytes);
-                if matches!(expr.ty, IrType::StaticBytes | IrType::FrozenBytes) {
+                if matches!(expr.ty, IrType::FrozenBytes) {
+                    Ok(quote! { incan_stdlib::frozen::FrozenBytes::new(#lit) })
+                } else if matches!(expr.ty, IrType::StaticBytes) {
                     Ok(lit.to_token_stream())
                 } else {
                     Ok(quote! { #lit.to_vec() })
@@ -2251,6 +2269,30 @@ mod tests {
         assert!(
             rendered.contains("right_provider :: __IncanUnion") && !rendered.contains("wrong_provider"),
             "expected nested target type to own union qualifier, got `{rendered}`"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn target_aware_emission_materializes_spanless_frozen_str_literals() -> Result<(), String> {
+        let registry = FunctionRegistry::new();
+        let emitter = IrEmitter::new(&registry);
+        let expr = TypedExpr::new(IrExprKind::String("policy".to_string()), IrType::String);
+
+        let emitted = emitter
+            .emit_expr_for_use(
+                &expr,
+                ValueUseSite::IncanCallArg {
+                    target_ty: Some(&IrType::FrozenStr),
+                    callee_param: None,
+                    in_return: true,
+                },
+            )
+            .map_err(|err| format!("expected successful frozen literal emission, got {err:?}"))?;
+        let rendered = emitted.to_string();
+        assert_eq!(
+            rendered, "incan_stdlib :: frozen :: FrozenStr :: new (\"policy\")",
+            "expected target-aware frozen wrapper emission, got `{rendered}`"
         );
         Ok(())
     }

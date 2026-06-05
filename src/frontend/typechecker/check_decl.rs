@@ -2116,7 +2116,12 @@ impl TypeChecker {
         };
         for arg in &partial.args {
             self.validate_top_level_partial_preset(arg);
-            let actual = self.check_expr(&arg.value);
+            let expected = info
+                .params
+                .iter()
+                .find(|param| param.name() == Some(arg.name.as_str()))
+                .map(|param| &param.ty);
+            let actual = self.check_expr_with_expected(&arg.value, expected);
             if let Some(param) = info.params.iter().find(|param| param.name() == Some(arg.name.as_str()))
                 && !self.types_compatible(&actual, &param.ty)
             {

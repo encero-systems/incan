@@ -10,7 +10,9 @@ use crate::frontend::symbols::*;
 use crate::frontend::typechecker::helpers::freeze_const_type;
 use incan_core::lang::decorators::{self as core_decorators, DecoratorId};
 
-use super::{FunctionBindingInfo, TypeChecker};
+use super::{
+    FunctionBindingInfo, PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, TypeChecker,
+};
 
 mod decl_helpers;
 pub(super) mod decorators;
@@ -257,6 +259,7 @@ impl TypeChecker {
             ));
             return;
         };
+        let target_kind = Self::partial_projection_target_kind(&kind);
         let Some((params, return_type, is_async, type_params, type_param_bounds, type_param_bound_details)) =
             Self::partial_callable_signature_from_kind(&partial.target.segments, kind)
         else {
@@ -288,6 +291,19 @@ impl TypeChecker {
             span,
             scope: 0,
         });
+        self.type_info.record_partial_projection(PartialProjectionInfo {
+            name: partial.name.clone(),
+            target_path: partial.target.segments.clone(),
+            target_kind,
+            presets: partial
+                .args
+                .iter()
+                .map(|arg| PartialProjectionPreset {
+                    name: arg.name.clone(),
+                    value: arg.value.clone(),
+                })
+                .collect(),
+        });
     }
 
     /// Resolve the callable surface that a top-level partial declaration projects from an already-resolved symbol.
@@ -302,7 +318,7 @@ impl TypeChecker {
                 info.type_param_bound_details,
             )),
             SymbolKind::Type(TypeInfo::Model(info)) => Some((
-                Self::constructor_params_from_fields(&info.fields),
+                Self::constructor_params_from_fields(&info.fields, &info.field_order),
                 ResolvedType::Named(segments.last()?.clone()),
                 false,
                 info.type_params,
@@ -310,7 +326,7 @@ impl TypeChecker {
                 HashMap::new(),
             )),
             SymbolKind::Type(TypeInfo::Class(info)) => Some((
-                Self::constructor_params_from_fields(&info.fields),
+                Self::constructor_params_from_fields(&info.fields, &info.field_order),
                 ResolvedType::Named(segments.last()?.clone()),
                 false,
                 info.type_params,
@@ -329,15 +345,43 @@ impl TypeChecker {
         }
     }
 
+    /// Classify a resolved partial target for downstream projection consumers.
+    fn partial_projection_target_kind(kind: &SymbolKind) -> PartialProjectionTargetKind {
+        match kind {
+            SymbolKind::Function(_) | SymbolKind::FunctionOverloads(_) => PartialProjectionTargetKind::Function,
+            SymbolKind::Type(TypeInfo::Model(_)) => PartialProjectionTargetKind::ModelConstructor,
+            SymbolKind::Type(TypeInfo::Class(_)) => PartialProjectionTargetKind::ClassConstructor,
+            SymbolKind::Type(TypeInfo::Newtype(_)) => PartialProjectionTargetKind::NewtypeConstructor,
+            _ => PartialProjectionTargetKind::Unknown,
+        }
+    }
+
     /// Convert collected field metadata into constructor callable parameters.
-    fn constructor_params_from_fields(fields: &HashMap<String, FieldInfo>) -> Vec<CallableParam> {
-        let mut params: Vec<_> = fields
+    fn constructor_params_from_fields(
+        fields: &HashMap<String, FieldInfo>,
+        field_order: &[String],
+    ) -> Vec<CallableParam> {
+        let mut used = HashSet::new();
+        let mut params = Vec::with_capacity(fields.len());
+        for name in field_order {
+            if let Some(info) = fields.get(name) {
+                used.insert(name.as_str());
+                params.push(CallableParam::named_with_default(
+                    name.clone(),
+                    info.ty.clone(),
+                    ParamKind::Normal,
+                    info.has_default,
+                ));
+            }
+        }
+        let mut remaining = fields
             .iter()
-            .map(|(name, info)| {
-                CallableParam::named_with_default(name.clone(), info.ty.clone(), ParamKind::Normal, info.has_default)
-            })
-            .collect();
-        params.sort_by(|a, b| a.name().cmp(&b.name()));
+            .filter(|(name, _)| !used.contains(name.as_str()))
+            .collect::<Vec<_>>();
+        remaining.sort_by_key(|(name, _)| *name);
+        params.extend(remaining.into_iter().map(|(name, info)| {
+            CallableParam::named_with_default(name.clone(), info.ty.clone(), ParamKind::Normal, info.has_default)
+        }));
         params
     }
 
@@ -500,6 +544,7 @@ impl TypeChecker {
                 trait_adoptions,
                 derives,
                 fields,
+                field_order,
                 properties,
                 methods,
                 method_overloads,
@@ -516,6 +561,11 @@ impl TypeChecker {
 
         // Add own fields (can override inherited ones)
         fields.extend(collect_fields(&class.fields, self, &class.name, &class.type_params));
+        let field_order = class
+            .fields
+            .iter()
+            .map(|field| field.node.name.clone())
+            .collect::<Vec<_>>();
         properties.extend(collect_properties(
             &class.properties,
             self,
@@ -545,6 +595,7 @@ impl TypeChecker {
                 trait_adoptions,
                 derives,
                 fields,
+                field_order,
                 properties,
                 methods,
                 method_overloads,

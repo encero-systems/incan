@@ -10,13 +10,14 @@
 
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::{CompileError, errors};
+use crate::frontend::partial_projection::{PartialPresetRef, merge_named_partial_args};
 use crate::frontend::symbols::{ResolvedType, SymbolKind, TypeInfo};
 use crate::numeric_adapters::{numeric_op_from_ast, numeric_ty_from_resolved, pow_exponent_kind_from_ast};
 use incan_core::lang::types::numerics::NumericTypeId;
 use incan_core::strings::{self, StringAccessError};
 use incan_core::{NumericTy, result_numeric_type};
 
-use super::TypeChecker;
+use super::{PartialProjectionTargetKind, TypeChecker};
 use crate::frontend::typechecker::helpers::{
     freeze_const_type, frozen_bytes_ty, frozen_str_ty, is_frozen_str, is_intlike_for_index, is_str_like,
 };
@@ -798,6 +799,18 @@ impl TypeChecker {
                 {
                     return self.eval_const_model_constructor(callee_name, args, expected, stack, decl_span, expr.span);
                 }
+                if let Expr::Ident(callee_name) = &callee.node
+                    && let Some(result) = self.eval_const_partial_constructor_call(
+                        callee_name,
+                        args,
+                        expected,
+                        stack,
+                        decl_span,
+                        expr.span,
+                    )
+                {
+                    return Some(result);
+                }
 
                 let Some(ResolvedType::Named(expected_name)) = expected else {
                     self.errors.push(errors::const_expression_not_allowed(expr.span));
@@ -878,6 +891,31 @@ impl TypeChecker {
     fn is_const_model_constructor_name(&self, name: &str) -> bool {
         self.lookup_type_info(name)
             .is_some_and(|info| matches!(info, TypeInfo::Model(_)))
+    }
+
+    /// Evaluate a model-constructor partial call inside a const initializer.
+    fn eval_const_partial_constructor_call(
+        &mut self,
+        callee_name: &str,
+        args: &[CallArg],
+        expected: Option<&ResolvedType>,
+        stack: &mut Vec<String>,
+        decl_span: Span,
+        call_span: Span,
+    ) -> Option<ConstEvalResult> {
+        let projection = self.type_info.partial_projection(callee_name)?.clone();
+        if projection.target_kind != PartialProjectionTargetKind::ModelConstructor {
+            return None;
+        }
+        let target_name = projection.target_path.last()?;
+        let merged_args = merge_named_partial_args(
+            projection.presets.iter().map(|preset| PartialPresetRef {
+                name: preset.name.as_str(),
+                value: &preset.value,
+            }),
+            args,
+        )?;
+        self.eval_const_model_constructor(target_name, &merged_args, expected, stack, decl_span, call_span)
     }
 
     /// Evaluate a model constructor in a const initializer.

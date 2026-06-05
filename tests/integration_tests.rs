@@ -10508,6 +10508,259 @@ mod rfc031_pub_import_integration_tests {
     }
 
     #[test]
+    fn boundary_parity_preserves_dependency_owned_union_helpers_through_facade()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("boundarykit_provider");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"boundarykit\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/exprs.incn"),
+            r#"@derive(Clone)
+pub model ColumnRefExpr:
+  name: str
+
+@derive(Clone)
+pub model SortExpr:
+  direction: str
+
+pub type ColumnExpr = Union[ColumnRefExpr, SortExpr]
+
+@derive(Clone)
+pub class Frame:
+  def order_by(self, columns: list[ColumnExpr]) -> Self:
+    return self
+
+pub def frame() -> Frame:
+  return Frame()
+
+pub def col(name: str) -> ColumnRefExpr:
+  return ColumnRefExpr(name=name)
+
+pub def desc(expr: ColumnExpr) -> ColumnExpr:
+  return SortExpr(direction="desc")
+"#,
+        )?;
+        std::fs::write(
+            producer_root.join("src/facade.incn"),
+            "pub from exprs import ColumnExpr, ColumnRefExpr, SortExpr, Frame, frame, col, desc\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub from facade import ColumnExpr, ColumnRefExpr, SortExpr, Frame, frame, col, desc\n",
+        )?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected boundarykit provider library build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+
+        let consumer_root = tmp.path().join("consumer");
+        let main_path = write_project_files(
+            &consumer_root,
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nboundarykit = { path = \"../boundarykit_provider\" }\n",
+            r#"from pub::boundarykit import Frame, frame
+from pub::boundarykit import col as __incan_vocab_helper_boundarykit_col
+from pub::boundarykit import desc as __incan_vocab_helper_boundarykit_desc
+
+def main() -> None:
+  ordered: Frame = frame().order_by([
+    __incan_vocab_helper_boundarykit_desc(__incan_vocab_helper_boundarykit_col("amount"))
+  ])
+  ordered.order_by([])
+"#,
+        )?;
+
+        let out_dir = consumer_root.join("out");
+        let consumer_build = run_build(&main_path, &out_dir)?;
+        let generated_main = std::fs::read_to_string(out_dir.join("src/main.rs"))?;
+        assert!(
+            consumer_build.status.success(),
+            "expected boundary parity consumer build to preserve dependency-owned union identity.\ngenerated main.rs:\n{}\nstdout:\n{}\nstderr:\n{}",
+            generated_main,
+            String::from_utf8_lossy(&consumer_build.stdout),
+            String::from_utf8_lossy(&consumer_build.stderr)
+        );
+        assert!(
+            !generated_main.contains("pub enum __IncanUnion"),
+            "consumer must not re-own provider anonymous unions.\ngenerated main.rs:\n{generated_main}"
+        );
+        assert!(
+            generated_main.contains("boundarykit::__IncanUnion"),
+            "expected public helper calls to use provider-qualified union wrappers.\ngenerated main.rs:\n{generated_main}"
+        );
+
+        Ok(())
+    }
+
+    #[test]
+    fn boundary_parity_preserves_decorated_alias_partial_identity_through_facade()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
+        let producer_root = tmp.path().join("callkit_provider");
+        std::fs::create_dir_all(producer_root.join("src"))?;
+        std::fs::write(
+            producer_root.join("incan.toml"),
+            "[project]\nname = \"callkit\"\nversion = \"0.1.0\"\n",
+        )?;
+        std::fs::write(
+            producer_root.join("src/registry.incn"),
+            r#"pub model FunctionSpec:
+  namespace: str
+  name: str
+  deterministic: bool
+
+pub static registered_names: list[str] = []
+pub static registered_specs: list[FunctionSpec] = []
+
+pub deterministic_spec = partial FunctionSpec(namespace="core", deterministic=true)
+
+pub def register[F](spec: FunctionSpec) -> ((F) -> F):
+  registered_specs.append(spec)
+  return (func) => capture[F](func)
+
+def capture[F](func: F) -> F:
+  registered_names.append(func.__name__)
+  return func
+
+@register(deterministic_spec(name="scale"))
+pub def scale(value: int) -> int:
+  return value * 2
+
+pub scale_alias = alias scale
+
+pub def registered_count() -> int:
+  return len(registered_names)
+
+pub def registered_name(index: int) -> str:
+  return registered_names[index]
+
+pub def registered_spec_name(index: int) -> str:
+  return registered_specs[index].name
+"#,
+        )?;
+        std::fs::write(
+            producer_root.join("src/facade.incn"),
+            r#"pub from registry import FunctionSpec, deterministic_spec, registered_count, registered_name, registered_spec_name, scale, scale_alias
+"#,
+        )?;
+        std::fs::write(
+            producer_root.join("src/lib.incn"),
+            "pub from facade import FunctionSpec, deterministic_spec, registered_count, registered_name, registered_spec_name, scale, scale_alias\n",
+        )?;
+
+        let producer_build = run_build_lib(&producer_root)?;
+        assert!(
+            producer_build.status.success(),
+            "expected callkit provider library build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&producer_build.stdout),
+            String::from_utf8_lossy(&producer_build.stderr)
+        );
+
+        let consumer_root = tmp.path().join("consumer");
+        let main_path = write_project_files(
+            &consumer_root,
+            "[project]\nname = \"consumer\"\n\n[dependencies]\ncallkit = { path = \"../callkit_provider\" }\n",
+            r#"from pub::callkit import registered_count, registered_name, registered_spec_name, scale, scale_alias
+
+def main() -> None:
+  assert scale(3) == 6
+  assert scale_alias(4) == 8
+  assert registered_count() == 1
+  assert registered_name(0) == "scale"
+  assert registered_spec_name(0) == "scale"
+"#,
+        )?;
+
+        let consumer_check = run_check(&main_path)?;
+        assert!(
+            consumer_check.status.success(),
+            "expected decorated alias partial identity consumer check to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_check.stdout),
+            String::from_utf8_lossy(&consumer_check.stderr)
+        );
+        let out_dir = consumer_root.join("out");
+        let consumer_build = run_build(&main_path, &out_dir)?;
+        assert!(
+            consumer_build.status.success(),
+            "expected decorated alias partial identity consumer build to succeed.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&consumer_build.stdout),
+            String::from_utf8_lossy(&consumer_build.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn boundary_parity_activates_dependency_vocab_across_check_fmt_and_test() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let tmp = tempfile::tempdir()?;
+        write_pub_library_with_provider_requirements_and_assert_keyword(
+            tmp.path(),
+            "widgets",
+            "widgets_core",
+            Vec::new(),
+            Vec::new(),
+        )?;
+
+        let consumer_root = tmp.path().join("consumer");
+        std::fs::create_dir_all(consumer_root.join("src"))?;
+        std::fs::create_dir_all(consumer_root.join("tests"))?;
+        std::fs::write(
+            consumer_root.join("incan.toml"),
+            "[project]\nname = \"consumer\"\n\n[dependencies]\nwidgets = { path = \"../deps/widgets\" }\n",
+        )?;
+        let main_path = consumer_root.join("src/main.incn");
+        std::fs::write(
+            &main_path,
+            r#"import pub::widgets
+
+
+def main() -> None:
+    assert true
+"#,
+        )?;
+        let test_path = consumer_root.join("tests/test_vocab.incn");
+        std::fs::write(
+            &test_path,
+            r#"import pub::widgets
+
+
+def test_external_vocab_assert_keyword() -> None:
+    assert true
+"#,
+        )?;
+
+        let check_output = run_check(&main_path)?;
+        assert!(
+            check_output.status.success(),
+            "expected dependency vocab to activate for --check.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&check_output.stdout),
+            String::from_utf8_lossy(&check_output.stderr)
+        );
+        let fmt_check_output = run_fmt_check(&consumer_root.join("src"))?;
+        assert!(
+            fmt_check_output.status.success(),
+            "expected dependency vocab to activate for fmt --check.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&fmt_check_output.stdout),
+            String::from_utf8_lossy(&fmt_check_output.stderr)
+        );
+        let test_output = run_test(&consumer_root.join("tests"))?;
+        assert!(
+            test_output.status.success(),
+            "expected dependency vocab to activate for incan test.\nstdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&test_output.stdout),
+            String::from_utf8_lossy(&test_output.stderr)
+        );
+        Ok(())
+    }
+
+    #[test]
     fn build_keeps_return_context_string_literal_union_arg_as_union_value() -> Result<(), Box<dyn std::error::Error>> {
         let tmp = tempfile::tempdir()?;
         let project_root = tmp.path().join("return_context_union_arg");

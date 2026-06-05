@@ -56,10 +56,10 @@ mod validate_rust_module;
 pub use const_eval::ConstValue;
 pub use type_info::{
     ComputedPropertyAccessInfo, DecoratedFunctionBindingInfo, DecoratedMethodBindingInfo, FixedUnpackPlan,
-    FunctionBindingInfo, IdentKind, ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch,
-    ResolvedOperatorCall, ResolvedOperatorKind, RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo,
-    TestingFixtureInfo, TypeCheckInfo, ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode,
-    ValidatedNewtypeCoercionStep,
+    FunctionBindingInfo, IdentKind, PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind,
+    ProtocolIterationInfo, ResolvedMethodCall, ResolvedMethodDispatch, ResolvedOperatorCall, ResolvedOperatorKind,
+    RustArgCoercionInfo, RustArgCoercionKind, StaticBindingInfo, TestingFixtureInfo, TypeCheckInfo,
+    ValidatedNewtypeCoercionInfo, ValidatedNewtypeCoercionMode, ValidatedNewtypeCoercionStep,
 };
 #[cfg(test)]
 mod tests;
@@ -209,12 +209,19 @@ pub struct TypeChecker {
     /// Direct source imports use this map before falling back to ambient symbol lookup so `from module import name as
     /// alias` binds `module.name`, not an unrelated same-name symbol imported earlier from a sibling dependency.
     pub(crate) dependency_member_symbols: HashMap<String, HashMap<String, SymbolKind>>,
+    /// Exact source-module partial projection metadata collected from dependencies, keyed by canonical module name.
+    ///
+    /// Source imports must preserve the callable projection, not only the callable signature, so const evaluation and
+    /// lowering see the same partial preset semantics on both sides of an import or facade boundary.
+    pub(crate) dependency_member_partial_projections: HashMap<String, HashMap<String, PartialProjectionInfo>>,
     /// Module-owned direct dependency members captured while that module is being imported.
     ///
     /// Dependency re-export refresh runs after all modules have been imported, when the ambient symbol table may
     /// contain unrelated same-name declarations from sibling modules. Direct members must therefore come from this
     /// per-module snapshot rather than a later global `lookup_symbol(...)`.
     pub(crate) dependency_direct_member_symbols: HashMap<String, HashMap<String, SymbolKind>>,
+    /// Module-owned direct partial projection metadata captured while that module is being imported.
+    pub(crate) dependency_direct_member_partial_projections: HashMap<String, HashMap<String, PartialProjectionInfo>>,
     /// RFC 024 derivable-module metadata from imported source modules, keyed by module path.
     pub(crate) dependency_derivable_modules: HashMap<String, Vec<String>>,
     /// RFC 024/user-module trait metadata from imported source modules, keyed by module-qualified trait name.
@@ -339,7 +346,9 @@ impl TypeChecker {
             type_info: TypeCheckInfo::default(),
             dependency_exports: HashMap::new(),
             dependency_member_symbols: HashMap::new(),
+            dependency_member_partial_projections: HashMap::new(),
             dependency_direct_member_symbols: HashMap::new(),
+            dependency_direct_member_partial_projections: HashMap::new(),
             dependency_derivable_modules: HashMap::new(),
             dependency_module_traits: HashMap::new(),
             dependency_trait_rust_derive_paths: HashMap::new(),
@@ -3666,6 +3675,7 @@ impl TypeChecker {
     /// Cache exact member symbols exported by one dependency module for source `from ... import ...` resolution.
     fn cache_dependency_member_symbols(&mut self, module_name: &str, module_ast: &Program, public_only: bool) {
         let mut member_symbols = HashMap::new();
+        let mut member_projections = HashMap::new();
         if let Some(direct_symbols) = self.dependency_direct_member_symbols.get(module_name) {
             member_symbols.extend(direct_symbols.clone());
         } else {
@@ -3674,25 +3684,40 @@ impl TypeChecker {
                 member_symbols.extend(direct_symbols.clone());
             }
         }
+        if let Some(direct_projections) = self.dependency_direct_member_partial_projections.get(module_name) {
+            member_projections.extend(direct_projections.clone());
+        }
         for (exported_name, module, item_name) in Self::dependency_source_reexport_targets(module_ast) {
             if let Some(kind) = self.dependency_member_symbol_for_path(&module, &item_name) {
-                member_symbols.insert(exported_name, kind);
+                member_symbols.insert(exported_name.clone(), kind);
+            }
+            if let Some(mut projection) = self.dependency_member_partial_projection_for_path(&module, &item_name) {
+                projection.name.clone_from(&exported_name);
+                member_projections.insert(exported_name, projection);
             }
         }
         self.dependency_member_symbols
             .insert(module_name.to_string(), member_symbols);
+        self.dependency_member_partial_projections
+            .insert(module_name.to_string(), member_projections);
     }
 
     /// Cache direct declarations owned by one dependency module.
     fn cache_dependency_direct_member_symbols(&mut self, module_name: &str, module_ast: &Program, public_only: bool) {
         let mut direct_symbols = HashMap::new();
+        let mut direct_projections = HashMap::new();
         for name in Self::dependency_direct_member_names(module_ast, public_only) {
             if let Some(symbol) = self.lookup_symbol(name.as_str()) {
-                direct_symbols.insert(name, symbol.kind.clone());
+                direct_symbols.insert(name.clone(), symbol.kind.clone());
+            }
+            if let Some(projection) = self.type_info.partial_projection(&name) {
+                direct_projections.insert(name, projection.clone());
             }
         }
         self.dependency_direct_member_symbols
             .insert(module_name.to_string(), direct_symbols);
+        self.dependency_direct_member_partial_projections
+            .insert(module_name.to_string(), direct_projections);
     }
 
     /// Return direct declaration names owned by a dependency module, excluding import re-exports.
@@ -3771,6 +3796,22 @@ impl TypeChecker {
         }
         let module_name = canonicalize_source_module_segments(&module.segments).join("_");
         self.dependency_member_symbols
+            .get(&module_name)?
+            .get(item_name)
+            .cloned()
+    }
+
+    /// Return the exact partial projection metadata for one dependency module member path.
+    pub(crate) fn dependency_member_partial_projection_for_path(
+        &self,
+        module: &ImportPath,
+        item_name: &str,
+    ) -> Option<PartialProjectionInfo> {
+        if module.parent_levels > 0 || module.segments.is_empty() {
+            return None;
+        }
+        let module_name = canonicalize_source_module_segments(&module.segments).join("_");
+        self.dependency_member_partial_projections
             .get(&module_name)?
             .get(item_name)
             .cloned()
@@ -3907,6 +3948,7 @@ impl TypeChecker {
                         trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
+                        field_order: Vec::new(),
                         properties: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),
@@ -3926,6 +3968,7 @@ impl TypeChecker {
                         trait_adoptions: Vec::new(),
                         derives: Vec::new(),
                         fields: HashMap::new(),
+                        field_order: Vec::new(),
                         properties: HashMap::new(),
                         methods: HashMap::new(),
                         method_overloads: HashMap::new(),
@@ -4028,7 +4071,9 @@ impl TypeChecker {
     ) -> Result<(), Vec<CompileError>> {
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
+        self.dependency_member_partial_projections.clear();
         self.dependency_direct_member_symbols.clear();
+        self.dependency_direct_member_partial_projections.clear();
         self.dependency_derivable_modules.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
@@ -4065,7 +4110,9 @@ impl TypeChecker {
         // Skip populating dependency exports so visibility checks are bypassed.
         self.dependency_exports.clear();
         self.dependency_member_symbols.clear();
+        self.dependency_member_partial_projections.clear();
         self.dependency_direct_member_symbols.clear();
+        self.dependency_direct_member_partial_projections.clear();
         self.dependency_derivable_modules.clear();
         self.dependency_module_traits.clear();
         self.dependency_trait_rust_derive_paths.clear();
@@ -4475,14 +4522,28 @@ impl TypeChecker {
             (ResolvedType::Ref(a), ResolvedType::Ref(b))
             | (ResolvedType::RefMut(a), ResolvedType::Ref(b))
             | (ResolvedType::RefMut(a), ResolvedType::RefMut(b)) => self.types_compatible(a, b),
-            (ResolvedType::FrozenStr, ResolvedType::Str | ResolvedType::FrozenStr) => true,
+            // Frozen const-eval values are compatible with their frozen wrappers. Ordinary runtime strings do not
+            // implicitly become frozen values here; const-eval is responsible for freezing literal values first.
+            (ResolvedType::FrozenStr, ResolvedType::FrozenStr) => true,
+            (ResolvedType::FrozenStr, ResolvedType::Named(name))
+                if stringlike_type_id(name.as_str()) == Some(StringLikeId::FrozenStr) =>
+            {
+                true
+            }
             // `FrozenStr` is a read-only string wrapper; allow it where `str` is expected.
+            (ResolvedType::FrozenStr, ResolvedType::Str) => true,
             (ResolvedType::Named(name), ResolvedType::Str)
                 if stringlike_type_id(name.as_str()) == Some(StringLikeId::FrozenStr) =>
             {
                 true
             }
-            (ResolvedType::FrozenBytes, ResolvedType::Bytes | ResolvedType::FrozenBytes) => true,
+            (ResolvedType::FrozenBytes, ResolvedType::FrozenBytes) => true,
+            (ResolvedType::FrozenBytes, ResolvedType::Named(name))
+                if stringlike_type_id(name.as_str()) == Some(StringLikeId::FrozenBytes) =>
+            {
+                true
+            }
+            (ResolvedType::FrozenBytes, ResolvedType::Bytes) => true,
             // `bytes` and `list[u8]` share the same owned representation. This lets APIs use collection helpers
             // such as `list.repeat` when constructing byte buffers without falling back to manual Vec assembly.
             (ResolvedType::Generic(name, args), ResolvedType::Bytes)

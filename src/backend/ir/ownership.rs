@@ -243,9 +243,7 @@ impl ArgumentPassingPlan {
     /// Plan one argument at the given use site.
     pub fn for_use_site(expr: &IrExpr, site: ValueUseSite<'_>) -> Self {
         let mut value = match site {
-            ValueUseSite::ExternalCallArg { target_ty }
-                if external_list_arg_needs_element_into(&expr.ty, target_ty) =>
-            {
+            ValueUseSite::ExternalCallArg { target_ty } if external_list_arg_needs_element_into(expr, target_ty) => {
                 ArgumentValuePlan::ExternalListElementInto
             }
             _ => ArgumentValuePlan::Ownership(plan_value_use(expr, site)),
@@ -297,14 +295,19 @@ pub fn incan_call_arg_needs_rust_mut_borrow(param: &FunctionParam) -> bool {
 }
 
 /// Return whether an external Rust list argument needs element-wise `Into` coercion.
-fn external_list_arg_needs_element_into(source_ty: &IrType, target_ty: Option<&IrType>) -> bool {
+fn external_list_arg_needs_element_into(expr: &IrExpr, target_ty: Option<&IrType>) -> bool {
+    if matches!(&expr.kind, IrExprKind::List(items) if items.is_empty()) {
+        return false;
+    }
     let Some(IrType::List(target_elem)) = target_ty else {
         return false;
     };
-    let IrType::List(source_elem) = source_ty else {
+    let IrType::List(source_elem) = &expr.ty else {
         return false;
     };
-    source_elem != target_elem && !is_unresolved_call_seed_type(target_elem)
+    source_elem != target_elem
+        && !is_unresolved_call_seed_type(source_elem)
+        && !is_unresolved_call_seed_type(target_elem)
 }
 
 /// Return whether a call-seed target still contains unresolved generic or unknown parts.
@@ -773,6 +776,36 @@ mod tests {
         let rendered = render(plan.apply_full(quote! { items }));
         assert!(rendered.contains("items).into_iter().map"));
         assert!(rendered.contains("Into::into(__incan_item)"));
+    }
+
+    #[test]
+    fn argument_plan_external_list_element_into_skips_unresolved_source_elements() {
+        let expr = IrExpr::new(IrExprKind::List(Vec::new()), IrType::List(Box::new(IrType::Unknown)));
+        let target = IrType::List(Box::new(IrType::Struct("demo::Name".to_string())));
+        let plan = ArgumentPassingPlan::for_use_site(
+            &expr,
+            ValueUseSite::ExternalCallArg {
+                target_ty: Some(&target),
+            },
+        );
+        let rendered = render(plan.apply_full(quote! { vec![] }));
+        assert!(!rendered.contains("into_iter"));
+        assert!(!rendered.contains("Into::into"));
+    }
+
+    #[test]
+    fn argument_plan_external_list_element_into_skips_empty_list_literals() {
+        let expr = IrExpr::new(IrExprKind::List(Vec::new()), IrType::List(Box::new(IrType::String)));
+        let target = IrType::List(Box::new(IrType::Struct("demo::Name".to_string())));
+        let plan = ArgumentPassingPlan::for_use_site(
+            &expr,
+            ValueUseSite::ExternalCallArg {
+                target_ty: Some(&target),
+            },
+        );
+        let rendered = render(plan.apply_full(quote! { vec![] }));
+        assert!(!rendered.contains("into_iter"));
+        assert!(!rendered.contains("Into::into"));
     }
 
     #[test]

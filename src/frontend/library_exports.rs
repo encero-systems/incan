@@ -955,6 +955,7 @@ fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<Chec
         trait_adoptions,
         derives,
         fields,
+        field_order,
         method_overloads,
         ..
     })) = &symbol.kind
@@ -968,7 +969,7 @@ fn checked_model_export(model: &ModelDecl, checker: &TypeChecker) -> Option<Chec
         traits: sorted_vec(traits.to_vec()),
         trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         derives: sorted_vec(derives.to_vec()),
-        fields: map_fields(fields),
+        fields: map_fields(fields, field_order),
         methods: map_method_overloads(method_overloads),
     })
 }
@@ -982,6 +983,7 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
         trait_adoptions,
         derives,
         fields,
+        field_order,
         method_overloads,
         ..
     })) = &symbol.kind
@@ -996,7 +998,7 @@ fn checked_class_export(class: &ClassDecl, checker: &TypeChecker) -> Option<Chec
         traits: sorted_vec(traits.to_vec()),
         trait_adoptions: sorted_type_bounds(map_type_bound_infos(trait_adoptions)),
         derives: sorted_vec(derives.to_vec()),
-        fields: map_fields(fields),
+        fields: map_fields(fields, field_order),
         methods: map_method_overloads(method_overloads),
     })
 }
@@ -1188,18 +1190,37 @@ fn type_args_sort_key(args: &[ResolvedType]) -> String {
     args.iter().map(ToString::to_string).collect::<Vec<_>>().join(",")
 }
 
-fn map_fields(fields: &HashMap<String, FieldInfo>) -> Vec<CheckedField> {
-    let mut entries: Vec<_> = fields
+/// Map checked field metadata into manifest order, preserving source declaration order when it is available.
+///
+/// Dependency manifests use this order to reconstruct constructor and partial surfaces. Any fields missing from the
+/// recorded source order are appended lexically so generated metadata remains deterministic.
+fn map_fields(fields: &HashMap<String, FieldInfo>, field_order: &[String]) -> Vec<CheckedField> {
+    let mut used = std::collections::HashSet::new();
+    let mut entries = Vec::with_capacity(fields.len());
+    for name in field_order {
+        if let Some(info) = fields.get(name) {
+            used.insert(name.as_str());
+            entries.push(CheckedField {
+                name: name.clone(),
+                ty: info.ty.clone(),
+                has_default: info.has_default,
+                alias: info.alias.clone(),
+                description: info.description.clone(),
+            });
+        }
+    }
+    let mut remaining = fields
         .iter()
-        .map(|(name, info)| CheckedField {
-            name: name.clone(),
-            ty: info.ty.clone(),
-            has_default: info.has_default,
-            alias: info.alias.clone(),
-            description: info.description.clone(),
-        })
-        .collect();
-    entries.sort_by(|left, right| left.name.cmp(&right.name));
+        .filter(|(name, _)| !used.contains(name.as_str()))
+        .collect::<Vec<_>>();
+    remaining.sort_by_key(|(name, _)| *name);
+    entries.extend(remaining.into_iter().map(|(name, info)| CheckedField {
+        name: name.clone(),
+        ty: info.ty.clone(),
+        has_default: info.has_default,
+        alias: info.alias.clone(),
+        description: info.description.clone(),
+    }));
     entries
 }
 

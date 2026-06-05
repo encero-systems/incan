@@ -5,7 +5,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::frontend::ast::{ParamKind, Span};
+use crate::frontend::ast::{Expr, ParamKind, Span, Spanned};
 use crate::frontend::symbols::{
     CallableParam, FunctionOverloadInfo, NewtypePrimitiveConstraint, ResolvedType, TypeBoundInfo,
 };
@@ -212,6 +212,11 @@ pub struct DeclarationArtifacts {
     /// Each value is the concrete Rust function name exported by the provider module for one overload candidate. IR
     /// import lowering consumes this so source-level overload names do not get re-exported as nonexistent Rust items.
     pub imported_function_emitted_names: HashMap<String, Vec<String>>,
+    /// Module-visible partial projections keyed by their source binding name.
+    ///
+    /// Constructor partials can be materialized in const contexts without calling the generated wrapper. Keeping the
+    /// target and preset expressions here lets const-eval and lowering consume one resolved projection surface.
+    pub partial_projections: HashMap<String, PartialProjectionInfo>,
     /// Module-visible static bindings keyed by local name for lowering/runtime emission.
     pub static_bindings: HashMap<String, StaticBindingInfo>,
     /// Same-type method aliases keyed by nominal type name (`alias -> target_method`).
@@ -226,6 +231,36 @@ pub struct DeclarationArtifacts {
     pub decorated_function_bindings_by_span: HashMap<(usize, usize), DecoratedFunctionBindingInfo>,
     /// RFC 036: Method names whose declaration was rebound through a user-defined decorator chain.
     pub decorated_method_bindings: HashMap<(String, String), DecoratedMethodBindingInfo>,
+}
+
+/// Source-level partial projection metadata preserved after collection.
+#[derive(Debug, Clone)]
+pub struct PartialProjectionInfo {
+    /// Source name of the partial declaration visible in the current module.
+    pub name: String,
+    /// Resolved source path to the projected target.
+    pub target_path: Vec<String>,
+    /// Semantic kind of the projected target when collection could classify it.
+    pub target_kind: PartialProjectionTargetKind,
+    /// Preset keyword expressions supplied by the partial declaration.
+    pub presets: Vec<PartialProjectionPreset>,
+}
+
+/// One preset keyword/value pair from a partial declaration.
+#[derive(Debug, Clone)]
+pub struct PartialProjectionPreset {
+    pub name: String,
+    pub value: Spanned<Expr>,
+}
+
+/// Target kinds that matter to downstream partial projection consumers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PartialProjectionTargetKind {
+    Function,
+    ModelConstructor,
+    ClassConstructor,
+    NewtypeConstructor,
+    Unknown,
 }
 
 /// Call-site semantic decisions selected by the typechecker.
@@ -606,6 +641,18 @@ impl TypeCheckInfo {
             .insert(local_name, emitted_names);
     }
 
+    /// Return partial projection metadata for a visible partial binding, if collection recorded one.
+    pub fn partial_projection(&self, local_name: &str) -> Option<&PartialProjectionInfo> {
+        self.declarations.partial_projections.get(local_name)
+    }
+
+    /// Record partial projection metadata for a visible partial binding.
+    pub(crate) fn record_partial_projection(&mut self, projection: PartialProjectionInfo) {
+        self.declarations
+            .partial_projections
+            .insert(projection.name.clone(), projection);
+    }
+
     /// Return overload candidates for one source binding, if any.
     pub fn function_overloads(&self, local_name: &str) -> Option<&[FunctionOverloadInfo]> {
         self.declarations.function_overloads.get(local_name).map(Vec::as_slice)
@@ -816,7 +863,7 @@ fn callable_param_needs_boundary_snapshot(ty: &ResolvedType) -> bool {
         return true;
     }
     match ty {
-        ResolvedType::Ref(_) | ResolvedType::RefMut(_) => true,
+        ResolvedType::Ref(_) | ResolvedType::RefMut(_) | ResolvedType::FrozenStr | ResolvedType::FrozenBytes => true,
         ResolvedType::Function(params, ret) => {
             params
                 .iter()

@@ -303,6 +303,111 @@ pub default_config = partial configure(headers={"accept": "json"}, codes=[200], 
 }
 
 #[test]
+fn test_source_imported_partial_records_projection_metadata() {
+    let provider = parse_program(
+        r#"
+pub model Policy:
+  pub family: FrozenStr
+  pub role: FrozenStr
+  pub enabled: bool
+
+pub policy = partial Policy(family="core", enabled=true)
+"#,
+        "imported partial projection provider",
+    );
+    let consumer = parse_program(
+        r#"
+from provider import Policy, policy
+
+const DEFAULT_POLICY: Policy = policy(role="admin")
+
+def runtime_policy_enabled() -> bool:
+  return policy(role="runtime").enabled
+"#,
+        "imported partial projection consumer",
+    );
+    let mut checker = TypeChecker::new();
+    checker
+        .check_with_imports(&consumer, &[("provider", &provider)])
+        .unwrap_or_else(|errs| panic!("imported partial projection should typecheck: {errs:?}"));
+    assert!(
+        checker.type_info.partial_projection("policy").is_some(),
+        "imported partial should preserve projection metadata"
+    );
+    let policy_symbol = checker
+        .lookup_symbol("policy")
+        .unwrap_or_else(|| panic!("imported partial symbol should exist"));
+    let SymbolKind::Function(policy_info) = &policy_symbol.kind else {
+        panic!("imported partial should be a function, got {:?}", policy_symbol.kind);
+    };
+    let param_names = policy_info
+        .params
+        .iter()
+        .map(|param| param.name.as_deref().unwrap_or("<anonymous>"))
+        .collect::<Vec<_>>();
+    assert_eq!(param_names, ["family", "role", "enabled"], "{:?}", policy_info.params);
+    assert!(
+        matches!(
+            policy_info.params.as_slice(),
+            [
+                CallableParam {
+                    ty: ResolvedType::FrozenStr,
+                    ..
+                },
+                CallableParam {
+                    ty: ResolvedType::FrozenStr,
+                    ..
+                },
+                CallableParam {
+                    ty: ResolvedType::Bool,
+                    ..
+                }
+            ]
+        ),
+        "expected imported partial params to preserve FrozenStr, got {:?}",
+        policy_info.params
+    );
+    let call_params = checker
+        .type_info
+        .calls
+        .call_site_callable_params
+        .values()
+        .find(|params| {
+            params
+                .iter()
+                .filter_map(|param| param.name.as_deref())
+                .collect::<Vec<_>>()
+                == ["family", "role", "enabled"]
+        })
+        .unwrap_or_else(|| {
+            panic!(
+                "runtime partial call should record source-ordered call-site params, got {:?}",
+                checker.type_info.calls.call_site_callable_params
+            )
+        });
+    assert!(
+        matches!(
+            call_params.as_slice(),
+            [
+                CallableParam {
+                    ty: ResolvedType::FrozenStr,
+                    ..
+                },
+                CallableParam {
+                    ty: ResolvedType::FrozenStr,
+                    ..
+                },
+                CallableParam {
+                    ty: ResolvedType::Bool,
+                    ..
+                }
+            ]
+        ),
+        "expected runtime partial call params to preserve FrozenStr, got {call_params:?}"
+    );
+}
+
+#[test]
 fn test_top_level_partial_rejects_runtime_preset_values() {
     let source = r#"
 def default_method() -> str:
@@ -10386,6 +10491,38 @@ def foo() -> FrozenStr:
   return GREETING
 "#;
     assert!(check_str(source).is_ok());
+}
+
+#[test]
+fn test_runtime_str_does_not_implicitly_satisfy_frozen_str() {
+    let source = r#"
+def accept_frozen(value: FrozenStr) -> None:
+  return
+
+def foo(value: str) -> None:
+  accept_frozen(value)
+"#;
+    let errs = check_str_err(source, "runtime str should not typecheck as FrozenStr");
+    assert!(
+        errs.iter().any(|err| err.message.contains("Type mismatch")),
+        "expected type mismatch for runtime str to FrozenStr, got {errs:?}"
+    );
+}
+
+#[test]
+fn test_runtime_bytes_do_not_implicitly_satisfy_frozen_bytes() {
+    let source = r#"
+def accept_frozen(value: FrozenBytes) -> None:
+  return
+
+def foo(value: bytes) -> None:
+  accept_frozen(value)
+"#;
+    let errs = check_str_err(source, "runtime bytes should not typecheck as FrozenBytes");
+    assert!(
+        errs.iter().any(|err| err.message.contains("Type mismatch")),
+        "expected type mismatch for runtime bytes to FrozenBytes, got {errs:?}"
+    );
 }
 
 #[test]

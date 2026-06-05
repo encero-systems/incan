@@ -10,6 +10,7 @@
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::{CompileError, errors};
 use crate::frontend::symbols::{FieldInfo, FunctionInfo, ResolvedType, SymbolKind, VariableInfo};
+use crate::frontend::typechecker::helpers::{is_frozen_bytes, is_frozen_str};
 use incan_core::lang::keywords;
 use incan_semantics_core::SurfaceExprTypeCheck;
 use std::collections::HashMap;
@@ -53,7 +54,11 @@ impl TypeChecker {
         };
 
         for arg in &partial.args {
-            let actual = self.check_expr(&arg.value);
+            let expected = projected
+                .iter()
+                .find(|param| param.name() == Some(arg.name.as_str()))
+                .map(|param| &param.ty);
+            let actual = self.check_expr_with_expected(&arg.value, expected);
             if let Some(param) = projected.iter().find(|param| param.name() == Some(arg.name.as_str()))
                 && !self.types_compatible(&actual, &param.ty)
             {
@@ -281,6 +286,7 @@ impl TypeChecker {
         expected: Option<&ResolvedType>,
     ) -> ResolvedType {
         let ty = match (&expr.node, expected) {
+            (_, Some(ResolvedType::TypeVar(_))) => return self.check_expr(expr),
             (Expr::Paren(inner), Some(expected_ty)) => self.check_expr_with_expected(inner, Some(expected_ty)),
             (Expr::Ident(_), Some(ResolvedType::TypeToken(_))) => {
                 self.type_token_value_spans.push((expr.span.start, expr.span.end));
@@ -312,6 +318,10 @@ impl TypeChecker {
             }
             (Expr::Literal(Literal::Decimal(_)), Some(expected_ty)) if is_decimal_type(expected_ty) => {
                 self.validate_decimal_literal_with_expected(expr, expected_ty);
+                expected_ty.clone()
+            }
+            (Expr::Literal(Literal::String(_)), Some(expected_ty)) if is_frozen_str(expected_ty) => expected_ty.clone(),
+            (Expr::Literal(Literal::Bytes(_)), Some(expected_ty)) if is_frozen_bytes(expected_ty) => {
                 expected_ty.clone()
             }
             (Expr::Binary(left, op, right), Some(expected_ty)) => {

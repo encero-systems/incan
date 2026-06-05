@@ -523,12 +523,14 @@ fn determine_owned_storage_conversion(expr: &IrExpr, target_ty: Option<&IrType>)
         {
             Conversion::ToString
         }
-        (IrExprKind::StaticRead { .. }, None) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
+        (IrExprKind::StaticRead { .. }, None) if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) => {
+            Conversion::ToString
+        }
         (_, Some(IrType::String)) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
         (IrExprKind::String(_), Some(IrType::Generic(_))) => Conversion::ToString,
         (_, Some(IrType::Generic(_))) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
-        (IrExprKind::String(_), None) => Conversion::ToString,
-        (_, None) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
+        (IrExprKind::String(_), None) if string_literal_needs_owned_string(&expr.ty, target_ty) => Conversion::ToString,
+        (_, None) if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) => Conversion::ToString,
         _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
         (IrExprKind::Var { access, .. }, Some(IrType::String)) if matches!(expr.ty, IrType::String) => match access {
             VarAccess::Move => Conversion::None,
@@ -600,9 +602,20 @@ fn is_borrowed_string_like_type(ty: &IrType) -> bool {
     matches!(ty, IrType::StaticStr | IrType::StrRef | IrType::FrozenStr)
 }
 
+/// Return whether a string literal needs ordinary owned `String` materialization at an Incan boundary.
+///
+/// Frozen targets are deliberately excluded because the target-aware emitter materializes those literals as
+/// `FrozenStr` wrappers instead of converting them through `String`.
+fn string_literal_needs_owned_string(source_ty: &IrType, target_ty: Option<&IrType>) -> bool {
+    matches!(target_ty, Some(IrType::String | IrType::Generic(_)))
+        || (target_ty.is_none() && !matches!(source_ty, IrType::FrozenStr))
+}
+
 /// Return whether an owned Incan sink needs borrowed/static string materialization.
 fn borrowed_string_like_needs_owned_string(source_ty: &IrType, target_ty: Option<&IrType>) -> bool {
-    is_borrowed_string_like_type(source_ty) && matches!(target_ty, None | Some(IrType::String | IrType::Generic(_)))
+    is_borrowed_string_like_type(source_ty)
+        && (matches!(target_ty, Some(IrType::String | IrType::Generic(_)))
+            || (target_ty.is_none() && !matches!(source_ty, IrType::FrozenStr)))
 }
 
 /// Whether a value type came from Rust interop and can reasonably cross an Incan `str` boundary via `ToString`.
@@ -699,7 +712,11 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 {
                     Conversion::ToString
                 }
-                (IrExprKind::StaticRead { .. }, None) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
+                (IrExprKind::StaticRead { .. }, None)
+                    if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) =>
+                {
+                    Conversion::ToString
+                }
                 // Const/imported `str` values can lower as borrowed/static Rust string shapes but still follow Incan
                 // owned-string semantics at call sites.
                 (_, Some(IrType::String)) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
@@ -709,9 +726,11 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
                 // Generic `T` instantiated with Incan `str` must still materialize to owned `String`.
                 (_, Some(IrType::Generic(_))) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
                 // String literal with unknown target (enum variants, etc.) → .to_string()
-                (IrExprKind::String(_), None) => Conversion::ToString,
+                (IrExprKind::String(_), None) if string_literal_needs_owned_string(&expr.ty, target_ty) => {
+                    Conversion::ToString
+                }
                 // Const `str` values need the same owned-string materialization when the target is inferred.
-                (_, None) if is_borrowed_string_like_type(&expr.ty) => Conversion::ToString,
+                (_, None) if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) => Conversion::ToString,
                 // Borrowed method-chain results such as `box.as_ref()` must materialize owned values at Incan call
                 // boundaries.
                 _ if borrowed_expr_needs_owned_materialization(expr, target_ty) => Conversion::Clone,
@@ -749,7 +768,9 @@ pub fn determine_conversion(expr: &IrExpr, target_ty: Option<&IrType>, context: 
             // This avoids unnecessary clones like `return merge(left.clone(), right.clone())`
             match (&expr.kind, target_ty) {
                 // String literal → .to_string()
-                (IrExprKind::String(_), _) => Conversion::ToString,
+                (IrExprKind::String(_), _) if string_literal_needs_owned_string(&expr.ty, target_ty) => {
+                    Conversion::ToString
+                }
                 (IrExprKind::StaticRead { .. }, _) if borrowed_string_like_needs_owned_string(&expr.ty, target_ty) => {
                     Conversion::ToString
                 }
@@ -1110,6 +1131,27 @@ mod tests {
 
         let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArg);
         assert_eq!(conv, Conversion::ToString);
+    }
+
+    #[test]
+    fn test_incan_function_frozen_str_literal_without_target_stays_frozen() {
+        let expr = IrExpr::new(IrExprKind::String("policy".to_string()), IrType::FrozenStr);
+
+        let conv = determine_conversion(&expr, None, ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_incan_function_frozen_str_static_read_without_target_stays_frozen() {
+        let expr = IrExpr::new(
+            IrExprKind::StaticRead {
+                name: "POLICY".to_string(),
+            },
+            IrType::FrozenStr,
+        );
+
+        let conv = determine_conversion(&expr, None, ConversionContext::IncanFunctionArg);
+        assert_eq!(conv, Conversion::None);
     }
 
     #[test]
@@ -1731,6 +1773,18 @@ mod tests {
         let target = IrType::Struct("User".to_string());
 
         let conv = determine_conversion(&expr, Some(&target), ConversionContext::IncanFunctionArgInReturn);
+        assert_eq!(conv, Conversion::None);
+    }
+
+    #[test]
+    fn test_return_call_context_frozen_str_target_preserves_frozen_literal() {
+        let expr = IrExpr::new(IrExprKind::String("policy".to_string()), IrType::FrozenStr);
+
+        let conv = determine_conversion(
+            &expr,
+            Some(&IrType::FrozenStr),
+            ConversionContext::IncanFunctionArgInReturn,
+        );
         assert_eq!(conv, Conversion::None);
     }
 

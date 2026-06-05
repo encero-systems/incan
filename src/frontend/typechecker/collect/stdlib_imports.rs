@@ -5,19 +5,26 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::frontend::api_metadata::{
+    ApiDeclaration, class_export_from_api, enum_export_from_api, function_export_from_api,
+    function_export_from_api_projected, model_export_from_api, newtype_export_from_api, partial_export_from_api,
+    trait_export_from_api,
+};
 use crate::frontend::ast::*;
 use crate::frontend::diagnostics::errors;
 use crate::frontend::library_manifest_index::{LibraryManifestFailureKind, LibraryManifestIndexEntry};
 use crate::frontend::module::{ExportedSymbol, canonicalize_source_module_segments};
 use crate::frontend::symbols::*;
 use crate::frontend::testing_markers::{TestingMarkerSemantics, load_testing_marker_semantics};
-use crate::frontend::typechecker::TypeChecker;
 use crate::frontend::typechecker::type_info::RustTraitImportInfo;
+use crate::frontend::typechecker::{
+    PartialProjectionInfo, PartialProjectionPreset, PartialProjectionTargetKind, TypeChecker,
+};
 use crate::library_manifest::{
     AliasExport, ClassExport, ConstExport, EnumExport, EnumValueExport, EnumValueTypeExport, FieldExport,
     FunctionExport, LibraryManifest, MethodExport, ModelExport, NewtypeExport, ParamDefaultExport, ParamExport,
-    ParamKindExport, PartialExport, ReceiverExport, StaticExport, TraitExport, TypeAliasExport, TypeBoundExport,
-    TypeParamExport, resolved_type_from_manifest_type_ref,
+    ParamKindExport, PartialExport, PartialTargetKindExport, PresetValueExport, ReceiverExport, StaticExport,
+    TraitExport, TypeAliasExport, TypeBoundExport, TypeParamExport, resolved_type_from_manifest_type_ref,
 };
 use incan_core::interop::{RustItemKind, RustTraitAssoc, fallback_rust_trait_methods, is_rust_capability_bound};
 use incan_core::lang::stdlib::{self, is_typechecker_only_stdlib};
@@ -231,7 +238,8 @@ impl TypeChecker {
                 continue;
             }
             if let Some(kind) = self.imported_source_dependency_symbol_kind(module, item) {
-                self.define_resolved_source_import_symbol(item, kind, span);
+                let projection = self.imported_source_dependency_partial_projection(module, item);
+                self.define_resolved_source_import_symbol(item, kind, projection, span);
                 continue;
             }
             if self.preserve_existing_from_import_symbol(item, span) {
@@ -578,8 +586,23 @@ impl TypeChecker {
         self.dependency_member_symbol_for_path(module, &item.name)
     }
 
+    /// Return the exact partial projection metadata targeted by a source import.
+    fn imported_source_dependency_partial_projection(
+        &self,
+        module: &ImportPath,
+        item: &ImportItem,
+    ) -> Option<PartialProjectionInfo> {
+        self.dependency_member_partial_projection_for_path(module, &item.name)
+    }
+
     /// Define a source-imported dependency symbol under its local import name.
-    fn define_resolved_source_import_symbol(&mut self, item: &ImportItem, mut kind: SymbolKind, span: Span) {
+    fn define_resolved_source_import_symbol(
+        &mut self,
+        item: &ImportItem,
+        mut kind: SymbolKind,
+        projection: Option<PartialProjectionInfo>,
+        span: Span,
+    ) {
         let local_name = Self::import_item_local_name(item);
         if let SymbolKind::FunctionOverloads(overloads) = &kind {
             self.record_function_overload_binding(&local_name, overloads, true);
@@ -590,6 +613,10 @@ impl TypeChecker {
                 local_name.clone(),
                 crate::frontend::typechecker::StaticBindingInfo { is_imported: true },
             );
+        }
+        if let Some(mut projection) = projection {
+            projection.name.clone_from(&local_name);
+            self.type_info.record_partial_projection(projection);
         }
         self.define_named_import_symbol(local_name, kind, span);
     }
@@ -813,14 +840,7 @@ impl TypeChecker {
                 fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
             }),
             ManifestExportRef::Alias(export) => {
-                if let Some(function) = &export.projected_function {
-                    return Some(SymbolKind::Function(self.function_info_from_manifest(function)));
-                }
-                let target_name = export.target_path.last()?;
-                if let Some(kind) = self.pub_library_function_symbol(manifest, target_name) {
-                    return Some(kind);
-                }
-                return self.lookup_pub_library_symbol_member(library, target_name);
+                return self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new());
             }
         })
     }
@@ -1005,6 +1025,202 @@ impl TypeChecker {
         None
     }
 
+    /// Find one manifest export by name without following alias entries.
+    fn find_manifest_non_alias_export<'a>(manifest: &'a LibraryManifest, name: &str) -> Option<ManifestExportRef<'a>> {
+        if let Some(item) = manifest.exports.models.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Model(item));
+        }
+        if let Some(item) = manifest.exports.classes.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Class(item));
+        }
+        if let Some(item) = manifest.exports.functions.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Function(item));
+        }
+        if let Some(item) = manifest.exports.partials.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Partial(item));
+        }
+        if let Some(item) = manifest.exports.traits.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Trait(item));
+        }
+        if let Some(item) = manifest.exports.enums.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Enum(item));
+        }
+        for enum_export in &manifest.exports.enums {
+            if let Some(variant) = enum_export.variants.iter().find(|variant| variant.name == name) {
+                return Some(ManifestExportRef::EnumVariant {
+                    enum_name: &enum_export.name,
+                    fields: &variant.fields,
+                });
+            }
+            if let Some(alias) = enum_export.variant_aliases.iter().find(|alias| alias.name == name)
+                && let Some(variant) = enum_export.variants.iter().find(|variant| variant.name == alias.target)
+            {
+                return Some(ManifestExportRef::EnumVariant {
+                    enum_name: &enum_export.name,
+                    fields: &variant.fields,
+                });
+            }
+        }
+        if let Some(item) = manifest.exports.type_aliases.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::TypeAlias(item));
+        }
+        if let Some(item) = manifest.exports.newtypes.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Newtype(item));
+        }
+        if let Some(item) = manifest.exports.consts.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Const(item));
+        }
+        if let Some(item) = manifest.exports.statics.iter().find(|item| item.name == name) {
+            return Some(ManifestExportRef::Static(item));
+        }
+        None
+    }
+
+    /// Resolve a manifest alias into the symbol it actually projects.
+    ///
+    /// Facades often publish aliases whose short target name is the same as the exported alias name (`Frame` →
+    /// `exprs.Frame`). Resolving only by the final segment re-enters the alias export and can recurse forever. Prefer
+    /// the explicit target path in checked API metadata, then fall back to non-alias manifest exports, and only follow
+    /// another alias with a visited guard.
+    fn symbol_kind_from_manifest_alias(
+        &self,
+        manifest: &LibraryManifest,
+        export: &AliasExport,
+        visited: &mut HashSet<Vec<String>>,
+    ) -> Option<SymbolKind> {
+        if let Some(function) = &export.projected_function {
+            return Some(SymbolKind::Function(self.function_info_from_manifest(function)));
+        }
+        if !visited.insert(export.target_path.clone()) {
+            return None;
+        }
+        if let Some(kind) = self.symbol_kind_from_api_target_path(manifest, &export.target_path) {
+            return Some(kind);
+        }
+        let target_name = export.target_path.last()?;
+        if let Some(kind) = self
+            .find_manifest_non_alias_symbol_kind(manifest, target_name)
+            .or_else(|| self.pub_library_function_symbol(manifest, target_name))
+        {
+            return Some(kind);
+        }
+        let ManifestExportRef::Alias(target_alias) = Self::find_manifest_export(manifest, target_name)? else {
+            return None;
+        };
+        self.symbol_kind_from_manifest_alias(manifest, target_alias, visited)
+    }
+
+    /// Convert one non-alias manifest export into checker symbol metadata.
+    fn find_manifest_non_alias_symbol_kind(&self, manifest: &LibraryManifest, name: &str) -> Option<SymbolKind> {
+        match Self::find_manifest_non_alias_export(manifest, name)? {
+            ManifestExportRef::Model(export) => {
+                Some(SymbolKind::Type(TypeInfo::Model(self.model_info_from_manifest(export))))
+            }
+            ManifestExportRef::Class(export) => {
+                Some(SymbolKind::Type(TypeInfo::Class(self.class_info_from_manifest(export))))
+            }
+            ManifestExportRef::Function(export) => Some(SymbolKind::Function(self.function_info_from_manifest(export))),
+            ManifestExportRef::Partial(export) => Some(SymbolKind::Function(self.partial_info_from_manifest(export))),
+            ManifestExportRef::Trait(export) => Some(SymbolKind::Trait(self.trait_info_from_manifest(export))),
+            ManifestExportRef::Enum(export) => {
+                Some(SymbolKind::Type(TypeInfo::Enum(self.enum_info_from_manifest(export))))
+            }
+            ManifestExportRef::EnumVariant { enum_name, fields } => Some(SymbolKind::Variant(VariantInfo {
+                enum_name: enum_name.to_string(),
+                fields: fields.iter().map(resolved_type_from_manifest_type_ref).collect(),
+            })),
+            ManifestExportRef::TypeAlias(_) => Some(SymbolKind::Type(TypeInfo::TypeAlias)),
+            ManifestExportRef::Newtype(export) => Some(SymbolKind::Type(TypeInfo::Newtype(
+                self.newtype_info_from_manifest(export),
+            ))),
+            ManifestExportRef::Const(export) => Some(SymbolKind::Variable(VariableInfo {
+                ty: resolved_type_from_manifest_type_ref(&export.ty),
+                is_mutable: false,
+                is_used: false,
+            })),
+            ManifestExportRef::Static(export) => Some(SymbolKind::Static(StaticInfo {
+                ty: resolved_type_from_manifest_type_ref(&export.ty),
+                is_public: true,
+                is_imported: true,
+                is_used: false,
+            })),
+            ManifestExportRef::Alias(_) => None,
+        }
+    }
+
+    /// Resolve an alias target path against the checked API metadata embedded in the manifest.
+    fn symbol_kind_from_api_target_path(
+        &self,
+        manifest: &LibraryManifest,
+        target_path: &[String],
+    ) -> Option<SymbolKind> {
+        let name = target_path.last()?;
+        let module_path = if target_path.first().is_some_and(|segment| segment == "crate") {
+            &target_path[1..]
+        } else {
+            target_path
+        };
+        let module_path = module_path.get(..module_path.len().saturating_sub(1))?;
+        let api = manifest.contract_metadata.api.as_ref()?;
+        let module = api.modules.iter().find(|module| module.module_path == module_path)?;
+        let declaration = module.declarations.iter().find(|declaration| match declaration {
+            ApiDeclaration::Function(item) => item.name == *name,
+            ApiDeclaration::Model(item) => item.name == *name,
+            ApiDeclaration::Class(item) => item.name == *name,
+            ApiDeclaration::Trait(item) => item.name == *name,
+            ApiDeclaration::Enum(item) => item.name == *name,
+            ApiDeclaration::Newtype(item) => item.name == *name,
+            ApiDeclaration::TypeAlias(item) => item.name == *name,
+            ApiDeclaration::Const(item) => item.name == *name,
+            ApiDeclaration::Static(item) => item.name == *name,
+            ApiDeclaration::Alias(item) => item.name == *name,
+            ApiDeclaration::Partial(item) => item.name == *name,
+        })?;
+        self.symbol_kind_from_api_declaration(declaration)
+    }
+
+    /// Convert one checked API declaration into the same semantic symbols used for manifest exports.
+    fn symbol_kind_from_api_declaration(&self, declaration: &ApiDeclaration) -> Option<SymbolKind> {
+        match declaration {
+            ApiDeclaration::Function(item) => Some(SymbolKind::Function(
+                self.function_info_from_manifest(&function_export_from_api(item)),
+            )),
+            ApiDeclaration::Model(item) => Some(SymbolKind::Type(TypeInfo::Model(
+                self.model_info_from_manifest(&model_export_from_api(item)),
+            ))),
+            ApiDeclaration::Class(item) => Some(SymbolKind::Type(TypeInfo::Class(
+                self.class_info_from_manifest(&class_export_from_api(item)),
+            ))),
+            ApiDeclaration::Trait(item) => Some(SymbolKind::Trait(
+                self.trait_info_from_manifest(&trait_export_from_api(item)),
+            )),
+            ApiDeclaration::Enum(item) => Some(SymbolKind::Type(TypeInfo::Enum(
+                self.enum_info_from_manifest(&enum_export_from_api(item)),
+            ))),
+            ApiDeclaration::Newtype(item) => Some(SymbolKind::Type(TypeInfo::Newtype(
+                self.newtype_info_from_manifest(&newtype_export_from_api(item)),
+            ))),
+            ApiDeclaration::TypeAlias(_) => Some(SymbolKind::Type(TypeInfo::TypeAlias)),
+            ApiDeclaration::Const(item) => Some(SymbolKind::Variable(VariableInfo {
+                ty: resolved_type_from_manifest_type_ref(&item.ty),
+                is_mutable: false,
+                is_used: false,
+            })),
+            ApiDeclaration::Static(item) => Some(SymbolKind::Static(StaticInfo {
+                ty: resolved_type_from_manifest_type_ref(&item.ty),
+                is_public: true,
+                is_imported: true,
+                is_used: false,
+            })),
+            ApiDeclaration::Alias(item) => item.projected_function.as_ref().map(|function| {
+                SymbolKind::Function(self.function_info_from_manifest(&function_export_from_api_projected(function)))
+            }),
+            ApiDeclaration::Partial(item) => Some(SymbolKind::Function(
+                self.partial_info_from_manifest(&partial_export_from_api(item)),
+            )),
+        }
+    }
+
     /// Return whether a manifest export introduces a type-like name into the importing module.
     fn manifest_export_is_type(export: &ManifestExportRef<'_>) -> bool {
         matches!(
@@ -1046,6 +1262,8 @@ impl TypeChecker {
         imported_type_aliases: &HashMap<String, String>,
         span: Span,
     ) {
+        let partial_projection =
+            self.partial_projection_from_manifest_export(manifest, &local_name, &export, imported_type_aliases, span);
         let mut kind = match export {
             ManifestExportRef::Model(export) => {
                 SymbolKind::Type(TypeInfo::Model(self.model_info_from_manifest(export)))
@@ -1088,33 +1306,19 @@ impl TypeChecker {
                 is_used: false,
             }),
             ManifestExportRef::Alias(export) => {
-                if let Some(function) = &export.projected_function {
-                    SymbolKind::Function(self.function_info_from_manifest(function))
-                } else {
-                    let Some(target_name) = export.target_path.last() else {
-                        return;
-                    };
-                    if let Some(kind) = self.pub_library_function_symbol(manifest, target_name) {
-                        kind
-                    } else {
-                        let Some(target_export) = Self::find_manifest_export(manifest, target_name) else {
-                            return;
-                        };
-                        return self.define_pub_import_symbol(
-                            manifest,
-                            local_name,
-                            target_export,
-                            imported_type_aliases,
-                            span,
-                        );
-                    }
-                }
+                let Some(kind) = self.symbol_kind_from_manifest_alias(manifest, export, &mut HashSet::new()) else {
+                    return;
+                };
+                kind
             }
         };
         self.remap_symbol_kind_with_import_aliases(&mut kind, imported_type_aliases);
 
         if let SymbolKind::FunctionOverloads(overloads) = &kind {
             self.record_function_overload_binding(&local_name, overloads, true);
+        }
+        if let Some(projection) = partial_projection {
+            self.type_info.record_partial_projection(projection);
         }
 
         if matches!(kind, SymbolKind::Static(_)) {
@@ -1314,6 +1518,169 @@ impl TypeChecker {
         }
     }
 
+    /// Convert one public-manifest export into partial projection metadata when it denotes a partial callable.
+    fn partial_projection_from_manifest_export(
+        &self,
+        manifest: &LibraryManifest,
+        local_name: &str,
+        export: &ManifestExportRef<'_>,
+        imported_type_aliases: &HashMap<String, String>,
+        span: Span,
+    ) -> Option<PartialProjectionInfo> {
+        match export {
+            ManifestExportRef::Partial(export) => {
+                Self::partial_projection_from_manifest_partial(export, local_name, imported_type_aliases, span)
+            }
+            ManifestExportRef::Alias(export) => self.partial_projection_from_manifest_alias(
+                manifest,
+                local_name,
+                export,
+                imported_type_aliases,
+                span,
+                &mut HashSet::new(),
+            ),
+            _ => None,
+        }
+    }
+
+    /// Follow manifest aliases so a public alias to a partial keeps the same projection under the alias name.
+    fn partial_projection_from_manifest_alias(
+        &self,
+        manifest: &LibraryManifest,
+        local_name: &str,
+        alias: &AliasExport,
+        imported_type_aliases: &HashMap<String, String>,
+        span: Span,
+        visited: &mut HashSet<String>,
+    ) -> Option<PartialProjectionInfo> {
+        let target_name = alias.target_path.last()?;
+        if !visited.insert(target_name.clone()) {
+            return None;
+        }
+        match Self::find_manifest_export(manifest, target_name)? {
+            ManifestExportRef::Partial(export) => {
+                Self::partial_projection_from_manifest_partial(export, local_name, imported_type_aliases, span)
+            }
+            ManifestExportRef::Alias(next_alias) => self.partial_projection_from_manifest_alias(
+                manifest,
+                local_name,
+                next_alias,
+                imported_type_aliases,
+                span,
+                visited,
+            ),
+            _ => None,
+        }
+    }
+
+    /// Reconstruct import-visible projection metadata from serialized partial preset metadata.
+    fn partial_projection_from_manifest_partial(
+        export: &PartialExport,
+        local_name: &str,
+        imported_type_aliases: &HashMap<String, String>,
+        span: Span,
+    ) -> Option<PartialProjectionInfo> {
+        let mut target_path = export.target_path.clone();
+        if let Some(target_name) = target_path.last_mut()
+            && let Some(local_alias) = imported_type_aliases.get(target_name)
+        {
+            target_name.clone_from(local_alias);
+        }
+        Some(PartialProjectionInfo {
+            name: local_name.to_string(),
+            target_path,
+            target_kind: Self::partial_projection_target_kind_from_manifest(export.target_kind),
+            presets: export
+                .presets
+                .iter()
+                .map(|preset| {
+                    Some(PartialProjectionPreset {
+                        name: preset.name.clone(),
+                        value: Self::manifest_preset_value_expr(&preset.value, imported_type_aliases, span)?,
+                    })
+                })
+                .collect::<Option<Vec<_>>>()?,
+        })
+    }
+
+    /// Convert manifest partial target kind metadata into frontend projection vocabulary.
+    fn partial_projection_target_kind_from_manifest(kind: PartialTargetKindExport) -> PartialProjectionTargetKind {
+        match kind {
+            PartialTargetKindExport::Function => PartialProjectionTargetKind::Function,
+            PartialTargetKindExport::ModelConstructor => PartialProjectionTargetKind::ModelConstructor,
+            PartialTargetKindExport::ClassConstructor => PartialProjectionTargetKind::ClassConstructor,
+            PartialTargetKindExport::NewtypeConstructor => PartialProjectionTargetKind::NewtypeConstructor,
+            PartialTargetKindExport::Partial | PartialTargetKindExport::Unknown => PartialProjectionTargetKind::Unknown,
+        }
+    }
+
+    /// Rebuild a metadata-safe preset value as a synthetic AST expression.
+    fn manifest_preset_value_expr(
+        value: &PresetValueExport,
+        imported_type_aliases: &HashMap<String, String>,
+        span: Span,
+    ) -> Option<Spanned<Expr>> {
+        let expr = match value {
+            PresetValueExport::Int(value) => Expr::Literal(Literal::Int(IntLiteral::synthetic(*value))),
+            PresetValueExport::Float(value) => Expr::Literal(Literal::Float(FloatLiteral {
+                value: value.parse().ok()?,
+                repr: value.clone(),
+            })),
+            PresetValueExport::Bool(value) => Expr::Literal(Literal::Bool(*value)),
+            PresetValueExport::String(value) => Expr::Literal(Literal::String(value.clone())),
+            PresetValueExport::Bytes(value) => Expr::Literal(Literal::Bytes(value.clone())),
+            PresetValueExport::None => Expr::Literal(Literal::None),
+            PresetValueExport::List(values) => Expr::List(
+                values
+                    .iter()
+                    .map(|item| {
+                        Self::manifest_preset_value_expr(item, imported_type_aliases, span).map(ListEntry::Element)
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            PresetValueExport::Dict(entries) => Expr::Dict(
+                entries
+                    .iter()
+                    .map(|entry| {
+                        Some(DictEntry::Pair(
+                            Self::manifest_preset_value_expr(&entry.key, imported_type_aliases, span)?,
+                            Self::manifest_preset_value_expr(&entry.value, imported_type_aliases, span)?,
+                        ))
+                    })
+                    .collect::<Option<Vec<_>>>()?,
+            ),
+            PresetValueExport::ConstRef(path) => Self::manifest_const_ref_expr(path, span)?.node,
+            PresetValueExport::ModelLiteral { name, fields } => {
+                let constructor = imported_type_aliases.get(name).cloned().unwrap_or_else(|| name.clone());
+                Expr::Call(
+                    Box::new(Spanned::new(Expr::Ident(constructor), span)),
+                    Vec::new(),
+                    fields
+                        .iter()
+                        .map(|field| {
+                            Some(CallArg::Named(
+                                field.name.clone(),
+                                Self::manifest_preset_value_expr(&field.value, imported_type_aliases, span)?,
+                            ))
+                        })
+                        .collect::<Option<Vec<_>>>()?,
+                )
+            }
+            PresetValueExport::Unsupported => return None,
+        };
+        Some(Spanned::new(expr, span))
+    }
+
+    /// Build an identifier/field expression for a serialized const reference path.
+    fn manifest_const_ref_expr(path: &[String], span: Span) -> Option<Spanned<Expr>> {
+        let (first, rest) = path.split_first()?;
+        let mut expr = Spanned::new(Expr::Ident(first.clone()), span);
+        for segment in rest {
+            expr = Spanned::new(Expr::Field(Box::new(expr), segment.clone()), span);
+        }
+        Some(expr)
+    }
+
     /// Convert one manifest model export into semantic model metadata.
     fn model_info_from_manifest(&self, export: &ModelExport) -> ModelInfo {
         let methods = self.methods_from_manifest(&export.methods);
@@ -1324,6 +1691,7 @@ impl TypeChecker {
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
             fields: self.fields_from_manifest(&export.fields),
+            field_order: export.fields.iter().map(|field| field.name.clone()).collect(),
             properties: std::collections::HashMap::new(),
             method_overloads,
             methods,
@@ -1342,6 +1710,7 @@ impl TypeChecker {
             trait_adoptions: Self::trait_adoptions_from_manifest(&export.traits, &export.trait_adoptions),
             derives: export.derives.clone(),
             fields: self.fields_from_manifest(&export.fields),
+            field_order: export.fields.iter().map(|field| field.name.clone()).collect(),
             properties: std::collections::HashMap::new(),
             method_overloads,
             methods,

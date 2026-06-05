@@ -22,7 +22,10 @@ use super::AstLowering;
 use super::errors::LoweringError;
 use crate::frontend::ast::{self, Spanned};
 use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
-use crate::frontend::typechecker::{IdentKind, ResolvedMethodDispatch, ResolvedOperatorKind};
+use crate::frontend::partial_projection::{PartialPresetRef, merge_named_partial_args};
+use crate::frontend::typechecker::{
+    IdentKind, PartialProjectionTargetKind, ResolvedMethodDispatch, ResolvedOperatorKind,
+};
 use incan_core::interop::RustCollectionFamily;
 use incan_core::lang::magic_methods::{self, MagicMethodId};
 use incan_core::lang::surface::collection_helpers::{self, BuiltinCollectionHelperId};
@@ -436,6 +439,9 @@ impl AstLowering {
     /// This wraps [`Self::lower_expr`] and then overrides the inferred IR type using the typechecker span-to-type map.
     /// This is a stepping stone toward fully typed lowering.
     pub fn lower_expr_spanned(&mut self, expr: &Spanned<ast::Expr>) -> Result<TypedExpr, LoweringError> {
+        if let Some((kind, ty)) = self.lower_partial_constructor_call(expr)? {
+            return Ok(TypedExpr::new(kind, ty));
+        }
         let mut lowered = self.lower_expr(&expr.node, expr.span)?;
         if let Some(info) = &self.type_info
             && let Some(res_ty) = info.expr_type(expr.span)
@@ -512,6 +518,50 @@ impl AstLowering {
         // Apply RFC 017 implicit validated-newtype coercions at typechecker-approved destination sites.
         lowered = self.wrap_with_validated_newtype_coercion(lowered, expr.span)?;
         Ok(lowered)
+    }
+
+    /// Lower a known model-constructor partial call through the ordinary constructor lowering path.
+    fn lower_partial_constructor_call(
+        &mut self,
+        expr: &Spanned<ast::Expr>,
+    ) -> Result<Option<(IrExprKind, IrType)>, LoweringError> {
+        let ast::Expr::Call(callee, type_args, args) = &expr.node else {
+            return Ok(None);
+        };
+        if !type_args.is_empty() {
+            return Ok(None);
+        }
+        let ast::Expr::Ident(callee_name) = &callee.node else {
+            return Ok(None);
+        };
+        let Some(projection) = self
+            .type_info
+            .as_ref()
+            .and_then(|info| info.partial_projection(callee_name))
+            .cloned()
+        else {
+            return Ok(None);
+        };
+        if projection.target_kind != PartialProjectionTargetKind::ModelConstructor {
+            return Ok(None);
+        }
+        let Some(target_name) = projection.target_path.last() else {
+            return Ok(None);
+        };
+        if !self.struct_names.contains_key(target_name) && !self.import_aliases.contains_key(target_name) {
+            return Ok(None);
+        }
+        let Some(merged_args) = merge_named_partial_args(
+            projection.presets.iter().map(|preset| PartialPresetRef {
+                name: preset.name.as_str(),
+                value: &preset.value,
+            }),
+            args,
+        ) else {
+            return Ok(None);
+        };
+        self.lower_constructor_call(target_name, &[], &merged_args, expr.span)
+            .map(Some)
     }
 
     /// Return the identifier classification that lowering should use for this expression.
@@ -660,8 +710,26 @@ impl AstLowering {
                 ast::Literal::Int(il) => (IrExprKind::IntLiteral(il.repr.clone()), IrType::Int),
                 ast::Literal::Float(fl) => (IrExprKind::Float(fl.value), IrType::Float),
                 ast::Literal::Decimal(dl) => (IrExprKind::Decimal(dl.repr.clone()), IrType::Unknown),
-                ast::Literal::String(s) => (IrExprKind::String(s.clone()), IrType::String),
-                ast::Literal::Bytes(bytes) => (IrExprKind::Bytes(bytes.clone()), IrType::Bytes),
+                ast::Literal::String(s) => {
+                    let ty = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.expr_type(expr_span))
+                        .map(|ty| self.lower_resolved_type(ty))
+                        .filter(|ty| matches!(ty, IrType::FrozenStr | IrType::StaticStr | IrType::StrRef))
+                        .unwrap_or(IrType::String);
+                    (IrExprKind::String(s.clone()), ty)
+                }
+                ast::Literal::Bytes(bytes) => {
+                    let ty = self
+                        .type_info
+                        .as_ref()
+                        .and_then(|info| info.expr_type(expr_span))
+                        .map(|ty| self.lower_resolved_type(ty))
+                        .filter(|ty| matches!(ty, IrType::FrozenBytes | IrType::StaticBytes))
+                        .unwrap_or(IrType::Bytes);
+                    (IrExprKind::Bytes(bytes.clone()), ty)
+                }
                 ast::Literal::Bool(b) => (IrExprKind::Bool(*b), IrType::Bool),
                 ast::Literal::None => (IrExprKind::None, IrType::Option(Box::new(IrType::Unknown))),
             },

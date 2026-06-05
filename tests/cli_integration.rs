@@ -3914,6 +3914,71 @@ def test_partial_default_symbols_in_decorator() -> None:
 }
 
 #[test]
+fn test_partial_constructor_presets_materialize_const_metadata_issue753() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = tempfile::tempdir()?;
+    let main_path = write_minimal_project(tmp.path(), "partial_constructor_const_metadata", "")?;
+    let src_dir = main_path.parent().ok_or("main path had no parent")?;
+    fs::write(
+        src_dir.join("metadata.incn"),
+        r#"pub model Policy:
+    pub family: FrozenStr
+    pub role: FrozenStr
+    pub enabled: bool
+
+
+pub policy = partial Policy(family="hyperloglog", enabled=true)
+
+
+pub const CONSTRUCT_POLICY: Policy = policy(role="construct")
+pub const MERGE_POLICY: Policy = policy(role="merge", enabled=false)
+
+
+pub def construct_enabled() -> bool:
+    return CONSTRUCT_POLICY.enabled
+
+
+pub def merge_enabled() -> bool:
+    return MERGE_POLICY.enabled
+"#,
+    )?;
+    fs::write(
+        src_dir.join("runtime_consumer.incn"),
+        r#"from metadata import policy
+
+
+pub def runtime_policy_enabled() -> bool:
+    return policy(role="runtime").enabled
+"#,
+    )?;
+    fs::write(
+        &main_path,
+        r#"from metadata import Policy, construct_enabled, merge_enabled, policy
+from runtime_consumer import runtime_policy_enabled
+
+
+const IMPORTED_POLICY: Policy = policy(role="imported")
+
+
+def main() -> None:
+    assert construct_enabled()
+    assert not merge_enabled()
+    assert IMPORTED_POLICY.enabled
+    assert runtime_policy_enabled()
+"#,
+    )?;
+
+    let build_output = run_incan(
+        tmp.path(),
+        &["build", main_path.to_str().ok_or("main path was not valid UTF-8")?],
+    )?;
+    assert_success(
+        &build_output,
+        "incan build for partial constructor const metadata issue753",
+    );
+    Ok(())
+}
+
+#[test]
 fn test_decorated_functions_preserve_default_argument_calls_issue703() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = tempfile::tempdir()?;
     let main_path = write_minimal_project(tmp.path(), "decorated_default_argument_calls", "")?;

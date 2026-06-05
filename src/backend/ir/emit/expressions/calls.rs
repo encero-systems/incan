@@ -856,9 +856,16 @@ impl<'a> IrEmitter<'a> {
                 let target_aware_list_element_widening_arg = target_ty
                     .is_some_and(|target_ty| self.list_element_widening_needed(&list_widening_source_ty, target_ty))
                     && !matches!(use_site, ValueUseSite::ExternalCallArg { .. });
+                let target_aware_frozen_literal_arg = target_ty.is_some_and(|target_ty| {
+                    matches!(
+                        (&a.kind, target_ty),
+                        (IrExprKind::String(_), IrType::FrozenStr) | (IrExprKind::Bytes(_), IrType::FrozenBytes)
+                    )
+                });
                 let target_aware_value_arg = target_aware_aggregate_literal_arg
                     || target_aware_union_widening_arg
-                    || target_aware_list_element_widening_arg;
+                    || target_aware_list_element_widening_arg
+                    || target_aware_frozen_literal_arg;
                 let arg_plan = ArgumentPassingPlan::for_use_site(a, use_site);
                 let previous_qualify = if *from_default {
                     Some(self.qualify_internal_canonical_paths.replace(true))
@@ -866,14 +873,14 @@ impl<'a> IrEmitter<'a> {
                     None
                 };
                 let emitted = (|| {
-                    let mut emitted_from_seed = false;
+                    let mut emitted_from_value_plan = false;
                     let emitted = if let Some(target_ty) = target_ty {
                         if let Some(seed) = self.emit_inference_seeded_literal_arg_with_union_qualifier(
                             a,
                             target_ty,
                             pub_library_union_qualifier.as_deref(),
                         )? {
-                            emitted_from_seed = true;
+                            emitted_from_value_plan = true;
                             seed
                         } else if Self::is_unresolved_call_seed_type(target_ty) {
                             // Signature exists but leaves generics unresolved: fallback to the argument's own inferred
@@ -883,9 +890,10 @@ impl<'a> IrEmitter<'a> {
                                 &a.ty,
                                 pub_library_union_qualifier.as_deref(),
                             )? {
-                                emitted_from_seed = true;
+                                emitted_from_value_plan = true;
                                 seed
                             } else if target_aware_value_arg {
+                                emitted_from_value_plan = true;
                                 self.emit_expr_for_use_with_union_qualifier(
                                     a,
                                     use_site,
@@ -895,6 +903,7 @@ impl<'a> IrEmitter<'a> {
                                 self.emit_expr(a)?
                             }
                         } else if target_aware_value_arg {
+                            emitted_from_value_plan = true;
                             self.emit_expr_for_use_with_union_qualifier(
                                 a,
                                 use_site,
@@ -911,9 +920,10 @@ impl<'a> IrEmitter<'a> {
                             &a.ty,
                             pub_library_union_qualifier.as_deref(),
                         )? {
-                            emitted_from_seed = true;
+                            emitted_from_value_plan = true;
                             seed
                         } else if target_aware_value_arg {
+                            emitted_from_value_plan = true;
                             self.emit_expr_for_use_with_union_qualifier(
                                 a,
                                 use_site,
@@ -923,18 +933,18 @@ impl<'a> IrEmitter<'a> {
                             self.emit_expr(a)?
                         }
                     };
-                    Ok::<(TokenStream, bool), EmitError>((emitted, emitted_from_seed))
+                    Ok::<(TokenStream, bool), EmitError>((emitted, emitted_from_value_plan))
                 })();
                 if let Some(previous) = previous_qualify {
                     self.qualify_internal_canonical_paths.replace(previous);
                 }
-                let (emitted, emitted_from_seed) = emitted?;
+                let (emitted, emitted_from_value_plan) = emitted?;
 
                 if let Some(adapter) = self.borrowed_function_adapter_arg(a, target_ty) {
                     return Ok(adapter);
                 }
 
-                let tokens = if emitted_from_seed || target_aware_value_arg {
+                let tokens = if emitted_from_value_plan {
                     arg_plan.apply_after_value_plan(emitted)
                 } else {
                     arg_plan.apply_full(emitted)

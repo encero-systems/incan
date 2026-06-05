@@ -1,6 +1,8 @@
 //! Call expression lowering: struct constructors, builtin dispatch, newtype checked construction, and regular function
 //! calls.
 
+use std::collections::HashMap;
+
 use super::super::super::decl::FunctionParam;
 use super::super::super::expr::{
     BuiltinFn, IrCallArg, IrCallArgKind, IrDictEntry, IrExprKind, IrInteropCoercionKind, IrListEntry,
@@ -11,8 +13,10 @@ use super::super::super::types::IrType;
 use super::super::super::{FunctionSignature, IrStmt, Mutability, TypedExpr};
 use super::super::AstLowering;
 use super::super::errors::LoweringError;
+use crate::frontend::api_metadata::{ApiDeclaration, method_export_from_api};
 use crate::frontend::ast::{self, TypeConstraintKey};
 use crate::frontend::library_manifest_index::LibraryManifestIndexEntry;
+use crate::frontend::partial_projection::{PartialPresetRef, merge_named_partial_args};
 use crate::frontend::symbols::{CallableParam, NewtypePrimitiveConstraint, ResolvedType};
 use crate::frontend::typechecker::{FixedUnpackPlan, RustArgCoercionKind, ValidatedNewtypeCoercionMode};
 use crate::frontend::typechecker::{IdentKind, ResolvedOperatorKind};
@@ -473,6 +477,7 @@ impl AstLowering {
             .iter()
             .find(|model| model.name == type_name)
             .and_then(|model| model.methods.iter().find(|method| method.name == method_name))
+            .cloned()
             .or_else(|| {
                 manifest
                     .exports
@@ -480,6 +485,7 @@ impl AstLowering {
                     .iter()
                     .find(|class| class.name == type_name)
                     .and_then(|class| class.methods.iter().find(|method| method.name == method_name))
+                    .cloned()
             })
             .or_else(|| {
                 manifest
@@ -488,6 +494,7 @@ impl AstLowering {
                     .iter()
                     .find(|newtype| newtype.name == type_name)
                     .and_then(|newtype| newtype.methods.iter().find(|method| method.name == method_name))
+                    .cloned()
             })
             .or_else(|| {
                 manifest
@@ -496,9 +503,71 @@ impl AstLowering {
                     .iter()
                     .find(|enum_| enum_.name == type_name)
                     .and_then(|enum_| enum_.methods.iter().find(|method| method.name == method_name))
-            })?
-            .clone();
+                    .cloned()
+            })
+            .or_else(|| Self::api_method_export_for_pub_type(manifest, type_name, method_name))?;
         Some(self.callable_signature_from_pub_method_export(library, &method))
+    }
+
+    /// Resolve methods for public types that are exposed only through facade aliases.
+    ///
+    /// The compact export list may contain `Frame -> exprs.Frame` as an alias rather than a full class export, while
+    /// checked API metadata still records the original class declaration and methods. Backend method lookup must use
+    /// that same target-path metadata or call planning diverges between direct provider modules and public facades.
+    fn api_method_export_for_pub_type(
+        manifest: &crate::library_manifest::LibraryManifest,
+        type_name: &str,
+        method_name: &str,
+    ) -> Option<MethodExport> {
+        let api = manifest.contract_metadata.api.as_ref()?;
+        for alias in manifest.exports.aliases.iter().filter(|alias| alias.name == type_name) {
+            if let Some(method) = Self::api_method_export_for_target_path(api, &alias.target_path, method_name) {
+                return Some(method);
+            }
+        }
+        api.modules
+            .iter()
+            .flat_map(|module| module.declarations.iter())
+            .find_map(|declaration| Self::api_method_export_for_declaration(declaration, type_name, method_name))
+    }
+
+    /// Resolve one checked API method from a module-qualified public type target path.
+    fn api_method_export_for_target_path(
+        api: &crate::frontend::api_metadata::CheckedApiMetadataPackage,
+        target_path: &[String],
+        method_name: &str,
+    ) -> Option<MethodExport> {
+        let type_name = target_path.last()?;
+        let path = if target_path.first().is_some_and(|segment| segment == "crate") {
+            &target_path[1..]
+        } else {
+            target_path
+        };
+        let module_path = path.get(..path.len().saturating_sub(1))?;
+        let module = api.modules.iter().find(|module| module.module_path == module_path)?;
+        module
+            .declarations
+            .iter()
+            .find_map(|declaration| Self::api_method_export_for_declaration(declaration, type_name, method_name))
+    }
+
+    /// Convert one checked API declaration into the method export requested by backend call planning.
+    fn api_method_export_for_declaration(
+        declaration: &ApiDeclaration,
+        type_name: &str,
+        method_name: &str,
+    ) -> Option<MethodExport> {
+        let methods = match declaration {
+            ApiDeclaration::Model(model) if model.name == type_name => model.methods.as_slice(),
+            ApiDeclaration::Class(class) if class.name == type_name => class.methods.as_slice(),
+            ApiDeclaration::Enum(enum_) if enum_.name == type_name => enum_.methods.as_slice(),
+            ApiDeclaration::Newtype(newtype) if newtype.name == type_name => newtype.methods.as_slice(),
+            _ => return None,
+        };
+        methods
+            .iter()
+            .find(|method| method.name == method_name)
+            .map(method_export_from_api)
     }
 
     /// Return the nominal receiver type name used for manifest method lookup.
@@ -1800,6 +1869,7 @@ impl AstLowering {
             ResolvedType::Ref(inner) if matches!(inner.as_ref(), ResolvedType::Str) => IrType::StrRef,
             ResolvedType::Ref(inner) => IrType::Ref(Box::new(self.lower_rust_boundary_target_type(inner))),
             ResolvedType::RefMut(inner) => IrType::RefMut(Box::new(self.lower_rust_boundary_target_type(inner))),
+            ResolvedType::TypeVar(_) => IrType::Unknown,
             ResolvedType::Tuple(items) => IrType::Tuple(
                 items
                     .iter()
@@ -1989,6 +2059,9 @@ impl AstLowering {
             }
         }
 
+        let expanded_partial_args = self.partial_projection_call_args(f, args, call_span);
+        let args = expanded_partial_args.as_deref().unwrap_or(args);
+
         let selected_emitted_name = self
             .type_info
             .as_ref()
@@ -2129,21 +2202,23 @@ impl AstLowering {
                 ret_ty,
             ));
         }
+        let call_site_signature = self.callable_signature_for_call_span(call_span);
+        let local_callable_signature = match &f.node {
+            ast::Expr::Ident(name) => selected_emitted_name
+                .as_deref()
+                .and_then(|emitted_name| self.lookup_local_callable_signature(emitted_name))
+                .or_else(|| self.lookup_local_callable_signature(name)),
+            ast::Expr::Partial(_) => self.partial_expr_signature_for_span(f.span),
+            _ => None,
+        };
         let callable_signature = imported_callee_path
             .as_deref()
             .and_then(|path| {
                 self.callable_signature_for_imported_stdlib_path(path)
                     .or_else(|| self.callable_signature_for_imported_pub_path(path))
             })
-            .or_else(|| match &f.node {
-                ast::Expr::Ident(name) => selected_emitted_name
-                    .as_deref()
-                    .and_then(|emitted_name| self.lookup_local_callable_signature(emitted_name))
-                    .or_else(|| self.lookup_local_callable_signature(name)),
-                ast::Expr::Partial(_) => self.partial_expr_signature_for_span(f.span),
-                _ => None,
-            })
-            .or_else(|| self.callable_signature_for_call_span(call_span))
+            .or(call_site_signature)
+            .or(local_callable_signature)
             .or_else(|| self.callable_signature_for_callee_span(f.span));
         let callable_signature = self.refine_function_typed_local_call(&mut func, &args_ir, callable_signature);
         let imported_pub_library = imported_callee_path.as_deref().and_then(|path| {
@@ -2182,8 +2257,62 @@ impl AstLowering {
         ))
     }
 
+    /// Expand a call through a known partial projection into the full wrapper surface.
+    ///
+    /// Generated Rust functions do not have source-level default parameters. Local and imported partial calls therefore
+    /// need to materialize preset keyword arguments before ordinary call lowering so every boundary sees the same
+    /// callable shape.
+    fn partial_projection_call_args(
+        &self,
+        callee: &ast::Spanned<ast::Expr>,
+        args: &[ast::CallArg],
+        call_span: ast::Span,
+    ) -> Option<Vec<ast::CallArg>> {
+        let ast::Expr::Ident(callee_name) = &callee.node else {
+            return None;
+        };
+        let info = self.type_info.as_ref()?;
+        let projection = info.partial_projection(callee_name)?;
+        let merged = merge_named_partial_args(
+            projection.presets.iter().map(|preset| PartialPresetRef {
+                name: preset.name.as_str(),
+                value: &preset.value,
+            }),
+            args,
+        )?;
+
+        let params = info
+            .call_site_callable_params(call_span)
+            .or_else(|| match info.expr_type(callee.span)? {
+                ResolvedType::Function(params, _) => Some(params.as_slice()),
+                _ => None,
+            })?;
+        let mut by_name = merged
+            .into_iter()
+            .filter_map(|arg| match arg {
+                ast::CallArg::Named(name, value) => Some((name, value)),
+                _ => None,
+            })
+            .collect::<HashMap<_, _>>();
+        let mut ordered = Vec::with_capacity(by_name.len());
+        for param in params.iter().filter(|param| param.kind == ast::ParamKind::Normal) {
+            let Some(name) = param.name.as_deref() else {
+                continue;
+            };
+            if let Some(value) = by_name.remove(name) {
+                ordered.push(ast::CallArg::Named(name.to_string(), value));
+            }
+        }
+        ordered.extend(
+            by_name
+                .into_iter()
+                .map(|(name, value)| ast::CallArg::Named(name, value)),
+        );
+        Some(ordered)
+    }
+
     /// Lower a struct/model/class/newtype constructor call.
-    fn lower_constructor_call(
+    pub(super) fn lower_constructor_call(
         &mut self,
         name: &str,
         type_args: &[ast::Spanned<ast::Type>],

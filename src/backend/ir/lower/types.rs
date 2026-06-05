@@ -290,7 +290,9 @@ impl AstLowering {
         if !expanding.insert(name.clone()) {
             return None;
         }
-        let expanded = self.lower_pub_manifest_type_ref(library, &alias.target);
+        let target = resolved_type_from_manifest_type_ref(&alias.target);
+        let expanded = self.expand_pub_manifest_type_aliases(library, target, expanding);
+        let expanded = self.lower_resolved_type(&expanded);
         expanding.remove(&name);
         Some(expanded)
     }

@@ -24,9 +24,11 @@ use crate::frontend::library_exports::{
 use crate::frontend::module::canonicalize_source_module_segments;
 use crate::frontend::typechecker::{ConstValue, TypeChecker};
 use crate::library_manifest::{
-    EnumValueExport, EnumValueTypeExport, FieldExport, ParamExport, ParamKindExport, PartialPresetExport,
-    PartialTargetKindExport, PresetDictEntryExport, PresetModelFieldExport, PresetValueExport, ReceiverExport,
-    TypeAliasExport, TypeBoundExport, TypeParamExport, TypeRef, type_ref_from_resolved,
+    ClassExport, EnumExport, EnumValueExport, EnumValueTypeExport, EnumVariantAliasExport, EnumVariantExport,
+    FieldExport, FieldRequirementExport, FunctionExport, MethodExport, ModelExport, NewtypeExport, ParamExport,
+    ParamKindExport, PartialExport, PartialPresetExport, PartialTargetKindExport, PresetDictEntryExport,
+    PresetModelFieldExport, PresetValueExport, ReceiverExport, TraitExport, TypeAliasExport, TypeBoundExport,
+    TypeParamExport, TypeRef, type_ref_from_resolved,
 };
 
 pub const CHECKED_API_METADATA_SCHEMA_VERSION: u32 = 1;
@@ -105,6 +107,8 @@ pub struct ApiModel {
     pub decorators: Vec<DecoratorMetadata>,
     pub type_params: Vec<TypeParamExport>,
     pub traits: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trait_adoptions: Vec<TypeBoundExport>,
     pub derives: Vec<String>,
     pub fields: Vec<FieldExport>,
     pub methods: Vec<ApiMethod>,
@@ -121,6 +125,8 @@ pub struct ApiClass {
     pub type_params: Vec<TypeParamExport>,
     pub extends: Option<String>,
     pub traits: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trait_adoptions: Vec<TypeBoundExport>,
     pub derives: Vec<String>,
     pub fields: Vec<FieldExport>,
     pub methods: Vec<ApiMethod>,
@@ -149,9 +155,15 @@ pub struct ApiEnum {
     pub docstring_sections: Option<ApiDocstring>,
     pub decorators: Vec<DecoratorMetadata>,
     pub type_params: Vec<TypeParamExport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub traits: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trait_adoptions: Vec<TypeBoundExport>,
     pub value_type: Option<EnumValueTypeExport>,
     pub variants: Vec<ApiEnumVariant>,
     pub variant_aliases: Vec<ApiEnumVariantAlias>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub methods: Vec<ApiMethod>,
     pub derives: Vec<String>,
 }
 
@@ -177,6 +189,10 @@ pub struct ApiNewtype {
     pub docstring_sections: Option<ApiDocstring>,
     pub decorators: Vec<DecoratorMetadata>,
     pub type_params: Vec<TypeParamExport>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub traits: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trait_adoptions: Vec<TypeBoundExport>,
     pub is_rusttype: bool,
     pub underlying: TypeRef,
     pub methods: Vec<ApiMethod>,
@@ -271,6 +287,148 @@ pub struct ApiCallableMetadata {
     pub params: Vec<ParamExport>,
     pub return_type: TypeRef,
     pub is_async: bool,
+}
+
+/// Convert a checked API function into manifest-style callable metadata.
+pub(crate) fn function_export_from_api(function: &ApiFunction) -> FunctionExport {
+    FunctionExport {
+        name: function.name.clone(),
+        emitted_name: None,
+        type_params: function.type_params.clone(),
+        params: function.params.clone(),
+        return_type: function.return_type.clone(),
+        is_async: function.is_async,
+    }
+}
+
+/// Convert a projected alias callable into manifest-style callable metadata while preserving source callable identity.
+pub(crate) fn function_export_from_api_projected(function: &ApiProjectedFunction) -> FunctionExport {
+    FunctionExport {
+        name: function.callable.name.clone(),
+        emitted_name: None,
+        type_params: function.callable.type_params.clone(),
+        params: function.callable.params.clone(),
+        return_type: function.callable.return_type.clone(),
+        is_async: function.callable.is_async,
+    }
+}
+
+/// Convert a checked API partial into manifest-style partial metadata.
+pub(crate) fn partial_export_from_api(partial: &ApiPartial) -> PartialExport {
+    PartialExport {
+        name: partial.name.clone(),
+        target_path: partial.target_path.clone(),
+        target_kind: partial.target_kind,
+        presets: partial.presets.clone(),
+        type_params: partial.type_params.clone(),
+        params: partial.params.clone(),
+        return_type: partial.return_type.clone(),
+        is_async: partial.is_async,
+    }
+}
+
+/// Convert a checked API method into manifest-style method metadata.
+pub(crate) fn method_export_from_api(method: &ApiMethod) -> MethodExport {
+    MethodExport {
+        name: method.name.clone(),
+        alias_of: None,
+        type_params: method.type_params.clone(),
+        receiver: method.receiver.clone(),
+        params: method.params.clone(),
+        return_type: method.return_type.clone(),
+        is_async: method.is_async,
+        has_body: method.has_body,
+    }
+}
+
+/// Convert a checked API model into manifest-style model metadata for public boundary consumers.
+pub(crate) fn model_export_from_api(model: &ApiModel) -> ModelExport {
+    ModelExport {
+        name: model.name.clone(),
+        type_params: model.type_params.clone(),
+        traits: model.traits.clone(),
+        trait_adoptions: model.trait_adoptions.clone(),
+        derives: model.derives.clone(),
+        fields: model.fields.clone(),
+        methods: model.methods.iter().map(method_export_from_api).collect(),
+    }
+}
+
+/// Convert a checked API class into manifest-style class metadata for public boundary consumers.
+pub(crate) fn class_export_from_api(class: &ApiClass) -> ClassExport {
+    ClassExport {
+        name: class.name.clone(),
+        type_params: class.type_params.clone(),
+        extends: class.extends.clone(),
+        traits: class.traits.clone(),
+        trait_adoptions: class.trait_adoptions.clone(),
+        derives: class.derives.clone(),
+        fields: class.fields.clone(),
+        methods: class.methods.iter().map(method_export_from_api).collect(),
+    }
+}
+
+/// Convert a checked API trait into manifest-style trait metadata for public boundary consumers.
+pub(crate) fn trait_export_from_api(trait_decl: &ApiTrait) -> TraitExport {
+    TraitExport {
+        name: trait_decl.name.clone(),
+        source_name: None,
+        type_params: trait_decl.type_params.clone(),
+        supertraits: trait_decl.supertraits.clone(),
+        requires: trait_decl
+            .requires
+            .iter()
+            .map(|field| FieldRequirementExport {
+                name: field.name.clone(),
+                ty: field.ty.clone(),
+            })
+            .collect(),
+        methods: trait_decl.methods.iter().map(method_export_from_api).collect(),
+    }
+}
+
+/// Convert a checked API enum into manifest-style enum metadata for public boundary consumers.
+pub(crate) fn enum_export_from_api(enum_decl: &ApiEnum) -> EnumExport {
+    EnumExport {
+        name: enum_decl.name.clone(),
+        type_params: enum_decl.type_params.clone(),
+        traits: enum_decl.traits.clone(),
+        trait_adoptions: enum_decl.trait_adoptions.clone(),
+        value_type: enum_decl.value_type,
+        ordinal_type_identity: None,
+        variants: enum_decl
+            .variants
+            .iter()
+            .map(|variant| EnumVariantExport {
+                name: variant.name.clone(),
+                fields: variant.fields.clone(),
+                value: variant.value.clone(),
+            })
+            .collect(),
+        variant_aliases: enum_decl
+            .variant_aliases
+            .iter()
+            .map(|alias| EnumVariantAliasExport {
+                name: alias.name.clone(),
+                target: alias.target.clone(),
+            })
+            .collect(),
+        methods: enum_decl.methods.iter().map(method_export_from_api).collect(),
+        derives: enum_decl.derives.clone(),
+    }
+}
+
+/// Convert a checked API newtype into manifest-style newtype metadata for public boundary consumers.
+pub(crate) fn newtype_export_from_api(newtype: &ApiNewtype) -> NewtypeExport {
+    NewtypeExport {
+        name: newtype.name.clone(),
+        type_params: newtype.type_params.clone(),
+        traits: newtype.traits.clone(),
+        trait_adoptions: newtype.trait_adoptions.clone(),
+        is_rusttype: newtype.is_rusttype,
+        underlying: newtype.underlying.clone(),
+        methods: newtype.methods.iter().map(method_export_from_api).collect(),
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -800,6 +958,7 @@ fn api_model(
         decorators: decorators_metadata(&model.decorators, checker, None),
         type_params: type_params(&export.type_params),
         traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
         derives: export.derives.clone(),
         fields: fields_in_source_order(&model.fields, &export.fields),
         methods: methods(&model.methods, &export.methods, checker, module_path, &export.name),
@@ -824,6 +983,7 @@ fn api_class(
         type_params: type_params(&export.type_params),
         extends: export.extends.clone(),
         traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
         derives: export.derives.clone(),
         fields: fields_in_source_order(&class.fields, &export.fields),
         methods: methods(&class.methods, &export.methods, checker, module_path, &export.name),
@@ -878,6 +1038,8 @@ fn api_enum(
         docstring,
         decorators: decorators_metadata(&enum_decl.decorators, checker, None),
         type_params: type_params(&export.type_params),
+        traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
         value_type: export.value_type.map(|value_type| match value_type {
             crate::frontend::symbols::ValueEnumBacking::Str => EnumValueTypeExport::Str,
             crate::frontend::symbols::ValueEnumBacking::Int => EnumValueTypeExport::Int,
@@ -902,6 +1064,7 @@ fn api_enum(
                 target: alias.target.clone(),
             })
             .collect(),
+        methods: methods(&enum_decl.methods, &export.methods, checker, module_path, &export.name),
         derives: export.derives.clone(),
     }
 }
@@ -922,6 +1085,8 @@ fn api_newtype(
         docstring,
         decorators: decorators_metadata(&newtype.decorators, checker, None),
         type_params: type_params(&export.type_params),
+        traits: export.traits.clone(),
+        trait_adoptions: export.trait_adoptions.iter().map(type_bound).collect(),
         is_rusttype: export.is_rusttype,
         underlying: type_ref_from_resolved(&export.underlying),
         methods: methods(&newtype.methods, &export.methods, checker, module_path, &export.name),
@@ -2762,8 +2927,12 @@ pub model Order:
         let source = r#"
 pub const DEFAULT_LABEL = "none"
 
+pub trait Labelled:
+    def label(self) -> str: ...
+
+
 @derive(Clone)
-pub model Order:
+pub model Order with Labelled:
     """
     Order contract.
     """
@@ -2796,6 +2965,9 @@ pub model Order:
             })
             .ok_or_else(|| "expected model metadata".to_string())?;
         assert_eq!(model.docstring.as_deref().map(str::trim), Some("Order contract."));
+        assert_eq!(model.traits, vec!["Labelled".to_string()]);
+        assert_eq!(model.trait_adoptions.len(), 1);
+        assert_eq!(model.trait_adoptions[0].name, "Labelled");
         assert_eq!(
             model.fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>(),
             vec!["id", "label"]
