@@ -5575,6 +5575,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#development-progress" class="md-nav__link">
+    <span class="md-ellipsis">
+      Development progress
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tracking-issues" class="md-nav__link">
     <span class="md-ellipsis">
       Tracking issues
@@ -5747,6 +5756,15 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#development-progress" class="md-nav__link">
+    <span class="md-ellipsis">
+      Development progress
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#tracking-issues" class="md-nav__link">
     <span class="md-ellipsis">
       Tracking issues
@@ -5792,6 +5810,12 @@
 </ul>
 <h2 id="scope-guard">Scope guard<a class="headerlink" href="#scope-guard" title="Permanent link">&para;</a></h2>
 <p>The 0.4 release is not the home for <code>std.web</code>, <code>std.http</code>, Hees.ai product implementation, broad InQL/Pallay SDK work, source-local feature metadata, Rust caller/ABI architecture, or backend replacement. Those directions remain important, but they belong to later release lanes unless a small piece directly supports the install, starter, diagnostics, inspection, build-report, or codegraph path.</p>
+<h2 id="development-progress">Development progress<a class="headerlink" href="#development-progress" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong>Boundary parity fixtures</strong>: 0.4 now starts with a compact regression lane for package-boundary helper calls that move through provider, facade, and consumer modules. The fixture exercises dependency-owned union values, public helper aliases, method calls, list arguments, and generated Rust ownership so future import/reexport regressions fail inside Incan before downstream packages rediscover them.</li>
+<li><strong>Checked API identity reuse</strong>: public import resolution and backend method lookup now reuse checked API metadata when manifest aliases point through facades. That keeps public helper/type identity attached to the provider declaration instead of reconstructing a second answer from stale manifest-only surfaces.</li>
+<li><strong>Partial preset const metadata</strong>: model-constructor partials can now materialize const metadata values when their preset and call-site arguments are named and const-valid. This includes the <code>FrozenStr</code>/<code>str</code> compatibility needed by metadata builder presets without turning partial calls into a separate const-evaluator path.</li>
+</ul>
 <h2 id="tracking-issues">Tracking issues<a class="headerlink" href="#tracking-issues" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="https://github.com/dannys-code-corner/incan/issues/223">#223</a>: 0.4 umbrella.</li>
