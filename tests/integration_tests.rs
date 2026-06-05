@@ -10423,6 +10423,7 @@ def database() -> Database:
 mod rfc031_pub_import_integration_tests {
     use super::*;
     use incan::library_manifest::{FunctionExport, LibraryManifest, ModelExport, ParamExport, TypeRef};
+    use incan::manifest::{INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV};
     use sha2::{Digest, Sha256};
     use std::path::PathBuf;
 
@@ -13597,10 +13598,12 @@ def main() -> None:
         let fmt_output = super::incan_command()
             .args(["fmt", main_path.to_string_lossy().as_ref()])
             .env("CARGO_NET_OFFLINE", "true")
+            .env(INTERNAL_MANIFEST_OVERRIDE_ENV, consumer_root.join("incan.toml"))
+            .env(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, &consumer_root)
             .output()?;
         assert!(
             fmt_output.status.success(),
-            "expected fmt to prepare source dependency vocab before parsing clean query block.\nstdout:\n{}\nstderr:\n{}",
+            "expected fmt to prepare source dependency vocab before parsing clean query block, even when the parent command carries an internal manifest override.\nstdout:\n{}\nstderr:\n{}",
             String::from_utf8_lossy(&fmt_output.stdout),
             String::from_utf8_lossy(&fmt_output.stderr)
         );

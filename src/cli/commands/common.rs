@@ -30,7 +30,9 @@ use crate::frontend::module::{
 use crate::frontend::{ast_walk, diagnostics, lexer, parser, typechecker, vocab_desugar_pass};
 use crate::lockfile::CargoFeatureSelection;
 use crate::manifest::{DependencySource, DependencySpec};
-use crate::manifest::{MANIFEST_FILENAME, ProjectManifest};
+use crate::manifest::{
+    INTERNAL_MANIFEST_OVERRIDE_ENV, INTERNAL_PROJECT_ROOT_OVERRIDE_ENV, MANIFEST_FILENAME, ProjectManifest,
+};
 use crate::project_lifecycle::toolchain::ToolchainConstraintSet;
 #[cfg(feature = "rust_inspect")]
 use crate::rust_inspect::{Inspector, InspectorConfig};
@@ -328,6 +330,8 @@ fn prepare_library_dependency_artifact(dependency_key: &str, dependency_root: &P
     let output = Command::new(current_exe)
         .args(["build", "--lib"])
         .current_dir(dependency_root)
+        .env_remove(INTERNAL_MANIFEST_OVERRIDE_ENV)
+        .env_remove(INTERNAL_PROJECT_ROOT_OVERRIDE_ENV)
         .output()
         .map_err(|error| {
             CliError::failure(format!(
