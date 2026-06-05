@@ -2217,6 +2217,8 @@
       
         
       
+        
+      
     
     
       
@@ -2500,6 +2502,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6037,7 +6060,7 @@
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@rust</span><span class="o">.</span><span class="n">allow</span><span class="p">(</span><span class="s2">&quot;deprecated&quot;</span><span class="p">)</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">transform_write_order_lines_csv</span><span class="p">(</span><span class="n">session</span><span class="p">:</span> <span class="nc">Session</span><span class="p">,</span> <span class="n">input_uri</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">output_uri</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="kc">None</span><span class="p">,</span> <span class="nc">SessionError</span><span class="p">]:</span>
     <span class="n">lines</span> <span class="o">=</span> <span class="n">session</span><span class="o">.</span><span class="n">read_csv</span><span class="p">(</span><span class="nc">OrderLine</span><span class="p">)(</span><span class="n">uri</span><span class="o">=</span><span class="n">input_uri</span><span class="p">)</span><span class="o">?</span>
-    <span class="n">transformed</span> <span class="o">=</span> <span class="n">lines</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">rule_order_by_lineid</span><span class="p">)</span>
+    <span class="n">transformed</span> <span class="o">=</span> <span class="n">lines</span><span class="o">.</span><span class="nb">filter</span><span class="p">(</span><span class="n">rule_order_by_lineid</span><span class="p">)</span>
     <span class="k">return</span> <span class="n">session</span><span class="o">.</span><span class="n">write_csv</span><span class="p">(</span><span class="n">transformed</span><span class="p">,</span> <span class="n">output_uri</span><span class="p">)</span>
 </code></pre></div>
 <p>The intent is precise: this one declaration may emit Rust that uses a deprecated upstream field or API, and that warning should not leak into every build of the generated project.</p>

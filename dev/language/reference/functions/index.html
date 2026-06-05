@@ -2409,6 +2409,8 @@
       
         
       
+        
+      
     
     
       
@@ -2692,6 +2694,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6210,7 +6233,7 @@
     <span class="n">collector</span> <span class="o">=</span> <span class="nc">Collector</span><span class="p">()</span>
     <span class="n">xs</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
     <span class="n">labels</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;demo&quot;</span><span class="p">}</span>
-    <span class="k">return</span> <span class="n">collector</span><span class="o">.</span><span class="n">collect</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="o">*</span><span class="n">xs</span><span class="p">,</span> <span class="o">**</span><span class="n">labels</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">collector</span><span class="o">.</span><span class="nb">collect</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="o">*</span><span class="n">xs</span><span class="p">,</span> <span class="o">**</span><span class="n">labels</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="function-values">Function Values<a class="headerlink" href="#function-values" title="Permanent link">&para;</a></h2>
 <p>Named functions are first-class values. When a function value originates from a rest-aware function, the callable metadata preserves the rest markers, so direct rest arguments and unpack arguments still work through the variable:</p>
@@ -6218,7 +6241,7 @@
     <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">labels</span><span class="p">)</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="n">f</span> <span class="o">=</span> <span class="n">collect</span>
+    <span class="n">f</span> <span class="o">=</span> <span class="nb">collect</span>
     <span class="n">xs</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
     <span class="n">labels</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;demo&quot;</span><span class="p">}</span>
     <span class="k">return</span> <span class="n">f</span><span class="p">(</span><span class="s2">&quot;event&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">*</span><span class="n">xs</span><span class="p">,</span> <span class="o">**</span><span class="n">labels</span><span class="p">)</span>
@@ -6238,7 +6261,7 @@
 <li>List and dictionary literal spread lower to explicit container construction in source order.</li>
 </ul>
 <p>For example:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">collect</span><span class="p">(</span><span class="s2">&quot;event&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="o">*</span><span class="n">xs</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;demo&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">labels</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="nb">collect</span><span class="p">(</span><span class="s2">&quot;event&quot;</span><span class="p">,</span> <span class="mi">1</span><span class="p">,</span> <span class="o">*</span><span class="n">xs</span><span class="p">,</span> <span class="n">kind</span><span class="o">=</span><span class="s2">&quot;demo&quot;</span><span class="p">,</span> <span class="o">**</span><span class="n">labels</span><span class="p">)</span>
 </code></pre></div>
 <p>lowers conceptually to a call with explicit rest containers:</p>
 <div class="language-text highlight"><pre><span></span><code>collect(&quot;event&quot;, [1] + xs, &lt;dict containing &quot;kind&quot;: &quot;demo&quot; plus labels inserted in source order&gt;)

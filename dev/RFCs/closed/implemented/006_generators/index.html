@@ -2217,6 +2217,8 @@
       
         
       
+        
+      
     
     
       
@@ -2500,6 +2502,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6057,7 +6080,7 @@
         <span class="k">yield</span> <span class="n">a</span>
         <span class="n">a</span><span class="p">,</span> <span class="n">b</span> <span class="o">=</span> <span class="n">b</span><span class="p">,</span> <span class="n">a</span> <span class="o">+</span> <span class="n">b</span>
 
-<span class="n">fibs</span> <span class="o">=</span> <span class="n">fibonacci</span><span class="p">()</span><span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+<span class="n">fibs</span> <span class="o">=</span> <span class="n">fibonacci</span><span class="p">()</span><span class="o">.</span><span class="nb">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span><span class="o">.</span><span class="nb">collect</span><span class="p">()</span>
 </code></pre></div>
 <p>This is the core value proposition: the generator can describe an unbounded stream, while the consumer decides how much to realize.</p>
 <h3 id="lazy-transformations">Lazy transformations<a class="headerlink" href="#lazy-transformations" title="Permanent link">&para;</a></h3>
@@ -6068,10 +6091,10 @@
     <span class="k">return</span> <span class="n">n</span> <span class="o">%</span> <span class="mi">2</span> <span class="o">==</span> <span class="mi">0</span>
 
 <span class="n">evens_squared</span> <span class="o">=</span> <span class="n">count_up</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="mi">1_000_000</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_even</span><span class="p">)</span>
+    <span class="o">.</span><span class="nb">filter</span><span class="p">(</span><span class="n">is_even</span><span class="p">)</span>
     <span class="o">.</span><span class="nb">map</span><span class="p">(</span><span class="n">square</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+    <span class="o">.</span><span class="nb">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+    <span class="o">.</span><span class="nb">collect</span><span class="p">()</span>
 </code></pre></div>
 <p>Generator helper methods are lazy until a terminal operation consumes them. In the example above, <code>.filter()</code>, <code>.map()</code>, and <code>.take()</code> build a generator pipeline; <code>.collect()</code> realizes only the first ten transformed values as a <code>list[int]</code>.</p>
 <h3 id="recursive-traversal">Recursive traversal<a class="headerlink" href="#recursive-traversal" title="Permanent link">&para;</a></h3>

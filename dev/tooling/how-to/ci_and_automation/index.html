@@ -2221,6 +2221,8 @@
       
         
       
+        
+      
     
     
       
@@ -2504,6 +2506,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -5861,10 +5884,16 @@ incan<span class="w"> </span>build<span class="w"> </span>src/main.incn<span cla
 <span class="w">  </span><span class="nt">run</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">incan --version</span>
 </code></pre></div>
 <p>The action builds the compiler from the same Incan repository ref used by the action, caches Cargo build artifacts by default, and adds the built binary directory to <code>PATH</code>. The default build profile is <code>release</code>; use <code>profile: debug</code> when faster compiler builds matter more than runtime performance during CI setup.</p>
+<p>The action also installs the <code>wasm32-wasip1</code> Rust target by default. Downstream projects that depend on packages with vocab companions need that target during checks such as <code>incan fmt --check</code>, because the formatter can need to build or load dependency-provided vocab desugarers in a clean CI checkout. Projects that need a different target set can set the action's <code>targets</code> input to the complete list that should be installed with the toolchain.</p>
 <div class="language-yaml highlight"><pre><span></span><code><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Install Incan</span>
 <span class="w">  </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dannys-code-corner/incan/.github/actions/install-incan@main</span>
 <span class="w">  </span><span class="nt">with</span><span class="p">:</span>
 <span class="w">    </span><span class="nt">profile</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">debug</span>
+</code></pre></div>
+<div class="language-yaml highlight"><pre><span></span><code><span class="p p-Indicator">-</span><span class="w"> </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Install Incan</span>
+<span class="w">  </span><span class="nt">uses</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">dannys-code-corner/incan/.github/actions/install-incan@main</span>
+<span class="w">  </span><span class="nt">with</span><span class="p">:</span>
+<span class="w">    </span><span class="nt">targets</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">wasm32-wasip1,x86_64-unknown-linux-musl</span>
 </code></pre></div>
 <p>For a complete project workflow, keep project-specific checks in the downstream repository and use the action only for installation:</p>
 <div class="language-yaml highlight"><pre><span></span><code><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">CI</span>

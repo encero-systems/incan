@@ -2227,6 +2227,8 @@
       
         
       
+        
+      
     
     
       
@@ -2510,6 +2512,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -5774,7 +5797,8 @@
 <p>Import with:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.reflection</span><span class="w"> </span><span class="kn">import</span> <span class="kt">FieldInfo</span>
 </code></pre></div>
-<p>You only need to import <code>FieldInfo</code> when you want to spell the type explicitly in an annotation. Calling <code>obj.__fields__()</code> and inspecting the returned records does not require an explicit import.</p>
+<p>You only need to import <code>FieldInfo</code> when you want to spell the type explicitly in an annotation. Calling <code>obj.__fields__()</code> or generic type-level reflection such as <code>T.__fields__()</code> and inspecting the returned records does not require an explicit import.</p>
+<p>Primitive type-argument names such as <code>T.__class_name__()</code> for <code>T=int</code>, <code>T=float</code>, <code>T=str</code>, or <code>T=bool</code> are compiler-backed and also do not require a <code>std.reflection</code> import. Type-token parameters such as <code>Type[int]</code> are part of the language reflection surface rather than the <code>std.reflection</code> import surface; use the language reference when designing type-directed overload APIs.</p>
 <h2 id="types">Types<a class="headerlink" href="#types" title="Permanent link">&para;</a></h2>
 <h3 id="fieldinfo"><code>FieldInfo</code><a class="headerlink" href="#fieldinfo" title="Permanent link">&para;</a></h3>
 <p>Field metadata returned by <code>__fields__()</code>.</p>

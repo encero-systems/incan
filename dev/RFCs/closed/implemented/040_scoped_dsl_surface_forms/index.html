@@ -2217,6 +2217,8 @@
       
         
       
+        
+      
     
     
       
@@ -2500,6 +2502,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6412,7 +6435,7 @@
 </code></pre></div>
 <p><code>.status</code>, <code>.customer_id</code>, and <code>.amount</code> are leading-dot field references. They resolve against the implicit primary relation supplied by the <code>FROM</code> clause. Outside this query block, <code>.status</code> at expression start is not valid Incan syntax.</p>
 <p>The same pattern applies to method-chain relational arguments:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">orders</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="o">.</span><span class="n">amount</span> <span class="o">&gt;</span> <span class="mi">100</span><span class="p">)</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="o">.</span><span class="n">customer_id</span><span class="p">,</span> <span class="o">.</span><span class="n">region</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">orders</span><span class="o">.</span><span class="nb">filter</span><span class="p">(</span><span class="o">.</span><span class="n">amount</span> <span class="o">&gt;</span> <span class="mi">100</span><span class="p">)</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="o">.</span><span class="n">customer_id</span><span class="p">,</span> <span class="o">.</span><span class="n">region</span><span class="p">)</span>
 </code></pre></div>
 <p>Here <code>.amount</code>, <code>.customer_id</code>, and <code>.region</code> are in relational argument positions owned by the DSL that registered the <code>filter</code> and <code>select</code> operations. The implicit receiver is the dataset value the method is called on.</p>
 <p>Conceptually, the meaning of <code>.amount</code> might be:</p>

@@ -2093,6 +2093,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fluent-method-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fluent Method Chains
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#expression-vocab-blocks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Expression Vocab Blocks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#match-arms-and-short-forms" class="md-nav__link">
     <span class="md-ellipsis">
       Match Arms And Short Forms
@@ -2472,6 +2490,8 @@
       
         
       
+        
+      
     
     
       
@@ -2755,6 +2775,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6027,6 +6068,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fluent-method-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fluent Method Chains
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#expression-vocab-blocks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Expression Vocab Blocks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#match-arms-and-short-forms" class="md-nav__link">
     <span class="md-ellipsis">
       Match Arms And Short Forms
@@ -6092,10 +6151,6 @@
 <h1 id="incan-code-style-guide">Incan Code Style Guide<a class="headerlink" href="#incan-code-style-guide" title="Permanent link">&para;</a></h1>
 <p>This page is the canonical style guide for human-written <code>.incn</code> source files. It describes how Incan code is laid out, what spacing is expected, and which readability gaps are allowed.</p>
 <p>Use <code>incan fmt</code> to apply these formatting rules to source files. For formatter command usage and limits, see <a href="../../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a>.</p>
-<div class="admonition note">
-<p class="admonition-title">Historical note</p>
-<p>RFC 053 is the design record behind the current vertical-spacing model.</p>
-</div>
 <h2 id="scope">Scope<a class="headerlink" href="#scope" title="Permanent link">&para;</a></h2>
 <p>This guide is about source layout and readability:</p>
 <ul>
@@ -6312,6 +6367,38 @@
     <span class="s2">&quot;source&quot;</span><span class="p">:</span> <span class="s2">&quot;cli&quot;</span><span class="p">,</span>
 <span class="p">}</span>
 </code></pre></div>
+<h2 id="fluent-method-chains">Fluent Method Chains<a class="headerlink" href="#fluent-method-chains" title="Permanent link">&para;</a></h2>
+<p>Use leading-dot continuation for long fluent method-call chains. The receiver stays on the assignment or return line, and each wrapped method call starts on its own indented continuation line. This is valid Incan syntax, not only formatter output:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">enriched</span> <span class="o">=</span> <span class="n">orders</span>
+    <span class="o">.</span><span class="n">with_column</span><span class="p">(</span><span class="s2">&quot;region_norm&quot;</span><span class="p">,</span> <span class="nb">upper</span><span class="p">(</span><span class="n">trim</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;region&quot;</span><span class="p">))))</span>
+    <span class="o">.</span><span class="n">with_column</span><span class="p">(</span><span class="s2">&quot;status_norm&quot;</span><span class="p">,</span> <span class="nb">lower</span><span class="p">(</span><span class="n">trim</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">))))</span>
+    <span class="o">.</span><span class="n">with_column</span><span class="p">(</span><span class="s2">&quot;gross_amount&quot;</span><span class="p">,</span> <span class="nb">round</span><span class="p">(</span><span class="n">mul</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;quantity&quot;</span><span class="p">),</span> <span class="n">col</span><span class="p">(</span><span class="s2">&quot;unit_price&quot;</span><span class="p">)),</span> <span class="mi">2</span><span class="p">))</span>
+</code></pre></div>
+<p>Stand-alone comments may sit inside the fluent continuation block when they describe the next method segment:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">enriched</span> <span class="o">=</span> <span class="n">orders</span>
+    <span class="c1"># Normalize user-facing text before deriving labels.</span>
+    <span class="o">.</span><span class="n">with_column</span><span class="p">(</span><span class="s2">&quot;region_norm&quot;</span><span class="p">,</span> <span class="nb">upper</span><span class="p">(</span><span class="n">trim</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;region&quot;</span><span class="p">))))</span>
+    <span class="o">.</span><span class="n">with_column</span><span class="p">(</span><span class="s2">&quot;status_norm&quot;</span><span class="p">,</span> <span class="nb">lower</span><span class="p">(</span><span class="n">trim</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">))))</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Coming from Python?</p>
+<p>Python usually needs parentheses, a backslash, or an open bracketed expression before a newline can continue a method chain. Incan accepts the indented leading <code>.</code> as the continuation marker, so fluent APIs can stay visually vertical without adding grouping syntax just to satisfy the parser.</p>
+</div>
+<p>Short method-call chains can stay inline when they fit the line-length target. Do not add backslashes or dummy parentheses only to make a fluent chain parse; <code>incan fmt</code> uses leading-dot continuation when a method chain overflows.</p>
+<h2 id="expression-vocab-blocks">Expression Vocab Blocks<a class="headerlink" href="#expression-vocab-blocks" title="Permanent link">&para;</a></h2>
+<p>Expression-position vocab blocks keep their brace form and no-colon clause spelling. Clause names and body shapes come from the active vocab metadata, so the formatter preserves compound clause spelling such as <code>GROUP BY</code> instead of rewriting through the declaration-style colon form:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">return</span> <span class="n">query</span> <span class="p">{</span>
+    <span class="nc">FROM</span> <span class="n">paid</span>
+    <span class="nc">SELECT</span>
+        <span class="o">.</span><span class="n">order_id</span> <span class="k">as</span> <span class="n">order_id</span>
+        <span class="o">.</span><span class="n">customer_id</span> <span class="k">as</span> <span class="n">customer_id</span>
+    <span class="nc">GROUP</span> <span class="nc">BY</span>
+        <span class="o">.</span><span class="n">region_norm</span><span class="p">,</span>
+        <span class="o">.</span><span class="nb">channel</span>
+    <span class="nc">ORDER</span> <span class="nc">BY</span> <span class="n">desc</span><span class="p">(</span><span class="o">.</span><span class="n">net_amount</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>Comments inside a vocab block should stay near the clause or item they describe.</p>
 <h2 id="match-arms-and-short-forms">Match Arms And Short Forms<a class="headerlink" href="#match-arms-and-short-forms" title="Permanent link">&para;</a></h2>
 <p>Short single-statement <code>match</code> arms are allowed on one line when they stay readable.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">match</span> <span class="n">node</span><span class="o">.</span><span class="n">kind</span><span class="p">:</span>
@@ -6333,6 +6420,8 @@
 <li>one blank line between logic groups inside indented code</li>
 <li>one blank line between sibling statements after nested suites</li>
 <li>short inline <code>match</code> arms when they are still readable</li>
+<li>leading-dot method-chain continuation for fluent interfaces</li>
+<li>brace/no-colon expression vocab blocks whose syntax is provided by active vocab metadata</li>
 <li>actual string contents, including literal <code>\n</code> text</li>
 </ul>
 <h2 id="what-the-formatter-should-normalize">What The Formatter Should Normalize<a class="headerlink" href="#what-the-formatter-should-normalize" title="Permanent link">&para;</a></h2>
@@ -6341,7 +6430,7 @@
 <li>tabs or inconsistent indentation</li>
 <li>repeated blank-line runs beyond the allowed buckets</li>
 <li>trailing blank lines at end-of-file</li>
-<li>inconsistent wrapping of overflowing calls and constructors</li>
+<li>inconsistent wrapping of overflowing calls, constructors, and fluent method chains</li>
 <li>comment placement that would otherwise detach comments from the same-scope construct they describe</li>
 </ul>
 <p>Formatted files must end with exactly one trailing newline.</p>
@@ -6351,7 +6440,6 @@
 <ul>
 <li><a href="../../../tooling/reference/cli_reference/">CLI reference</a></li>
 <li><a href="../../../tooling/how-to/formatting/">Formatting with <code>incan fmt</code></a></li>
-<li><a href="../../../RFCs/closed/implemented/053_formatter_vertical_spacing_buckets/">RFC 053</a></li>
 </ul>
 
 

@@ -2217,6 +2217,8 @@
       
         
       
+        
+      
     
     
       
@@ -2500,6 +2502,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -5762,9 +5785,9 @@
 </li>
         
           <li class="md-nav__item">
-  <a href="#get-cratesnameversioncrate" class="md-nav__link">
+  <a href="#get-packagesnameversionincanpkg" class="md-nav__link">
     <span class="md-ellipsis">
-      GET /crates/&lt;name&gt;/&lt;version&gt;.crate
+      GET /packages/&lt;name&gt;/&lt;version&gt;.incanpkg
     </span>
   </a>
   
@@ -6111,6 +6134,7 @@
 </ul>
 <h2 id="summary">Summary<a class="headerlink" href="#summary" title="Permanent link">&para;</a></h2>
 <p>Define the <code>incan.pub</code> package registry: the protocols, guarantees, and CLI commands that allow Incan library authors to publish packages and consumers to resolve them. The registry must be EU-hosted, integrity-verified, signature-aware, and operationally cheap enough to run with predictable capped spend. Exact vendor choice and launch-era cost numbers are implementation details, not the core contract.</p>
+<p>This Draft was originally written against RFC 031's generated-Rust library artifact shape. The package format and resolution model below are now amended to align with the backend replacement direction: generated Rust may remain an internal/debug artifact, but it is not the public package compatibility path. The registry stores Incan package artifacts with semantic manifests, ABI/package metadata, and optional backend artifacts; consumers resolve Incan semantics first, not downloaded generated Rust source.</p>
 <h2 id="constraints">Constraints<a class="headerlink" href="#constraints" title="Permanent link">&para;</a></h2>
 <p>Two non-negotiable requirements drive every decision in this RFC:</p>
 <ol>
@@ -6216,17 +6240,18 @@ $<span class="w"> </span>incan<span class="w"> </span>publish
             └─────────────────────────────┘
 </code></pre></div>
 <h3 id="the-package-format">The package format<a class="headerlink" href="#the-package-format" title="Permanent link">&para;</a></h3>
-<p>A <code>.crate</code> file is a gzipped tarball containing the Rust crate output from <code>incan build --lib</code> plus the <code>.incnlib</code> type manifest:</p>
-<div class="language-text highlight"><pre><span></span><code>mylib-0.1.0.crate (tar.gz):
+<p>An Incan package artifact is a compressed archive, conventionally <code>.incanpkg</code>, containing package metadata, semantic manifests, ABI/package metadata, and optional emitted artifacts:</p>
+<div class="language-text highlight"><pre><span></span><code>mylib-0.1.0.incanpkg (tar.gz):
 └── mylib-0.1.0/
-    ├── Cargo.toml              # Generated Rust crate metadata
-    ├── src/
-    │   ├── lib.rs              # Generated Rust source
-    │   └── widgets.rs
-    └── .incnlib                # Type manifest (JSON, from RFC 031)
+    ├── incan-package.json      # Package identity, dependencies, ABI/schema versions
+    ├── .incnlib                # Checked type/API manifest
+    ├── semantic/               # Optional semantic package fragments
+    ├── abi/                    # Optional Rust-facing ABI/package metadata
+    ├── src/                    # Optional source snapshot, when publishing policy allows it
+    └── artifacts/              # Optional target artifacts and inspection reports
 </code></pre></div>
-<p>The <code>.incnlib</code> file is invisible to Cargo (which ignores unknown files in the tarball). The <code>incan</code> CLI extracts it for typechecking; <code>cargo build</code> only sees the Rust source.</p>
-<p>This is a single artifact — the type manifest and compiled Rust source are never stored or transferred separately. This simplifies every part of the pipeline: publish uploads one file, download retrieves one file, cache stores one file.</p>
+<p>Generated Rust source is not required to be present and must not be the public compatibility contract. If an implementation includes generated Rust for inspection, debugging, or migration, that output is an artifact with provenance metadata, not the semantic source of truth for package consumers.</p>
+<p>This is still one immutable package artifact for the registry: publish uploads one archive, download retrieves one archive, cache stores one archive, and checksums/signatures cover the archive as a whole. The compiler and backend decide how to consume package semantics and emit target-specific code for the current build.</p>
 <h3 id="index-format">Index format<a class="headerlink" href="#index-format" title="Permanent link">&para;</a></h3>
 <p>The registry uses a <strong>sparse index</strong> format inspired by Cargo's sparse registry protocol. Each package has one file in the index, containing one JSON line per published version:</p>
 <div class="language-text highlight"><pre><span></span><code>index/my/li/mylib
@@ -6257,7 +6282,7 @@ $<span class="w"> </span>incan<span class="w"> </span>publish
 <tr>
 <td><code>cksum</code></td>
 <td>string</td>
-<td>SHA256 of the <code>.crate</code> tarball (prefixed with <code>sha256:</code>)</td>
+<td>SHA256 of the package archive (prefixed with <code>sha256:</code>)</td>
 </tr>
 <tr>
 <td><code>deps</code></td>
@@ -6267,7 +6292,12 @@ $<span class="w"> </span>incan<span class="w"> </span>publish
 <tr>
 <td><code>rust_deps</code></td>
 <td>array</td>
-<td>Rust crate dependencies (merged into consumer's Cargo.toml)</td>
+<td>Rust crate dependencies required by package backend/ABI metadata, resolved by the compiler backend rather than blindly merged into user-authored manifests</td>
+</tr>
+<tr>
+<td><code>artifact_kind</code></td>
+<td>string</td>
+<td>Package artifact format, such as <code>incanpkg</code></td>
 </tr>
 <tr>
 <td><code>incan_version</code></td>
@@ -6330,7 +6360,7 @@ $<span class="w"> </span>incan<span class="w"> </span>publish
   X-Signature: MEUC... (base64, optional in Phase 1)
   X-Certificate: MIIB... (base64, optional in Phase 1)
 
-Body: .crate tarball (binary)
+Body: Incan package archive (binary)
 </code></pre></div>
 <p><strong>Server-side validation:</strong></p>
 <ol>
@@ -6339,11 +6369,13 @@ Body: .crate tarball (binary)
 <li>Verify <code>(name, version)</code> does not already exist → 409 Conflict</li>
 <li>Verify <code>X-Checksum</code> matches SHA256 of request body</li>
 <li>If signature provided: verify Sigstore signature is valid, signer matches publisher</li>
-<li>Extract <code>.incnlib</code> from tarball → verify it parses (basic structural validation)</li>
-<li>Store <code>.crate</code> in object storage: <code>crates/&lt;name&gt;/&lt;version&gt;.crate</code></li>
-<li>Store signature artifacts: <code>crates/&lt;name&gt;/&lt;version&gt;.crate.sig</code>, <code>.cert</code></li>
+<li>Extract <code>incan-package.json</code> and <code>.incnlib</code> from the archive and verify they parse</li>
+<li>Reject archives that require generated Rust source as the package compatibility path</li>
+<li>Store package archive in object storage: <code>packages/&lt;name&gt;/&lt;version&gt;.incanpkg</code></li>
+<li>Store signature artifacts: <code>packages/&lt;name&gt;/&lt;version&gt;.incanpkg.sig</code>, <code>.cert</code></li>
 <li>Update index: append version line to <code>index/&lt;prefix&gt;/&lt;name&gt;</code></li>
-<li>Invalidate CDN cache for the index entry 11. Return 200</li>
+<li>Invalidate CDN cache for the index entry</li>
+<li>Return 200</li>
 </ol>
 <p><strong>Response:</strong> <code>{ "published": "mylib", "version": "0.1.0" }</code></p>
 <h4 id="post-apiv1yank"><code>POST /api/v1/yank</code><a class="headerlink" href="#post-apiv1yank" title="Permanent link">&para;</a></h4>
@@ -6351,11 +6383,11 @@ Body: .crate tarball (binary)
   Authorization: Bearer &lt;token&gt;
 Body: { &quot;name&quot;: &quot;mylib&quot;, &quot;version&quot;: &quot;0.1.0&quot; }
 </code></pre></div>
-<p>Sets <code>yanked: true</code> in the index entry. Does not delete the <code>.crate</code> file (existing lockfiles and builds that reference this exact version still work).</p>
+<p>Sets <code>yanked: true</code> in the index entry. Does not delete the package archive (existing lockfiles and builds that reference this exact version still work).</p>
 <h4 id="get-indexprefixname"><code>GET /index/&lt;prefix&gt;/&lt;name&gt;</code><a class="headerlink" href="#get-indexprefixname" title="Permanent link">&para;</a></h4>
 <p>Returns the JSON-lines index file for the named package. Served from object storage, cached at CDN edge.</p>
-<h4 id="get-cratesnameversioncrate"><code>GET /crates/&lt;name&gt;/&lt;version&gt;.crate</code><a class="headerlink" href="#get-cratesnameversioncrate" title="Permanent link">&para;</a></h4>
-<p>Returns the <code>.crate</code> tarball. Served from object storage, cached at CDN edge. Immutable forever — cache headers set to maximum TTL.</p>
+<h4 id="get-packagesnameversionincanpkg"><code>GET /packages/&lt;name&gt;/&lt;version&gt;.incanpkg</code><a class="headerlink" href="#get-packagesnameversionincanpkg" title="Permanent link">&para;</a></h4>
+<p>Returns the package archive. Served from object storage, cached at CDN edge. Immutable forever, with cache headers set to maximum TTL.</p>
 <h3 id="authentication">Authentication<a class="headerlink" href="#authentication" title="Permanent link">&para;</a></h3>
 <h4 id="token-based-auth">Token-based auth<a class="headerlink" href="#token-based-auth" title="Permanent link">&para;</a></h4>
 <p>Publishers authenticate with API tokens. Tokens are generated via the <code>incan.pub</code> web UI (or a future <code>incan token create</code> CLI command).</p>
@@ -6377,21 +6409,21 @@ Body: { &quot;name&quot;: &quot;mylib&quot;, &quot;version&quot;: &quot;0.1.0&qu
 <li>Reserved names: <code>std</code>, <code>incan</code>, <code>core</code>, <code>test</code> — cannot be claimed by users</li>
 </ul>
 <h3 id="package-signing-with-sigstore">Package signing with Sigstore<a class="headerlink" href="#package-signing-with-sigstore" title="Permanent link">&para;</a></h3>
-<p>Every <code>incan publish</code> signs the <code>.crate</code> tarball using <a href="https://sigstore.dev">Sigstore</a> keyless signing:</p>
+<p>Every <code>incan publish</code> signs the package archive using <a href="https://sigstore.dev">Sigstore</a> keyless signing:</p>
 <p><strong>Publish side:</strong></p>
 <ol>
 <li><code>incan publish</code> initiates an OIDC flow (opens browser → GitHub/GitLab/Google login)</li>
 <li>Sigstore's Fulcio CA issues a short-lived signing certificate tied to the OIDC identity</li>
-<li>The <code>.crate</code> file's SHA256 digest is signed with the ephemeral private key</li>
+<li>The package archive's SHA256 digest is signed with the ephemeral private key</li>
 <li>The signature + certificate + checksum are recorded in Sigstore's Rekor transparency log</li>
-<li>The signature and certificate are sent to the registry alongside the <code>.crate</code></li>
+<li>The signature and certificate are sent to the registry alongside the package archive</li>
 </ol>
 <p><strong>Verification side (<code>incan build</code>):</strong></p>
 <ol>
-<li>Download <code>.crate</code> + <code>.sig</code> + <code>.cert</code> from registry</li>
-<li>Verify SHA256 of <code>.crate</code> matches the index checksum</li>
+<li>Download package archive + <code>.sig</code> + <code>.cert</code> from registry</li>
+<li>Verify SHA256 of the archive matches the index checksum</li>
 <li>Verify the certificate was issued by Sigstore Fulcio CA</li>
-<li>Verify the signature matches the <code>.crate</code> digest</li>
+<li>Verify the signature matches the archive digest</li>
 <li>Verify the signer identity in the certificate matches the <code>publisher</code> field in the index</li>
 <li>Verify the signature is recorded in Sigstore Rekor (transparency log lookup)</li>
 </ol>
@@ -6454,13 +6486,14 @@ mylib = { version = &quot;0.1.0&quot;, registry = &quot;incan.pub&quot; }  # exp
 <li>For each registry dep: <code>GET https://incan.pub/index/&lt;prefix&gt;/&lt;name&gt;</code></li>
 <li>Parse JSON lines, filter by version requirement, select newest matching non-yanked version</li>
 <li>Check local cache <code>~/.incan/libs/&lt;name&gt;-&lt;version&gt;/</code> — if cached and checksum matches, skip download</li>
-<li><code>GET https://incan.pub/crates/&lt;name&gt;/&lt;version&gt;.crate</code></li>
+<li><code>GET https://incan.pub/packages/&lt;name&gt;/&lt;version&gt;.incanpkg</code></li>
 <li>Verify SHA256 checksum matches index entry</li>
 <li>Verify Sigstore signature (if present; warn if absent)</li>
 <li>Extract to <code>~/.incan/libs/&lt;name&gt;-&lt;version&gt;/</code></li>
-<li>Load <code>.incnlib</code> into typechecker symbol table</li>
-<li>Wire Rust crate as path dependency in generated <code>Cargo.toml</code></li>
+<li>Load <code>.incnlib</code>, package metadata, and ABI/semantic facts into the compiler package database</li>
+<li>Let the backend consume those package facts and emit the target build artifacts</li>
 </ol>
+<p>The resolver must not wire downloaded generated Rust source into generated <code>Cargo.toml</code> as the package compatibility path. Rust-facing consumption should go through the ABI/Cargo-native package direction rather than treating generated Rust internals as public API.</p>
 <p><strong>Lockfile (<code>incan.lock</code>):</strong> on first resolution, write resolved versions + checksums to <code>incan.lock</code>. Subsequent builds use the lockfile for reproducibility. <code>incan update</code> re-resolves.</p>
 <h3 id="cli-commands">CLI commands<a class="headerlink" href="#cli-commands" title="Permanent link">&para;</a></h3>
 <table>
@@ -6489,7 +6522,7 @@ mylib = { version = &quot;0.1.0&quot;, registry = &quot;incan.pub&quot; }  # exp
 </tr>
 <tr>
 <td><code>incan publish</code></td>
-<td>Build library, package <code>.crate</code>, sign, upload to registry</td>
+<td>Build library, package <code>.incanpkg</code>, sign, upload to registry</td>
 </tr>
 <tr>
 <td><code>incan yank &lt;pkg&gt; &lt;ver&gt;</code></td>
@@ -6679,10 +6712,10 @@ $<span class="w"> </span>incan<span class="w"> </span>add<span class="w"> </span
 <h3 id="why-not-self-hosted-kellnr">Why not self-hosted Kellnr?<a class="headerlink" href="#why-not-self-hosted-kellnr" title="Permanent link">&para;</a></h3>
 <p>Kellnr is a self-hosted Rust crate registry that implements the Cargo registry protocol. It was considered and rejected because:</p>
 <ul>
-<li>It only speaks the Cargo registry protocol — no awareness of <code>.incnlib</code> manifests</li>
+<li>It only speaks the Cargo registry protocol and has no awareness of Incan package manifests, semantic metadata, or ABI metadata</li>
 <li>Requires a persistent server (no scale-to-zero)</li>
 <li>Written in Rust, not Incan (misses the dogfooding opportunity)</li>
-<li>The <code>.incnlib</code>-in-<code>.crate</code> trick makes Cargo protocol compatibility free anyway — any tool that can download a <code>.crate</code> gets both the Rust source and the type manifest</li>
+<li>Treating generated Rust as a Cargo package artifact would recreate the public-compatibility path the backend direction is moving away from</li>
 </ul>
 <h2 id="reference-service-implementation-informative">Reference service implementation (informative)<a class="headerlink" href="#reference-service-implementation-informative" title="Permanent link">&para;</a></h2>
 <p>The preferred long-term direction is for the <code>incan.pub</code> registry API to be an Incan service. That gives the project a strong dogfooding story and validates that Incan can support its own ecosystem infrastructure. However, the language used for the first service implementation is not the public contract of this RFC. The contract is the registry protocol, package format, integrity model, and CLI behavior.</p>
@@ -6694,9 +6727,9 @@ $<span class="w"> </span>incan<span class="w"> </span>add<span class="w"> </span
 </ol>
 <h2 id="interaction-with-existing-features">Interaction with existing features<a class="headerlink" href="#interaction-with-existing-features" title="Permanent link">&para;</a></h2>
 <ul>
-<li><strong>RFC 031 (library system):</strong> This RFC builds directly on RFC 031. The <code>.incnlib</code> manifest format, <code>pub::</code> import syntax, and <code>incan build --lib</code> command are defined there. This RFC adds the distribution layer on top.</li>
-<li><strong>RFC 027 (incan-vocab):</strong> Library soft keyword declarations are serialized into the <code>.incnlib</code> manifest during <code>incan build --lib</code> and included in the <code>.crate</code> tarball. The registry is unaware of soft keywords — it just stores and serves packages.</li>
-<li><strong><code>rust::</code> imports (RFC 005):</strong> <code>pub::</code> registry imports and <code>rust::</code> Rust crate imports coexist. A package's Rust dependencies (from its generated <code>Cargo.toml</code>) are listed in the index entry's <code>rust_deps</code> field.</li>
+<li><strong>RFC 031 (library system):</strong> This RFC builds on RFC 031's <code>.incnlib</code> manifest format, <code>pub::</code> import syntax, and <code>incan build --lib</code> command, but supersedes any assumption that generated Rust source is the registry package contract.</li>
+<li><strong>RFC 027 (incan-vocab):</strong> Library soft keyword declarations are serialized into checked package metadata during <code>incan build --lib</code> and included in the package archive. The registry is unaware of soft keywords; it stores and serves packages.</li>
+<li><strong><code>rust::</code> imports (RFC 005):</strong> <code>pub::</code> registry imports and <code>rust::</code> Rust crate imports coexist. A package's Rust dependencies may appear in package metadata, but the compiler backend owns how they are linked into the target build.</li>
 </ul>
 <h2 id="alternatives-considered">Alternatives considered<a class="headerlink" href="#alternatives-considered" title="Permanent link">&para;</a></h2>
 <h3 id="cloudflare-workers-r2">Cloudflare Workers + R2<a class="headerlink" href="#cloudflare-workers-r2" title="Permanent link">&para;</a></h3>

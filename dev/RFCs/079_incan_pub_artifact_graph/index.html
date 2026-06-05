@@ -2217,6 +2217,8 @@
       
         
       
+        
+      
     
     
       
@@ -2500,6 +2502,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6076,6 +6099,7 @@ incan capability show cli --source incan.pub
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="relationship-to-rfc-034">Relationship to RFC 034<a class="headerlink" href="#relationship-to-rfc-034" title="Permanent link">&para;</a></h3>
 <p>RFC 034 owns core package registry semantics. This RFC extends the registry's conceptual model from package versions to related artifact nodes and relationships.</p>
+<p>This RFC inherits RFC 034's amended package artifact boundary: generated Rust source is not the public package compatibility path. Artifact graph nodes may describe generated implementation artifacts for inspection, provenance, compatibility reports, or migration, but package semantics must remain grounded in Incan manifests, semantic metadata, ABI/package metadata, and registry artifact relationships.</p>
 <h3 id="relationship-to-rfc-074-and-rfc-075">Relationship to RFC 074 and RFC 075<a class="headerlink" href="#relationship-to-rfc-074-and-rfc-075" title="Permanent link">&para;</a></h3>
 <p>Template, starter, and capability descriptors are local tooling contracts. The graph can distribute and index them, but local lifecycle tooling owns rendering and mutation planning.</p>
 <h3 id="relationship-to-rfc-076">Relationship to RFC 076<a class="headerlink" href="#relationship-to-rfc-076" title="Permanent link">&para;</a></h3>

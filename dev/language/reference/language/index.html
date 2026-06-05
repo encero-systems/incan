@@ -2253,6 +2253,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#iterator-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Iterator methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#frozenlist-methods" class="md-nav__link">
     <span class="md-ellipsis">
       FrozenList methods
@@ -2670,6 +2679,8 @@
       
         
       
+        
+      
     
     
       
@@ -2953,6 +2964,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6427,6 +6459,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#iterator-methods" class="md-nav__link">
+    <span class="md-ellipsis">
+      Iterator methods
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#frozenlist-methods" class="md-nav__link">
     <span class="md-ellipsis">
       FrozenList methods
@@ -7640,7 +7681,7 @@
 </tbody>
 </table>
 <h2 id="decorators">Decorators<a class="headerlink" href="#decorators" title="Permanent link">&para;</a></h2>
-<p>User-defined decorators are valid on top-level <code>def</code> / <code>async def</code> declarations and instance methods. A decorator is an ordinary callable value that receives the decorated function value and returns the binding that should replace it:</p>
+<p>User-defined decorators are valid on top-level <code>def</code> / <code>async def</code> declarations and instance methods. A decorator is an ordinary callable value that receives the decorated function or method callable and returns the callable that should replace it:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">parse</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">value</span>
 
@@ -7655,6 +7696,36 @@
     <span class="kt">result</span> <span class="o">=</span> <span class="n">label</span><span class="p">(</span><span class="mi">1</span><span class="p">)</span>  <span class="c1"># int</span>
 </code></pre></div>
 <p>Stacked decorators apply bottom-up, matching Python's declaration model: the decorator closest to <code>def</code> receives the original function value first, and the outer decorators receive each previous result. Decorator factories such as <code>@logged("name")</code> are checked by first evaluating the factory expression as a callable-producing expression and then applying the produced decorator to the function value.</p>
+<div class="admonition tip">
+<p class="admonition-title">Coming from Python?</p>
+<p>Python decorators can replace a function with any object. Incan user-defined function decorators are stricter: the decorator input is the decorated callable, and the result must also be callable. Python's <code>Callable[[A, B], R]</code> corresponds to Incan's <code>(A, B) -&gt; R</code>; <code>=&gt;</code> is only for closure expressions, not callable types. Use <code>(F) -&gt; F</code> when a decorator preserves the original callable signature, and spell the source and replacement callable types separately when it intentionally changes the signature, such as <code>((str) -&gt; R) -&gt; ((str, str) -&gt; R)</code>.</p>
+</div>
+<p>Decorator factories can be generic over the decorated function type. This is the usual shape for registry, catalog, routing, telemetry, and validation decorators that record metadata but return the original function unchanged:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">registered</span><span class="p">[</span><span class="nc">F</span><span class="p">](</span><span class="n">function_ref</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="p">((</span><span class="nc">F</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">F</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">func</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">func</span>
+
+<span class="nd">@registered</span><span class="p">(</span><span class="s2">&quot;inql.functions.col&quot;</span><span class="p">)</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">col</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">ColumnExpr</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nc">ColumnExpr</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">)</span>
+</code></pre></div>
+<p>The compiler infers <code>F</code> from the decorated function when the factory result is applied. If inference needs help, pass the decorated function type explicitly on the decorator factory call:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@registered</span><span class="p">[(</span><span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">ColumnExpr</span><span class="p">](</span><span class="s2">&quot;inql.functions.col&quot;</span><span class="p">)</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">col</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">ColumnExpr</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nc">ColumnExpr</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">)</span>
+</code></pre></div>
+<p>The post-decoration binding keeps the concrete callable signature of the decorated function unless the decorator deliberately returns a different callable shape. Checked API metadata and imports observe that concrete signature, not the generic helper's <code>F</code>.</p>
+<p>The callable value passed into a decorator exposes <code>__name__</code> as the source callable name. Registry and catalog decorators can use this from concrete decorator helpers and from generic <code>(F) -&gt; F</code> helpers, so a decorator can record <code>func.__name__</code> without requiring the decorated declaration to repeat its own public name in a string argument.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">capture</span><span class="p">[</span><span class="nc">F</span><span class="p">](</span><span class="n">func</span><span class="p">:</span> <span class="nc">F</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">F</span><span class="p">:</span>
+    <span class="n">registry_names</span><span class="o">.</span><span class="nb">append</span><span class="p">(</span><span class="n">func</span><span class="o">.</span><span class="vm">__name__</span><span class="p">)</span>
+    <span class="k">return</span> <span class="n">func</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">registered</span><span class="p">[</span><span class="nc">F</span><span class="p">]()</span> <span class="o">-&gt;</span> <span class="p">((</span><span class="nc">F</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">F</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">func</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">capture</span><span class="p">[</span><span class="nc">F</span><span class="p">](</span><span class="n">func</span><span class="p">)</span>
+
+<span class="nd">@registered</span><span class="p">()</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">sample</span><span class="p">(</span><span class="n">value</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">value</span> <span class="o">+</span> <span class="mi">1</span>
+</code></pre></div>
 <p>Method decorators receive an unbound callable shape with the receiver first. A decorator on <code>def label(self, value: int) -&gt; str</code> sees <code>(&amp;Box, int) -&gt; str</code>; a decorator on <code>def bump(mut self, value: int) -&gt; int</code> sees <code>(&amp;mut Box, int) -&gt; int</code>. The wrapper passes the actual receiver borrow through to the decorated callable, so method decorators do not require cloning the receiver.</p>
 <p>Class, model, trait, enum, newtype, field, alias, and module decorators remain limited to compiler-owned decorators. Compiler-owned decorators such as <code>@derive</code>, <code>@route</code>, <code>@rust.extern</code>, <code>@rust.allow</code>, <code>@staticmethod</code>, <code>@classmethod</code>, and <code>@requires</code> keep their existing special behavior.</p>
 <table>
@@ -10049,6 +10120,229 @@
 <td></td>
 <td>Observe an Err payload by implicit borrow while preserving the original Result.</td>
 <td>RFC 070</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Unwrap</td>
+<td><code>unwrap</code></td>
+<td></td>
+<td>Return the Ok payload or panic.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>UnwrapOr</td>
+<td><code>unwrap_or</code></td>
+<td></td>
+<td>Return the Ok payload or a default value.</td>
+<td>RFC 000</td>
+<td>0.1</td>
+<td>Stable</td>
+</tr>
+</tbody>
+</table>
+<h3 id="iterator-methods">Iterator methods<a class="headerlink" href="#iterator-methods" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Canonical</th>
+<th>Aliases</th>
+<th>Description</th>
+<th>RFC</th>
+<th>Since</th>
+<th>Stability</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Iter</td>
+<td><code>iter</code></td>
+<td></td>
+<td>Create an iterator over an iterable.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Map</td>
+<td><code>map</code></td>
+<td></td>
+<td>Lazily transform iterator items.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Filter</td>
+<td><code>filter</code></td>
+<td></td>
+<td>Lazily keep items that match a predicate.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Enumerate</td>
+<td><code>enumerate</code></td>
+<td></td>
+<td>Yield each item with its zero-based index.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Zip</td>
+<td><code>zip</code></td>
+<td></td>
+<td>Pair items from two iterables.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Take</td>
+<td><code>take</code></td>
+<td></td>
+<td>Yield at most the requested number of items.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Skip</td>
+<td><code>skip</code></td>
+<td></td>
+<td>Discard at most the requested number of items.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>TakeWhile</td>
+<td><code>take_while</code></td>
+<td></td>
+<td>Yield items until a predicate first returns false.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>SkipWhile</td>
+<td><code>skip_while</code></td>
+<td></td>
+<td>Discard items while a predicate returns true.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Chain</td>
+<td><code>chain</code></td>
+<td></td>
+<td>Yield receiver items followed by another iterable.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>FlatMap</td>
+<td><code>flat_map</code></td>
+<td></td>
+<td>Map items to iterables and flatten the result.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Batch</td>
+<td><code>batch</code></td>
+<td></td>
+<td>Yield fixed-size list batches.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Collect</td>
+<td><code>collect</code></td>
+<td></td>
+<td>Consume an iterator into a list.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Count</td>
+<td><code>count</code></td>
+<td></td>
+<td>Consume an iterator and return the item count.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Reduce</td>
+<td><code>reduce</code></td>
+<td></td>
+<td>Consume an iterator with an explicit accumulator.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Fold</td>
+<td><code>fold</code></td>
+<td></td>
+<td>Consume an iterator with an explicit accumulator.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Any</td>
+<td><code>any</code></td>
+<td></td>
+<td>Return whether any item satisfies a predicate.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>All</td>
+<td><code>all</code></td>
+<td></td>
+<td>Return whether every item satisfies a predicate.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Find</td>
+<td><code>find</code></td>
+<td></td>
+<td>Return the first item satisfying a predicate.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>ForEach</td>
+<td><code>for_each</code></td>
+<td></td>
+<td>Consume an iterator for side effects.</td>
+<td>RFC 088</td>
+<td>0.3</td>
+<td>Stable</td>
+</tr>
+<tr>
+<td>Sum</td>
+<td><code>sum</code></td>
+<td></td>
+<td>Consume an iterator and return the numeric sum.</td>
+<td>RFC 088</td>
 <td>0.3</td>
 <td>Stable</td>
 </tr>

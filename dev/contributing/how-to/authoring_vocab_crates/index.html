@@ -2221,6 +2221,8 @@
       
         
       
+        
+      
     
     
       
@@ -2504,6 +2506,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6010,6 +6033,8 @@
 <ul>
 <li><code>DslSurface::on_import("routekit")</code> must match the consumer-facing import spelling after <code>pub::</code>.</li>
 <li>Declarations own their clause grammar directly, so nested DSL structure stays close to the declaration that introduces it.</li>
+<li>Use <code>DeclarationSurface::desugars_to_expression()</code> when the DSL declaration produces a value. Expression-desugaring declarations can be used in ordinary expression positions such as assignment values and returns, and the compiler desugars them before typechecking.</li>
+<li>Use <code>ClauseSurface::expr_list("SELECT")</code> for SQL-shaped projection clauses that accept entries such as <code>sum(amount) as total</code>; add declared item modifiers with <code>ExpressionItemModifierSurface::expr("for")</code> or similar when a projection item needs metadata such as <code>sum(amount) for customer with context</code>. The desugarer receives structured expression-list items with alias and modifier metadata, while <code>ClauseSurface::fields(...)</code> remains for config-style <code>name = value</code> sections.</li>
 <li><code>LibraryManifest</code> is where you describe exported module metadata plus any Cargo dependencies or stdlib features that must travel with the library artifact.</li>
 <li><code>KeywordRegistration</code> remains available only as a lower-level escape hatch for especially simple or incremental cases.</li>
 </ul>
@@ -6023,7 +6048,7 @@
         <span class="o">.</span><span class="n">amount</span> <span class="o">&gt;</span> <span class="mi">100</span>
         <span class="o">.</span><span class="n">customer_id</span>
         <span class="n">orders</span> <span class="o">|&gt;</span> <span class="n">paid_orders</span>
-        <span class="n">orders</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;paid&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="o">.</span><span class="n">region</span><span class="p">)</span>
+        <span class="n">orders</span><span class="o">.</span><span class="nb">filter</span><span class="p">(</span><span class="o">.</span><span class="n">status</span> <span class="o">==</span> <span class="s2">&quot;paid&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">select</span><span class="p">(</span><span class="o">.</span><span class="n">region</span><span class="p">)</span>
 </code></pre></div>
 <p>That surface has four distinct jobs:</p>
 <ul>
@@ -6224,9 +6249,10 @@ orders |&gt; paid_orders
 </code></pre></div>
 <p>Use <code>DesugarOutput::Statements(...)</code> when the DSL lowers into host statements and <code>DesugarOutput::Expression(...)</code> when it lowers into an expression position.</p>
 <p>If you need non-default packaging metadata, register the desugarer with <code>with_desugarer_registration(...)</code> and override fields on <code>DesugarerRegistration</code> or <code>DesugarerMetadata</code>. The default packaging profile targets <code>wasm32-wasip1</code> in <code>release</code> mode.</p>
-<p>When you package a desugarer, make sure your Rust toolchain has that target installed:</p>
+<p>When you package a desugarer locally, make sure your Rust toolchain has that target installed:</p>
 <div class="language-bash highlight"><pre><span></span><code>rustup<span class="w"> </span>target<span class="w"> </span>add<span class="w"> </span>wasm32-wasip1
 </code></pre></div>
+<p>CI jobs that install Incan through the repository's <code>install-incan</code> GitHub Action get <code>wasm32-wasip1</code> by default, so downstream vocab consumers do not need a separate <code>rustup target add wasm32-wasip1</code> step just to run <code>incan fmt --check</code>, <code>incan test</code>, or <code>incan build --lib</code>.</p>
 <p>Also export the standard WASM bridge symbols from your companion crate root:</p>
 <div class="language-rust highlight"><span class="filename">routekit/vocab_companion/src/lib.rs</span><pre><span></span><code><span class="n">incan_vocab</span><span class="p">::</span><span class="n">export_wasm_desugarer</span><span class="o">!</span><span class="p">(</span><span class="n">RoutekitDesugarer</span><span class="p">);</span>
 </code></pre></div>
@@ -6267,7 +6293,7 @@ orders |&gt; paid_orders
 <li>The activation namespace must match the consumer import spelling after <code>pub::</code>.</li>
 <li>Do not split the public contract across <code>build.rs</code>, convention functions, or hand-maintained <code>vocab_metadata.json</code> files.</li>
 <li>Companion crates that package a desugarer must include <code>cdylib</code> in <code>[lib].crate-type</code>.</li>
-<li>If desugarer packaging fails with a missing target error, install the required Rust target (<code>rustup target add wasm32-wasip1</code>) and rerun <code>incan build --lib</code>.</li>
+<li>If local desugarer packaging fails with a missing target error, install the required Rust target (<code>rustup target add wasm32-wasip1</code>) and rerun <code>incan build --lib</code>.</li>
 <li>If desugared code needs Rust crates or stdlib features, declare them in <code>LibraryManifest</code> so consumer builds get the same requirements.</li>
 <li>Block or clause-oriented DSL registrations need a desugarer when they cannot continue through the compiler as ordinary Incan syntax on their own.</li>
 </ul>

@@ -2221,6 +2221,8 @@
       
         
       
+        
+      
     
     
       
@@ -2504,6 +2506,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6000,11 +6023,13 @@
 <li>public partial callable presets with target provenance, preset metadata, projected callable parameters, return type, and async status</li>
 <li>raw docstring text when the declaration or method has a docstring</li>
 <li>parsed docstring sections in <code>docstring_sections</code>, including summary, parameters, returns, fields, aliases, and decorators</li>
-<li>decorator metadata with resolved decorator paths</li>
+<li>decorator metadata with resolved decorator paths, safe argument projections, and decorated callable context when the decorator is attached to a callable declaration</li>
 <li>safe const values for public consts and safe decorator arguments</li>
 </ul>
 <p>Types use the same structural <code>TypeRef</code> encoding as library manifest exports. For example, a non-generic type is encoded as <code>{"Named": {"name": "str"}}</code>, while a generic application is encoded as <code>{"Applied": {"name": "List", "args": [...]}}</code>.</p>
-<p>When decorator processing exposes a public function as a callable-valued binding, metadata follows that checked binding. In that case, function metadata reports the callable binding's parameters and return type rather than the original source signature. Existing decorator metadata remains attached separately through <code>decorators</code>, so consumers that inspect marker decorators, safe decorator arguments, or docstring <code>Decorators:</code> sections can keep using that lane without inferring binding types from it.</p>
+<p>Function metadata keeps the source declaration's public callable surface. For a decorated callable, each decorator entry also carries <code>decorated_callable</code>, which contains the decorated declaration's checked public identity, source anchor, type parameters, parameter names and types, return type, receiver when applicable, and async marker. Registry and catalog tooling should read that field instead of asking authors to repeat the decorated function name or signature in decorator arguments.</p>
+<p>Decorator arguments are represented structurally when the compiler can do so without executing user code. Literals, checked const references, symbolic references, lists, dicts, constructors, and ordinary calls can appear as metadata values. Unsupported expressions remain explicit <code>unsupported</code> entries.</p>
+<p>Public import aliases can include <code>projected_function</code> when the alias target resolves to a public function or callable-valued decorated binding. The projection includes the source declaration path, the callable signature under the alias name, and the source decorators. This lets reexport-only facades expose declaration metadata without no-op loader functions or runtime module initialization hooks.</p>
 <p>Public partial declarations use <code>kind: "partial"</code>. A partial declaration remains distinct from a hand-written function or alias:</p>
 <table>
 <thead>
@@ -6094,7 +6119,7 @@
 </tr>
 </tbody>
 </table>
-<p>Decorator arguments that are not literals, type arguments, or const references are reported as <code>unsupported</code> metadata values instead of being evaluated.</p>
+<p>Decorator arguments that are not declaration-safe literals, const references, symbolic references, lists, dicts, constructors, or ordinary call trees are reported as <code>unsupported</code> metadata values instead of being evaluated.</p>
 <h2 id="docstrings">Docstrings<a class="headerlink" href="#docstrings" title="Permanent link">&para;</a></h2>
 <p>The metadata command preserves raw docstring text for public declarations and checked methods and also emits parsed <code>docstring_sections</code> when a docstring is present. Recognized section headings are <code>Args:</code>, <code>Parameters:</code>, <code>Returns:</code>, <code>Fields:</code>, <code>Aliases:</code>, and <code>Decorators:</code>. Text before the first recognized heading becomes the <code>summary</code>.</p>
 <p>Named sections use <code>name: description</code> entries:</p>
@@ -6121,7 +6146,7 @@
 <p>The metadata JSON describes public declarations from checked Incan source and materialized contract models visible to the checked program. Model bundle schema, emit, materialization, and artifact inspection are documented separately in <a href="../contract_metadata/">Checked contract metadata</a>.</p>
 <h2 id="current-boundaries">Current Boundaries<a class="headerlink" href="#current-boundaries" title="Permanent link">&para;</a></h2>
 <p>Checked API metadata extraction does not inspect built <code>.incnlib</code> artifacts. Artifact inspection remains a separate tooling surface from source/project metadata extraction.</p>
-<p>The extractor exposes only checked compiler facts and safe literal/const values. Unsupported decorator expressions are reported as <code>unsupported</code> metadata rather than evaluated, and consumers should not treat docstrings or decorator payloads as trusted executable input.</p>
+<p>The extractor exposes only checked compiler facts and declaration-safe metadata values. Unsupported decorator expressions are reported as <code>unsupported</code> metadata rather than evaluated, and consumers should not treat docstrings or decorator payloads as trusted executable input.</p>
 
 
 

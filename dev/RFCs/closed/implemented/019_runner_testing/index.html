@@ -2217,6 +2217,8 @@
       
         
       
+        
+      
     
     
       
@@ -2500,6 +2502,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6871,12 +6894,12 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 <h3 id="parametrize-with-per-case-marks">Parametrize with per-case marks<a class="headerlink" href="#parametrize-with-per-case-marks" title="Permanent link">&para;</a></h3>
 <p>You can mark individual parameter cases (skip/xfail/etc.) via <code>param_case(...)</code>:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">module</span> <span class="k">tests</span><span class="p">:</span>
-    <span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">parametrize</span><span class="p">,</span> <span class="n">param_case</span><span class="p">,</span> <span class="n">skip</span><span class="p">,</span> <span class="n">xfail</span>
+    <span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="n">parametrize</span><span class="p">,</span> <span class="n">param_case</span><span class="p">,</span> <span class="nb">skip</span><span class="p">,</span> <span class="n">xfail</span>
 
     <span class="nd">@parametrize</span><span class="p">(</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="p">[</span>
         <span class="n">param_case</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span>
         <span class="n">param_case</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="p">[</span><span class="n">xfail</span><span class="p">(</span><span class="s2">&quot;bug #123&quot;</span><span class="p">)]),</span>
-        <span class="n">param_case</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="p">[</span><span class="n">skip</span><span class="p">(</span><span class="s2">&quot;too slow&quot;</span><span class="p">)]),</span>
+        <span class="n">param_case</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="p">[</span><span class="nb">skip</span><span class="p">(</span><span class="s2">&quot;too slow&quot;</span><span class="p">)]),</span>
     <span class="p">])</span>
     <span class="k">def</span><span class="w"> </span><span class="nf">test_x</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
         <span class="k">assert</span> <span class="n">x</span> <span class="o">&gt;</span> <span class="mi">0</span>
@@ -7447,7 +7470,7 @@ incan<span class="w"> </span><span class="nb">test</span><span class="w"> </span
 <div class="language-incan highlight"><pre><span></span><code><span class="nd">@parametrize</span><span class="p">(</span><span class="s2">&quot;x&quot;</span><span class="p">,</span> <span class="p">[</span>
     <span class="n">param_case</span><span class="p">(</span><span class="mi">1</span><span class="p">),</span>
     <span class="n">param_case</span><span class="p">(</span><span class="mi">2</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="p">[</span><span class="n">xfail</span><span class="p">(</span><span class="s2">&quot;bug #123&quot;</span><span class="p">)]),</span>
-    <span class="n">param_case</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="p">[</span><span class="n">skip</span><span class="p">(</span><span class="s2">&quot;too slow&quot;</span><span class="p">)]),</span>
+    <span class="n">param_case</span><span class="p">(</span><span class="mi">3</span><span class="p">,</span> <span class="n">marks</span><span class="o">=</span><span class="p">[</span><span class="nb">skip</span><span class="p">(</span><span class="s2">&quot;too slow&quot;</span><span class="p">)]),</span>
 <span class="p">])</span>
 </code></pre></div>
 <p>Allowed per-case marks (in <code>param_case(..., marks=[...])</code>):</p>

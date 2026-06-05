@@ -2019,6 +2019,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#type-tokens-and-type-argument-reflection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Type tokens and type-argument reflection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#value-enums" class="md-nav__link">
     <span class="md-ellipsis">
       Value enums
@@ -2703,6 +2712,8 @@
       
         
       
+        
+      
     
     
       
@@ -2986,6 +2997,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6205,6 +6237,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#type-tokens-and-type-argument-reflection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Type tokens and type-argument reflection
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#value-enums" class="md-nav__link">
     <span class="md-ellipsis">
       Value enums
@@ -6670,6 +6711,16 @@
 <td><a href="../reflection/">Reflection</a>, <a href="../stdlib/reflection/">std.reflection</a>, <a href="../../../release_notes/0_2/">Release 0.2</a></td>
 </tr>
 <tr>
+<td>Type tokens and type-argument reflection</td>
+<td>TypeSystem</td>
+<td style="text-align: right;">0.3</td>
+<td>Use explicit type arguments for compile-time reflection, or call an overload that expects <code>Type[T]</code>.</td>
+<td><code>T.__class_name__()</code><br><code>def cast(expr: ColumnExpr, target: Type[int]) -&gt; IntColumnExpr:</code><br><code>def accepts_schema(value: Type[MySchema]) -&gt; str:</code><br><code>cast(col("amount"), int)</code></td>
+<td>Primitive type arguments expose stable source names, model type tokens carry checked source type evidence, and expected <code>Type[T]</code> parameters let visible type names select precise overloads without making types general runtime values.</td>
+<td>String target names, dummy schema values, or helper families used only to recover type-specific return types.</td>
+<td><a href="../reflection/">Reflection</a>, <a href="../stdlib/reflection/">std.reflection</a>, <a href="../../../RFCs/107_type_directed_library_apis/">RFC 107 north star</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></td>
+</tr>
+<tr>
 <td>Value enums</td>
 <td>TypeSystem</td>
 <td style="text-align: right;">0.3</td>
@@ -6794,8 +6845,8 @@
 <td>Syntax</td>
 <td style="text-align: right;">0.3</td>
 <td>None for user-defined decorators; compiler-owned decorators keep their documented imports.</td>
-<td><code>@logged</code><br><code>@route("/users")</code><br><code>@trace(level=Level.INFO)</code></td>
-<td>Decorators are ordinary callable values applied to functions and methods, including decorator factories.</td>
+<td><code>@logged</code><br><code>@registered("catalog.ref")</code><br><code>func.__name__</code><br><code>@registered[(str) -&gt; ColumnExpr]("catalog.ref")</code></td>
+<td>Decorators are ordinary callable values applied to functions and methods, including generic decorator factories that infer or accept the decorated function type and decorator helpers that expose <code>func.__name__</code>.</td>
 <td>Boilerplate wrapper declarations around every function that needs the same callable transform.</td>
 <td><a href="../language/#decorators">Language reference</a>, <a href="../derives_and_traits/">Derives and traits</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></td>
 </tr>
@@ -7188,6 +7239,25 @@
 <li><code>name as "wire_name": str</code></li>
 <li><code>user.__fields__()</code></li>
 </ul>
+<h3 id="type-tokens-and-type-argument-reflection">Type tokens and type-argument reflection<a class="headerlink" href="#type-tokens-and-type-argument-reflection" title="Permanent link">&para;</a></h3>
+<ul>
+<li><strong>Id:</strong> <code>TypeTokensReflection</code></li>
+<li><strong>Category:</strong> <code>TypeSystem</code></li>
+<li><strong>Since:</strong> <code>0.3</code></li>
+<li><strong>RFC:</strong> <code>RFC 107</code></li>
+<li><strong>Stability:</strong> <code>Stable</code></li>
+<li><strong>Activation:</strong> Use explicit type arguments for compile-time reflection, or call an overload that expects <code>Type[T]</code>.</li>
+<li><strong>Use instead of:</strong> String target names, dummy schema values, or helper families used only to recover type-specific return types.</li>
+<li><strong>References:</strong> <a href="../reflection/">Reflection</a>, <a href="../stdlib/reflection/">std.reflection</a>, <a href="../../../RFCs/107_type_directed_library_apis/">RFC 107 north star</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></li>
+</ul>
+<p>Primitive type arguments expose stable source names, model type tokens carry checked source type evidence, and expected <code>Type[T]</code> parameters let visible type names select precise overloads without making types general runtime values.</p>
+<p>Canonical forms:</p>
+<ul>
+<li><code>T.__class_name__()</code></li>
+<li><code>def cast(expr: ColumnExpr, target: Type[int]) -&gt; IntColumnExpr:</code></li>
+<li><code>def accepts_schema(value: Type[MySchema]) -&gt; str:</code></li>
+<li><code>cast(col("amount"), int)</code></li>
+</ul>
 <h3 id="value-enums">Value enums<a class="headerlink" href="#value-enums" title="Permanent link">&para;</a></h3>
 <ul>
 <li><strong>Id:</strong> <code>ValueEnums</code></li>
@@ -7409,12 +7479,13 @@
 <li><strong>Use instead of:</strong> Boilerplate wrapper declarations around every function that needs the same callable transform.</li>
 <li><strong>References:</strong> <a href="../language/#decorators">Language reference</a>, <a href="../derives_and_traits/">Derives and traits</a>, <a href="../../../release_notes/0_3/">Release 0.3</a></li>
 </ul>
-<p>Decorators are ordinary callable values applied to functions and methods, including decorator factories.</p>
+<p>Decorators are ordinary callable values applied to functions and methods, including generic decorator factories that infer or accept the decorated function type and decorator helpers that expose <code>func.__name__</code>.</p>
 <p>Canonical forms:</p>
 <ul>
 <li><code>@logged</code></li>
-<li><code>@route("/users")</code></li>
-<li><code>@trace(level=Level.INFO)</code></li>
+<li><code>@registered("catalog.ref")</code></li>
+<li><code>func.__name__</code></li>
+<li><code>@registered[(str) -&gt; ColumnExpr]("catalog.ref")</code></li>
 </ul>
 <h3 id="generators">Generators<a class="headerlink" href="#generators" title="Permanent link">&para;</a></h3>
 <ul>

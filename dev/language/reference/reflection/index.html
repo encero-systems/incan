@@ -2198,7 +2198,34 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="__fields__() -> FrozenList[FieldInfo]">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#generic-value-reflection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generic Value Reflection
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#generic-type-reflection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generic Type Reflection
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#type-tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      Type Tokens
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Type Tokens">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -2274,6 +2301,8 @@
       
         
           
+        
+      
         
       
         
@@ -2599,6 +2628,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -5724,7 +5774,34 @@
     </span>
   </a>
   
-    <nav class="md-nav" aria-label="__fields__() -> FrozenList[FieldInfo]">
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#generic-value-reflection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generic Value Reflection
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#generic-type-reflection" class="md-nav__link">
+    <span class="md-ellipsis">
+      Generic Type Reflection
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#type-tokens" class="md-nav__link">
+    <span class="md-ellipsis">
+      Type Tokens
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Type Tokens">
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
@@ -5778,7 +5855,7 @@
 
 
 <h1 id="reflection-reference">Reflection (Reference)<a class="headerlink" href="#reflection-reference" title="Permanent link">&para;</a></h1>
-<p>Models and classes provide built-in reflection helpers for runtime introspection.</p>
+<p>Models and classes provide built-in reflection helpers for runtime introspection. Generic type-argument reflection also exposes stable source names for primitive type arguments.</p>
 <p>For the curated <code>std.reflection</code> module surface, see <a href="../stdlib/reflection/">Standard library reference: <code>std.reflection</code></a>.</p>
 <h2 id="__class_name__-str"><code>__class_name__() -&gt; str</code><a class="headerlink" href="#__class_name__-str" title="Permanent link">&para;</a></h2>
 <p>Returns the type's name as a string.</p>
@@ -5800,6 +5877,54 @@
     <span class="k">for</span> <span class="n">info</span> <span class="ow">in</span> <span class="n">u</span><span class="o">.</span><span class="n">__fields__</span><span class="p">():</span>
         <span class="nb">println</span><span class="p">(</span><span class="sa">f</span><span class="s2">&quot;</span><span class="si">{</span><span class="n">info</span><span class="o">.</span><span class="n">name</span><span class="si">}</span><span class="s2">: </span><span class="si">{</span><span class="n">info</span><span class="o">.</span><span class="n">type_name</span><span class="si">}</span><span class="s2">&quot;</span><span class="p">)</span>
 </code></pre></div>
+<h2 id="generic-value-reflection">Generic Value Reflection<a class="headerlink" href="#generic-value-reflection" title="Permanent link">&para;</a></h2>
+<p>Generic helpers may call <code>value.__class_name__()</code> and <code>value.__fields__()</code> on a type parameter. The compiler treats those calls as reflection capabilities and emits the required runtime bounds for the generated Rust function, so the generic helper has the same field metadata result as a direct concrete call when it is instantiated with a reflectable model or class.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">reflected_field_count</span><span class="p">[</span><span class="nc">T</span><span class="p">](</span><span class="n">value</span><span class="p">:</span> <span class="nc">T</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">value</span><span class="o">.</span><span class="n">__fields__</span><span class="p">())</span>
+</code></pre></div>
+<h2 id="generic-type-reflection">Generic Type Reflection<a class="headerlink" href="#generic-type-reflection" title="Permanent link">&para;</a></h2>
+<p>Generic schema helpers may also reflect on an explicit type argument without constructing a dummy value. This is the intended shape for APIs that need a model's schema rather than one model instance.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">schema_field_count</span><span class="p">[</span><span class="nc">T</span><span class="p">]()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="nc">T</span><span class="o">.</span><span class="n">__fields__</span><span class="p">())</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">schema_name</span><span class="p">[</span><span class="nc">T</span><span class="p">]()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nc">T</span><span class="o">.</span><span class="n">__class_name__</span><span class="p">()</span>
+</code></pre></div>
+<p>Callers instantiate those helpers with a reflectable model or class type:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">model</span> <span class="nc">User</span><span class="p">:</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span>
+    <span class="n">email</span><span class="p">:</span> <span class="nb">str</span>
+
+<span class="nb">println</span><span class="p">(</span><span class="n">schema_name</span><span class="p">[</span><span class="nc">User</span><span class="p">]())</span>
+<span class="nb">println</span><span class="p">(</span><span class="n">schema_field_count</span><span class="p">[</span><span class="nc">User</span><span class="p">]())</span>
+</code></pre></div>
+<p>Primitive type arguments support <code>T.__class_name__()</code> for type-directed APIs that need a stable source-level primitive identity:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">primitive_target</span><span class="p">[</span><span class="nc">T</span><span class="p">]()</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nb">str</span><span class="p">(</span><span class="nc">T</span><span class="o">.</span><span class="n">__class_name__</span><span class="p">())</span>
+
+<span class="nb">println</span><span class="p">(</span><span class="n">primitive_target</span><span class="p">[</span><span class="nb">int</span><span class="p">]())</span>    <span class="c1"># &quot;int&quot;</span>
+<span class="nb">println</span><span class="p">(</span><span class="n">primitive_target</span><span class="p">[</span><span class="nb">float</span><span class="p">]())</span>  <span class="c1"># &quot;float&quot;</span>
+<span class="nb">println</span><span class="p">(</span><span class="n">primitive_target</span><span class="p">[</span><span class="nb">str</span><span class="p">]())</span>    <span class="c1"># &quot;str&quot;</span>
+<span class="nb">println</span><span class="p">(</span><span class="n">primitive_target</span><span class="p">[</span><span class="nb">bool</span><span class="p">]())</span>   <span class="c1"># &quot;bool&quot;</span>
+</code></pre></div>
+<p>Primitive type arguments do not support <code>T.__fields__()</code>, because primitives do not have source fields.</p>
+<h2 id="type-tokens">Type Tokens<a class="headerlink" href="#type-tokens" title="Permanent link">&para;</a></h2>
+<p>A type name in value position is accepted only when the expected type is a compiler-emitted <code>Type[T]</code> token. <code>Type[T]</code> is a zero-sized marker used for type-directed APIs, not a general runtime type object. This lets libraries offer overloads whose return types remain precise:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">cast</span><span class="p">(</span><span class="n">expr</span><span class="p">:</span> <span class="nc">ColumnExpr</span><span class="p">,</span> <span class="n">target</span><span class="p">:</span> <span class="nc">Type</span><span class="p">[</span><span class="nb">int</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">IntColumnExpr</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">int_column_expr</span><span class="p">(</span><span class="n">expr</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">cast</span><span class="p">(</span><span class="n">expr</span><span class="p">:</span> <span class="nc">ColumnExpr</span><span class="p">,</span> <span class="n">target</span><span class="p">:</span> <span class="nc">Type</span><span class="p">[</span><span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="nc">FloatColumnExpr</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">float_column_expr</span><span class="p">(</span><span class="n">expr</span><span class="p">)</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">cast</span><span class="p">(</span><span class="n">expr</span><span class="p">:</span> <span class="nc">ColumnExpr</span><span class="p">,</span> <span class="n">target</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">ColumnExpr</span><span class="p">:</span>
+    <span class="k">return</span> <span class="n">dynamic_cast</span><span class="p">(</span><span class="n">expr</span><span class="p">,</span> <span class="n">target</span><span class="p">)</span>
+
+<span class="n">amount</span><span class="p">:</span> <span class="nc">IntColumnExpr</span> <span class="o">=</span> <span class="n">cast</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;amount&quot;</span><span class="p">),</span> <span class="nb">int</span><span class="p">)</span>
+<span class="n">total</span><span class="p">:</span> <span class="nc">FloatColumnExpr</span> <span class="o">=</span> <span class="n">mul</span><span class="p">(</span><span class="n">cast</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;unit_price&quot;</span><span class="p">),</span> <span class="nb">float</span><span class="p">),</span> <span class="n">cast</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;qty&quot;</span><span class="p">),</span> <span class="nb">float</span><span class="p">))</span>
+<span class="n">fallback</span><span class="p">:</span> <span class="nc">ColumnExpr</span> <span class="o">=</span> <span class="n">cast</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;amount&quot;</span><span class="p">),</span> <span class="s2">&quot;decimal(10,2)&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>Aliases preserve the overload set, so compatibility spellings such as <code>safe_cast = alias cast</code> can expose the same <code>Type[T]</code> token and fallback-string call surface without wrapper overloads.</p>
+<p>Use explicit type arguments such as <code>helper[int](...)</code> when an API needs compile-time type reflection inside the function body. A single generic function still has one declared return type, so <code>cast[T](expr)</code> cannot by itself express "return <code>IntColumnExpr</code> for <code>T=int</code> and <code>FloatColumnExpr</code> for <code>T=float</code>" unless that API declares a broader union or a future type-level return mapping feature.</p>
 <h3 id="fieldinfo-structure"><code>FieldInfo</code> structure<a class="headerlink" href="#fieldinfo-structure" title="Permanent link">&para;</a></h3>
 <p>Each <code>FieldInfo</code> record contains:</p>
 <table>

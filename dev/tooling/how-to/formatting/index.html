@@ -2221,6 +2221,8 @@
       
         
       
+        
+      
     
     
       
@@ -2504,6 +2506,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -4277,6 +4300,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fluent-method-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fluent Method Chains
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#expression-vocab-blocks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Expression Vocab Blocks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limitations" class="md-nav__link">
     <span class="md-ellipsis">
       Limitations
@@ -5826,6 +5867,24 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#fluent-method-chains" class="md-nav__link">
+    <span class="md-ellipsis">
+      Fluent Method Chains
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#expression-vocab-blocks" class="md-nav__link">
+    <span class="md-ellipsis">
+      Expression Vocab Blocks
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#limitations" class="md-nav__link">
     <span class="md-ellipsis">
       Limitations
@@ -5937,6 +5996,8 @@ incan<span class="w"> </span>fmt<span class="w"> </span>--diff<span class="w"> <
 <li>a <code>120</code>-character line-length target</li>
 <li>wrapping for long class trait adoption headers into parenthesized one-trait-per-line <code>with (...)</code> lists</li>
 <li>best-effort wrapping for long parenthesized logical expression chains at <code>and</code> / <code>or</code> breakpoints</li>
+<li>leading-dot wrapping for overflowing fluent method-call chains</li>
+<li>brace/no-colon preservation for expression-position vocab blocks such as <code>query { ... }</code></li>
 <li>top-level double-blank-line spacing only where the style guide permits it</li>
 <li>preservation of one authored readability gap inside ordinary code blocks</li>
 <li>comment placement that remains same-scope and structure-aware</li>
@@ -6010,6 +6071,34 @@ incan<span class="w"> </span>fmt<span class="w"> </span>--diff<span class="w"> <
 <span class="p">)</span>
 </code></pre></div>
 <p>Short parenthesized logical expressions remain inline.</p>
+<h2 id="fluent-method-chains">Fluent Method Chains<a class="headerlink" href="#fluent-method-chains" title="Permanent link">&para;</a></h2>
+<p>When a method-call chain exceeds the configured line-length target, <code>incan fmt</code> may split the chain after the receiver and keep each continuation line led by the next method call. The same leading-dot layout is valid source syntax, so users can author fluent interfaces in the shape the formatter emits.</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">enriched</span> <span class="o">=</span> <span class="n">orders</span>
+    <span class="o">.</span><span class="n">with_column</span><span class="p">(</span><span class="s2">&quot;region_norm&quot;</span><span class="p">,</span> <span class="nb">upper</span><span class="p">(</span><span class="n">trim</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;region&quot;</span><span class="p">))))</span>
+    <span class="o">.</span><span class="n">with_column</span><span class="p">(</span><span class="s2">&quot;status_norm&quot;</span><span class="p">,</span> <span class="nb">lower</span><span class="p">(</span><span class="n">trim</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">))))</span>
+</code></pre></div>
+<p>Comments can live inside the continuation block when they describe the next fluent call:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">enriched</span> <span class="o">=</span> <span class="n">orders</span>
+    <span class="c1"># Normalize before deriving labels.</span>
+    <span class="o">.</span><span class="n">with_column</span><span class="p">(</span><span class="s2">&quot;region_norm&quot;</span><span class="p">,</span> <span class="nb">upper</span><span class="p">(</span><span class="n">trim</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;region&quot;</span><span class="p">))))</span>
+    <span class="o">.</span><span class="n">with_column</span><span class="p">(</span><span class="s2">&quot;status_norm&quot;</span><span class="p">,</span> <span class="nb">lower</span><span class="p">(</span><span class="n">trim</span><span class="p">(</span><span class="n">col</span><span class="p">(</span><span class="s2">&quot;status&quot;</span><span class="p">))))</span>
+</code></pre></div>
+<div class="admonition tip">
+<p class="admonition-title">Coming from Python?</p>
+<p>This is deliberately a little different from Python. In Python, a newline before <code>.with_column(...)</code> normally has to live inside parentheses or use another continuation mechanism. Incan treats an indented leading <code>.</code> as fluent-chain continuation, which keeps DataFrame-style APIs readable without adding punctuation that is only there for line continuation.</p>
+</div>
+<p>Short method-call chains remain inline when they fit.</p>
+<h2 id="expression-vocab-blocks">Expression Vocab Blocks<a class="headerlink" href="#expression-vocab-blocks" title="Permanent link">&para;</a></h2>
+<p>For expression-position vocab blocks, <code>incan fmt</code> preserves the brace/no-colon surface exposed by the active vocab metadata:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">return</span> <span class="n">query</span> <span class="p">{</span>
+    <span class="nc">FROM</span> <span class="n">paid</span>
+    <span class="nc">SELECT</span>
+        <span class="o">.</span><span class="n">order_id</span> <span class="k">as</span> <span class="n">order_id</span>
+        <span class="o">.</span><span class="n">customer_id</span> <span class="k">as</span> <span class="n">customer_id</span>
+    <span class="nc">ORDER</span> <span class="nc">BY</span> <span class="n">desc</span><span class="p">(</span><span class="o">.</span><span class="n">net_amount</span><span class="p">)</span>
+<span class="p">}</span>
+</code></pre></div>
+<p>The formatter should not rewrite that shape to declaration-style <code>query:</code> / <code>FROM:</code> / <code>SELECT:</code> output.</p>
 <h2 id="limitations">Limitations<a class="headerlink" href="#limitations" title="Permanent link">&para;</a></h2>
 <h3 id="parse-required">Parse-required<a class="headerlink" href="#parse-required" title="Permanent link">&para;</a></h3>
 <p><strong>The formatter requires valid syntax.</strong> Unlike some formatters that can tolerate partial or broken code, <code>incan fmt</code> works on parsed syntax and cannot format files with syntax errors.</p>
@@ -6018,14 +6107,13 @@ incan<span class="w"> </span>fmt<span class="w"> </span>--diff<span class="w"> <
 </code></pre></div>
 <p>Fix syntax errors before formatting.</p>
 <h3 id="line-length-is-best-effort">Line length is best-effort<a class="headerlink" href="#line-length-is-best-effort" title="Permanent link">&para;</a></h3>
-<p>The <code>120</code>-character line length is a target, not a strict hard limit. The formatter does not yet rewrite every possible overflowing construct. Very long strings, fluent call chains, and some nested expressions may still require manual judgment.</p>
+<p>The <code>120</code>-character line length is a target, not a strict hard limit. The formatter does not yet rewrite every possible overflowing construct. Very long strings and some nested expressions may still require manual judgment.</p>
 <h2 id="next-steps">Next Steps<a class="headerlink" href="#next-steps" title="Permanent link">&para;</a></h2>
 <ul>
 <li><a href="../../../language/reference/code_style/">Incan Code Style Guide</a></li>
 <li><a href="../../../language/">Language Guide</a></li>
 <li><a href="https://github.com/dannys-code-corner/incan/tree/main/examples">Examples</a></li>
 <li><a href="../testing/">Testing</a></li>
-<li><a href="../../../RFCs/closed/implemented/053_formatter_vertical_spacing_buckets/">RFC 053</a></li>
 </ul>
 
 

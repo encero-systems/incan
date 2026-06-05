@@ -1880,6 +1880,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#calling-imported-rust-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Calling imported Rust functions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#qualified-backing-paths" class="md-nav__link">
     <span class="md-ellipsis">
       Qualified backing paths
@@ -2586,6 +2595,8 @@
       
         
       
+        
+      
     
     
       
@@ -2869,6 +2880,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6097,6 +6129,15 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#calling-imported-rust-functions" class="md-nav__link">
+    <span class="md-ellipsis">
+      Calling imported Rust functions
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#qualified-backing-paths" class="md-nav__link">
     <span class="md-ellipsis">
       Qualified backing paths
@@ -6353,6 +6394,7 @@ supported. The compiler will tell you to use <code>rust::std::...</code> instead
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">my_crate</span><span class="p">::</span><span class="n">proto</span> <span class="kn">import</span><span class="w"> </span><span class="nn">type</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">proto_type</span>
 </code></pre></div>
 <p>The same rule applies to path segments after <code>rust::</code> (for example <code>rust::substrait::proto::type::Binary</code>).</p>
+<p>For Rust struct fields whose real Rust identifier is a keyword, use the keyword spelling in Incan field access and named constructor arguments. For example, a Rust field declared as <code>r#type</code> is available as <code>value.type</code> and <code>TypeName(type=value)</code> in Incan source; generated Rust still uses the real raw identifier. An ordinary Rust field named <code>type_</code> remains <code>value.type_</code>.</p>
 <h2 id="dependency-management">Dependency Management<a class="headerlink" href="#dependency-management" title="Permanent link">&para;</a></h2>
 <p>When you use <code>import rust::crate_name</code>, Incan automatically adds the dependency to your generated <code>Cargo.toml</code>. Dependencies are resolved using a three-tier precedence system:</p>
 <ol>
@@ -6589,6 +6631,13 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 <h2 id="published-libraries-and-shipped-abi-metadata">Published libraries and shipped ABI metadata<a class="headerlink" href="#published-libraries-and-shipped-abi-metadata" title="Permanent link">&para;</a></h2>
 <p>When a library exposes Rust-backed items, run <code>incan build --lib</code> before another project consumes it through <code>pub::</code>. The generated <code>.incnlib</code> embeds a versioned Rust ABI payload containing the canonical Rust item signatures captured during the producer build.</p>
 <p>Consumers load that shipped ABI metadata first for Rust-backed imported symbols. <code>rust_inspect</code> remains available for producer capture, local workspace imports, and explicit fallback/debug paths, but a packaged dependency should not require consumer-side workspace inspection for signatures that were already published in its <code>.incnlib</code>.</p>
+<h3 id="calling-imported-rust-functions">Calling imported Rust functions<a class="headerlink" href="#calling-imported-rust-functions" title="Permanent link">&para;</a></h3>
+<p>Imported Rust free functions use ordinary Incan call syntax. When the compiler has inspected or shipped Rust signature metadata with parameter names, keyword arguments bind to those Rust parameters and lower to the positional Rust call shape that Cargo expects:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">demo</span> <span class="kn">import</span><span class="w"> </span><span class="nn">create_widget</span>
+
+<span class="n">widget</span> <span class="o">=</span> <span class="n">create_widget</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="s2">&quot;primary&quot;</span><span class="p">,</span> <span class="n">enabled</span><span class="o">=</span><span class="k">true</span><span class="p">)</span>
+</code></pre></div>
+<p>If the Rust metadata does not include the named parameter, the compiler rejects the keyword argument instead of guessing a positional mapping.</p>
 <h3 id="qualified-backing-paths">Qualified backing paths<a class="headerlink" href="#qualified-backing-paths" title="Permanent link">&para;</a></h3>
 <p>When a <code>rust::</code> import binds a Rust module (or other namespace), you can name a concrete type inside it with <code>::</code> after that binding:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">rust</span><span class="p">::</span><span class="n">substrait</span><span class="p">::</span><span class="n">proto</span> <span class="kn">import</span><span class="w"> </span><span class="nn">type</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">proto_type</span>
@@ -6888,8 +6937,7 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 <h2 id="understanding-rust-types-optional">Understanding Rust types (optional)<a class="headerlink" href="#understanding-rust-types-optional" title="Permanent link">&para;</a></h2>
 <details class="tip">
 <summary>Coming from Python?</summary>
-<p>If you're new to Rust types like <code>Vec</code>, <code>HashMap</code>, <code>String</code>, <code>Option</code>, and <code>Result</code>, see
-<a href="../rust_types_for_python_devs/">Understanding Rust types (coming from Python)</a>.</p>
+<p>If you're new to Rust types like <code>Vec</code>, <code>HashMap</code>, <code>String</code>, <code>Option</code>, and <code>Result</code>, see <a href="../rust_types_for_python_devs/">Understanding Rust types (coming from Python)</a>.</p>
 </details>
 <h3 id="matching-on-rust-backed-enums-and-oneofs">Matching on Rust-backed enums and oneofs<a class="headerlink" href="#matching-on-rust-backed-enums-and-oneofs" title="Permanent link">&para;</a></h3>
 <p>When you wrap an imported Rust enum (or a prost-style <code>oneof</code>) in a <code>rusttype</code>, <code>match</code> uses the same qualified constructor patterns as for Incan enums (<code>Type.Variant(...)</code> in source; the compiler normalizes this to <code>Type::Variant</code> internally). Names you bind in those patterns are in scope in the arm body, so you can nest <code>Option</code> / <code>Result</code> matches the same way you would for native types. The same payload typing now applies when you match through imported Rust/prost fields in normal CLI builds and editor/tooling analysis, so helpers like <code>match rel.rel_type: Some(RelType.Read(read)) =&gt; ...</code> resolve <code>read</code> to the concrete payload type instead of degrading to a placeholder <code>T</code>.</p>
@@ -6971,8 +7019,8 @@ hint: Add a version annotation: `import rust::my_crate @ &quot;1.0&quot;` or add
 <ul>
 <li><a href="../../../tooling/how-to/dependencies/">Managing dependencies</a> - Adding crates, locking, CI</li>
 <li><a href="../../../tooling/reference/project_configuration/">Project configuration reference</a> - Full <code>incan.toml</code> format</li>
-<li><a href="/dev/RFCs/closed/implemented/057_rust_allow_targeted_lint_suppression">RFC 057</a> - <code>@rust.allow(...)</code> targeted generated-Rust lint suppression</li>
-<li><a href="/dev/RFCs/closed/implemented/041_first_class_rust_interop_authoring">RFC 041</a> - <code>rusttype</code>, <code>interop</code>, capability bounds</li>
+<li><a href="#targeted-generated-rust-lint-suppression">Targeted generated-Rust lint suppression</a> - <code>@rust.allow(...)</code> for narrow generated-code lint allowances</li>
+<li><a href="../rust_types_for_python_devs/">Rust types for Python developers</a> - <code>rusttype</code>, interop declarations, and type mapping concepts</li>
 <li><a href="../../explanation/error_handling/">Error Handling</a> - Working with <code>Result</code> types</li>
 <li><a href="../../reference/derives_and_traits/">Derives &amp; Traits</a> - Drop trait for custom cleanup</li>
 <li><a href="../file_io/">File I/O</a> - Reading, writing, and path handling</li>

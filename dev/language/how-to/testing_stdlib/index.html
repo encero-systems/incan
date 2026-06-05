@@ -2424,6 +2424,8 @@
       
         
       
+        
+      
     
     
       
@@ -2707,6 +2709,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6437,7 +6460,7 @@ test_add<span class="o">[</span>-1-1-0<span class="o">]</span><span class="w"> <
 <p>Use <code>incan test --timeout &lt;duration&gt;</code> or <code>@timeout("duration")</code> to set a timeout for the generated test batch. Fixtures do not have their own timeout configuration.</p>
 <p>For async fixtures, the runner awaits teardown after ordinary assertion failures and panics while the worker remains alive. <code>--timeout</code>, <code>@timeout</code>, external interruption, and process termination are enforced at the generated worker or batch level; if that enforcement terminates the worker process, remaining teardown is best-effort and may not run. Keep teardown idempotent and prefer narrow fixture scopes for resources that must be released promptly.</p>
 <h2 id="full-example">Full example<a class="headerlink" href="#full-example" title="Permanent link">&para;</a></h2>
-<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_is_some</span><span class="p">,</span> <span class="n">fixture</span><span class="p">,</span> <span class="n">skip</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.testing</span><span class="w"> </span><span class="kn">import</span> <span class="nf">assert_eq</span><span class="p">,</span> <span class="nf">assert_true</span><span class="p">,</span> <span class="nf">assert_is_some</span><span class="p">,</span> <span class="n">fixture</span><span class="p">,</span> <span class="nb">skip</span>
 
 <span class="nd">@fixture</span>
 <span class="k">def</span><span class="w"> </span><span class="nf">database</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nc">Database</span><span class="p">:</span>

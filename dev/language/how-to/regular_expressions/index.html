@@ -2328,6 +2328,8 @@
       
         
       
+        
+      
     
     
       
@@ -2611,6 +2613,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -5839,14 +5862,14 @@
 
 <span class="k">def</span><span class="w"> </span><span class="nf">parse_csv_like_header</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="nc">RegexError</span><span class="p">]:</span>
     <span class="n">separator</span> <span class="o">=</span> <span class="nc">Regex</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">s*,</span><span class="se">\\</span><span class="s2">s*&quot;</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">separator</span><span class="o">.</span><span class="nb">split</span><span class="p">(</span><span class="n">text</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">())</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">separator</span><span class="o">.</span><span class="nb">split</span><span class="p">(</span><span class="n">text</span><span class="p">)</span><span class="o">.</span><span class="nb">collect</span><span class="p">())</span>
 </code></pre></div>
 <p>Use <code>splitn(...)</code> when the rest of the string should remain intact after a fixed number of separator matches:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">std.regex</span><span class="w"> </span><span class="kn">import</span> <span class="nc">Regex</span><span class="p">,</span> <span class="nc">RegexError</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">split_header</span><span class="p">(</span><span class="n">text</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kt">Result</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">],</span> <span class="nc">RegexError</span><span class="p">]:</span>
     <span class="n">header</span> <span class="o">=</span> <span class="nc">Regex</span><span class="p">(</span><span class="s2">&quot;</span><span class="se">\\</span><span class="s2">s*:</span><span class="se">\\</span><span class="s2">s*&quot;</span><span class="p">)</span><span class="o">?</span>
-    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">header</span><span class="o">.</span><span class="n">splitn</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="n">collect</span><span class="p">())</span>
+    <span class="k">return</span> <span class="nb">Ok</span><span class="p">(</span><span class="n">header</span><span class="o">.</span><span class="n">splitn</span><span class="p">(</span><span class="n">text</span><span class="p">,</span> <span class="mi">1</span><span class="p">)</span><span class="o">.</span><span class="nb">collect</span><span class="p">())</span>
 </code></pre></div>
 <h2 id="replace-with-captures">Replace with captures<a class="headerlink" href="#replace-with-captures" title="Permanent link">&para;</a></h2>
 <p>Replacement strings support capture interpolation with <code>$1</code> for numbered captures and <code>${name}</code> for named captures:</p>

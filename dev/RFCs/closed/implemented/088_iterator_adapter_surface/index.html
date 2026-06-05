@@ -2217,6 +2217,8 @@
       
         
       
+        
+      
     
     
       
@@ -2500,6 +2502,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6045,39 +6068,39 @@
 <span class="k">def</span><span class="w"> </span><span class="nf">user_name</span><span class="p">(</span><span class="n">user</span><span class="p">:</span> <span class="nc">User</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span><span class="p">:</span>
     <span class="k">return</span> <span class="n">user</span><span class="o">.</span><span class="n">name</span><span class="o">.</span><span class="nb">upper</span><span class="p">()</span>
 
-<span class="n">names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">users</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_active</span><span class="p">)</span>
+<span class="n">names</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">users</span><span class="o">.</span><span class="nb">iter</span><span class="p">()</span>
+    <span class="o">.</span><span class="nb">filter</span><span class="p">(</span><span class="n">is_active</span><span class="p">)</span>
     <span class="o">.</span><span class="nb">map</span><span class="p">(</span><span class="n">user_name</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+    <span class="o">.</span><span class="nb">collect</span><span class="p">()</span>
 </code></pre></div>
 <p>Adapters compose without realizing intermediate lists. The example above filters and maps lazily; <code>.collect()</code> is the point where the final list is produced.</p>
 <p>Iterators over unbounded sources stay bounded when the consumer asks for a bounded prefix:</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="n">first_ten_squares</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="n">naturals</span><span class="p">()</span>
     <span class="o">.</span><span class="nb">map</span><span class="p">((</span><span class="n">n</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">n</span> <span class="o">*</span> <span class="n">n</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+    <span class="o">.</span><span class="nb">take</span><span class="p">(</span><span class="mi">10</span><span class="p">)</span>
+    <span class="o">.</span><span class="nb">collect</span><span class="p">()</span>
 </code></pre></div>
 <p>Adapters can combine multiple streams:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">pairs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="n">names</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
-    <span class="o">.</span><span class="nb">zip</span><span class="p">(</span><span class="n">scores</span><span class="o">.</span><span class="n">iter</span><span class="p">())</span>
-    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">pairs</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">int</span><span class="p">]]</span> <span class="o">=</span> <span class="n">names</span><span class="o">.</span><span class="nb">iter</span><span class="p">()</span>
+    <span class="o">.</span><span class="nb">zip</span><span class="p">(</span><span class="n">scores</span><span class="o">.</span><span class="nb">iter</span><span class="p">())</span>
+    <span class="o">.</span><span class="nb">collect</span><span class="p">()</span>
 </code></pre></div>
 <p>Nested iterator-producing callbacks can be flattened:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">words</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">documents</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">flat_map</span><span class="p">(</span><span class="n">document_words</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_searchable</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">words</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="n">documents</span><span class="o">.</span><span class="nb">iter</span><span class="p">()</span>
+    <span class="o">.</span><span class="nb">flat_map</span><span class="p">(</span><span class="n">document_words</span><span class="p">)</span>
+    <span class="o">.</span><span class="nb">filter</span><span class="p">(</span><span class="n">is_searchable</span><span class="p">)</span>
+    <span class="o">.</span><span class="nb">collect</span><span class="p">()</span>
 </code></pre></div>
 <p>Terminal methods are for summaries or predicates:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">has_admin</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">users</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span><span class="o">.</span><span class="n">any</span><span class="p">(</span><span class="n">is_admin</span><span class="p">)</span>
-<span class="n">all_valid</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">rows</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span><span class="o">.</span><span class="n">all</span><span class="p">(</span><span class="n">validate_row</span><span class="p">)</span>
-<span class="n">first_error</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">Error</span><span class="p">]</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span><span class="o">.</span><span class="n">find</span><span class="p">(</span><span class="n">is_error</span><span class="p">)</span>
-<span class="n">total</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">numbers</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span><span class="o">.</span><span class="n">fold</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">add</span><span class="p">)</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">has_admin</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">users</span><span class="o">.</span><span class="nb">iter</span><span class="p">()</span><span class="o">.</span><span class="nb">any</span><span class="p">(</span><span class="n">is_admin</span><span class="p">)</span>
+<span class="n">all_valid</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="n">rows</span><span class="o">.</span><span class="nb">iter</span><span class="p">()</span><span class="o">.</span><span class="nb">all</span><span class="p">(</span><span class="n">validate_row</span><span class="p">)</span>
+<span class="n">first_error</span><span class="p">:</span> <span class="kt">Option</span><span class="p">[</span><span class="nc">Error</span><span class="p">]</span> <span class="o">=</span> <span class="n">results</span><span class="o">.</span><span class="nb">iter</span><span class="p">()</span><span class="o">.</span><span class="nb">find</span><span class="p">(</span><span class="n">is_error</span><span class="p">)</span>
+<span class="n">total</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">numbers</span><span class="o">.</span><span class="nb">iter</span><span class="p">()</span><span class="o">.</span><span class="nb">fold</span><span class="p">(</span><span class="mi">0</span><span class="p">,</span> <span class="n">add</span><span class="p">)</span>
 </code></pre></div>
 <p>Batching groups adjacent elements into fixed-size lists and preserves a final partial batch:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">batches</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nc">Event</span><span class="p">]]</span> <span class="o">=</span> <span class="n">events</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
-    <span class="o">.</span><span class="n">batch</span><span class="p">(</span><span class="mi">100</span><span class="p">)</span>
-    <span class="o">.</span><span class="n">collect</span><span class="p">()</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">batches</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">list</span><span class="p">[</span><span class="nc">Event</span><span class="p">]]</span> <span class="o">=</span> <span class="n">events</span><span class="o">.</span><span class="nb">iter</span><span class="p">()</span>
+    <span class="o">.</span><span class="nb">batch</span><span class="p">(</span><span class="mi">100</span><span class="p">)</span>
+    <span class="o">.</span><span class="nb">collect</span><span class="p">()</span>
 </code></pre></div>
 <p>If <code>events</code> contains 250 elements, the result contains two batches of 100 and one final batch of 50.</p>
 <h2 id="reference-level-explanation">Reference-level explanation<a class="headerlink" href="#reference-level-explanation" title="Permanent link">&para;</a></h2>
@@ -6111,10 +6134,10 @@
 </code></pre></div>
 <p>Terminal methods consume the receiver. After a terminal method consumes an iterator value, the program must not rely on that same iterator value yielding additional elements unless the iterator type documents reusable iteration separately.</p>
 <p>If code needs to preserve an iterator value for later use, clone it before the terminal call:</p>
-<div class="language-incan highlight"><pre><span></span><code><span class="n">remaining</span> <span class="o">=</span> <span class="n">rows</span><span class="o">.</span><span class="n">iter</span><span class="p">()</span>
+<div class="language-incan highlight"><pre><span></span><code><span class="n">remaining</span> <span class="o">=</span> <span class="n">rows</span><span class="o">.</span><span class="nb">iter</span><span class="p">()</span>
 <span class="n">copy</span> <span class="o">=</span> <span class="n">remaining</span><span class="o">.</span><span class="nb">clone</span><span class="p">()</span>
 
-<span class="n">error_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="n">filter</span><span class="p">(</span><span class="n">is_error</span><span class="p">)</span><span class="o">.</span><span class="nb">count</span><span class="p">()</span>
+<span class="n">error_count</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">copy</span><span class="o">.</span><span class="nb">filter</span><span class="p">(</span><span class="n">is_error</span><span class="p">)</span><span class="o">.</span><span class="nb">count</span><span class="p">()</span>
 
 <span class="k">for</span> <span class="n">row</span> <span class="ow">in</span> <span class="n">remaining</span><span class="p">:</span>
     <span class="n">handle</span><span class="p">(</span><span class="n">row</span><span class="p">)</span>

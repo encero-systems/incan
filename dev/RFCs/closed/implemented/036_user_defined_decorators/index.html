@@ -2217,6 +2217,8 @@
       
         
       
+        
+      
     
     
       
@@ -2500,6 +2502,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../../language/reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -5749,6 +5772,15 @@
 </li>
         
           <li class="md-nav__item">
+  <a href="#v03-amendment-generic-decorator-factories" class="md-nav__link">
+    <span class="md-ellipsis">
+      v0.3 amendment: generic decorator factories
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#async-decorators" class="md-nav__link">
     <span class="md-ellipsis">
       Async decorators
@@ -6031,7 +6063,7 @@
 <li>RFC 084 (RHS partial callable presets — future decorator factory ergonomics)</li>
 </ul>
 </li>
-<li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/170">#170</a></li>
+<li><strong>Issue:</strong> <a href="https://github.com/dannys-code-corner/incan/issues/170">#170</a>, <a href="https://github.com/dannys-code-corner/incan/issues/640">#640</a></li>
 <li><strong>RFC PR:</strong> —</li>
 <li><strong>Written against:</strong> v0.2</li>
 <li><strong>Shipped in:</strong> v0.3</li>
@@ -6087,7 +6119,7 @@
 <li>Desugar user-defined decorators to ordinary callable application before type checking.</li>
 <li>Apply stacked decorators bottom-up, matching Python's decorator ordering.</li>
 <li>Type-check decorator application through the ordinary callable and assignment rules.</li>
-<li>Allow decorator calls to change the visible type of the decorated binding.</li>
+<li>Allow decorator calls to change the visible callable type of the decorated binding.</li>
 <li>Keep decorator semantics compile-time and declaration-oriented; the language must not introduce arbitrary module-level statement execution or module-initialization side effects for decorators.</li>
 <li>Provide the primitive needed for library-owned patterns such as <code>@app.get</code>, <code>@cache</code>, <code>@retry</code>, and <code>@validate</code>.</li>
 </ul>
@@ -6206,7 +6238,7 @@
 <span class="n">f</span> <span class="o">=</span> <span class="nc">D2</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
 <span class="n">f</span> <span class="o">=</span> <span class="nc">D1</span><span class="p">(</span><span class="n">f</span><span class="p">)</span>
 </code></pre></div>
-<p>This means <code>D1</code> wraps <code>D2</code>'s result, which wraps <code>D3</code>'s result, which wraps the original <code>f</code>. Each step may change the type of <code>f</code>.</p>
+<p>This means <code>D1</code> wraps <code>D2</code>'s result, which wraps <code>D3</code>'s result, which wraps the original <code>f</code>. Each step may change the callable type of <code>f</code>.</p>
 <p><strong>Scope of desugaring</strong> — user-defined decorators desugar on <code>def</code>, <code>async def</code>, and method declarations. Class, model, trait, newtype, enum, field, alias, and module declarations are out of scope for this RFC.</p>
 <h3 id="binding-and-module-order">Binding and module order<a class="headerlink" href="#binding-and-module-order" title="Permanent link">&para;</a></h3>
 <p>Decorator desugaring is a compile-time declaration rewrite, not arbitrary module-level runtime execution. Incan still does not allow ordinary statements at module scope.</p>
@@ -6217,9 +6249,25 @@
 <ol>
 <li><code>D</code> must be a callable. If it is not, the compiler emits <code>decorator 'D' is not callable</code>.</li>
 <li>The argument type of <code>D</code>'s first parameter must be compatible with <code>f</code>'s declared type.</li>
-<li>The return type of <code>D(f)</code> becomes the new type of <code>f</code> in the enclosing scope. If <code>D</code> returns the same function type it received, <code>f</code>'s type is unchanged. If the return type cannot be inferred, an explicit return type annotation on <code>D</code> is required.</li>
+<li>The return type of <code>D(f)</code> must itself be callable and becomes the new callable type of <code>f</code> in the enclosing scope. If <code>D</code> returns the same function type it received, <code>f</code>'s type is unchanged. If the return type cannot be inferred, an explicit return type annotation on <code>D</code> is required.</li>
 </ol>
 <p>For decorator factories, step 1 applies to <code>D(args)</code> — the factory expression must produce a callable-shaped value — and then steps 2 and 3 apply to that callable applied to <code>f</code>.</p>
+<h3 id="v03-amendment-generic-decorator-factories">v0.3 amendment: generic decorator factories<a class="headerlink" href="#v03-amendment-generic-decorator-factories" title="Permanent link">&para;</a></h3>
+<p>Issue #640 was accepted as an implementation amendment to this RFC because it naturally extends decorator factories rather than introducing a separate decorator model. A decorator factory may be generic over the decorated function type and return <code>((F) -&gt; F)</code>, letting libraries write one registration helper instead of one helper per callable signature:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">registered</span><span class="p">[</span><span class="nc">F</span><span class="p">](</span><span class="n">function_ref</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="p">((</span><span class="nc">F</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">F</span><span class="p">):</span>
+    <span class="k">return</span> <span class="p">(</span><span class="n">func</span><span class="p">)</span> <span class="o">=&gt;</span> <span class="n">func</span>
+
+<span class="nd">@registered</span><span class="p">(</span><span class="s2">&quot;inql.functions.col&quot;</span><span class="p">)</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">col</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">ColumnExpr</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nc">ColumnExpr</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">)</span>
+</code></pre></div>
+<p>The compiler infers <code>F</code> from the decorated function when applying the produced decorator. If inference needs an explicit call-site type, the decorator factory call accepts the same bracketed type-argument syntax as ordinary generic calls:</p>
+<div class="language-incan highlight"><pre><span></span><code><span class="nd">@registered</span><span class="p">[(</span><span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">ColumnExpr</span><span class="p">](</span><span class="s2">&quot;inql.functions.col&quot;</span><span class="p">)</span>
+<span class="k">pub</span> <span class="k">def</span><span class="w"> </span><span class="nf">col</span><span class="p">(</span><span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nc">ColumnExpr</span><span class="p">:</span>
+    <span class="k">return</span> <span class="nc">ColumnExpr</span><span class="p">(</span><span class="n">name</span><span class="o">=</span><span class="n">name</span><span class="p">)</span>
+</code></pre></div>
+<p>This amendment preserves RFC 036's binding contract: later references, exports, imports, checked API metadata, and editor surfaces observe the concrete decorated function signature unless the decorator intentionally returns a different callable shape.</p>
+<p>Python decorators can replace a function binding with an arbitrary object. Incan intentionally does not copy that dynamic part of Python's model: user-defined function and method decorators are callable-to-callable transforms. Python's <code>Callable[[A, B], R]</code> corresponds to Incan's <code>(A, B) -&gt; R</code>; <code>=&gt;</code> is only for closure expressions, not callable types. The common generic registry shape is <code>(F) -&gt; F</code>; wrappers that intentionally change the callable signature should spell both the source callable type and replacement callable type explicitly.</p>
 <h3 id="async-decorators">Async decorators<a class="headerlink" href="#async-decorators" title="Permanent link">&para;</a></h3>
 <p>A decorator applied to an <code>async def</code> receives an async function value. The decorator is responsible for preserving async semantics correctly — typically by defining an <code>async def wrapper(...)</code> internally. The compiler does not automatically lift a synchronous wrapper to async; a sync decorator applied to an async function produces a sync-typed result, which is likely a type error at the call site.</p>
 <h3 id="errors-and-diagnostics">Errors and diagnostics<a class="headerlink" href="#errors-and-diagnostics" title="Permanent link">&para;</a></h3>
@@ -6251,7 +6299,7 @@
 </table>
 <h2 id="design-details">Design details<a class="headerlink" href="#design-details" title="Permanent link">&para;</a></h2>
 <h3 id="syntax">Syntax<a class="headerlink" href="#syntax" title="Permanent link">&para;</a></h3>
-<p>No new decorator syntax is introduced. <code>@name</code> and <code>@name(args)</code> already parse. Unknown decorator names no longer produce an error on <code>def</code>, <code>async def</code>, or method declarations — they desugar instead.</p>
+<p>RFC 036 originally required no new decorator syntax beyond <code>@name</code> and <code>@name(args)</code>. The v0.3 implementation amendment also accepts explicit generic call-site arguments on decorator factory calls, as in <code>@name[T](args)</code>, using the same type-argument syntax as ordinary generic calls. Unknown decorator names no longer produce an error on <code>def</code>, <code>async def</code>, or method declarations — they desugar instead.</p>
 <p>Method decorator signatures use reference callable parameters for receivers. Immutable method receivers are written as <code>&amp;Owner</code>, and mutable method receivers are written as <code>&amp;mut Owner</code>, for example <code>(&amp;Box, int) -&gt; str</code> and <code>(&amp;mut Counter, int) -&gt; int</code>.</p>
 <p>Class, model, trait, newtype, enum, field, alias, and module declarations continue to restrict decorators to compiler built-ins where such decorators are supported.</p>
 <h3 id="module-level-declarations">Module-level declarations<a class="headerlink" href="#module-level-declarations" title="Permanent link">&para;</a></h3>

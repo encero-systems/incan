@@ -2225,6 +2225,8 @@
       
         
       
+        
+      
     
     
       
@@ -2508,6 +2510,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -5757,14 +5780,14 @@
 </tr>
 </tbody>
 </table>
-<p>Both forms are interchangeable in type annotations. Named <code>def</code> functions and closures are both accepted wherever a function type is expected. See <a href="/dev/RFCs/closed/implemented/035_first_class_function_references">RFC 035</a> for the full specification.</p>
+<p>Both forms are interchangeable in type annotations. Named <code>def</code> functions and closures are both accepted wherever a function type is expected.</p>
 <h2 id="rest-aware-function-values">Rest-Aware Function Values<a class="headerlink" href="#rest-aware-function-values" title="Permanent link">&para;</a></h2>
 <p>Function values preserve source-declared rest parameters. A function declared with <code>*args: T</code> accepts additional positional arguments and <code>*list_value</code> unpacking through the function value. A function declared with <code>**kwargs: T</code> accepts additional keyword arguments and <code>**dict_value</code> unpacking through the function value.</p>
 <div class="language-incan highlight"><pre><span></span><code><span class="k">def</span><span class="w"> </span><span class="nf">collect</span><span class="p">(</span><span class="n">prefix</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">*</span><span class="n">items</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="o">**</span><span class="n">labels</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
     <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">labels</span><span class="p">)</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">int</span><span class="p">:</span>
-    <span class="n">f</span> <span class="o">=</span> <span class="n">collect</span>
+    <span class="n">f</span> <span class="o">=</span> <span class="nb">collect</span>
     <span class="n">xs</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
     <span class="n">labels</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;demo&quot;</span><span class="p">}</span>
     <span class="k">return</span> <span class="n">f</span><span class="p">(</span><span class="s2">&quot;event&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">*</span><span class="n">xs</span><span class="p">,</span> <span class="o">**</span><span class="n">labels</span><span class="p">)</span>

@@ -2414,6 +2414,8 @@
       
         
       
+        
+      
     
     
       
@@ -2697,6 +2699,27 @@
   
   <span class="md-ellipsis">
     std.logging
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../reference/stdlib/telemetry/" class="md-nav__link">
+        
+  
+  <span class="md-ellipsis">
+    std.telemetry
   </span>
   
 
@@ -6065,7 +6088,7 @@
     <span class="k">return</span> <span class="nb">len</span><span class="p">(</span><span class="n">items</span><span class="p">)</span> <span class="o">+</span> <span class="nb">len</span><span class="p">(</span><span class="n">labels</span><span class="p">)</span>
 
 <span class="k">def</span><span class="w"> </span><span class="nf">main</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
-    <span class="n">f</span> <span class="o">=</span> <span class="n">collect</span>
+    <span class="n">f</span> <span class="o">=</span> <span class="nb">collect</span>
     <span class="n">xs</span> <span class="o">=</span> <span class="p">[</span><span class="mi">1</span><span class="p">,</span> <span class="mi">2</span><span class="p">]</span>
     <span class="n">labels</span> <span class="o">=</span> <span class="p">{</span><span class="s2">&quot;kind&quot;</span><span class="p">:</span> <span class="s2">&quot;demo&quot;</span><span class="p">}</span>
     <span class="nb">count</span> <span class="o">=</span> <span class="n">f</span><span class="p">(</span><span class="s2">&quot;event&quot;</span><span class="p">,</span> <span class="mi">0</span><span class="p">,</span> <span class="o">*</span><span class="n">xs</span><span class="p">,</span> <span class="o">**</span><span class="n">labels</span><span class="p">)</span>
